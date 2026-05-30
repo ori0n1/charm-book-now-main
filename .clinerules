@@ -1,0 +1,9 @@
+Nunca quebrar lógica existente.
+Nunca remover funcionalidades sem autorização.
+Manter design premium atual.
+Priorizar mobile-first.
+Não alterar Supabase sem confirmação.
+Não criar componentes duplicados.
+Sempre revisar responsividade desktop e mobile.
+Evitar textos quebrados.
+Não modificar autenticação ou pagamentos sem necessidade.

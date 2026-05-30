@@ -1,0 +1,19 @@
+{
+  "name": "Painel do Estúdio",
+  "short_name": "Estúdio",
+  "description": "Painel de marcações, clientes e financeiro do estúdio.",
+  "start_url": "/admin",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#080b10",
+  "theme_color": "#080b10",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/pwa-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

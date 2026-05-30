@@ -1,0 +1,1 @@
+GRANT EXECUTE ON FUNCTION public.confirm_paid_booking_request(UUID, TEXT) TO service_role;

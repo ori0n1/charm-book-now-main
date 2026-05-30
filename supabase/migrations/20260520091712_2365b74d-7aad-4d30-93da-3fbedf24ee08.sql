@@ -1,0 +1,2 @@
+ALTER TABLE public.studios ADD COLUMN IF NOT EXISTS commission_percent integer NOT NULL DEFAULT 50;
+ALTER TABLE public.studios ADD CONSTRAINT studios_commission_percent_range CHECK (commission_percent >= 0 AND commission_percent <= 100);
