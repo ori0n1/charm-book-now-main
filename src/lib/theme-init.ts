@@ -1,0 +1,2 @@
+/** Script inline para aplicar tema antes da hidratação (evita flash). */
+export const THEME_INIT_SCRIPT = `(function(){try{var k="bellza:theme",l="lumiere:theme",s=localStorage.getItem(k)||localStorage.getItem(l),t="light";if(s==="dark"||s==="light")t=s;else if(s==="system"||!s)t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";var r=document.documentElement;r.classList.toggle("dark",t==="dark");r.style.colorScheme=t;}catch(e){}})();`;

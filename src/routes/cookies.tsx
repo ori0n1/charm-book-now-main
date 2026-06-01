@@ -1,13 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { APP_BRAND } from "@/lib/app-brand";
+import { LegalPageLayout, LegalSection } from "@/components/public/legal-page-layout";
 
 export const Route = createFileRoute("/cookies")({
   head: () => ({
     meta: [
-      { title: "Política de Cookies" },
-      {
-        name: "description",
-        content: "Como usamos cookies essenciais, analíticos e de marketing.",
-      },
+      { title: `Política de Cookies — ${APP_BRAND.name}` },
+      { name: "description", content: "Como a Bellza utiliza cookies essenciais e opcionais." },
     ],
   }),
   component: CookiesPage,
@@ -15,61 +14,48 @@ export const Route = createFileRoute("/cookies")({
 
 function CookiesPage() {
   return (
-    <div className="min-h-screen bg-background px-5 py-10 md:py-16">
-      <div className="mx-auto max-w-2xl">
-        <Link to="/" className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground hover:underline">
-          Voltar
-        </Link>
-        <h1 className="mt-4 text-3xl font-light tracking-tight">Política de Cookies</h1>
-        <p className="mt-2 text-xs text-muted-foreground">Última atualização: 29 de maio de 2026</p>
+    <LegalPageLayout
+      title="Política de Cookies"
+      updatedAt="1 de junho de 2026"
+      description="Explicação simples sobre cookies, preferências e tecnologias necessárias ao funcionamento da Bellza."
+    >
+      <LegalSection title="O que são cookies">
+        <p>
+          Cookies são pequenos ficheiros guardados no dispositivo. Ajudam a manter sessões seguras, recordar
+          preferências e garantir que a experiência funciona corretamente.
+        </p>
+      </LegalSection>
 
-        <div className="mt-8 space-y-6 text-sm leading-relaxed text-foreground/90">
-          <section>
-            <h2 className="text-base font-medium">O que são</h2>
-            <p className="mt-2">
-              Cookies são pequenos ficheiros guardados no dispositivo. Ajudam o site a funcionar,
-              manter a sessão segura e lembrar algumas preferências.
-            </p>
-          </section>
+      <LegalSection title="Tipos de cookies">
+        <ul>
+          <li>
+            <strong>Essenciais:</strong> necessários para login, segurança, reservas e funcionamento técnico.
+          </li>
+          <li>
+            <strong>Preferências:</strong> guardam opções como tema visual ou decisões no banner.
+          </li>
+          <li>
+            <strong>Analíticos ou marketing:</strong> usados apenas quando forem ativados com consentimento.
+          </li>
+        </ul>
+      </LegalSection>
 
-          <section>
-            <h2 className="text-base font-medium">Como usamos</h2>
-            <ul className="mt-2 list-disc space-y-2 pl-5">
-              <li>
-                <strong>Essenciais:</strong> necessários para segurança, login e funcionamento da
-                reserva.
-              </li>
-              <li>
-                <strong>Analíticos:</strong> ajudam-nos a perceber o que deve ser melhorado.
-              </li>
-              <li>
-                <strong>Marketing:</strong> usados apenas quando existe consentimento para medir
-                campanhas ou comunicações.
-              </li>
-            </ul>
-          </section>
+      <LegalSection title="Gerir preferências">
+        <p>
+          Pode aceitar ou recusar cookies não essenciais no banner. Também pode apagar cookies diretamente nas
+          definições do seu browser.
+        </p>
+      </LegalSection>
 
-          <section>
-            <h2 className="text-base font-medium">Gerir preferências</h2>
-            <p className="mt-2">
-              Pode aceitar, recusar ou ajustar preferências no banner de cookies. Também pode limpar
-              os cookies nas definições do browser.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="text-base font-medium">Dados pessoais</h2>
-            <p className="mt-2">
-              Alguns cookies podem ficar associados a dados técnicos, como sessão, dispositivo ou IP.
-              Para mais detalhe, consulte a{" "}
-              <Link to="/privacidade" className="underline">
-                Política de Privacidade
-              </Link>
-              .
-            </p>
-          </section>
-        </div>
-      </div>
-    </div>
+      <LegalSection title="Mais informação">
+        <p>
+          Consulte também a{" "}
+          <Link to="/privacidade" className="underline underline-offset-2">
+            Política de Privacidade
+          </Link>
+          .
+        </p>
+      </LegalSection>
+    </LegalPageLayout>
   );
 }

@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
-  CalendarDays,
   CalendarOff,
   Clock,
   Plus,
@@ -13,8 +12,7 @@ import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { getSegmentConfig } from "@/lib/segments";
 import { supabase } from "@/integrations/supabase/client";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import {
   Select,
   SelectContent,
@@ -468,30 +466,16 @@ function DateTimeField({
   return (
     <Field label={label}>
       <div className="grid min-w-0 max-w-full gap-2 sm:grid-cols-[1fr_6.25rem]">
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className="box-border flex h-11 w-full min-w-0 max-w-full items-center justify-between rounded-2xl border border-border bg-background px-3 text-left text-sm transition hover:bg-muted/40 focus:outline-none focus:ring-2 focus:ring-ring/15"
-            >
-              <span className={date ? "text-foreground" : "text-muted-foreground"}>
-                {date ? date.toLocaleDateString("pt-PT") : "Escolher data"}
-              </span>
-              <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-auto rounded-3xl border-border p-2 shadow-2xl">
-            <Calendar
-              mode="single"
-              selected={date}
-              onSelect={(selectedDate) => {
-                if (!selectedDate) return;
-                onChange(mergeDateAndTime(selectedDate, time));
-              }}
-              className="rounded-2xl"
-            />
-          </PopoverContent>
-        </Popover>
+        <PremiumDatePicker
+          value={value ? value.slice(0, 10) : ""}
+          onChange={(selectedDate) => {
+            if (!selectedDate) return;
+            onChange(mergeDateAndTime(new Date(`${selectedDate}T12:00:00`), time));
+          }}
+          placeholder="Escolher data"
+          className="h-11 bg-background"
+          allowClear={false}
+        />
         <input
           type="time"
           value={time}

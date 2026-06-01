@@ -1,14 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { createFileRoute } from "@tanstack/react-router";
+import { APP_BRAND } from "@/lib/app-brand";
+import { LegalPageLayout, LegalSection } from "@/components/public/legal-page-layout";
 
 export const Route = createFileRoute("/politica-reembolso")({
   head: () => ({
     meta: [
-      { title: "Política de Reembolso" },
-      {
-        name: "description",
-        content: "Como são tratados pedidos de reembolso de sinais pagos online.",
-      },
+      { title: `Política de Reembolso — ${APP_BRAND.name}` },
+      { name: "description", content: "Como são tratados pedidos de reembolso na Bellza." },
     ],
   }),
   component: RefundPolicyPage,
@@ -16,47 +14,39 @@ export const Route = createFileRoute("/politica-reembolso")({
 
 function RefundPolicyPage() {
   return (
-    <LegalShell title="Política de Reembolso">
-      <Section title="Pedido de reembolso">
-        Se o estúdio permitir pedidos de reembolso, pode enviar o motivo através da página da
-        reserva. O pedido fica registado para análise.
-      </Section>
-      <Section title="Decisão do estúdio">
-        A resposta depende da regra aceite no checkout, do prazo de cancelamento e do contexto da
-        marcação. O estúdio pode aprovar, recusar ou propor uma remarcação.
-      </Section>
-      <Section title="Sinal pago online">
-        O sinal é um valor antecipado. Quando a marcação acontece, é descontado no preço final do
-        serviço.
-      </Section>
-      <Section title="Como o reembolso é feito">
-        Quando o pedido é aprovado, o estúdio indica o próximo passo. Em alguns casos o reembolso
-        pode ser manual, dependendo do método de pagamento usado.
-      </Section>
-    </LegalShell>
-  );
-}
-
-function LegalShell({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="min-h-screen bg-background px-5 py-10 md:py-16">
-      <main className="mx-auto max-w-2xl">
-        <Link to="/" className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground hover:underline">
-          Voltar
-        </Link>
-        <h1 className="mt-4 text-3xl font-light tracking-tight">{title}</h1>
-        <p className="mt-2 text-xs text-muted-foreground">Última atualização: 29 de maio de 2026</p>
-        <div className="mt-8 space-y-6 text-sm leading-relaxed text-foreground/90">{children}</div>
-      </main>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <h2 className="text-base font-medium">{title}</h2>
-      <p className="mt-2">{children}</p>
-    </section>
+    <LegalPageLayout
+      title="Política de Reembolso"
+      updatedAt="1 de junho de 2026"
+      description="Transparência sobre reembolsos de subscrição e sinais pagos online."
+    >
+      <LegalSection title="Subscrição Bellza">
+        <p>
+          Se existir cobrança indevida, erro técnico ou duplicação de pagamento, contacte {APP_BRAND.supportEmail}
+          para análise. Pedidos são avaliados caso a caso, de forma razoável e documentada.
+        </p>
+      </LegalSection>
+      <LegalSection title="Sinais pagos a estúdios">
+        <p>
+          Quando um cliente paga um sinal para reservar um serviço, o valor fica associado à marcação. A decisão
+          de reembolso depende das regras do estúdio apresentadas no checkout e da política de cancelamento
+          aplicável.
+        </p>
+      </LegalSection>
+      <LegalSection title="Prazos e método">
+        <p>
+          Quando aprovado, o reembolso é processado através do método de pagamento original ou por instruções
+          indicadas pelo estúdio, conforme o fornecedor de pagamentos utilizado.
+        </p>
+      </LegalSection>
+      <LegalSection title="Contacto">
+        <p>
+          Para pedidos relacionados com a plataforma Bellza, envie email para{" "}
+          <a className="underline underline-offset-2" href={`mailto:${APP_BRAND.supportEmail}`}>
+            {APP_BRAND.supportEmail}
+          </a>
+          .
+        </p>
+      </LegalSection>
+    </LegalPageLayout>
   );
 }

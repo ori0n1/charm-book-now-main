@@ -1,14 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { APP_BRAND } from "@/lib/app-brand";
+import { LegalPageLayout, LegalSection } from "@/components/public/legal-page-layout";
 
 export const Route = createFileRoute("/termos")({
   head: () => ({
     meta: [
-      { title: "Termos de Utilização" },
-      {
-        name: "description",
-        content: "Termos de utilização da plataforma de marcações e gestão de estúdios.",
-      },
+      { title: `Termos e Condições — ${APP_BRAND.name}` },
+      { name: "description", content: "Termos e condições de utilização da plataforma Bellza." },
     ],
   }),
   component: TermsPage,
@@ -16,53 +14,57 @@ export const Route = createFileRoute("/termos")({
 
 function TermsPage() {
   return (
-    <div className="min-h-screen bg-background px-5 py-10 md:py-16">
-      <div className="mx-auto max-w-2xl">
-        <Link to="/" className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground hover:underline">
-          ← Voltar
-        </Link>
-        <h1 className="mt-4 text-3xl font-light tracking-tight">Termos de Utilização</h1>
-        <p className="mt-2 text-xs text-muted-foreground">Última atualização: 27 de maio de 2026</p>
-
-        <div className="mt-8 space-y-6 text-sm leading-relaxed text-foreground/90">
-          <Section title="1. Âmbito">
-            Estes termos regulam a utilização da plataforma por estúdios, profissionais e clientes
-            finais que realizam marcações públicas.
-          </Section>
-          <Section title="2. Conta do estúdio">
-            A dona do estúdio é responsável por manter dados corretos, proteger o acesso à conta e
-            garantir que apenas pessoas autorizadas acedem ao painel.
-          </Section>
-          <Section title="3. Marcações e pagamentos">
-            O estúdio define serviços, preços, sinais, políticas de pagamento e cancelamento. O
-            cliente deve confirmar os dados antes de concluir a reserva ou pagamento.
-          </Section>
-          <Section title="4. Comunicações">
-            Mensagens de confirmação e lembretes são comunicações operacionais ligadas à marcação.
-            Comunicações promocionais exigem consentimento próprio.
-          </Section>
-          <Section title="5. Uso aceitável">
-            Não é permitido tentar aceder a dados de outros estúdios, abusar de formulários públicos,
-            contornar pagamentos, interferir com a segurança ou publicar conteúdo ilegal.
-          </Section>
-          <Section title="6. Privacidade">
-            O tratamento de dados pessoais é descrito na{" "}
-            <Link to="/privacidade" className="underline">
-              Política de Privacidade
-            </Link>
-            .
-          </Section>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section>
-      <h2 className="text-base font-medium">{title}</h2>
-      <p className="mt-2">{children}</p>
-    </section>
+    <LegalPageLayout
+      title="Termos e Condições"
+      updatedAt="1 de junho de 2026"
+      description="Regras principais para utilização da Bellza por estúdios, profissionais e clientes finais."
+    >
+      <LegalSection title="1. Identificação">
+        <p>
+          A {APP_BRAND.name} é operada por {APP_BRAND.legalName}, NIF {APP_BRAND.taxId}, com contacto oficial
+          em{" "}
+          <a className="underline underline-offset-2" href={`mailto:${APP_BRAND.supportEmail}`}>
+            {APP_BRAND.supportEmail}
+          </a>
+          .
+        </p>
+      </LegalSection>
+      <LegalSection title="2. Serviço">
+        <p>
+          A Bellza disponibiliza software de gestão para agenda, equipa, clientes, pagamentos, comunicações e
+          página pública de marcações. O estúdio é responsável por configurar serviços, preços, disponibilidade
+          e políticas apresentadas aos seus clientes.
+        </p>
+      </LegalSection>
+      <LegalSection title="3. Subscrição">
+        <p>
+          Os planos pagos podem ser mensais, trimestrais ou anuais. O acesso pode incluir um período de teste
+          gratuito de 14 dias. A subscrição pode ser cancelada de forma simples, sem fidelização.
+        </p>
+      </LegalSection>
+      <LegalSection title="4. Pagamentos, cancelamentos e reembolsos">
+        <p>
+          Pagamentos online e sinais podem ser processados por fornecedores certificados. Regras de
+          cancelamento e reembolso devem ser claras para o cliente antes da confirmação. Consulte a{" "}
+          <Link to="/politica-reembolso" className="underline underline-offset-2">
+            Política de Reembolso
+          </Link>{" "}
+          e a{" "}
+          <Link to="/politica-cancelamento" className="underline underline-offset-2">
+            Política de Cancelamento
+          </Link>
+          .
+        </p>
+      </LegalSection>
+      <LegalSection title="5. Privacidade">
+        <p>
+          O tratamento de dados pessoais está descrito na{" "}
+          <Link to="/privacidade" className="underline underline-offset-2">
+            Política de Privacidade
+          </Link>
+          .
+        </p>
+      </LegalSection>
+    </LegalPageLayout>
   );
 }

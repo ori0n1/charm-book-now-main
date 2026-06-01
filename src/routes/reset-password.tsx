@@ -1,10 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
+import { AuthField, AuthPrimaryButton } from "@/components/public/auth-field";
+import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { supabase } from "@/integrations/supabase/client";
+import { APP_BRAND } from "@/lib/app-brand";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/reset-password")({
-  head: () => ({ meta: [{ title: "Nova palavra-passe — Lumière" }] }),
+  head: () => ({ meta: [{ title: `Nova palavra-passe — ${APP_BRAND.name}` }] }),
   component: ResetPasswordPage,
 });
 
@@ -35,10 +38,6 @@ function ResetPasswordPage() {
       toast.error("As palavras-passe não coincidem.");
       return;
     }
-    if (password.length < 6) {
-      toast.error("A palavra-passe deve ter pelo menos 6 caracteres.");
-      return;
-    }
     setLoading(true);
     const { error } = await supabase.auth.updateUser({ password });
     setLoading(false);
@@ -46,79 +45,64 @@ function ResetPasswordPage() {
       toast.error(error.message);
       return;
     }
-    toast.success(isTeamInvite ? "Bem-vinda ao painel." : "Palavra-passe atualizada com sucesso.");
+    toast.success("Palavra-passe atualizada.");
     navigate({ to: isTeamInvite ? "/admin" : "/login" });
   }
 
   if (checking) {
     return (
-      <main className="min-h-screen bg-background flex items-center justify-center px-6 py-12">
-        <p className="text-sm text-muted-foreground">A verificar link…</p>
-      </main>
+      <AuthPageLayout title="A verificar link" description="Aguarde um momento.">
+        <p className="text-sm text-muted-foreground">A validar o seu acesso…</p>
+      </AuthPageLayout>
     );
   }
 
   if (!valid) {
     return (
-      <main className="min-h-screen bg-background flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-sm text-center">
-          <h1 className="text-2xl font-light tracking-tight">Link inválido ou expirado</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            O link de recuperação já não é válido. Solicite um novo.
-          </p>
-          <Link
-            to="/forgot-password"
-            className="mt-6 inline-block text-sm underline text-foreground"
-          >
+      <AuthPageLayout
+        title="Link inválido"
+        description="O link expirou ou já foi utilizado."
+        footer={
+          <Link to="/forgot-password" className="block text-center text-sm font-medium underline-offset-2 hover:underline">
             Solicitar novo link
           </Link>
-        </div>
-      </main>
+        }
+      >
+        <p className="text-sm text-muted-foreground">Peça um novo email de recuperação para continuar.</p>
+      </AuthPageLayout>
     );
   }
 
   return (
-    <main className="min-h-screen bg-background flex items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm">
-        <Link to="/login" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          ← Voltar ao login
-        </Link>
-        <h1 className="mt-6 text-3xl font-light tracking-tight">
-          {isTeamInvite ? "Criar acesso ao painel" : "Nova palavra-passe"}
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          {isTeamInvite
-            ? "Defina a sua palavra-passe para aceder ao painel do estúdio. Depois entra automaticamente."
-            : "Defina uma nova palavra-passe para a sua conta."}
-        </p>
-        <form onSubmit={onSubmit} className="mt-8 space-y-4">
-          <input
-            type="password"
-            required
-            minLength={6}
-            placeholder="Nova palavra-passe (min. 6)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-md border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
-          />
-          <input
-            type="password"
-            required
-            minLength={6}
-            placeholder="Confirmar palavra-passe"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className="w-full rounded-md border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md bg-foreground py-3 text-sm font-medium text-background disabled:opacity-50"
-          >
-            {loading ? "A guardar…" : "Definir nova palavra-passe"}
-          </button>
-        </form>
-      </div>
-    </main>
+    <AuthPageLayout
+      title={isTeamInvite ? "Criar acesso ao painel" : "Nova palavra-passe"}
+      description="Defina uma palavra-passe segura para a sua conta."
+    >
+      <form onSubmit={onSubmit} className="space-y-4">
+        <AuthField
+          label="Nova palavra-passe"
+          name="password"
+          type="password"
+          required
+          minLength={6}
+          placeholder="Mínimo 6 caracteres"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <AuthField
+          label="Confirmar palavra-passe"
+          name="confirm"
+          type="password"
+          required
+          minLength={6}
+          placeholder="Repita a palavra-passe"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
+        <AuthPrimaryButton disabled={loading}>
+          {loading ? "A guardar…" : "Guardar palavra-passe"}
+        </AuthPrimaryButton>
+      </form>
+    </AuthPageLayout>
   );
 }

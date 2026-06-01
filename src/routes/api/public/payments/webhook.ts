@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { type StripeEnv, verifyWebhook } from "@/lib/stripe.server";
+import type Stripe from "stripe";
+import { createStripeClient, type StripeEnv, verifyWebhook } from "@/lib/stripe.server";
+import { getPlanByPriceId, getSubscriptionPriceId } from "@/lib/subscription-plans.server";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
 
 let _supabase: SupabaseClient | null = null;
@@ -19,9 +21,14 @@ type StripePayload = Record<string, unknown> & {
   customer?: string | null;
   subscription?: string | null;
   status?: string;
+  failure_message?: string | null;
+  failure_code?: string | null;
+  receipt_url?: string | null;
+  hosted_invoice_url?: string | null;
   current_period_end?: number;
   cancel_at_period_end?: boolean;
   metadata?: StripeMetadata;
+  lines?: { data?: Array<{ price?: { id?: string } }> };
 };
 
 async function handlePaymentIntent(
@@ -133,98 +140,263 @@ async function handlePaymentIntent(
   }
 }
 
-async function handleCheckoutSession(session: StripePayload) {
+async function handleCheckoutSession(session: StripePayload, env: StripeEnv) {
   const studioId = session.metadata?.studio_id;
-  if (!studioId) return;
-  const sb = getSupabase();
-  await sb
-    .from("studios")
-    .update({
-      stripe_customer_id: typeof session.customer === "string" ? session.customer : null,
-      stripe_subscription_id:
-        typeof session.subscription === "string" ? session.subscription : null,
-      subscription_status: "active",
-      plan: "pro",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", studioId);
+  const userId = session.metadata?.user_id;
+  if (typeof session.subscription === "string") {
+    const stripe = createStripeClient(env);
+    const subscription = await stripe.subscriptions.retrieve(session.subscription);
+    await syncSubscription(subscription, env, {
+      userId,
+      studioId,
+      customerId: typeof session.customer === "string" ? session.customer : null,
+    });
+    return;
+  }
+  console.warn("checkout session completed without subscription", {
+    sessionId: session.id,
+    studioId,
+    userId,
+  });
 }
 
-async function handleSubscription(subscription: StripePayload) {
-  const studioId = subscription.metadata?.studio_id;
-  const customerId = typeof subscription?.customer === "string" ? subscription.customer : null;
+async function validateUserId(userId: string | null | undefined) {
+  if (!userId) return null;
+  const { data, error } = await getSupabase().auth.admin.getUserById(userId);
+  if (error || !data.user) {
+    console.warn("subscription webhook ignored unknown user_id", userId);
+    return null;
+  }
+  return userId;
+}
+
+async function syncSubscription(
+  subscription: Stripe.Subscription,
+  env: StripeEnv,
+  fallback?: { userId?: string | null; studioId?: string | null; customerId?: string | null },
+) {
+  const metadata = subscription.metadata ?? {};
+  const userId = await validateUserId(metadata.user_id || fallback?.userId);
+  const studioId = metadata.studio_id || fallback?.studioId || null;
+  const customerId =
+    typeof subscription.customer === "string"
+      ? subscription.customer
+      : fallback?.customerId ?? null;
+  const priceId = getSubscriptionPriceId(subscription);
+  const plan = getPlanByPriceId(env, priceId);
+  const status = subscription.status ?? "incomplete";
+  const currentPeriodEnd = subscription.current_period_end
+    ? new Date(subscription.current_period_end * 1000).toISOString()
+    : null;
+
+  if (!userId || !studioId || !priceId || !plan) {
+    console.warn("subscription webhook missing secure mapping", {
+      subscriptionId: subscription.id,
+      userId,
+      studioId,
+      priceId,
+    });
+    return;
+  }
+
+  const { data: role, error: roleError } = await getSupabase()
+    .from("user_roles")
+    .select("studio_id")
+    .eq("user_id", userId)
+    .eq("studio_id", studioId)
+    .limit(1)
+    .maybeSingle();
+  if (roleError || !role?.studio_id) {
+    console.warn("subscription webhook ignored studio not owned by metadata user", {
+      subscriptionId: subscription.id,
+      userId,
+      studioId,
+    });
+    return;
+  }
+
   const sb = getSupabase();
+  const activeAccess = ["active", "trialing"].includes(status);
+
+  const { error: subscriptionError } = await (sb as any).from("subscriptions").upsert(
+    {
+      user_id: userId,
+      studio_id: studioId || null,
+      stripe_customer_id: customerId,
+      stripe_subscription_id: subscription.id,
+      stripe_price_id: priceId,
+      plan: plan.id,
+      status,
+      current_period_end: currentPeriodEnd,
+      cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "stripe_subscription_id" },
+  );
+  if (subscriptionError) throw subscriptionError;
+
   const patch = {
     stripe_customer_id: customerId,
-    stripe_subscription_id: subscription?.id ?? null,
-    subscription_status: subscription?.status ?? "incomplete",
-    subscription_current_period_end: subscription?.current_period_end
-      ? new Date(subscription.current_period_end * 1000).toISOString()
-      : null,
-    subscription_cancel_at_period_end: Boolean(subscription?.cancel_at_period_end),
-    premium_access_until: subscription?.current_period_end
-      ? new Date(subscription.current_period_end * 1000).toISOString()
-      : null,
-    plan: ["active", "trialing"].includes(subscription?.status) ? "pro" : "trial",
+    stripe_subscription_id: subscription.id,
+    subscription_status: status,
+    subscription_current_period_end: currentPeriodEnd,
+    subscription_cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+    premium_access_until: activeAccess ? currentPeriodEnd : null,
+    plan: activeAccess ? "pro" : "trial",
     updated_at: new Date().toISOString(),
   };
 
-  if (studioId) {
-    await sb.from("studios").update(patch).eq("id", studioId);
-    return;
-  }
-  if (customerId) {
-    await sb.from("studios").update(patch).eq("stripe_customer_id", customerId);
-  }
+  const { error: studioError } = await sb.from("studios").update(patch).eq("id", studioId);
+  if (studioError) throw studioError;
 }
 
-async function logBillingEvent(event: {
+async function handleSubscription(subscription: StripePayload, env: StripeEnv) {
+  await syncSubscription(subscription as unknown as Stripe.Subscription, env);
+}
+
+async function handleInvoice(invoice: StripePayload, env: StripeEnv) {
+  const subscriptionId =
+    typeof invoice.subscription === "string" ? invoice.subscription : null;
+  if (subscriptionId) {
+    const stripe = createStripeClient(env);
+    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+    await syncSubscription(subscription, env);
+    return;
+  }
+
+  const customerId = typeof invoice.customer === "string" ? invoice.customer : null;
+  const priceId = invoice.lines?.data?.[0]?.price?.id ?? null;
+  const plan = getPlanByPriceId(env, priceId);
+  if (!customerId || !plan) return;
+
+  await (getSupabase() as any)
+    .from("subscriptions")
+    .update({
+      status: invoice.status === "paid" ? "active" : "past_due",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("stripe_customer_id", customerId)
+    .eq("stripe_price_id", plan.priceId);
+}
+
+async function syncWithdrawalRequest(
+  obj: StripePayload,
+  status: "processing" | "completed" | "failed" | "canceled",
+) {
+  const requestId = obj.metadata?.withdrawal_request_id;
+  if (!requestId) return;
+
+  const proofUrl =
+    obj.receipt_url ||
+    obj.hosted_invoice_url ||
+    obj.metadata?.proof_url ||
+    obj.metadata?.receipt_url ||
+    null;
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = {
+    status,
+    status_updated_at: now,
+    updated_at: now,
+  };
+
+  if (status === "processing") patch.processed_at = now;
+  if (status === "completed") {
+    patch.paid_at = now;
+    patch.processed_at = now;
+  }
+  if (status === "failed") {
+    patch.failure_reason = obj.failure_message || obj.failure_code || "Não foi possível concluir o levantamento.";
+  }
+  if (proofUrl) patch.proof_url = proofUrl;
+
+  const { error } = await (getSupabase() as any)
+    .from("withdrawal_requests")
+    .update(patch)
+    .eq("id", requestId);
+  if (error) throw error;
+}
+
+async function claimBillingEvent(event: {
   id?: string;
   type: string;
   data: { object: StripePayload };
 }) {
-  if (!event.id) return;
+  if (!event.id) return true;
   const obj = event.data.object;
   const studioId = obj.metadata?.studio_id;
-  await getSupabase()
+  const { error } = await getSupabase()
     .from("platform_billing_events")
     .insert({
       stripe_event_id: event.id,
       event_type: event.type,
       studio_id: studioId ?? null,
       payload: event as unknown as Record<string, unknown>,
-    })
-    .select("id")
-    .maybeSingle();
+    });
+  if ((error as any)?.code === "23505") return false;
+  if (error) throw error;
+  return true;
+}
+
+async function releaseBillingEventClaim(eventId?: string) {
+  if (!eventId) return;
+  await getSupabase().from("platform_billing_events").delete().eq("stripe_event_id", eventId);
 }
 
 async function handleWebhook(req: Request, env: StripeEnv) {
   const event = await verifyWebhook(req, env);
+  if (typeof event.livemode === "boolean" && event.livemode !== (env === "live")) {
+    throw new Error("webhook_environment_mismatch");
+  }
   const obj = event.data.object as StripePayload;
-  await logBillingEvent(event as { id?: string; type: string; data: { object: StripePayload } });
-  switch (event.type) {
-    case "payment_intent.succeeded":
-      await handlePaymentIntent(obj, "succeeded");
-      break;
-    case "payment_intent.processing":
-      await handlePaymentIntent(obj, "processing");
-      break;
-    case "payment_intent.payment_failed":
-      await handlePaymentIntent(obj, "failed");
-      break;
-    case "payment_intent.canceled":
-      await handlePaymentIntent(obj, "canceled");
-      break;
-    case "checkout.session.completed":
-      await handleCheckoutSession(obj);
-      break;
-    case "customer.subscription.created":
-    case "customer.subscription.updated":
-    case "customer.subscription.deleted":
-      await handleSubscription(obj);
-      break;
-    default:
-      console.log("Unhandled stripe event:", event.type);
+  const claimed = await claimBillingEvent(event as { id?: string; type: string; data: { object: StripePayload } });
+  if (!claimed) return;
+  try {
+    switch (event.type) {
+      case "payment_intent.succeeded":
+        await handlePaymentIntent(obj, "succeeded");
+        break;
+      case "payment_intent.processing":
+        await handlePaymentIntent(obj, "processing");
+        break;
+      case "payment_intent.payment_failed":
+        await handlePaymentIntent(obj, "failed");
+        break;
+      case "payment_intent.canceled":
+        await handlePaymentIntent(obj, "canceled");
+        break;
+      case "checkout.session.completed":
+        await handleCheckoutSession(obj, env);
+        break;
+      case "invoice.paid":
+      case "invoice.payment_failed":
+        await handleInvoice(obj, env);
+        break;
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted":
+        await handleSubscription(obj, env);
+        break;
+      case "transfer.created":
+      case "payout.created":
+        await syncWithdrawalRequest(obj, "processing");
+        break;
+      case "transfer.paid":
+      case "payout.paid":
+        await syncWithdrawalRequest(obj, "completed");
+        break;
+      case "transfer.failed":
+      case "payout.failed":
+        await syncWithdrawalRequest(obj, "failed");
+        break;
+      case "payout.canceled":
+        await syncWithdrawalRequest(obj, "canceled");
+        break;
+      default:
+        console.log("Unhandled stripe event:", event.type);
+    }
+  } catch (error) {
+    await releaseBillingEventClaim(event.id);
+    throw error;
   }
 }
 
@@ -234,7 +406,7 @@ export const Route = createFileRoute("/api/public/payments/webhook")({
       POST: async ({ request }) => {
         const rawEnv = new URL(request.url).searchParams.get("env");
         if (rawEnv !== "sandbox" && rawEnv !== "live") {
-          return Response.json({ received: true, ignored: "invalid env" });
+          return Response.json({ received: false, error: "invalid_env" }, { status: 400 });
         }
         try {
           await handleWebhook(request, rawEnv);

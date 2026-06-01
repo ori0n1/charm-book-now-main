@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { computeAttendanceRevenue, formatEUR, isFinanciallyRelevantAppointment } from "@/lib/utils";
+import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import {
   Select,
   SelectContent,
@@ -468,6 +469,7 @@ function ClientDetails({
   const [saving, setSaving] = useState(false);
 
   async function saveStatus() {
+    if (status === "suspended" && !until) return;
     setSaving(true);
     const payload = {
       booking_status: status,
@@ -530,7 +532,10 @@ function ClientDetails({
             active={status === "active"}
             title="Ativo"
             description="Pode fazer marcações normalmente."
-            onClick={() => setStatus("active")}
+            onClick={() => {
+              setStatus("active");
+              setUntil("");
+            }}
           />
           <StatusOption
             active={status === "suspended"}
@@ -542,20 +547,23 @@ function ClientDetails({
             active={status === "blocked"}
             title="Bloqueado definitivamente"
             description="Não pode fazer novas marcações."
-            onClick={() => setStatus("blocked")}
+            onClick={() => {
+              setStatus("blocked");
+              setUntil("");
+            }}
           />
         </div>
 
         {status === "suspended" && (
           <label className="mt-3 block w-full min-w-0 max-w-full overflow-hidden">
             <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-              Suspenso ate
+              Suspenso até
             </span>
-            <input
-              type="date"
+            <PremiumDatePicker
               value={until}
-              onChange={(event) => setUntil(event.target.value)}
-              className="mt-1.5 block w-full min-w-0 max-w-full min-h-[3rem] rounded-2xl border border-border bg-card px-4 py-3 text-sm leading-normal outline-none focus:ring-2 focus:ring-ring/20 box-border appearance-none shadow-none"
+              onChange={setUntil}
+              placeholder="dd/mm/aaaa"
+              className="mt-1.5"
             />
           </label>
         )}

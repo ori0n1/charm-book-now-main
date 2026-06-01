@@ -421,6 +421,179 @@
     overflow-x: hidden;
   }
 
+  /* ── Public marketing & auth surfaces (Bellza) ── */
+  .public-shell {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+
+  .public-grid-bg {
+    background-image: radial-gradient(
+      color-mix(in oklch, var(--foreground) 9%, transparent) 1px,
+      transparent 1px
+    );
+    background-size: 22px 22px;
+    mask-image: linear-gradient(to bottom, black 30%, transparent 92%);
+  }
+
+  .public-nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    border-bottom: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
+    background: color-mix(in oklch, var(--background) 78%, transparent);
+    backdrop-filter: blur(16px);
+  }
+
+  .public-section-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-muted-foreground);
+  }
+
+  .public-card {
+    border: 1px solid color-mix(in oklch, var(--border) 85%, transparent);
+    border-radius: 1.25rem;
+    background: color-mix(in oklch, var(--card) 92%, var(--background));
+    box-shadow: 0 1px 2px oklch(0 0 0 / 0.03);
+  }
+
+  .public-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding-inline: 1.25rem;
+    border-radius: 9999px;
+    background: var(--color-foreground);
+    color: var(--color-background);
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition:
+      transform 0.15s ease,
+      opacity 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  .public-btn-primary:hover {
+    transform: translateY(-1px);
+  }
+  .public-btn-primary:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  .public-btn-primary:disabled {
+    opacity: 0.55;
+    pointer-events: none;
+  }
+
+  .public-btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding-inline: 1.25rem;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
+    background: color-mix(in oklch, var(--card) 88%, var(--background));
+    color: var(--color-foreground);
+    font-size: 0.875rem;
+    font-weight: 600;
+    transition:
+      transform 0.15s ease,
+      background-color 0.15s ease;
+  }
+  .public-btn-secondary:hover {
+    transform: translateY(-1px);
+    background: color-mix(in oklch, var(--card) 96%, var(--background));
+  }
+
+  .public-btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding-inline: 0.875rem;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-muted-foreground);
+    transition: color 0.15s ease, background-color 0.15s ease;
+  }
+  .public-btn-ghost:hover {
+    color: var(--color-foreground);
+    background: color-mix(in oklch, var(--foreground) 5%, transparent);
+  }
+
+  .public-input {
+    min-height: 2.875rem;
+    padding: 0.75rem 0.95rem;
+    border-radius: 0.85rem;
+    border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
+    background: color-mix(in oklch, var(--background) 92%, var(--card));
+    font-size: 0.9375rem;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  .public-input::placeholder {
+    color: color-mix(in oklch, var(--muted-foreground) 78%, transparent);
+  }
+  .public-input:focus {
+    outline: none;
+    border-color: color-mix(in oklch, var(--accent) 55%, var(--border));
+    box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 18%, transparent);
+  }
+
+  .public-feature-card {
+    border: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
+    border-radius: 1.25rem;
+    background: color-mix(in oklch, var(--card) 94%, var(--background));
+    padding: 1.5rem;
+    transition: border-color 0.2s ease;
+  }
+  .public-feature-card:hover {
+    border-color: color-mix(in oklch, var(--accent) 28%, var(--border));
+  }
+
+  .public-prose {
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.65;
+    color: color-mix(in oklch, var(--foreground) 88%, transparent);
+  }
+
+  .public-legal-section h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .public-legal-section ul {
+    margin-top: 0.5rem;
+    padding-left: 1.25rem;
+    list-style: disc;
+  }
+  .public-legal-section li + li {
+    margin-top: 0.35rem;
+  }
+
+  html.theme-transition,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition:
+      background-color 0.2s ease,
+      border-color 0.2s ease,
+      color 0.15s ease,
+      fill 0.15s ease,
+      stroke 0.15s ease !important;
+  }
+
   @media (max-width: 767px) {
     .public-booking :where(h1, h2, h3, p, span, button, a, input, textarea) {
       overflow-wrap: normal;

@@ -3,6 +3,7 @@ import { getRequest } from "@tanstack/react-start/server";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { assertStudioPremiumAccess } from "@/lib/server-security";
 
 type AccessRole = "manager" | "staff" | "desk_staff";
 type InviteStatus =
@@ -466,6 +467,7 @@ async function assertCanManageStudioAccess(sb: any, userId: string, studioId: st
     .maybeSingle();
 
   if (error || !data?.role) throw new Response("forbidden", { status: 403 });
+  await assertStudioPremiumAccess(sb, studioId);
 }
 
 async function assertStaffInStudio(sb: any, staffId: string, studioId: string) {

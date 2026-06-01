@@ -1,10 +1,14 @@
 ﻿import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import {
+  BadgeCheck,
   Calendar,
   CalendarPlus,
   Clock,
   CreditCard,
+  HandCoins,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -25,6 +29,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { APP_BRAND } from "@/lib/app-brand";
 import { getSegmentConfig } from "@/lib/segments";
+import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: APP_BRAND.name }] }),
@@ -59,6 +64,13 @@ const NAV = [
     exact: false,
   },
   {
+    to: "/admin/levantamentos",
+    label: "Levantamentos",
+    mobileLabel: "Levant.",
+    icon: HandCoins,
+    exact: false,
+  },
+  {
     to: "/admin/whatsapp",
     label: "WhatsApp",
     mobileLabel: "WhatsApp",
@@ -73,17 +85,38 @@ const NAV = [
     icon: ShieldCheck,
     exact: false,
   },
+  {
+    to: "/admin/premium",
+    label: "Assinatura",
+    mobileLabel: "Plano",
+    icon: BadgeCheck,
+    exact: false,
+  },
 ] as const;
 
 function AdminLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { studio, studios, loading, error, refetch } = useCurrentStudio();
+  const loadBilling = useServerFn(getPlatformSubscriptionSummary);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [sidebarStateReady, setSidebarStateReady] = useState(false);
   const accessMode =
     studio?.role === "desk_staff" ? "desk" : studio?.role === "staff" ? "limited" : "full";
+  const billingQuery = useQuery({
+    queryKey: ["platform-subscription-summary", studio?.id],
+    enabled: !!studio,
+    staleTime: 30 * 1000,
+    retry: 1,
+    queryFn: async () =>
+      (await loadBilling({ data: { studioId: studio!.id } })) as {
+        premiumActive: boolean;
+        status: string;
+      },
+  });
+  const premiumLocked = Boolean(billingQuery.data && !billingQuery.data.premiumActive);
+  const isPremiumPage = pathname.startsWith("/admin/premium");
 
   useEffect(() => {
     if (!loading && studios.length === 0) {
@@ -92,7 +125,7 @@ function AdminLayout() {
   }, [loading, studios.length, navigate]);
 
   useEffect(() => {
-    if (loading || accessMode === "full") return;
+    if (loading || accessMode === "full" || premiumLocked) return;
     const allowedPaths =
       accessMode === "desk"
         ? ["/admin/balcao"]
@@ -103,7 +136,12 @@ function AdminLayout() {
     if (!canAccess) {
       navigate({ to: allowedPaths[0], replace: true });
     }
-  }, [accessMode, loading, navigate, pathname]);
+  }, [accessMode, loading, navigate, pathname, premiumLocked]);
+
+  useEffect(() => {
+    if (loading || billingQuery.isLoading || !premiumLocked || isPremiumPage) return;
+    navigate({ to: "/admin/premium", replace: true });
+  }, [billingQuery.isLoading, isPremiumPage, loading, navigate, premiumLocked]);
 
   useEffect(() => {
     setDesktopSidebarCollapsed(localStorage.getItem("admin-sidebar-collapsed") === "true");
@@ -166,6 +204,42 @@ function AdminLayout() {
     );
   }
 
+  if (premiumLocked) {
+    if (!isPremiumPage) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background px-6">
+          <p className="text-sm text-muted-foreground">A abrir planos premium...</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="min-h-screen overflow-x-hidden bg-background">
+        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border/70 bg-background/88 px-4 py-3 backdrop-blur-2xl md:px-8 md:py-4">
+          <div className="min-w-0">
+            <p className="text-[9px] uppercase tracking-[0.25em] text-muted-foreground">
+              {APP_BRAND.shortName}
+            </p>
+            <h1 className="truncate text-base font-light tracking-tight">{studio.name}</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <ThemeToggle className="h-9 w-9" />
+            <button
+              onClick={logout}
+              className="rounded-2xl border border-border p-2"
+              aria-label="Sair"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+        <main className="mx-auto max-w-6xl px-4 pb-10 pt-4 md:px-8 md:pt-8">
+          <Outlet />
+        </main>
+      </div>
+    );
+  }
+
   const isActive = (to: string, exact: boolean) =>
     exact ? pathname === to : pathname.startsWith(to);
   const segment = getSegmentConfig(studio.business_segment);
@@ -177,19 +251,20 @@ function AdminLayout() {
             ["/admin/agenda", "/admin/clientes", "/admin/balcao"].includes(item.to),
           )
         : NAV;
+  const roleNav = allowedNav;
 
-  const primaryMobileNav = allowedNav.filter((item) =>
+  const primaryMobileNav = roleNav.filter((item) =>
     ["/admin", "/admin/agenda", "/admin/clientes", "/admin/pagamentos"].includes(item.to),
   );
-  const deskMobileNav = accessMode === "desk" ? allowedNav : primaryMobileNav;
-  const secondaryMobileNav = allowedNav.filter((item) => !deskMobileNav.includes(item));
+  const deskMobileNav = accessMode === "desk" ? roleNav : primaryMobileNav;
+  const secondaryMobileNav = roleNav.filter((item) => !deskMobileNav.includes(item));
   const secondaryActive = secondaryMobileNav.some((item) => isActive(item.to, item.exact));
   const navLabel = (item: (typeof NAV)[number]) =>
     item.to === "/admin/equipa" ? capitalize(segment.labels.professionalPlural) : item.label;
   const mobileNavLabel = (item: (typeof NAV)[number]) =>
     item.to === "/admin/equipa" ? capitalize(segment.labels.professionalPlural) : item.mobileLabel;
 
-  if (accessMode !== "full" && !allowedNav.some((item) => isActive(item.to, item.exact))) {
+  if (accessMode !== "full" && !roleNav.some((item) => isActive(item.to, item.exact))) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-6">
         <p className="text-sm text-muted-foreground">A abrir Balcão...</p>
@@ -210,15 +285,17 @@ function AdminLayout() {
               {!desktopSidebarCollapsed && (
                 <>
                   <p className="text-[10px] uppercase tracking-[0.28em] text-muted-foreground/85">
-                    {APP_BRAND.shortName}
+                    {APP_BRAND.name}
                   </p>
-                  <h1 className="mt-1.5 truncate text-lg font-light tracking-tight">{APP_BRAND.name}</h1>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">{studio.name}</p>
+                  <h1 className="mt-1.5 truncate text-lg font-light tracking-tight">{studio.name}</h1>
                 </>
               )}
               {desktopSidebarCollapsed && (
-                <span className="grid size-9 place-items-center rounded-full bg-foreground text-sm font-black text-background shadow-sm">
-                  {APP_BRAND.shortName.slice(0, 1)}
+                <span
+                  className="grid size-9 place-items-center rounded-full bg-foreground text-sm font-black text-background shadow-sm"
+                  title={studio.name}
+                >
+                  {studio.name.slice(0, 1).toUpperCase()}
                 </span>
               )}
             </div>
@@ -243,7 +320,7 @@ function AdminLayout() {
             desktopSidebarCollapsed ? "flex flex-col items-stretch gap-1 px-3 pt-1" : "flex flex-col gap-[3px] px-3 pt-1"
           }`}
         >
-          {allowedNav.map((item) => {
+          {roleNav.map((item) => {
             const active = isActive(item.to, item.exact);
             const Icon = item.icon;
             return (
@@ -381,6 +458,8 @@ function AdminLayout() {
                         {item.to === "/admin/whatsapp" && "Ligação e mensagens automáticas"}
                         {item.to === "/admin/marca" && "Marca e página pública"}
                         {item.to === "/admin/politicas" && "Cancelamentos e reembolsos"}
+                        {item.to === "/admin/premium" && "Plano, teste e renovação"}
+                        {item.to === "/admin/levantamentos" && "Saldo, pedidos e comprovativos"}
                       </span>
                     </span>
                     <span className="text-lg text-muted-foreground">›</span>

@@ -1,13 +1,15 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { GoogleAuthButton } from "@/components/google-auth-button";
+import { AuthField, AuthPrimaryButton } from "@/components/public/auth-field";
+import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
 import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/signup")({
-  head: () => ({ meta: [{ title: `Criar conta - ${APP_BRAND.name}` }] }),
+  head: () => ({ meta: [{ title: `Criar conta — ${APP_BRAND.name}` }] }),
   component: SignupPage,
 });
 
@@ -40,86 +42,71 @@ function SignupPage() {
   }
 
   return (
-    <main className="min-h-screen bg-background flex items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm">
-        <Link to="/" className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-          ← Voltar
-        </Link>
-        <h1 className="mt-6 text-3xl font-light tracking-tight">Criar conta</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Comece o teste gratuito de 14 dias.
+    <AuthPageLayout
+      title="Criar conta Bellza"
+      description="Teste gratuito de 14 dias. Sem cartão de crédito."
+      footer={
+        <p className="text-center text-xs text-muted-foreground">
+          Já tem conta?{" "}
+          <Link to="/login" className="font-medium text-foreground underline-offset-2 hover:underline">
+            Entrar
+          </Link>
         </p>
-
-        {submitted ? (
-          <div className="mt-8 rounded-md border border-border bg-muted/40 p-4 text-sm">
-            <p className="font-medium text-foreground">Verifique o seu email</p>
-            <p className="mt-1 text-muted-foreground">
-              Enviámos um link de confirmação para <strong>{email}</strong>. Clique no link para
-              ativar a sua conta e poder entrar.
-            </p>
-            <p className="mt-3 text-xs text-muted-foreground">
-              Já confirmou?{" "}
-              <Link to="/login" className="underline text-foreground">
-                Entrar
-              </Link>
-            </p>
+      }
+    >
+      {submitted ? (
+        <div className="rounded-xl border border-border/80 bg-muted/30 p-4 text-sm">
+          <p className="font-medium">Verifique o seu email</p>
+          <p className="mt-2 text-muted-foreground">
+            Enviámos um link para <strong className="text-foreground">{email}</strong>. Clique para ativar a conta.
+          </p>
+          <Link to="/login" className="mt-4 inline-block text-sm font-medium underline-offset-2 hover:underline">
+            Ir para entrar
+          </Link>
+        </div>
+      ) : (
+        <>
+          <GoogleAuthButton mode="signup" />
+          <div className="my-6 flex items-center gap-3 text-[11px] font-medium uppercase text-muted-foreground">
+            <span className="h-px flex-1 bg-border" />
+            <span>ou email</span>
+            <span className="h-px flex-1 bg-border" />
           </div>
-        ) : (
-          <>
-            <div className="mt-8">
-              <GoogleAuthButton mode="signup" />
-              <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-                <span className="h-px flex-1 bg-border" />
-                <span>Email</span>
-                <span className="h-px flex-1 bg-border" />
-              </div>
-            </div>
-            <form onSubmit={onSubmit} className="space-y-4">
-            <input
+          <form onSubmit={onSubmit} className="space-y-4">
+            <AuthField
+              label="Nome"
+              name="name"
               required
               placeholder="O seu nome"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
             />
-            <input
+            <AuthField
+              label="Email"
+              name="email"
               type="email"
               required
-              placeholder="Email"
+              placeholder="nome@estudio.pt"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
             />
-            <input
+            <AuthField
+              label="Palavra-passe"
+              name="password"
               type="password"
               required
               minLength={6}
-              placeholder="Palavra-passe (min. 6)"
+              placeholder="Mínimo 6 caracteres"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
             />
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-md bg-foreground py-3 text-sm font-medium text-background disabled:opacity-50"
-            >
-              {loading ? "A criar…" : "Criar conta"}
-            </button>
+            <AuthPrimaryButton disabled={loading}>{loading ? "A criar..." : "Criar conta"}</AuthPrimaryButton>
             <p className="text-center text-[11px] text-muted-foreground">
-              Enviaremos um email com um link para ativar a sua conta.
+              Enviaremos um email de confirmação para ativar a conta Bellza.
             </p>
-            </form>
-          </>
-        )}
-
-        <p className="mt-6 text-center text-xs text-muted-foreground">
-          Já tem conta?{" "}
-          <Link to="/login" className="underline">
-            Entrar
-          </Link>
-        </p>
-      </div>
-    </main>
+          </form>
+        </>
+      )}
+    </AuthPageLayout>
   );
 }

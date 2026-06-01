@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { toast } from "sonner";
-
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -39,13 +38,13 @@ export function GoogleAuthButton({ mode, className }: GoogleAuthButtonProps) {
       onClick={continueWithGoogle}
       disabled={loading}
       className={cn(
-        "group flex h-12 w-full items-center justify-center gap-3 rounded-md border border-border bg-card/80 px-4 text-sm font-medium text-foreground shadow-sm transition",
-        "hover:border-foreground/30 hover:bg-card hover:shadow-md focus:outline-none focus:ring-1 focus:ring-foreground/40",
+        "flex h-11 w-full items-center justify-center gap-3 rounded-xl border border-border/80 bg-background px-4 text-sm font-medium transition",
+        "hover:border-border hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40",
         "disabled:pointer-events-none disabled:opacity-60",
         className,
       )}
     >
-      <GoogleIcon className="h-5 w-5 shrink-0" />
+      <GoogleIcon className="size-[18px] shrink-0" />
       <span>{loading ? "A abrir Google..." : "Continuar com Google"}</span>
       <span className="sr-only">
         {mode === "signup" ? "Criar conta com Google" : "Entrar com Google"}

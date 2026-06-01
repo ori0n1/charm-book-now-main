@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TermosRouteImport } from './routes/termos'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as RgpdRouteImport } from './routes/rgpd'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as PrivacidadeRouteImport } from './routes/privacidade'
 import { Route as PoliticaReembolsoRouteImport } from './routes/politica-reembolso'
@@ -18,20 +19,24 @@ import { Route as PoliticaCancelamentoRouteImport } from './routes/politica-canc
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as CookiesRouteImport } from './routes/cookies'
+import { Route as ContactoRouteImport } from './routes/contacto'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SSlugRouteImport } from './routes/s.$slug'
 import { Route as MarcacaoTokenRouteImport } from './routes/marcacao.$token'
 import { Route as ConviteEquipaTokenRouteImport } from './routes/convite-equipa.$token'
+import { Route as ApiCreateCheckoutSessionRouteImport } from './routes/api/create-checkout-session'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin.index'
 import { Route as AuthenticatedAdminWhatsappRouteImport } from './routes/_authenticated/admin.whatsapp'
 import { Route as AuthenticatedAdminSinalRouteImport } from './routes/_authenticated/admin.sinal'
 import { Route as AuthenticatedAdminServicosRouteImport } from './routes/_authenticated/admin.servicos'
+import { Route as AuthenticatedAdminPremiumRouteImport } from './routes/_authenticated/admin.premium'
 import { Route as AuthenticatedAdminPoliticasRouteImport } from './routes/_authenticated/admin.politicas'
 import { Route as AuthenticatedAdminPagamentosRouteImport } from './routes/_authenticated/admin.pagamentos'
 import { Route as AuthenticatedAdminMarcaRouteImport } from './routes/_authenticated/admin.marca'
+import { Route as AuthenticatedAdminLevantamentosRouteImport } from './routes/_authenticated/admin.levantamentos'
 import { Route as AuthenticatedAdminHorariosRouteImport } from './routes/_authenticated/admin.horarios'
 import { Route as AuthenticatedAdminEquipaRouteImport } from './routes/_authenticated/admin.equipa'
 import { Route as AuthenticatedAdminComissoesRouteImport } from './routes/_authenticated/admin.comissoes'
@@ -48,6 +53,11 @@ const TermosRoute = TermosRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RgpdRoute = RgpdRouteImport.update({
+  id: '/rgpd',
+  path: '/rgpd',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -85,6 +95,11 @@ const CookiesRoute = CookiesRouteImport.update({
   path: '/cookies',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ContactoRoute = ContactoRouteImport.update({
+  id: '/contacto',
+  path: '/contacto',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
@@ -109,6 +124,12 @@ const ConviteEquipaTokenRoute = ConviteEquipaTokenRouteImport.update({
   path: '/convite-equipa/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCreateCheckoutSessionRoute =
+  ApiCreateCheckoutSessionRouteImport.update({
+    id: '/api/create-checkout-session',
+    path: '/api/create-checkout-session',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const AuthenticatedOnboardingRoute = AuthenticatedOnboardingRouteImport.update({
   id: '/onboarding',
   path: '/onboarding',
@@ -141,6 +162,12 @@ const AuthenticatedAdminServicosRoute =
     path: '/servicos',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminPremiumRoute =
+  AuthenticatedAdminPremiumRouteImport.update({
+    id: '/premium',
+    path: '/premium',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminPoliticasRoute =
   AuthenticatedAdminPoliticasRouteImport.update({
     id: '/politicas',
@@ -158,6 +185,12 @@ const AuthenticatedAdminMarcaRoute = AuthenticatedAdminMarcaRouteImport.update({
   path: '/marca',
   getParentRoute: () => AuthenticatedAdminRoute,
 } as any)
+const AuthenticatedAdminLevantamentosRoute =
+  AuthenticatedAdminLevantamentosRouteImport.update({
+    id: '/levantamentos',
+    path: '/levantamentos',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminHorariosRoute =
   AuthenticatedAdminHorariosRouteImport.update({
     id: '/horarios',
@@ -203,6 +236,7 @@ const ApiPublicPaymentsWebhookRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/contacto': typeof ContactoRoute
   '/cookies': typeof CookiesRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -210,10 +244,12 @@ export interface FileRoutesByFullPath {
   '/politica-reembolso': typeof PoliticaReembolsoRoute
   '/privacidade': typeof PrivacidadeRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/rgpd': typeof RgpdRoute
   '/signup': typeof SignupRoute
   '/termos': typeof TermosRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -223,9 +259,11 @@ export interface FileRoutesByFullPath {
   '/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/admin/equipa': typeof AuthenticatedAdminEquipaRoute
   '/admin/horarios': typeof AuthenticatedAdminHorariosRoute
+  '/admin/levantamentos': typeof AuthenticatedAdminLevantamentosRoute
   '/admin/marca': typeof AuthenticatedAdminMarcaRoute
   '/admin/pagamentos': typeof AuthenticatedAdminPagamentosRoute
   '/admin/politicas': typeof AuthenticatedAdminPoliticasRoute
+  '/admin/premium': typeof AuthenticatedAdminPremiumRoute
   '/admin/servicos': typeof AuthenticatedAdminServicosRoute
   '/admin/sinal': typeof AuthenticatedAdminSinalRoute
   '/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
@@ -234,6 +272,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/contacto': typeof ContactoRoute
   '/cookies': typeof CookiesRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -241,9 +280,11 @@ export interface FileRoutesByTo {
   '/politica-reembolso': typeof PoliticaReembolsoRoute
   '/privacidade': typeof PrivacidadeRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/rgpd': typeof RgpdRoute
   '/signup': typeof SignupRoute
   '/termos': typeof TermosRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
+  '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -253,9 +294,11 @@ export interface FileRoutesByTo {
   '/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/admin/equipa': typeof AuthenticatedAdminEquipaRoute
   '/admin/horarios': typeof AuthenticatedAdminHorariosRoute
+  '/admin/levantamentos': typeof AuthenticatedAdminLevantamentosRoute
   '/admin/marca': typeof AuthenticatedAdminMarcaRoute
   '/admin/pagamentos': typeof AuthenticatedAdminPagamentosRoute
   '/admin/politicas': typeof AuthenticatedAdminPoliticasRoute
+  '/admin/premium': typeof AuthenticatedAdminPremiumRoute
   '/admin/servicos': typeof AuthenticatedAdminServicosRoute
   '/admin/sinal': typeof AuthenticatedAdminSinalRoute
   '/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
@@ -266,6 +309,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_authenticated': typeof AuthenticatedRouteWithChildren
+  '/contacto': typeof ContactoRoute
   '/cookies': typeof CookiesRoute
   '/forgot-password': typeof ForgotPasswordRoute
   '/login': typeof LoginRoute
@@ -273,10 +317,12 @@ export interface FileRoutesById {
   '/politica-reembolso': typeof PoliticaReembolsoRoute
   '/privacidade': typeof PrivacidadeRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/rgpd': typeof RgpdRoute
   '/signup': typeof SignupRoute
   '/termos': typeof TermosRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
+  '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -286,9 +332,11 @@ export interface FileRoutesById {
   '/_authenticated/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/_authenticated/admin/equipa': typeof AuthenticatedAdminEquipaRoute
   '/_authenticated/admin/horarios': typeof AuthenticatedAdminHorariosRoute
+  '/_authenticated/admin/levantamentos': typeof AuthenticatedAdminLevantamentosRoute
   '/_authenticated/admin/marca': typeof AuthenticatedAdminMarcaRoute
   '/_authenticated/admin/pagamentos': typeof AuthenticatedAdminPagamentosRoute
   '/_authenticated/admin/politicas': typeof AuthenticatedAdminPoliticasRoute
+  '/_authenticated/admin/premium': typeof AuthenticatedAdminPremiumRoute
   '/_authenticated/admin/servicos': typeof AuthenticatedAdminServicosRoute
   '/_authenticated/admin/sinal': typeof AuthenticatedAdminSinalRoute
   '/_authenticated/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
@@ -299,6 +347,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/contacto'
     | '/cookies'
     | '/forgot-password'
     | '/login'
@@ -306,10 +355,12 @@ export interface FileRouteTypes {
     | '/politica-reembolso'
     | '/privacidade'
     | '/reset-password'
+    | '/rgpd'
     | '/signup'
     | '/termos'
     | '/admin'
     | '/onboarding'
+    | '/api/create-checkout-session'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -319,9 +370,11 @@ export interface FileRouteTypes {
     | '/admin/comissoes'
     | '/admin/equipa'
     | '/admin/horarios'
+    | '/admin/levantamentos'
     | '/admin/marca'
     | '/admin/pagamentos'
     | '/admin/politicas'
+    | '/admin/premium'
     | '/admin/servicos'
     | '/admin/sinal'
     | '/admin/whatsapp'
@@ -330,6 +383,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/contacto'
     | '/cookies'
     | '/forgot-password'
     | '/login'
@@ -337,9 +391,11 @@ export interface FileRouteTypes {
     | '/politica-reembolso'
     | '/privacidade'
     | '/reset-password'
+    | '/rgpd'
     | '/signup'
     | '/termos'
     | '/onboarding'
+    | '/api/create-checkout-session'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -349,9 +405,11 @@ export interface FileRouteTypes {
     | '/admin/comissoes'
     | '/admin/equipa'
     | '/admin/horarios'
+    | '/admin/levantamentos'
     | '/admin/marca'
     | '/admin/pagamentos'
     | '/admin/politicas'
+    | '/admin/premium'
     | '/admin/servicos'
     | '/admin/sinal'
     | '/admin/whatsapp'
@@ -361,6 +419,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_authenticated'
+    | '/contacto'
     | '/cookies'
     | '/forgot-password'
     | '/login'
@@ -368,10 +427,12 @@ export interface FileRouteTypes {
     | '/politica-reembolso'
     | '/privacidade'
     | '/reset-password'
+    | '/rgpd'
     | '/signup'
     | '/termos'
     | '/_authenticated/admin'
     | '/_authenticated/onboarding'
+    | '/api/create-checkout-session'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -381,9 +442,11 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/comissoes'
     | '/_authenticated/admin/equipa'
     | '/_authenticated/admin/horarios'
+    | '/_authenticated/admin/levantamentos'
     | '/_authenticated/admin/marca'
     | '/_authenticated/admin/pagamentos'
     | '/_authenticated/admin/politicas'
+    | '/_authenticated/admin/premium'
     | '/_authenticated/admin/servicos'
     | '/_authenticated/admin/sinal'
     | '/_authenticated/admin/whatsapp'
@@ -394,6 +457,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
+  ContactoRoute: typeof ContactoRoute
   CookiesRoute: typeof CookiesRoute
   ForgotPasswordRoute: typeof ForgotPasswordRoute
   LoginRoute: typeof LoginRoute
@@ -401,8 +465,10 @@ export interface RootRouteChildren {
   PoliticaReembolsoRoute: typeof PoliticaReembolsoRoute
   PrivacidadeRoute: typeof PrivacidadeRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  RgpdRoute: typeof RgpdRoute
   SignupRoute: typeof SignupRoute
   TermosRoute: typeof TermosRoute
+  ApiCreateCheckoutSessionRoute: typeof ApiCreateCheckoutSessionRoute
   ConviteEquipaTokenRoute: typeof ConviteEquipaTokenRoute
   MarcacaoTokenRoute: typeof MarcacaoTokenRoute
   SSlugRoute: typeof SSlugRoute
@@ -423,6 +489,13 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/rgpd': {
+      id: '/rgpd'
+      path: '/rgpd'
+      fullPath: '/rgpd'
+      preLoaderRoute: typeof RgpdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -474,6 +547,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CookiesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/contacto': {
+      id: '/contacto'
+      path: '/contacto'
+      fullPath: '/contacto'
+      preLoaderRoute: typeof ContactoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated': {
       id: '/_authenticated'
       path: ''
@@ -507,6 +587,13 @@ declare module '@tanstack/react-router' {
       path: '/convite-equipa/$token'
       fullPath: '/convite-equipa/$token'
       preLoaderRoute: typeof ConviteEquipaTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/create-checkout-session': {
+      id: '/api/create-checkout-session'
+      path: '/api/create-checkout-session'
+      fullPath: '/api/create-checkout-session'
+      preLoaderRoute: typeof ApiCreateCheckoutSessionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/onboarding': {
@@ -551,6 +638,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminServicosRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/premium': {
+      id: '/_authenticated/admin/premium'
+      path: '/premium'
+      fullPath: '/admin/premium'
+      preLoaderRoute: typeof AuthenticatedAdminPremiumRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/politicas': {
       id: '/_authenticated/admin/politicas'
       path: '/politicas'
@@ -570,6 +664,13 @@ declare module '@tanstack/react-router' {
       path: '/marca'
       fullPath: '/admin/marca'
       preLoaderRoute: typeof AuthenticatedAdminMarcaRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/_authenticated/admin/levantamentos': {
+      id: '/_authenticated/admin/levantamentos'
+      path: '/levantamentos'
+      fullPath: '/admin/levantamentos'
+      preLoaderRoute: typeof AuthenticatedAdminLevantamentosRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
     '/_authenticated/admin/horarios': {
@@ -631,9 +732,11 @@ interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminComissoesRoute: typeof AuthenticatedAdminComissoesRoute
   AuthenticatedAdminEquipaRoute: typeof AuthenticatedAdminEquipaRoute
   AuthenticatedAdminHorariosRoute: typeof AuthenticatedAdminHorariosRoute
+  AuthenticatedAdminLevantamentosRoute: typeof AuthenticatedAdminLevantamentosRoute
   AuthenticatedAdminMarcaRoute: typeof AuthenticatedAdminMarcaRoute
   AuthenticatedAdminPagamentosRoute: typeof AuthenticatedAdminPagamentosRoute
   AuthenticatedAdminPoliticasRoute: typeof AuthenticatedAdminPoliticasRoute
+  AuthenticatedAdminPremiumRoute: typeof AuthenticatedAdminPremiumRoute
   AuthenticatedAdminServicosRoute: typeof AuthenticatedAdminServicosRoute
   AuthenticatedAdminSinalRoute: typeof AuthenticatedAdminSinalRoute
   AuthenticatedAdminWhatsappRoute: typeof AuthenticatedAdminWhatsappRoute
@@ -647,9 +750,11 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminComissoesRoute: AuthenticatedAdminComissoesRoute,
   AuthenticatedAdminEquipaRoute: AuthenticatedAdminEquipaRoute,
   AuthenticatedAdminHorariosRoute: AuthenticatedAdminHorariosRoute,
+  AuthenticatedAdminLevantamentosRoute: AuthenticatedAdminLevantamentosRoute,
   AuthenticatedAdminMarcaRoute: AuthenticatedAdminMarcaRoute,
   AuthenticatedAdminPagamentosRoute: AuthenticatedAdminPagamentosRoute,
   AuthenticatedAdminPoliticasRoute: AuthenticatedAdminPoliticasRoute,
+  AuthenticatedAdminPremiumRoute: AuthenticatedAdminPremiumRoute,
   AuthenticatedAdminServicosRoute: AuthenticatedAdminServicosRoute,
   AuthenticatedAdminSinalRoute: AuthenticatedAdminSinalRoute,
   AuthenticatedAdminWhatsappRoute: AuthenticatedAdminWhatsappRoute,
@@ -676,6 +781,7 @@ const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRoute: AuthenticatedRouteWithChildren,
+  ContactoRoute: ContactoRoute,
   CookiesRoute: CookiesRoute,
   ForgotPasswordRoute: ForgotPasswordRoute,
   LoginRoute: LoginRoute,
@@ -683,8 +789,10 @@ const rootRouteChildren: RootRouteChildren = {
   PoliticaReembolsoRoute: PoliticaReembolsoRoute,
   PrivacidadeRoute: PrivacidadeRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  RgpdRoute: RgpdRoute,
   SignupRoute: SignupRoute,
   TermosRoute: TermosRoute,
+  ApiCreateCheckoutSessionRoute: ApiCreateCheckoutSessionRoute,
   ConviteEquipaTokenRoute: ConviteEquipaTokenRoute,
   MarcacaoTokenRoute: MarcacaoTokenRoute,
   SSlugRoute: SSlugRoute,

@@ -1,13 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { APP_BRAND } from "@/lib/app-brand";
+import { LegalPageLayout, LegalSection } from "@/components/public/legal-page-layout";
 
 export const Route = createFileRoute("/privacidade")({
   head: () => ({
     meta: [
-      { title: "Política de Privacidade" },
+      { title: `Política de Privacidade — ${APP_BRAND.name}` },
       {
         name: "description",
-        content: "Como os dados são usados para gerir reservas, pagamentos e mensagens do estúdio.",
+        content: "Como a Bellza trata dados pessoais de estúdios, profissionais e clientes em Portugal.",
       },
     ],
   }),
@@ -16,89 +17,67 @@ export const Route = createFileRoute("/privacidade")({
 
 function PrivacyPage() {
   return (
-    <LegalShell title="Política de Privacidade">
-      <Section title="Quem usa os dados">
+    <LegalPageLayout
+      title="Política de Privacidade"
+      updatedAt="1 de junho de 2026"
+      description="Informação sobre recolha, utilização, conservação e direitos dos titulares de dados."
+    >
+      <LegalSection title="Responsável pelo tratamento">
         <p>
-          A plataforma ajuda estúdios e profissionais a gerir reservas. Cada estúdio é responsável
-          pelos dados das suas clientes. A plataforma fornece a tecnologia para esse trabalho.
+          A {APP_BRAND.name} é operada por {APP_BRAND.legalName}, NIF {APP_BRAND.taxId}. Para questões de
+          privacidade pode contactar{" "}
+          <a className="underline underline-offset-2" href={`mailto:${APP_BRAND.supportEmail}`}>
+            {APP_BRAND.supportEmail}
+          </a>
+          .
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Dados que podem ser pedidos">
+      <LegalSection title="Dados tratados">
         <ul>
-          <li>Nome, telefone, WhatsApp e email.</li>
-          <li>Serviço escolhido, profissional, data, hora, preço e estado da reserva.</li>
-          <li>Notas que a cliente decida deixar para preparar o atendimento.</li>
-          <li>Dados técnicos necessários para segurança, sessão e prevenção de abuso.</li>
+          <li>Dados de conta do estúdio, incluindo nome, email e dados de autenticação.</li>
+          <li>Dados operacionais de clientes, como nome, telefone, email, serviço, data e hora da marcação.</li>
+          <li>Informação de pagamentos, sinais, estado da reserva e regras aceites no checkout.</li>
+          <li>Dados técnicos necessários para segurança, sessão, prevenção de abuso e funcionamento do serviço.</li>
         </ul>
-      </Section>
+      </LegalSection>
 
-      <Section title="Para que servem">
+      <LegalSection title="Finalidades e base legal">
         <p>
-          Usamos estes dados para criar marcações, confirmar pagamentos, enviar mensagens
-          operacionais, prestar suporte e manter o serviço seguro. Marketing só deve acontecer com
-          consentimento válido.
+          Os dados são tratados para prestar o serviço contratado, gerir reservas, enviar comunicações
+          operacionais, processar pagamentos, cumprir obrigações legais e proteger a plataforma. Comunicações
+          promocionais exigem consentimento quando aplicável.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Notas sensíveis">
+      <LegalSection title="Subcontratantes e pagamentos">
         <p>
-          O campo de observações é opcional. Se incluir alergias, cuidados de saúde ou outra
-          informação sensível, essa nota deve ser usada apenas para preparar o atendimento.
+          A Bellza pode recorrer a fornecedores técnicos, incluindo alojamento, autenticação, email,
+          comunicações e pagamentos. Pagamentos online podem ser processados por Stripe ou fornecedores
+          equivalentes certificados.
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Pagamentos e mensagens">
+      <LegalSection title="Direitos RGPD">
         <p>
-          Alguns pagamentos podem passar por fornecedores externos, como a Stripe. Mensagens de
-          reserva podem ser enviadas por WhatsApp, email ou SMS, conforme a configuração do estúdio.
-        </p>
-      </Section>
-
-      <Section title="Direitos">
-        <p>
-          Pode pedir acesso, correção, eliminação ou limitação dos seus dados. Também pode retirar
-          consentimento quando o tratamento depender dele. Para reclamações, consulte a CNPD em{" "}
-          <a className="underline" href="https://www.cnpd.pt" target="_blank" rel="noreferrer">
+          Pode solicitar acesso, retificação, apagamento, oposição, limitação ou portabilidade dos seus dados.
+          Também pode apresentar reclamação junto da CNPD em{" "}
+          <a className="underline underline-offset-2" href="https://www.cnpd.pt" target="_blank" rel="noreferrer">
             www.cnpd.pt
           </a>
           .
         </p>
-      </Section>
+      </LegalSection>
 
-      <Section title="Cookies">
+      <LegalSection title="Cookies">
         <p>
-          A utilização de cookies está explicada na{" "}
-          <Link to="/cookies" className="underline">
+          Consulte a{" "}
+          <Link to="/cookies" className="underline underline-offset-2">
             Política de Cookies
-          </Link>
-          .
+          </Link>{" "}
+          para saber como gerir preferências no browser.
         </p>
-      </Section>
-    </LegalShell>
-  );
-}
-
-function LegalShell({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="min-h-screen bg-background px-5 py-10 md:py-16">
-      <div className="mx-auto max-w-2xl">
-        <Link to="/" className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground hover:underline">
-          Voltar
-        </Link>
-        <h1 className="mt-4 text-3xl font-light tracking-tight">{title}</h1>
-        <p className="mt-2 text-xs text-muted-foreground">Última atualização: 29 de maio de 2026</p>
-        <div className="mt-8 space-y-6 text-sm leading-relaxed text-foreground/90">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="[&_li]:mt-1 [&_ul]:mt-2 [&_ul]:list-disc [&_ul]:pl-5">
-      <h2 className="text-base font-medium">{title}</h2>
-      <div className="mt-2">{children}</div>
-    </section>
+      </LegalSection>
+    </LegalPageLayout>
   );
 }

@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
   BadgePercent,
-  CalendarPlus,
   CreditCard,
   FileText,
   RefreshCw,
@@ -25,8 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import {
   Accordion,
   AccordionContent,
@@ -611,6 +609,9 @@ function formatPlan(plan?: string | null) {
     starter: "Starter",
     pro: "Pro",
     business: "Business",
+    monthly: "Premium Mensal",
+    quarterly: "Premium Trimestral",
+    yearly: "Premium Anual",
   };
   return labels[plan ?? ""] ?? "Não definido";
 }
@@ -811,46 +812,18 @@ function DatePicker({
   onChange: (value: string) => void;
   variant?: "filter" | "field";
 }) {
-  const selected = value ? new Date(`${value}T12:00`) : undefined;
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={
-            variant === "filter"
-              ? filterTriggerClass
-              : `${controlClass} flex items-center justify-between text-left`
-          }
-        >
-          <span
-            className={`min-w-0 truncate ${value ? "text-foreground" : "text-muted-foreground"}`}
-          >
-            {value ? formatDateOnly(value) : placeholder}
-          </span>
-          <CalendarPlus className="h-4 w-4 shrink-0 text-muted-foreground" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto rounded-3xl border-border p-2 shadow-2xl">
-        <Calendar
-          mode="single"
-          selected={selected}
-          onSelect={(date) => {
-            if (date) onChange(localDateValue(date));
-          }}
-          className="rounded-2xl"
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            className="mt-2 w-full rounded-2xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            Limpar data
-          </button>
-        )}
-      </PopoverContent>
-    </Popover>
+    <PremiumDatePicker
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      className={
+        variant === "filter"
+          ? "h-10 rounded-full bg-background/90 text-xs font-medium"
+          : `${controlClass} h-12`
+      }
+      allowClear={variant === "filter"}
+    />
   );
 }
 

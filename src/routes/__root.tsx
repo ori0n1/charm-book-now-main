@@ -14,6 +14,7 @@ import { Toaster } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { ThemeProvider } from "@/components/theme-provider";
 import { APP_BRAND } from "@/lib/app-brand";
+import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
 import appCss from "../styles.css?url";
 
 function NotFoundComponent() {
@@ -82,13 +83,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         content:
           "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover",
       },
-      { title: APP_BRAND.name },
+      { title: `${APP_BRAND.name} | ${APP_BRAND.tagline}` },
       { name: "description", content: APP_BRAND.description },
       { property: "og:title", content: APP_BRAND.name },
       { property: "og:description", content: APP_BRAND.description },
       { property: "og:type", content: "website" },
+      { property: "og:site_name", content: APP_BRAND.name },
+      { property: "og:image", content: "/bellza-logo.png" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@CharmBook" },
+      { name: "twitter:title", content: APP_BRAND.name },
+      { name: "twitter:description", content: APP_BRAND.description },
+      { name: "twitter:image", content: "/bellza-logo.png" },
     ],
     links: [
       {
@@ -96,8 +101,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "manifest", href: "/manifest.webmanifest" },
-      { rel: "icon", href: "/pwa-icon.svg" },
-      { rel: "apple-touch-icon", href: "/pwa-icon.svg" },
+      { rel: "icon", href: "/bellza-logo.png", type: "image/png" },
+      { rel: "apple-touch-icon", href: "/bellza-logo.png" },
     ],
   }),
   shellComponent: RootShell,
@@ -108,8 +113,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 
 function RootShell({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-PT">
+    <html lang="pt-PT" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <HeadContent />
       </head>
       <body>
@@ -135,17 +141,11 @@ function RootComponent() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      // Ignore noisy events that fire periodically (TOKEN_REFRESHED,
-      // INITIAL_SESSION, USER_UPDATED). Also dedupe by user id so a
-      // SIGNED_IN for the same user doesn't trigger re-invalidations.
       if (event !== "SIGNED_IN" && event !== "SIGNED_OUT") return;
       const uid = session?.user?.id ?? null;
       if (uid === lastUserId) return;
       lastUserId = uid;
 
-      // Invalidate cached queries; do NOT call router.invalidate() here —
-      // it re-runs beforeLoad on every protected route and stacks with the
-      // navigate() the login page already does, causing double loads.
       void queryClient.invalidateQueries();
     });
     return () => subscription.unsubscribe();

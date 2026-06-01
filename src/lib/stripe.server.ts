@@ -21,13 +21,13 @@ export function createStripeClient(env: StripeEnv): Stripe {
 export async function verifyWebhook(
   req: Request,
   env: StripeEnv,
-): Promise<{ id?: string; type: string; data: { object: unknown } }> {
+): Promise<{ id?: string; type: string; livemode?: boolean; data: { object: unknown } }> {
   const signature = req.headers.get("stripe-signature");
   const body = await req.text();
   const secret =
     env === "sandbox"
-      ? getEnv("PAYMENTS_SANDBOX_WEBHOOK_SECRET")
-      : getEnv("PAYMENTS_LIVE_WEBHOOK_SECRET");
+      ? process.env.PAYMENTS_SANDBOX_WEBHOOK_SECRET ?? getEnv("STRIPE_SANDBOX_WEBHOOK_SECRET")
+      : process.env.PAYMENTS_LIVE_WEBHOOK_SECRET ?? getEnv("STRIPE_LIVE_WEBHOOK_SECRET");
 
   if (!signature || !body) throw new Error("Missing signature or body");
 

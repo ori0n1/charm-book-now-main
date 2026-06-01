@@ -20,6 +20,12 @@ import {
   type BusinessSegment,
 } from "@/lib/segments";
 import { uploadStudioAsset } from "@/lib/upload";
+import {
+  computeAttendanceRevenue,
+  computeFinancialSplit,
+  formatEUR,
+  isFinanciallyRelevantAppointment,
+} from "@/lib/utils";
 import { toast } from "sonner";
 import {
   Check,
@@ -37,6 +43,8 @@ import {
   X,
 } from "lucide-react";
 
+const DAY_MS = 86400000;
+
 export const Route = createFileRoute("/_authenticated/admin/equipa")({
   component: TeamPage,
 });
@@ -50,10 +58,34 @@ type Staff = {
   photo_url: string | null;
   rating: number | null;
   is_active: boolean;
+  commission_percent?: number | null;
 };
-type Service = { id: string; name: string; category_id: string | null };
+type Service = {
+  id: string;
+  name: string;
+  category_id: string | null;
+  duration_min?: number | null;
+  price?: number | null;
+};
 type Category = { id: string; label: string; sort_order: number };
 type Suggestion = { id: string; label: string };
+type TeamAppointment = {
+  id: string;
+  starts_at: string;
+  status: string;
+  total_price: number;
+  staff_id: string | null;
+};
+type PaidRow = { appointment_id: string | null; amount_cents: number; status: string };
+type StaffPerformance = {
+  appointments: number;
+  generated: number;
+  professional: number;
+  studio: number;
+  received: number;
+  trend: number;
+  trendDirection: "up" | "down" | "flat";
+};
 type AccessRole = "manager" | "staff" | "desk_staff";
 type StaffAccess = {
   staffId: string;
@@ -196,6 +228,65 @@ function formatDateTime(value?: string | null) {
   }).format(new Date(value));
 }
 
+function TeamMetric({
+  label,
+  value,
+  money,
+  tooltip,
+  className = "",
+}: {
+  label: string;
+  value: string;
+  money?: boolean;
+  tooltip?: string;
+  className?: string;
+}) {
+  return (
+    <div className={`flex min-h-[2.85rem] flex-col justify-between rounded-lg bg-background/65 px-2 py-1.5 ${className}`}>
+      <p className="flex items-center gap-1 text-[8.5px] uppercase leading-3 tracking-[0.08em] text-muted-foreground">
+        <span>{label}</span>
+        {tooltip && (
+          <span
+            title={tooltip}
+            className="inline-flex h-3 w-3 items-center justify-center rounded-full border border-border text-[8px] font-bold normal-case tracking-normal text-muted-foreground"
+          >
+            ?
+          </span>
+        )}
+      </p>
+      <p
+        className={`mt-0.5 truncate text-[12px] font-semibold leading-4 ${
+          money ? "font-mono text-emerald-700 dark:text-emerald-400" : ""
+        }`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function TrendBadge({
+  value,
+  direction,
+}: {
+  value: number;
+  direction: StaffPerformance["trendDirection"];
+}) {
+  const tone =
+    direction === "up"
+      ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-300"
+      : direction === "down"
+        ? "border-red-500/20 bg-red-500/10 text-red-600 dark:text-red-300"
+        : "border-border bg-background/70 text-muted-foreground";
+  const arrow = direction === "up" ? "↑" : direction === "down" ? "↓" : "→";
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-semibold ${tone}`}>
+      <span>{arrow}</span>
+      <span>{value > 0 ? "+" : ""}{value}%</span>
+    </span>
+  );
+}
+
 function accessRoleLabel(role: AccessRole) {
   if (role === "manager") return "Acesso completo";
   if (role === "staff") return "Acesso limitado";
@@ -212,6 +303,121 @@ function inviteStatusLabel(status: string) {
   return "Convite pendente";
 }
 
+function compactAccessState(memberAccess?: StaffAccess) {
+  if (!memberAccess) {
+    return {
+      label: "Sem acesso",
+      dot: "bg-muted-foreground/45",
+      badge: "bg-muted text-muted-foreground",
+    };
+  }
+  if (memberAccess.role === "desk_staff") {
+    return {
+      label: "Apenas balcão",
+      dot: "bg-amber-400",
+      badge: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+    };
+  }
+  if (memberAccess.status === "active") {
+    return {
+      label: "Conta ativa",
+      dot: "bg-emerald-400",
+      badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+    };
+  }
+  return {
+    label: "Acesso limitado",
+    dot: "bg-amber-400",
+    badge: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+  };
+}
+
+function emptyPerformance(): StaffPerformance {
+  return {
+    appointments: 0,
+    generated: 0,
+    professional: 0,
+    studio: 0,
+    received: 0,
+    trend: 0,
+    trendDirection: "flat",
+  };
+}
+
+function buildStaffPerformance(
+  staff: Staff[],
+  appointments: TeamAppointment[],
+  payments: PaidRow[],
+  fallbackCommissionPercent: number,
+) {
+  const paidByAppointment = new Map<string, number>();
+  for (const payment of payments) {
+    if (!payment.appointment_id || payment.status !== "succeeded") continue;
+    paidByAppointment.set(
+      payment.appointment_id,
+      (paidByAppointment.get(payment.appointment_id) ?? 0) + Number(payment.amount_cents || 0) / 100,
+    );
+  }
+
+  const now = Date.now();
+  const currentStart = now - 30 * DAY_MS;
+  const previousStart = now - 60 * DAY_MS;
+  const staffById = new Map(staff.map((member) => [member.id, member]));
+  const current = new Map<string, StaffPerformance>();
+  const previousGenerated = new Map<string, number>();
+
+  for (const appointment of appointments) {
+    if (!appointment.staff_id || !staffById.has(appointment.staff_id)) continue;
+    const startsAt = new Date(appointment.starts_at).getTime();
+    if (startsAt < previousStart || startsAt > now) continue;
+    const paidAmount = paidByAppointment.get(appointment.id) ?? 0;
+    if (!isFinanciallyRelevantAppointment(appointment.status, paidAmount)) continue;
+
+    const total = Number(appointment.total_price || 0);
+    const revenue = computeAttendanceRevenue(total, paidAmount, appointment.status);
+    const member = staffById.get(appointment.staff_id);
+    const studioPercent = Number(member?.commission_percent ?? fallbackCommissionPercent ?? 0);
+    const split = computeFinancialSplit(total, studioPercent, { receivedAmount: paidAmount });
+
+    if (startsAt >= currentStart) {
+      const item = current.get(appointment.staff_id) ?? emptyPerformance();
+      item.appointments += appointment.status === "completed" ? 1 : 0;
+      item.generated += total;
+      item.professional += split.professional;
+      item.studio += split.studio;
+      item.received += revenue.depositReceived;
+      current.set(appointment.staff_id, item);
+    } else {
+      previousGenerated.set(
+        appointment.staff_id,
+        (previousGenerated.get(appointment.staff_id) ?? 0) + total,
+      );
+    }
+  }
+
+  const result: Record<string, StaffPerformance> = {};
+  for (const member of staff) {
+    const item = current.get(member.id) ?? emptyPerformance();
+    item.generated = roundMoney(item.generated);
+    item.professional = roundMoney(item.professional);
+    item.studio = roundMoney(item.studio);
+    item.received = roundMoney(item.received);
+    item.trend = getTrendPercent(item.generated, previousGenerated.get(member.id) ?? 0);
+    item.trendDirection = item.trend > 0 ? "up" : item.trend < 0 ? "down" : "flat";
+    result[member.id] = item;
+  }
+  return result;
+}
+
+function getTrendPercent(current: number, previous: number) {
+  if (previous <= 0) return current > 0 ? 100 : 0;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+function roundMoney(value: number) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
 function TeamPage() {
   const { studio } = useCurrentStudio();
   const labels = getSegmentConfig(studio?.business_segment).labels;
@@ -220,6 +426,7 @@ function TeamPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [staffServices, setStaffServices] = useState<Record<string, string[]>>({});
+  const [performance, setPerformance] = useState<Record<string, StaffPerformance>>({});
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Staff | null>(null);
   const [creating, setCreating] = useState(false);
@@ -239,23 +446,33 @@ function TeamPage() {
   const [inviteExpiry, setInviteExpiry] = useState("");
   const [shareInvite, setShareInvite] = useState<InviteShare | null>(null);
   const [accessBusy, setAccessBusy] = useState(false);
+  const [expandedStaff, setExpandedStaff] = useState<Record<string, boolean>>({});
   const [deskEmail, setDeskEmail] = useState("");
   const [deskBusy, setDeskBusy] = useState(false);
 
   async function load() {
     if (!studio) return;
     setLoading(true);
-    const [{ data: st }, { data: sv }, { data: cat }, { data: sug }, { data: ss }] =
+    const since = new Date(Date.now() - 60 * DAY_MS).toISOString();
+    const [
+      { data: st },
+      { data: sv },
+      { data: cat },
+      { data: sug },
+      { data: ss },
+      { data: appts },
+      { data: payments },
+    ] =
       await Promise.all([
         supabase
           .from("staff")
-          .select("id,name,role,whatsapp,bio,photo_url,rating,is_active")
+          .select("id,name,role,whatsapp,bio,photo_url,rating,is_active,commission_percent")
           .eq("studio_id", studio.id)
           .order("sort_order")
           .order("name"),
         supabase
           .from("services")
-          .select("id,name,category_id")
+          .select("id,name,category_id,duration_min,price")
           .eq("studio_id", studio.id)
           .eq("is_active", true)
           .order("name"),
@@ -266,12 +483,29 @@ function TeamPage() {
           .order("sort_order"),
         supabase.from("service_category_suggestions").select("id,label").order("sort_order"),
         supabase.from("staff_services").select("staff_id,service_id"),
+        supabase
+          .from("appointments")
+          .select("id,starts_at,status,total_price,staff_id")
+          .eq("studio_id", studio.id)
+          .gte("starts_at", since),
+        supabase
+          .from("payment_intents")
+          .select("appointment_id,amount_cents,status")
+          .eq("studio_id", studio.id),
       ]);
     const staffList = (st ?? []) as Staff[];
     setStaff(staffList);
     setServices((sv ?? []) as Service[]);
     setCategories((cat ?? []) as Category[]);
     setSuggestions((sug ?? []) as Suggestion[]);
+    setPerformance(
+      buildStaffPerformance(
+        staffList,
+        (appts ?? []) as TeamAppointment[],
+        (payments ?? []) as PaidRow[],
+        Number((studio as any).commission_percent ?? 0),
+      ),
+    );
     const staffIds = new Set(staffList.map((s) => s.id));
     const map: Record<string, string[]> = {};
     (ss ?? []).forEach((r) => {
@@ -538,27 +772,148 @@ function TeamPage() {
           {labels.emptyProfessionals}
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {staff.map((m) => {
             const memberAccess = access[m.id];
+            const metrics = performance[m.id] ?? emptyPerformance();
+            const pendingStudioAmount = roundMoney(Math.max(0, metrics.professional - metrics.received));
+            const expanded = expandedStaff[m.id] === true;
+            const accessState = compactAccessState(memberAccess);
             return (
             <article
               key={m.id}
-              className={`rounded-lg border p-4 ${m.is_active ? "border-border" : "border-border/50 opacity-60"}`}
+              className={`rounded-2xl border bg-card p-2.5 shadow-sm transition hover:border-foreground/15 hover:shadow-md ${m.is_active ? "border-border" : "border-border/50 opacity-70"}`}
             >
-              <div className="flex items-center gap-3">
-                <div className="h-12 w-12 overflow-hidden rounded-full bg-muted">
-                  {m.photo_url && (
-                    <img src={m.photo_url} alt={m.name} className="h-full w-full object-cover" />
-                  )}
-                </div>
-                <div className="min-w-0">
-                  <h3 className="truncate text-sm font-medium">{m.name}</h3>
-                  {m.role && <p className="truncate text-xs text-muted-foreground">{m.role}</p>}
+              <div className="flex min-h-[4.25rem] items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedStaff((current) => ({ ...current, [m.id]: !current[m.id] }))
+                  }
+                  aria-expanded={expanded}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-muted/45 focus:outline-none focus:ring-2 focus:ring-foreground/15"
+                >
+                  <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-muted">
+                    {m.photo_url ? (
+                      <img src={m.photo_url} alt={m.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="grid h-full w-full place-items-center text-sm font-semibold text-muted-foreground">
+                        {m.name.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <h3 className="truncate text-sm font-semibold">{m.name}</h3>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${accessState.dot}`} />
+                    </div>
+                    <div className="mt-1 flex min-w-0 items-center gap-2">
+                      <span
+                        className={`inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${accessState.badge}`}
+                      >
+                        <span className="truncate">{accessState.label}</span>
+                      </span>
+                      {m.rating !== null && (
+                        <span className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
+                          <Star className="h-3 w-3 fill-foreground" /> {Number(m.rating).toFixed(1)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ${
+                      expanded ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                <div className="flex shrink-0 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(m)}
+                    className="rounded-lg border border-border p-1.5 text-muted-foreground transition hover:text-foreground"
+                    aria-label="Editar"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(m.id)}
+                    className="rounded-lg border border-border p-1.5 text-muted-foreground transition hover:text-foreground"
+                    aria-label="Eliminar"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
-              {m.bio && <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">{m.bio}</p>}
-              <div className="mt-3 rounded-2xl border border-border/80 bg-background/55 p-3">
+
+              <div
+                className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+                  expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <p className={`mt-1 px-1.5 text-[11px] leading-4 ${m.bio ? "line-clamp-2 text-muted-foreground" : "text-transparent"}`}>
+                    {m.bio || "Sem descrição"}
+                  </p>
+
+              <div className="mt-3 rounded-2xl border border-emerald-700/20 bg-emerald-950/[0.03] p-2.5 dark:bg-emerald-400/[0.05]">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      Quebra de pagamento
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {metrics.appointments} atendimento{metrics.appointments === 1 ? "" : "s"} · últimos 30 dias
+                    </p>
+                  </div>
+                  <TrendBadge value={metrics.trend} direction={metrics.trendDirection} />
+                </div>
+
+                <div className="mt-3 space-y-2">
+                  <div className="rounded-xl border border-border/70 bg-background/60 p-2.5">
+                    <div className="flex items-end justify-between gap-3">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                        Cliente pagou
+                      </span>
+                      <span className="font-mono text-base font-semibold leading-none text-emerald-700 dark:text-emerald-400">
+                        {formatEUR(metrics.generated)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-emerald-700/20 bg-emerald-950/[0.04] p-2.5 dark:bg-emerald-400/[0.07]">
+                    <div className="flex items-end justify-between gap-3">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                        Profissional recebe
+                      </span>
+                      <span className="font-mono text-lg font-semibold leading-none text-emerald-700 dark:text-emerald-400">
+                        {formatEUR(metrics.professional)}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-2 gap-1.5">
+                      <div className="rounded-lg bg-background/70 px-2 py-1.5">
+                        <p className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground">
+                          Já pago online
+                        </p>
+                        <p className="mt-0.5 font-mono text-[12px] font-semibold leading-4 text-emerald-700 dark:text-emerald-400">
+                          {formatEUR(metrics.received)}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-background/70 px-2 py-1.5">
+                        <p className="text-[9px] uppercase tracking-[0.08em] text-muted-foreground">
+                          Pendente no estúdio
+                        </p>
+                        <p className="mt-0.5 font-mono text-[12px] font-semibold leading-4 text-emerald-700 dark:text-emerald-400">
+                          {formatEUR(pendingStudioAmount)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-2 rounded-2xl border border-border/80 bg-background/55 p-2.5">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <span
@@ -581,7 +936,7 @@ function TeamPage() {
                       <>
                         <p className="mt-1 text-xs font-medium">{accessRoleLabel(memberAccess.role)}</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          Ultimo acesso: {formatDateTime(memberAccess.lastSignInAt)}
+                          Último acesso: {formatDateTime(memberAccess.lastSignInAt)}
                         </p>
                       </>
                     )}
@@ -589,20 +944,20 @@ function TeamPage() {
                   <button
                     type="button"
                     onClick={() => (memberAccess ? openInviteShare(m) : openAccessModal(m))}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-foreground px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] text-background shadow-sm transition hover:opacity-90"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-foreground px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-[0.1em] text-background shadow-sm transition hover:opacity-90"
                   >
                     <MessageCircle className="h-3.5 w-3.5" />
                     {memberAccess?.inviteUrl ? "Partilhar" : memberAccess ? "Acesso" : "Convidar"}
                   </button>
                 </div>
                 {memberAccess && (
-                  <div className="mt-3 flex flex-wrap gap-2">
+                  <div className="mt-2 flex flex-wrap gap-1.5">
                     {memberAccess.status === "pending" && (
                       <button
                         type="button"
                         onClick={() => resendAccess(m)}
                         disabled={accessBusy}
-                        className="rounded-xl border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-60"
+                        className="rounded-xl border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:text-foreground disabled:opacity-60"
                       >
                         Reenviar convite
                       </button>
@@ -612,7 +967,7 @@ function TeamPage() {
                         type="button"
                         onClick={() => regenerateAccess(m)}
                         disabled={accessBusy}
-                        className="rounded-xl border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-60"
+                        className="rounded-xl border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:text-foreground disabled:opacity-60"
                       >
                         Regenerar link
                       </button>
@@ -621,36 +976,13 @@ function TeamPage() {
                       type="button"
                       onClick={() => revokeAccess(m)}
                       disabled={accessBusy}
-                      className="rounded-xl border border-border px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-60"
+                      className="rounded-xl border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:text-foreground disabled:opacity-60"
                     >
                       Remover acesso
                     </button>
                   </div>
                 )}
               </div>
-              <div className="mt-3 flex items-center justify-between">
-                {m.rating !== null && (
-                  <div className="flex items-center gap-1 text-xs">
-                    <Star className="h-3.5 w-3.5 fill-foreground" /> {Number(m.rating).toFixed(1)}
-                  </div>
-                )}
-                <div className="ml-auto flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditing(m)}
-                    className="rounded-md border border-border p-1.5"
-                    aria-label="Editar"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => remove(m.id)}
-                    className="rounded-md border border-border p-1.5"
-                    aria-label="Eliminar"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
                 </div>
               </div>
             </article>
@@ -1100,6 +1432,11 @@ function ServicesPicker({
     [services, selected],
   );
   const typedService = query.trim();
+  const categoryById = useMemo(() => {
+    const map = new Map<string, string>();
+    categories.forEach((category) => map.set(category.id, category.label));
+    return map;
+  }, [categories]);
 
   const categoryOptions = useMemo(() => {
     const labels = [
@@ -1122,18 +1459,57 @@ function ServicesPicker({
     (s) => normalizeText(s.name) === normalizeText(newServiceName || typedService),
   );
 
-  const quickPresets = useMemo(() => {
+  const serviceSearchSuggestions = useMemo(() => {
     const q = normalizeText(query);
-    return segmentConfig.servicePresets.filter((preset) => {
-      const presetName = normalizeText(preset.name);
-      const categoryName = normalizeText(preset.category);
-      return !q || presetName.includes(q) || categoryName.includes(q);
-    }).slice(0, 8);
-  }, [query, segmentConfig.servicePresets]);
+    if (!q) return [];
+
+    return services
+      .map((service) => {
+        const categoryLabel = service.category_id ? categoryById.get(service.category_id) ?? "" : "";
+        const duration = service.duration_min ? `${service.duration_min} min` : "";
+        const price = Number.isFinite(Number(service.price)) ? `${Number(service.price).toFixed(2)} eur` : "";
+        const haystack = [
+          service.name,
+          categoryLabel,
+          duration,
+          price,
+          price.replace(".", ","),
+        ]
+          .map(normalizeText)
+          .join(" ");
+
+        let score = 0;
+        const name = normalizeText(service.name);
+        const category = normalizeText(categoryLabel);
+        if (name === q) score += 60;
+        if (name.startsWith(q)) score += 45;
+        if (name.includes(q)) score += 30;
+        if (category.startsWith(q)) score += 18;
+        if (category.includes(q)) score += 12;
+        if (haystack.includes(q)) score += 8;
+        if (selected.has(service.id)) score += 4;
+        return { service, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || a.service.name.localeCompare(b.service.name))
+      .slice(0, 7)
+      .map((entry) => entry.service);
+  }, [categoryById, query, selected, services]);
+  const quickPresets = [] as ServicePreset[];
 
   const grouped = useMemo(() => {
     const q = normalizeText(query);
-    const filterFn = (s: Service) => !q || normalizeText(s.name).includes(q);
+    const filterFn = (s: Service) => {
+      if (!q) return true;
+      const categoryLabel = s.category_id ? categoryById.get(s.category_id) ?? "" : "";
+      const parts = [
+        s.name,
+        categoryLabel,
+        s.duration_min ? `${s.duration_min} min` : "",
+        Number.isFinite(Number(s.price)) ? `${Number(s.price).toFixed(2)} eur` : "",
+      ];
+      return parts.map(normalizeText).join(" ").includes(q);
+    };
     const buckets: { cat: Category | null; items: Service[] }[] = [];
 
     categories.forEach((c) => {
@@ -1144,7 +1520,7 @@ function ServicesPicker({
     const uncategorized = services.filter((s) => !s.category_id).filter(filterFn);
     if (uncategorized.length) buckets.push({ cat: null, items: uncategorized });
     return buckets;
-  }, [services, categories, query]);
+  }, [services, categories, query, categoryById]);
 
   const canCreateFromSearch =
     typedService.length >= 2 &&
@@ -1152,6 +1528,16 @@ function ServicesPicker({
 
   function toggle(id: string) {
     onChange(selected.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  }
+
+  function serviceMeta(service: Service) {
+    const categoryLabel = service.category_id ? categoryById.get(service.category_id) : null;
+    const parts = [
+      categoryLabel || "Sem categoria",
+      service.duration_min ? `${service.duration_min} min` : null,
+      Number.isFinite(Number(service.price)) ? formatEUR(Number(service.price)) : null,
+    ].filter(Boolean);
+    return parts.join(" · ");
   }
 
   async function ensureCategory(label: string) {
@@ -1258,29 +1644,39 @@ function ServicesPicker({
   }
 
   return (
-    <div className="space-y-4 rounded-lg border border-border bg-card/40 p-3 sm:p-4">
-      {selectedServices.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="space-y-4 rounded-xl border border-border bg-card/45 p-3 shadow-sm sm:p-4">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
             Selecionados
           </p>
+          <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+            {selectedServices.length} {selectedServices.length === 1 ? "serviço" : "serviços"}
+          </span>
+        </div>
+        {selectedServices.length > 0 ? (
           <div className="flex flex-wrap gap-1.5">
             {selectedServices.map((s) => (
-              <span
+              <button
                 key={s.id}
-                className="inline-flex items-center gap-1 rounded-full bg-foreground px-2.5 py-1 text-[11px] text-background"
+                type="button"
+                onClick={() => toggle(s.id)}
+                className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-[11px] font-medium text-background shadow-sm transition hover:opacity-90"
+                aria-label={`Remover ${s.name}`}
               >
-                {s.name}
-                <button type="button" onClick={() => toggle(s.id)} aria-label={`Remover ${s.name}`}>
-                  <X className="h-3 w-3" />
-                </button>
-              </span>
+                <span className="max-w-[180px] truncate">{s.name}</span>
+                <X className="h-3.5 w-3.5" />
+              </button>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="rounded-lg border border-dashed border-border bg-background/70 px-3 py-3 text-xs text-muted-foreground">
+            Pesquise e selecione os serviços desta profissional. A seleção aparece aqui de imediato.
+          </div>
+        )}
+      </div>
 
-      {quickPresets.length > 0 && (
+      {false && (
         <div className="space-y-2">
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -1342,11 +1738,60 @@ function ServicesPicker({
             />
           </span>
         </label>
+        {typedService ? (
+          <div className="overflow-hidden rounded-xl border border-border bg-background shadow-lg shadow-black/5">
+            {serviceSearchSuggestions.length > 0 ? (
+              <div className="divide-y divide-border">
+                {serviceSearchSuggestions.map((service) => {
+                  const on = selected.has(service.id);
+                  return (
+                    <button
+                      key={service.id}
+                      type="button"
+                      onClick={() => toggle(service.id)}
+                      className={`flex min-h-[64px] w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition ${
+                        on ? "bg-foreground text-background" : "hover:bg-muted/70"
+                      }`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold">{service.name}</span>
+                        <span
+                          className={`mt-0.5 block truncate text-xs ${
+                            on ? "text-background/70" : "text-muted-foreground"
+                          }`}
+                        >
+                          {serviceMeta(service)}
+                        </span>
+                      </span>
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
+                          on
+                            ? "border-background/40 bg-background text-foreground"
+                            : "border-border text-muted-foreground"
+                        }`}
+                      >
+                        {on ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="px-3 py-3 text-xs text-muted-foreground">
+                Nenhum serviço encontrado com esta pesquisa.
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Comece a escrever para encontrar por nome, categoria, duração ou preço.
+          </p>
+        )}
         {canCreateFromSearch && (
           <button
             type="button"
             onClick={() => startCreate(typedService)}
-            className="flex w-full items-center justify-between rounded-md border border-dashed border-border bg-background px-3 py-2 text-left text-xs hover:bg-muted"
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-background px-3 py-3 text-left text-xs transition hover:bg-muted"
           >
             <span>
               Adicionar novo serviço: <strong>{typedService}</strong>
@@ -1373,10 +1818,17 @@ function ServicesPicker({
           </button>
         </div>
       ) : grouped.length > 0 ? (
-        <div className="max-h-72 overflow-y-auto rounded-md border border-border bg-background">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Seleção por categoria
+            </p>
+            <span className="text-[11px] text-muted-foreground">Opção secundária</span>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-border bg-background/80">
           {grouped.map(({ cat, items }) => {
             const key = cat?.id ?? "uncat";
-            const open = openCats[key] !== false;
+            const open = openCats[key] === true;
             return (
               <div key={key} className="border-b border-border last:border-b-0">
                 <button
@@ -1420,6 +1872,7 @@ function ServicesPicker({
               </div>
             );
           })}
+          </div>
         </div>
       ) : (
         <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">

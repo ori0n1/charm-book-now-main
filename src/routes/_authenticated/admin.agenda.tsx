@@ -10,8 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import {
@@ -87,6 +86,15 @@ function AgendaPage() {
   const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const [filters, setFilters] = useState<AgendaFilters>(EMPTY_FILTERS);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [showDepositSplit, setShowDepositSplit] = useState(false);
+
+  useEffect(() => {
+    setShowDepositSplit(localStorage.getItem("agenda-show-deposit-split") === "true");
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("agenda-show-deposit-split", String(showDepositSplit));
+  }, [showDepositSplit]);
 
   useEffect(() => {
     if (!studio) return;
@@ -378,6 +386,7 @@ function AgendaPage() {
                 latestMessageByAppointment.get(a.id),
               );
               const canConfirmPresence = revenue.isOnlinePaid && a.status !== "cancelled";
+              const canResendMessage = messageState?.tone === "danger";
               const missed = a.status === "no_show";
               return (
                 <article
@@ -475,10 +484,40 @@ function AgendaPage() {
                           : "border-emerald-700/20 bg-emerald-950/5"
                       }`}
                     >
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                            Repartição financeira automática
+                          </p>
+                          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+                            A divisão é calculada sobre o valor total do serviço. O sinal mostra apenas
+                            o que já foi recebido online.
+                          </p>
+                        </div>
+                        <label className="flex shrink-0 items-center gap-2 rounded-2xl border border-border bg-background/60 px-3 py-2 text-[11px] font-semibold text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            checked={showDepositSplit}
+                            onChange={(event) => setShowDepositSplit(event.target.checked)}
+                            className="h-3.5 w-3.5 accent-emerald-600"
+                          />
+                          Mostrar divisão do sinal
+                        </label>
+                      </div>
+                      <p className="hidden text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
                         Repartição financeira automática
                       </p>
-                      <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                      <div className="mt-4 grid gap-2 md:grid-cols-4">
+                        <FinancialMetricCard label="Valor total" value={formatEUR(split.serviceTotal)} featured />
+                        <FinancialMetricCard label="Recebido online" value={formatEUR(split.received)} />
+                        <FinancialMetricCard label="Restante no estúdio" value={formatEUR(split.pending)} />
+                        <FinancialMetricCard
+                          label={a.status === "completed" ? "Faturamento confirmado" : "Ainda pendente"}
+                          value={formatEUR(split.confirmed)}
+                          muted={a.status !== "completed"}
+                        />
+                      </div>
+                      <dl className="mt-3 hidden gap-2 text-xs sm:grid-cols-2">
                         <Row label="Valor confirmado" value={formatEUR(split.confirmed)} />
                         <Row label="Sinal recebido" value={formatEUR(split.received)} muted />
                         <Row
@@ -503,8 +542,46 @@ function AgendaPage() {
                           confirmar que a cliente compareceu.
                         </p>
                       </dl>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2">
+                        <FinancialMetricCard
+                          label="Estúdio recebe"
+                          value={formatEUR(split.studio)}
+                          detail={`${split.commissionPercent}% do serviço total`}
+                          featured
+                        />
+                        <FinancialMetricCard
+                          label="Profissional recebe"
+                          value={formatEUR(split.professional)}
+                          detail={`${100 - split.commissionPercent}% do serviço total`}
+                          featured
+                        />
+                      </div>
+                      {showDepositSplit && split.received > 0 && (
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                          <FinancialMetricCard
+                            label="Sinal: estúdio"
+                            value={formatEUR(split.signalStudio)}
+                            detail="Apenas referência do sinal recebido"
+                            muted
+                          />
+                          <FinancialMetricCard
+                            label="Sinal: profissional"
+                            value={formatEUR(split.signalProfessional)}
+                            detail="Apenas referência do sinal recebido"
+                            muted
+                          />
+                        </div>
+                      )}
+                      <div className="mt-4 grid gap-2 text-xs md:grid-cols-3">
+                        <FlowStep title="Sinal recebido online" value={formatEUR(split.received)} />
+                        <FlowStep title="Restante pago no estúdio" value={formatEUR(split.pending)} />
+                        <FlowStep
+                          title="Divisão após presença"
+                          value={a.status === "completed" ? "Confirmada" : missed ? "Sinal mantido" : "Pendente"}
+                        />
+                      </div>
                       {canConfirmPresence && (
-                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                        <div className={`mt-4 grid gap-2 ${canResendMessage ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
                           <PresenceButton
                             active={a.status === "completed"}
                             disabled={savingPresenceId === a.id}
@@ -520,6 +597,16 @@ function AgendaPage() {
                           >
                             Cliente não compareceu
                           </PresenceButton>
+                          {canResendMessage && (
+                            <PresenceButton
+                              active={false}
+                              whatsapp
+                              disabled={resendingMessageId === a.id}
+                              onClick={() => resendMessage(a)}
+                            >
+                              {resendingMessageId === a.id ? "A reenviar..." : "Reenviar WhatsApp"}
+                            </PresenceButton>
+                          )}
                         </div>
                       )}
                       {!canConfirmPresence && a.status !== "cancelled" && (
@@ -528,15 +615,17 @@ function AgendaPage() {
                           funcionar como já estava.
                         </p>
                       )}
-                      {messageState && messageState.tone === "danger" && (
-                        <button
-                          type="button"
-                          onClick={() => resendMessage(a)}
-                          disabled={resendingMessageId === a.id}
-                          className="mt-4 h-10 rounded-2xl border border-border px-4 text-xs font-bold text-muted-foreground transition hover:bg-background hover:text-foreground disabled:opacity-60"
-                        >
-                          {resendingMessageId === a.id ? "A reenviar..." : "Reenviar WhatsApp"}
-                        </button>
+                      {canResendMessage && !canConfirmPresence && (
+                        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                          <PresenceButton
+                            active={false}
+                            whatsapp
+                            disabled={resendingMessageId === a.id}
+                            onClick={() => resendMessage(a)}
+                          >
+                            {resendingMessageId === a.id ? "A reenviar..." : "Reenviar WhatsApp"}
+                          </PresenceButton>
+                        </div>
                       )}
                     </div>
                   )}
@@ -834,47 +923,13 @@ function DateFilterPicker({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const selected = value ? new Date(`${value}T12:00`) : undefined;
-
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-2xl border border-border bg-background/70 px-3 text-left text-sm shadow-none outline-none transition hover:bg-background focus:border-foreground/30 focus:ring-2 focus:ring-foreground/10 data-[state=open]:border-foreground/30 data-[state=open]:bg-background"
-        >
-          <span className="flex min-w-0 items-center gap-2">
-            <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <span className={`truncate ${value ? "text-foreground" : "text-muted-foreground"}`}>
-              {value ? formatDateOnly(value) : "Escolher data"}
-            </span>
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground opacity-70" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-auto rounded-3xl border-border bg-popover/98 p-2 shadow-2xl shadow-black/10"
-      >
-        <Calendar
-          mode="single"
-          selected={selected}
-          onSelect={(date) => {
-            if (date) onChange(toDateInputValue(date));
-          }}
-          className="rounded-2xl bg-transparent"
-        />
-        {value && (
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            className="mt-2 h-9 w-full rounded-2xl border border-border px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          >
-            Limpar data
-          </button>
-        )}
-      </PopoverContent>
-    </Popover>
+    <PremiumDatePicker
+      value={value}
+      onChange={onChange}
+      placeholder="Escolher data"
+      className="h-10 bg-background/70"
+    />
   );
 }
 
@@ -966,31 +1021,35 @@ function computeAppointmentSplit(
         rule?.commission_percent ?? a.staff?.commission_percent ?? studio?.commission_percent ?? 0;
       const linePaid =
         Number(a.total_price) > 0 ? (paidAmount * Number(line.price)) / Number(a.total_price) : 0;
+      const lineTotal = Number(line.price);
       const lineConfirmed =
-        Number(a.total_price) > 0
-          ? (revenue.confirmed * Number(line.price)) / Number(a.total_price)
-          : Number(line.price);
+        Number(a.total_price) > 0 ? (revenue.confirmed * lineTotal) / Number(a.total_price) : lineTotal;
       const linePredicted =
-        Number(a.total_price) > 0
-          ? (revenue.predicted * Number(line.price)) / Number(a.total_price)
-          : 0;
-      const split = computeFinancialSplit(lineConfirmed, studioPercent, {
+        Number(a.total_price) > 0 ? (revenue.predicted * lineTotal) / Number(a.total_price) : 0;
+      const finalSplit = computeFinancialSplit(lineTotal, studioPercent, {
         depositPercent: studio?.deposit_percent ?? 0,
         requiresDeposit: false,
-        receivedAmount: lineConfirmed,
+        receivedAmount: linePaid,
+      });
+      const signalSplit = computeFinancialSplit(linePaid, studioPercent, {
+        depositPercent: studio?.deposit_percent ?? 0,
+        requiresDeposit: false,
+        receivedAmount: linePaid,
       });
       return {
-        total: acc.total + Number(line.price),
-        serviceTotal: acc.serviceTotal + Number(line.price),
-        confirmed: acc.confirmed + split.total,
+        total: acc.total + lineTotal,
+        serviceTotal: acc.serviceTotal + lineTotal,
+        confirmed: acc.confirmed + lineConfirmed,
         predicted: acc.predicted + linePredicted,
-        deposit: acc.deposit + split.deposit,
+        deposit: acc.deposit + signalSplit.deposit,
         remaining: acc.remaining + linePredicted,
-        commissionBase: acc.commissionBase + split.commissionBase,
-        commission: acc.commission + split.commission,
-        professional: acc.professional + split.professional,
-        studio: acc.studio + split.studio,
-        received: acc.received + Math.min(Number(line.price), Math.max(0, linePaid)),
+        commissionBase: acc.commissionBase + finalSplit.commissionBase,
+        commission: acc.commission + finalSplit.commission,
+        professional: acc.professional + finalSplit.professional,
+        studio: acc.studio + finalSplit.studio,
+        signalProfessional: acc.signalProfessional + signalSplit.professional,
+        signalStudio: acc.signalStudio + signalSplit.studio,
+        received: acc.received + Math.min(lineTotal, Math.max(0, linePaid)),
         pending: acc.pending + linePredicted,
         commissionPercent: studioPercent,
         depositProfessionalPercent: 0,
@@ -1007,6 +1066,8 @@ function computeAppointmentSplit(
       commission: 0,
       professional: 0,
       studio: 0,
+      signalProfessional: 0,
+      signalStudio: 0,
       received: 0,
       pending: 0,
       commissionPercent: 0,
@@ -1131,16 +1192,59 @@ function StatusPill({
   );
 }
 
+function FinancialMetricCard({
+  label,
+  value,
+  detail,
+  featured,
+  muted,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  featured?: boolean;
+  muted?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-2xl border px-3 py-3 ${
+        featured
+          ? "border-emerald-700/25 bg-emerald-950/5 dark:bg-emerald-400/[0.06]"
+          : "border-border/70 bg-background/65"
+      }`}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </p>
+      <MoneyText value={value} className={`mt-2 text-base ${muted ? "opacity-80" : ""}`} />
+      {detail && <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{detail}</p>}
+    </div>
+  );
+}
+
+function FlowStep({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-border/70 bg-background/55 px-3 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {title}
+      </p>
+      <p className="mt-1 text-sm font-semibold">{value}</p>
+    </div>
+  );
+}
+
 function PresenceButton({
   children,
   active,
   danger,
+  whatsapp,
   disabled,
   onClick,
 }: {
   children: React.ReactNode;
   active: boolean;
   danger?: boolean;
+  whatsapp?: boolean;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -1149,16 +1253,27 @@ function PresenceButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`min-h-10 rounded-2xl border px-3 py-2 text-xs font-bold uppercase tracking-wide transition disabled:cursor-wait disabled:opacity-60 ${
+      className={`flex h-11 w-full items-center justify-center gap-2 rounded-2xl border px-3 text-center text-[11px] font-bold uppercase leading-tight tracking-[0.08em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-wait disabled:opacity-60 sm:text-xs ${
         active
           ? danger
             ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
             : "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-          : "border-border bg-background/70 text-muted-foreground hover:bg-muted hover:text-foreground"
+          : whatsapp
+            ? "border-emerald-500/25 bg-emerald-600/10 text-emerald-700 shadow-sm hover:border-emerald-600/35 hover:bg-emerald-600/15 dark:text-emerald-300"
+            : "border-border bg-background/70 text-muted-foreground shadow-sm hover:border-foreground/15 hover:bg-muted hover:text-foreground"
       }`}
     >
+      {whatsapp && <WhatsAppIcon className="h-4 w-4 shrink-0" />}
       {children}
     </button>
+  );
+}
+
+function WhatsAppIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">
+      <path d="M20.52 3.49A11.82 11.82 0 0 0 12.1 0C5.55 0 .22 5.33.22 11.88c0 2.09.55 4.14 1.6 5.94L.12 24l6.32-1.66a11.9 11.9 0 0 0 5.66 1.44h.01c6.55 0 11.88-5.33 11.88-11.88 0-3.17-1.23-6.15-3.47-8.41Zm-8.42 18.3h-.01a9.86 9.86 0 0 1-5.03-1.38l-.36-.21-3.75.98 1-3.65-.24-.38a9.85 9.85 0 0 1-1.51-5.27c0-5.46 4.44-9.9 9.9-9.9 2.65 0 5.13 1.03 7 2.9a9.82 9.82 0 0 1 2.9 7c0 5.46-4.44 9.91-9.9 9.91Zm5.43-7.42c-.3-.15-1.76-.87-2.03-.97-.27-.1-.47-.15-.67.15-.2.3-.77.97-.94 1.17-.17.2-.35.22-.65.07-.3-.15-1.26-.46-2.4-1.48-.89-.79-1.49-1.77-1.66-2.07-.17-.3-.02-.46.13-.61.13-.13.3-.35.45-.52.15-.17.2-.3.3-.5.1-.2.05-.37-.02-.52-.07-.15-.67-1.61-.92-2.2-.24-.58-.49-.5-.67-.51h-.57c-.2 0-.52.07-.79.37-.27.3-1.04 1.02-1.04 2.48s1.06 2.87 1.21 3.07c.15.2 2.09 3.19 5.06 4.47.71.31 1.26.49 1.69.63.71.23 1.36.2 1.87.12.57-.08 1.76-.72 2-1.41.25-.69.25-1.29.17-1.41-.07-.13-.27-.2-.57-.35Z" />
+    </svg>
   );
 }
 

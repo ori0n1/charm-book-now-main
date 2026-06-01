@@ -1,0 +1,76 @@
+import type { ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import { APP_BRAND } from "@/lib/app-brand";
+import { BellzaLogo } from "@/components/bellza-logo";
+
+export function LandingFooter() {
+  const year = new Date().getFullYear();
+
+  return (
+    <footer className="border-t border-border/80 bg-foreground text-background">
+      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 md:grid-cols-[1.45fr_1fr_1fr_1fr]">
+        <div className="space-y-4">
+          <BellzaLogo variant="footer" href={null} className="text-background" />
+          <p className="max-w-sm text-sm leading-relaxed text-background/62">{APP_BRAND.description}</p>
+        </div>
+
+        <FooterCol title="Produto">
+          <FooterLink href="#produto">Demonstração</FooterLink>
+          <FooterLink href="#funcionalidades">Funcionalidades</FooterLink>
+          <FooterLink href="#planos">Planos</FooterLink>
+          <FooterLink href="#faq">FAQ</FooterLink>
+        </FooterCol>
+
+        <FooterCol title="Conta">
+          <FooterLink to="/signup">Criar conta</FooterLink>
+          <FooterLink to="/login">Iniciar sessão</FooterLink>
+          <FooterLink to="/contacto">Contacto</FooterLink>
+        </FooterCol>
+
+        <FooterCol title="Legal">
+          <FooterLink to="/privacidade">Política de Privacidade</FooterLink>
+          <FooterLink to="/cookies">Política de Cookies</FooterLink>
+          <FooterLink to="/termos">Termos e Condições</FooterLink>
+          <FooterLink to="/rgpd">RGPD/GDPR</FooterLink>
+          <FooterLink to="/politica-reembolso">Reembolsos</FooterLink>
+          <FooterLink to="/politica-cancelamento">Cancelamentos</FooterLink>
+          <FooterLink href="https://www.livroreclamacoes.pt/Inicio/">Livro de Reclamações</FooterLink>
+        </FooterCol>
+      </div>
+
+      <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 border-t border-background/10 px-4 py-7 text-center text-xs text-background/45 sm:px-6">
+        <p>© {year} {APP_BRAND.name}. Todos os direitos reservados.</p>
+        <p>Portugal · RGPD · SSL · Pagamentos online através de fornecedores certificados</p>
+      </div>
+    </footer>
+  );
+}
+
+function FooterCol({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-3">
+      <h2 className="text-xs font-semibold uppercase text-background/45">{title}</h2>
+      <ul className="grid gap-2 text-sm">{children}</ul>
+    </div>
+  );
+}
+
+function FooterLink({ href, to, children }: { href?: string; to?: string; children: React.ReactNode }) {
+  const className = "footer-link text-background/62 transition hover:text-background";
+  if (to) {
+    return (
+      <li>
+        <Link to={to} className={className}>
+          {children}
+        </Link>
+      </li>
+    );
+  }
+  return (
+    <li>
+      <a href={href} className={className}>
+        {children}
+      </a>
+    </li>
+  );
+}

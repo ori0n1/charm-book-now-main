@@ -1,0 +1,50 @@
+import type Stripe from "stripe";
+import type { StripeEnv } from "@/lib/stripe.server";
+
+export const SUBSCRIPTION_PLAN_IDS = ["monthly", "quarterly", "yearly"] as const;
+export type SubscriptionPlanId = (typeof SUBSCRIPTION_PLAN_IDS)[number];
+
+export type SubscriptionPlanConfig = {
+  id: SubscriptionPlanId;
+  label: string;
+  priceId: string;
+};
+
+function envValue(...keys: string[]) {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value) return value;
+  }
+  return null;
+}
+
+export function isSubscriptionPlanId(value: unknown): value is SubscriptionPlanId {
+  return typeof value === "string" && SUBSCRIPTION_PLAN_IDS.includes(value as SubscriptionPlanId);
+}
+
+export function getSubscriptionPlans(env: StripeEnv): Record<SubscriptionPlanId, SubscriptionPlanConfig> {
+  const prefix = env === "live" ? "STRIPE_LIVE" : "STRIPE_SANDBOX";
+  const monthly = envValue(`${prefix}_PRICE_MONTHLY`, "STRIPE_PRICE_MONTHLY");
+  const quarterly = envValue(`${prefix}_PRICE_QUARTERLY`, "STRIPE_PRICE_QUARTERLY");
+  const yearly = envValue(`${prefix}_PRICE_YEARLY`, "STRIPE_PRICE_YEARLY");
+
+  if (!monthly || !quarterly || !yearly) {
+    throw new Error("stripe_subscription_prices_not_configured");
+  }
+
+  return {
+    monthly: { id: "monthly", label: "Premium Mensal", priceId: monthly },
+    quarterly: { id: "quarterly", label: "Premium Trimestral", priceId: quarterly },
+    yearly: { id: "yearly", label: "Premium Anual", priceId: yearly },
+  };
+}
+
+export function getPlanByPriceId(env: StripeEnv, priceId: string | null | undefined) {
+  if (!priceId) return null;
+  const plans = getSubscriptionPlans(env);
+  return Object.values(plans).find((plan) => plan.priceId === priceId) ?? null;
+}
+
+export function getSubscriptionPriceId(subscription: Stripe.Subscription) {
+  return subscription.items.data[0]?.price.id ?? null;
+}

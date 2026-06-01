@@ -2,7 +2,11 @@ import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertStudioAccess, rateLimitOrThrow } from "@/lib/server-security";
+import {
+  assertAppointmentAccess,
+  assertStudioAccessWithOptions,
+  rateLimitOrThrow,
+} from "@/lib/server-security";
 
 const DEFAULT_TEMPLATE =
   "Olá, {nome_cliente}. Confirmamos a sua marcação de {serviço} com {profissional} para {data} às {hora}.\n\nPode consultar os detalhes, remarcar, cancelar ou solicitar reembolso pelo link abaixo:\n{link_agendamento}";
@@ -57,7 +61,9 @@ export const getWhatsAppSettings = createServerFn({ method: "POST" })
   .inputValidator((input) => z.object({ studioId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const sb = admin();
-    await assertStudioAccess(sb, (context as any).userId, data.studioId);
+    await assertStudioAccessWithOptions(sb, (context as any).userId, data.studioId, {
+      requirePremium: true,
+    });
     const studio = await loadStudioWhatsApp(sb, data.studioId);
     return normalizeWhatsAppStudio(studio);
   });
@@ -75,7 +81,9 @@ export const saveWhatsAppSettings = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const sb = admin();
-    await assertStudioAccess(sb, (context as any).userId, data.studioId);
+    await assertStudioAccessWithOptions(sb, (context as any).userId, data.studioId, {
+      requirePremium: true,
+    });
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (typeof data.autoSendEnabled === "boolean") {
       patch.whatsapp_auto_send_enabled = data.autoSendEnabled;
@@ -99,7 +107,7 @@ export const testWhatsAppMessage = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = admin();
     const userId = (context as any).userId;
-    await assertStudioAccess(sb, userId, data.studioId);
+    await assertStudioAccessWithOptions(sb, userId, data.studioId, { requirePremium: true });
     await rateLimitOrThrow({
       key: `whatsapp-test:${userId}:${data.studioId}`,
       limit: 5,
@@ -146,9 +154,13 @@ export async function sendAppointmentConfirmationMessage(
 }
 
 export const sendAppointmentConfirmationForAppointment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({ appointmentId: z.string().uuid() }).parse(input))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const sb = admin();
+    await assertAppointmentAccess(sb, (context as any).userId, data.appointmentId, {
+      requirePremium: true,
+    });
     const ctx = await loadAppointmentConfirmationContext(sb, data.appointmentId);
     if (!ctx) return null;
     return sendConfirmationFromContext(sb, ctx, `twilio-whatsapp-appointment-${data.appointmentId}`);
@@ -167,7 +179,7 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
       reason: "auto_send_disabled",
       message: rendered,
       recipientPhone: recipient,
-      provider: "twilio_whatsapp_sandbox",
+      provider: "twilio_whatsapp",
     });
   }
   if (!recipient) {
@@ -176,7 +188,7 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
       reason: "invalid_phone",
       message: rendered,
       recipientPhone: ctx.clientPhone || null,
-      provider: "twilio_whatsapp_sandbox",
+      provider: "twilio_whatsapp",
     });
   }
 
@@ -187,7 +199,7 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
       reason: null,
       message: rendered,
       recipientPhone: recipient,
-      provider: "twilio_whatsapp_sandbox",
+      provider: "twilio_whatsapp",
     }));
   if (!pending) return findExistingLog(sb, idempotencyKey);
   if (existing) {
@@ -196,7 +208,7 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
       reason: null,
       message: rendered,
       recipient_phone: recipient,
-      provider: "twilio_whatsapp_sandbox",
+      provider: "twilio_whatsapp",
       provider_message_id: null,
       payload: {
         retry_from_status: existing.status,
@@ -234,13 +246,14 @@ function getWhatsAppProvider(): WhatsAppProvider {
 
 function createTwilioWhatsAppProvider(): WhatsAppProvider {
   return {
-    name: "twilio_whatsapp_sandbox",
+    name: "twilio_whatsapp",
     async sendText(input) {
       const accountSid = await getServerEnv("TWILIO_ACCOUNT_SID");
       const authToken = await getServerEnv("TWILIO_AUTH_TOKEN");
-      const from = (await getServerEnv("TWILIO_WHATSAPP_NUMBER")) || "whatsapp:+14155238886";
+      const from = await getServerEnv("TWILIO_WHATSAPP_NUMBER");
       if (!accountSid) throw new Error("TWILIO_ACCOUNT_SID em falta.");
       if (!authToken) throw new Error("TWILIO_AUTH_TOKEN em falta.");
+      if (!from) throw new Error("TWILIO_WHATSAPP_NUMBER em falta.");
 
       const body = new URLSearchParams({
         From: from,
@@ -290,7 +303,7 @@ function createTwilioWhatsAppProvider(): WhatsAppProvider {
         });
       }
       return {
-        provider: "twilio_whatsapp_sandbox",
+        provider: "twilio_whatsapp",
         messageId: finalPayload?.sid ?? payload?.sid ?? null,
         deliveryStatus,
         payload: finalPayload ?? payload,
@@ -499,8 +512,8 @@ function normalizeWhatsAppStudio(studio: any) {
     studioId: studio.id as string,
     autoSendEnabled: Boolean(studio.whatsapp_auto_send_enabled),
     messageTemplate: (studio.whatsapp_default_message as string) ?? DEFAULT_TEMPLATE,
-    provider: "twilio_whatsapp_sandbox",
-    sandboxNumber: process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886",
+    provider: "twilio_whatsapp",
+    sandboxNumber: process.env.TWILIO_WHATSAPP_NUMBER || "",
     lastError: null,
   };
 }

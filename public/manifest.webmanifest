@@ -1,18 +1,18 @@
 {
-  "name": "Painel do Estúdio",
-  "short_name": "Estúdio",
-  "description": "Painel de marcações, clientes e financeiro do estúdio.",
+  "name": "Bellza — Painel do Estúdio",
+  "short_name": "Bellza",
+  "description": "Agenda online, pagamentos, clientes e gestão para estúdios de beleza e barbearias.",
   "start_url": "/admin",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#080b10",
-  "theme_color": "#080b10",
+  "background_color": "#111318",
+  "theme_color": "#111318",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/pwa-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/bellza-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any maskable"
     }
   ]
