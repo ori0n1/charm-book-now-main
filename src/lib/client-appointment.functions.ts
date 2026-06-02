@@ -1,15 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
-let _admin: ReturnType<typeof createClient> | null = null;
 function admin(): any {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
+  return getAdminClient();
 }
 
 export const getClientAppointment = createServerFn({ method: "POST" })

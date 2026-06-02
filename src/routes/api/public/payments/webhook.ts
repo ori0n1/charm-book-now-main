@@ -22,6 +22,15 @@ type StripePayload = Record<string, unknown> & {
   lines?: { data?: Array<{ price?: { id?: string } }> };
 };
 
+type SubscriptionWithPeriodEnd = Stripe.Subscription & {
+  current_period_end?: number | null;
+};
+
+function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
+  const direct = (subscription as SubscriptionWithPeriodEnd).current_period_end;
+  return typeof direct === "number" ? direct : null;
+}
+
 async function handlePaymentIntent(
   pi: StripePayload,
   kind: "succeeded" | "failed" | "processing" | "canceled",
@@ -176,8 +185,9 @@ async function syncSubscription(
   const priceId = getSubscriptionPriceId(subscription);
   const plan = getPlanByPriceId(env, priceId);
   const status = subscription.status ?? "incomplete";
-  const currentPeriodEnd = subscription.current_period_end
-    ? new Date(subscription.current_period_end * 1000).toISOString()
+  const periodEnd = getCurrentPeriodEnd(subscription);
+  const currentPeriodEnd = periodEnd
+    ? new Date(periodEnd * 1000).toISOString()
     : null;
 
   if (!userId || !studioId || !priceId || !plan) {
@@ -202,21 +212,33 @@ async function syncSubscription(
 
   const activeAccess = ["active", "trialing"].includes(status);
 
-  const { error: subscriptionError } = await sb.from("subscriptions").upsert(
-    {
-      user_id: userId,
-      studio_id: studioId || null,
-      stripe_customer_id: customerId,
-      stripe_subscription_id: subscription.id,
-      stripe_price_id: priceId,
-      plan: plan.id,
-      status,
-      current_period_end: currentPeriodEnd,
-      cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "stripe_subscription_id" },
-  );
+  const subscriptionPatch = {
+    user_id: userId,
+    studio_id: studioId,
+    stripe_customer_id: customerId,
+    stripe_subscription_id: subscription.id,
+    stripe_price_id: priceId,
+    plan: plan.id,
+    status,
+    current_period_end: currentPeriodEnd,
+    cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: pendingSubscription, error: pendingError } = await sb
+    .from("subscriptions")
+    .select("id")
+    .eq("studio_id", studioId)
+    .eq("status", "checkout_pending")
+    .limit(1)
+    .maybeSingle();
+  if (pendingError) throw pendingError;
+
+  const { error: subscriptionError } = pendingSubscription?.id
+    ? await sb.from("subscriptions").update(subscriptionPatch).eq("id", pendingSubscription.id)
+    : await sb.from("subscriptions").upsert(subscriptionPatch, {
+        onConflict: "stripe_subscription_id",
+      });
   if (subscriptionError) throw subscriptionError;
 
   // Mark trial as used when subscription enters trialing/active status (prevents reuse exploit)
@@ -394,7 +416,7 @@ async function handleWebhook(req: Request, env: StripeEnv) {
         await syncWithdrawalRequest(obj, "canceled");
         break;
       default:
-        console.log("Unhandled stripe event:", event.type);
+        break;
     }
   } catch (error) {
     await releaseBillingEventClaim(event.id);
@@ -413,8 +435,7 @@ export const Route = createFileRoute("/api/public/payments/webhook")({
         try {
           await handleWebhook(request, rawEnv);
           return Response.json({ received: true });
-        } catch (e) {
-          console.error("Webhook error:", e);
+        } catch {
           return new Response("Webhook error", { status: 400 });
         }
       },

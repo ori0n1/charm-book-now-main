@@ -2299,6 +2299,7 @@ function ReviewStep({
   const depositRate = Number(depositPercent ?? 0);
   const depositNow = requiresDeposit ? Math.round(total * depositRate) / 100 : 0;
   const remaining = Math.max(0, total - depositNow);
+  const policySummary = `${policyParts.rescheduleBody} ${policyParts.refundBody}`;
   return (
     <section className="animate-slide-up space-y-5 pt-4">
       {/* Identification card */}
@@ -2466,6 +2467,7 @@ function ReviewStepPremium({
   const depositRate = Number(depositPercent ?? 0);
   const depositNow = requiresDeposit ? Math.round(total * depositRate) / 100 : 0;
   const remaining = Math.max(0, total - depositNow);
+  const policySummary = `${policyParts.rescheduleBody} ${policyParts.refundBody}`;
 
   return (
     <section className="animate-slide-up space-y-5 pt-4">

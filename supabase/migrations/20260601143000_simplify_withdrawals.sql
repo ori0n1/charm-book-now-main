@@ -13,6 +13,7 @@ ALTER TABLE public.withdrawal_requests
 
 ALTER TABLE public.studio_payout_settings
   DROP CONSTRAINT IF EXISTS studio_payout_settings_payout_method_check,
+  DROP CONSTRAINT IF EXISTS studio_payout_settings_destination_check,
   DROP CONSTRAINT IF EXISTS studio_payout_settings_check;
 
 ALTER TABLE public.studio_payout_settings

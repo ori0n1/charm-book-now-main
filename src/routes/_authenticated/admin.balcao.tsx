@@ -383,13 +383,16 @@ async function loadPaymentSettings(studioId: string) {
   };
 }
 
-function normalizeStudio(studio: StudioRow | null) {
-  return studio || {
-    id: "",
-    payment_policy: "pay_in_studio",
-    accepted_payment_methods: [],
-    deposit_percent: 0,
-    commission_percent: 0,
+function normalizeStudio(
+  studio: (Omit<Partial<StudioRow>, "payment_policy"> & { payment_policy?: string | null }) | null,
+): StudioRow {
+  return {
+    ...studio,
+    id: studio?.id ?? "",
+    payment_policy: studio?.payment_policy === "pre_payment" ? "pre_payment" : "pay_in_studio",
+    accepted_payment_methods: studio?.accepted_payment_methods ?? [],
+    deposit_percent: studio?.deposit_percent ?? 0,
+    commission_percent: studio?.commission_percent ?? 0,
   };
 }
 

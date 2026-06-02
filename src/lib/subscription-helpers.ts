@@ -158,6 +158,7 @@ export async function reserveCheckoutSession(
     userId: string;
     studioId: string;
     planId: string;
+    priceId: string;
     customerId: string;
   },
 ) {
@@ -165,6 +166,8 @@ export async function reserveCheckoutSession(
     user_id: input.userId,
     studio_id: input.studioId,
     stripe_customer_id: input.customerId,
+    stripe_subscription_id: `checkout_pending:${input.studioId}`,
+    stripe_price_id: input.priceId,
     plan: input.planId,
     status: "checkout_pending",
     created_at: new Date().toISOString(),

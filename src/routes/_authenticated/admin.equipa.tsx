@@ -547,7 +547,7 @@ function TeamPage() {
     if (!email) return toast.error("Introduza o email da funcionária.");
     setDeskBusy(true);
     try {
-      await inviteDesk({ data: { studioId: studio.id, email } });
+      await inviteDesk();
       setDeskEmail("");
       toast.success("Acesso Balcão autorizado para este estúdio.");
     } catch (error) {
@@ -1676,7 +1676,7 @@ function ServicesPicker({
         )}
       </div>
 
-      {false && (
+      {quickPresets.length > 0 && (
         <div className="space-y-2">
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">

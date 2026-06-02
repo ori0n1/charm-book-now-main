@@ -47,29 +47,31 @@ export const Route = createFileRoute("/api/create-checkout-session")({
           }
 
           const plan = getSubscriptionPlans(stripeEnv())[planId];
-          const studio = await loadPrimaryStudio(user.id);
+          const sb = getAdminClient();
+          const studio = await loadPrimaryStudio(sb, user.id);
           if (!studio?.id) {
             return Response.json({ error: "studio_required" }, { status: 409 });
           }
-          await assertNoDuplicateActiveSubscription(studio.id);
+          await assertNoDuplicateActiveSubscription(sb, studio.id);
 
-          const customerId = await ensureCustomer({
-            userId: user.id,
-            email: user.email ?? null,
-            studio,
-          });
+          const stripe = createStripeClient(stripeEnv());
+          const customerId = await ensureCustomer(sb, stripe, studio);
 
           // Reserve checkout session to prevent race condition
           // This record will be updated by webhook when Stripe confirms
-          const sb = getAdminClient();
           await reserveCheckoutSession(sb, {
             userId: user.id,
             studioId: studio.id,
             planId: planId,
+            priceId: plan.priceId,
             customerId,
           });
 
-          const stripe = createStripeClient(stripeEnv());
+          const trialEnd = trialEndUnix(
+            studio.trial_ends_at,
+            studio.subscription_status,
+            studio.trial_used_at,
+          );
           const session = await stripe.checkout.sessions.create({
             mode: "subscription",
             customer: customerId,
@@ -86,9 +88,7 @@ export const Route = createFileRoute("/api/create-checkout-session")({
                 studio_id: studio.id,
                 plan: plan.id,
               },
-              ...(trialEndUnix(studio.trial_ends_at, studio.subscription_status, studio.trial_used_at)
-                ? { trial_end: trialEndUnix(studio.trial_ends_at, studio.subscription_status, studio.trial_used_at) }
-                : {}),
+              ...(trialEnd ? { trial_end: trialEnd } : {}),
             },
             success_url: `${appBaseUrl()}/admin/pagamentos?billing=success`,
             cancel_url: `${appBaseUrl()}/?billing=cancelled`,

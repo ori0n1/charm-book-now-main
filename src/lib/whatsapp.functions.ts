@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import {
@@ -7,6 +6,7 @@ import {
   assertStudioAccessWithOptions,
   rateLimitOrThrow,
 } from "@/lib/server-security";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 const DEFAULT_TEMPLATE =
   "Olá, {nome_cliente}. Confirmamos a sua marcação de {serviço} com {profissional} para {data} às {hora}.\n\nPode consultar os detalhes, remarcar, cancelar ou solicitar reembolso pelo link abaixo:\n{link_agendamento}";
@@ -46,14 +46,8 @@ type ConfirmationContext = {
   bookingUrl: string;
 };
 
-let _admin: ReturnType<typeof createClient> | null = null;
 function admin(): any {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
+  return getAdminClient();
 }
 
 export const getWhatsAppSettings = createServerFn({ method: "POST" })

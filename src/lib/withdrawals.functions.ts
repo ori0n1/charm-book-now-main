@@ -1,18 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccessWithOptions, rateLimitOrThrow } from "@/lib/server-security";
-
-let _admin: ReturnType<typeof createClient> | null = null;
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 function admin(): SupabaseClient {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
+  return getAdminClient();
 }
 
 const StudioInput = z.object({ studioId: z.string().uuid() });

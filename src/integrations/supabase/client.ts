@@ -2,12 +2,22 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
+const PUBLIC_SUPABASE_URL = "https://pwmdzpvnatrvfpgcvnzg.supabase.co";
+const PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQ";
+
 function createSupabaseClient() {
-  // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const env = import.meta.env;
+  const processEnv = typeof process !== "undefined" && process.env ? process.env : {};
+  const SUPABASE_URL =
+    env.VITE_SUPABASE_URL ||
+    processEnv.SUPABASE_URL ||
+    processEnv.VITE_SUPABASE_URL ||
+    PUBLIC_SUPABASE_URL;
   const SUPABASE_PUBLISHABLE_KEY =
-    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+    env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    processEnv.SUPABASE_PUBLISHABLE_KEY ||
+    processEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [

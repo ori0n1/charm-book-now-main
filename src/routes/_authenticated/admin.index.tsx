@@ -601,7 +601,12 @@ function MobileOverview({
     predicted: number;
   };
   paidByAppointment: Map<string, number>;
-  studio: FinancialRuleSource & { deposit_percent: number; payment_policy: string };
+  studio: FinancialRuleSource & {
+    name: string;
+    slug: string;
+    deposit_percent: number;
+    payment_policy: string;
+  };
   billing: BillingSummary | null;
   checkoutPlan: PlanId | null;
   onChoosePremiumPlan: () => void;
@@ -1419,6 +1424,7 @@ function buildStaffMetrics(
         received: 0,
         pending: 0,
         commission: 0,
+        predicted: 0,
       },
     ]),
   );
@@ -1437,6 +1443,7 @@ function buildStaffMetrics(
       received: 0,
       pending: 0,
       commission: 0,
+      predicted: 0,
     };
     if (new Date(row.appointment.starts_at).getTime() >= now) current.appointmentsFuture += 1;
     else current.appointmentsDone += 1;

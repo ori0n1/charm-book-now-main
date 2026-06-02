@@ -519,7 +519,12 @@ function PolicyPreview({
   );
 }
 
-function normalizePolicy(row: Partial<StudioPolicy> & { id: string }): StudioPolicy {
+function normalizePolicy(
+  row: Omit<Partial<StudioPolicy>, "cancellation_after_deadline_policy"> & {
+    id: string;
+    cancellation_after_deadline_policy?: string | null;
+  },
+): StudioPolicy {
   return {
     id: row.id,
     cancellation_min_notice_hours: Number(row.cancellation_min_notice_hours ?? 24),

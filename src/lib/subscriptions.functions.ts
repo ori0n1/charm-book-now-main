@@ -19,6 +19,7 @@ import {
   trialEndUnix,
   getDaysRemaining,
   loadRecentInvoices,
+  reserveCheckoutSession,
 } from "@/lib/subscription-helpers";
 
 
@@ -106,7 +107,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         subscription?.cancel_at_period_end ?? studio.subscription_cancel_at_period_end,
       ),
       premiumActive,
-      invoices: await loadRecentInvoices(studio.stripe_customer_id as string | null),
+      invoices: await loadRecentInvoices(stripeEnv(), studio.stripe_customer_id as string | null),
     };
   });
 
@@ -127,6 +128,18 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
     const stripe = createStripeClient(stripeEnv());
     const customerId = await ensureCustomer(sb, stripe, studio);
     await assertNoDuplicateActiveSubscription(sb, studio.id);
+    await reserveCheckoutSession(sb, {
+      userId,
+      studioId: studio.id,
+      planId: plan.id,
+      priceId: plan.priceId,
+      customerId,
+    });
+    const trialEnd = trialEndUnix(
+      studio.trial_ends_at,
+      studio.subscription_status,
+      studio.trial_used_at,
+    );
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,
@@ -136,9 +149,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
       subscription_data: {
         metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
-        ...(trialEndUnix(studio.trial_ends_at, studio.subscription_status)
-          ? { trial_end: trialEndUnix(studio.trial_ends_at, studio.subscription_status) }
-          : {}),
+        ...(trialEnd ? { trial_end: trialEnd } : {}),
       },
     });
     return { url: session.url };
