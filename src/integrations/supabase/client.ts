@@ -42,7 +42,7 @@ function createSupabaseClient() {
       storage: typeof window !== "undefined" ? localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,
-      flowType: isBrowser ? "implicit" : "pkce",
+      flowType: "pkce",
     },
   });
 }
@@ -60,7 +60,7 @@ export function recordAuthDebugEvent(event: Omit<AuthDebugEvent, "at">) {
   if (typeof window === "undefined") return;
   try {
     const previous = JSON.parse(localStorage.getItem(AUTH_DEBUG_STORAGE_KEY) ?? "[]") as AuthDebugEvent[];
-    const next = [{ ...event, at: new Date().toISOString() }, ...previous].slice(0, 40);
+    const next = [{ ...event, at: new Date().toISOString() }, ...previous].slice(0, 120);
     localStorage.setItem(AUTH_DEBUG_STORAGE_KEY, JSON.stringify(next));
   } catch {
     // ignore diagnostics failures
