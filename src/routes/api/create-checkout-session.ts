@@ -2,6 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 import { getSubscriptionPlans, isSubscriptionPlanId } from "@/lib/subscription-plans.server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import {
+  loadPrimaryStudio,
+  assertNoDuplicateActiveSubscription,
+  ensureCustomer,
+  trialEndUnix,
+} from "@/lib/subscription-helpers";
 
 function stripeEnv(): StripeEnv {
   return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
@@ -21,68 +27,10 @@ async function getUserFromRequest(request: Request) {
   const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) throw new Error("unauthorized");
 
-  const { data, error } = await admin().auth.getUser(token);
+  const db = getAdminClient();
+  const { data, error } = await db.auth.getUser(token);
   if (error || !data.user) throw new Error("unauthorized");
   return data.user;
-}
-
-async function loadPrimaryStudio(userId: string) {
-  const db = getAdminClient();
-  const { data } = await db
-    .from("user_roles")
-    .select("studio_id,studios(id,name,email,stripe_customer_id,subscription_status,trial_ends_at)")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-
-  return (data?.studios ?? null) as
-    | {
-        id: string;
-        name: string | null;
-        email: string | null;
-        stripe_customer_id: string | null;
-        subscription_status: string | null;
-        trial_ends_at: string | null;
-      }
-    | null;
-}
-
-async function assertNoDuplicateActiveSubscription(studioId: string) {
-  const db = getAdminClient();
-  const { data, error } = await db
-    .from("subscriptions")
-    .select("id,status")
-    .eq("studio_id", studioId)
-    .in("status", ["active", "trialing", "incomplete"])
-    .maybeSingle();
-  if (!error && data?.id) throw new Error("subscription_already_exists");
-}
-
-async function ensureCustomer(input: {
-  userId: string;
-  email: string | null;
-  studio: NonNullable<Awaited<ReturnType<typeof loadPrimaryStudio>>>;
-}) {
-  if (input.studio?.stripe_customer_id) return input.studio.stripe_customer_id;
-
-  const stripe = createStripeClient(stripeEnv());
-  const customer = await stripe.customers.create({
-    email: input.email ?? input.studio?.email ?? undefined,
-    name: input.studio?.name ?? undefined,
-    metadata: {
-      user_id: input.userId,
-      studio_id: input.studio?.id ?? "",
-    },
-  });
-
-  if (input.studio?.id) {
-    await admin()
-      .from("studios")
-      .update({ stripe_customer_id: customer.id })
-      .eq("id", input.studio.id);
-  }
-
-  return customer.id;
 }
 
 export const Route = createFileRoute("/api/create-checkout-session")({
@@ -152,10 +100,3 @@ export const Route = createFileRoute("/api/create-checkout-session")({
     },
   },
 });
-
-function trialEndUnix(trialEndsAt?: string | null, status?: string | null) {
-  if (status && status !== "trialing") return null;
-  if (!trialEndsAt) return null;
-  const timestamp = Math.floor(new Date(trialEndsAt).getTime() / 1000);
-  return timestamp > Math.floor(Date.now() / 1000) ? timestamp : null;
-}
