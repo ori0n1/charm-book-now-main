@@ -1,5 +1,5 @@
 import type { Session } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
+import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
 
 export type AuthLandingPath = "/admin" | "/admin/agenda" | "/admin/balcao" | "/admin/premium" | "/onboarding";
 
@@ -27,17 +27,44 @@ type SubscriptionRow = {
 export async function getSettledSession(maxAttempts = 8): Promise<Session | null> {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const { data, error } = await supabase.auth.getSession();
-    if (data.session) return data.session;
+    if (data.session) {
+      recordAuthDebugEvent({
+        kind: "session_settled",
+        message: `attempt=${attempt + 1}`,
+      });
+      return data.session;
+    }
     if (error && attempt === maxAttempts - 1) throw error;
     await delay(150);
   }
+  recordAuthDebugEvent({ kind: "session_missing_after_settle" });
   return null;
 }
 
 export async function settleSessionFromCurrentUrl(cleanPath?: string): Promise<Session | null> {
   const url = new URL(window.location.href);
   const code = url.searchParams.get("code");
-  if (code) await supabase.auth.exchangeCodeForSession(code);
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  recordAuthDebugEvent({
+    kind: "settle_current_url",
+    url: `${url.origin}${url.pathname}`,
+    message: JSON.stringify({
+      hasCode: Boolean(code),
+      hashKeys: [...hash.keys()],
+      cleanPath: cleanPath ?? window.location.pathname,
+    }),
+  });
+
+  if (code) {
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    recordAuthDebugEvent({
+      kind: "exchange_code_for_session",
+      url: `${url.origin}${url.pathname}`,
+      ok: !error,
+      message: error?.message,
+    });
+    if (error) throw error;
+  }
 
   if (window.location.hash || code) {
     window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);

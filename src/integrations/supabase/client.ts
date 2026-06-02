@@ -4,6 +4,7 @@ import type { Database } from "./types";
 
 const PUBLIC_SUPABASE_URL = "https://pwmdzpvnatrvfpgcvnzg.supabase.co";
 const PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP";
+export const AUTH_DEBUG_STORAGE_KEY = "bellza:auth-debug-events";
 
 function createSupabaseClient() {
   const env = import.meta.env;
@@ -30,6 +31,9 @@ function createSupabaseClient() {
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    global: {
+      fetch: isBrowser ? createSupabaseDebugFetch() : undefined,
+    },
     auth: {
       storage: typeof window !== "undefined" ? localStorage : undefined,
       persistSession: true,
@@ -37,6 +41,56 @@ function createSupabaseClient() {
       flowType: isBrowser ? "implicit" : "pkce",
     },
   });
+}
+
+type AuthDebugEvent = {
+  at: string;
+  kind: string;
+  url?: string;
+  status?: number;
+  ok?: boolean;
+  message?: string;
+};
+
+export function recordAuthDebugEvent(event: Omit<AuthDebugEvent, "at">) {
+  if (typeof window === "undefined") return;
+  try {
+    const previous = JSON.parse(localStorage.getItem(AUTH_DEBUG_STORAGE_KEY) ?? "[]") as AuthDebugEvent[];
+    const next = [{ ...event, at: new Date().toISOString() }, ...previous].slice(0, 40);
+    localStorage.setItem(AUTH_DEBUG_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore diagnostics failures
+  }
+}
+
+function createSupabaseDebugFetch(): typeof fetch {
+  return async (input, init) => {
+    const response = await fetch(input, init);
+    const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+
+    try {
+      const url = new URL(rawUrl);
+      if (url.hostname.endsWith("supabase.co")) {
+        const event: Omit<AuthDebugEvent, "at"> = {
+          kind: "supabase_fetch",
+          url: `${url.origin}${url.pathname}`,
+          status: response.status,
+          ok: response.ok,
+        };
+
+        if (!response.ok) {
+          const text = await response.clone().text().catch(() => "");
+          event.message = text.slice(0, 500);
+        }
+
+        recordAuthDebugEvent(event);
+      }
+    } catch {
+      // ignore diagnostics failures
+    }
+
+    return response;
+  };
 }
 
 export const supabasePublicConfig = {

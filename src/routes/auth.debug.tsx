@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { supabase, supabasePublicConfig } from "@/integrations/supabase/client";
+import { AUTH_DEBUG_STORAGE_KEY, supabase, supabasePublicConfig } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/auth/debug")({
   component: AuthDebugPage,
@@ -18,6 +18,7 @@ type DebugState = {
   redirectTo: string;
   oauthUrlStatus: string;
   oauthUrlHost: string | null;
+  events: unknown[];
 };
 
 function AuthDebugPage() {
@@ -81,6 +82,7 @@ function AuthDebugPage() {
         redirectTo,
         oauthUrlStatus,
         oauthUrlHost,
+        events: readEvents(),
       });
     }
 
@@ -97,4 +99,12 @@ function AuthDebugPage() {
       </div>
     </main>
   );
+}
+
+function readEvents() {
+  try {
+    return JSON.parse(localStorage.getItem(AUTH_DEBUG_STORAGE_KEY) ?? "[]") as unknown[];
+  } catch {
+    return [];
+  }
 }
