@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type Stripe from "stripe";
 import { z } from "zod";
 import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
@@ -10,17 +9,7 @@ import {
 } from "@/lib/subscription-plans.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccess, rateLimitOrThrow } from "@/lib/server-security";
-
-let _admin: ReturnType<typeof createClient> | null = null;
-
-function admin(): SupabaseClient {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
-}
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 function stripeEnv(): StripeEnv {
   return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
@@ -49,7 +38,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
-    const sb = admin();
+    const sb = getAdminClient();
     await assertStudioAccess(sb, (context as any).userId, data.studioId);
     const { data: studio, error } = await sb
       .from("studios")
@@ -114,7 +103,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
-    const sb = admin();
+    const sb = getAdminClient();
     const userId = (context as any).userId;
     await assertStudioAccess(sb, userId, data.studioId);
     await rateLimitOrThrow({
@@ -148,7 +137,7 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
-    const sb = admin();
+    const sb = getAdminClient();
     const userId = (context as any).userId;
     await assertStudioAccess(sb, userId, data.studioId);
     await rateLimitOrThrow({

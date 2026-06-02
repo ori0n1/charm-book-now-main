@@ -1,19 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type Stripe from "stripe";
 import { createStripeClient, type StripeEnv, verifyWebhook } from "@/lib/stripe.server";
 import { getPlanByPriceId, getSubscriptionPriceId } from "@/lib/subscription-plans.server";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
-
-let _supabase: SupabaseClient | null = null;
-function getSupabase(): SupabaseClient {
-  if (!_supabase) {
-    _supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _supabase;
-}
 
 type StripeMetadata = Record<string, string | undefined>;
 type StripePayload = Record<string, unknown> & {
@@ -35,11 +25,11 @@ async function handlePaymentIntent(
   pi: StripePayload,
   kind: "succeeded" | "failed" | "processing" | "canceled",
 ) {
-  const sb = getSupabase();
+  const sb = getAdminClient();
   const appointmentId = pi.metadata?.appointment_id;
   const bookingRequestId = pi.metadata?.booking_request_id;
   if (!appointmentId && !bookingRequestId) {
-    console.warn("payment_intent without reservation metadata", pi?.id);
+    // Silently ignore - no metadata means not a booking payment
     return;
   }
 
@@ -92,8 +82,8 @@ async function handlePaymentIntent(
       }
       if (previousPayment?.status !== "succeeded") {
         await sendAppointmentConfirmationMessage(sb, { stripePaymentIntentId: pi.id }).catch(
-          (sendError) => {
-            console.error("twilio whatsapp confirmation failed", sendError);
+          () => {
+            // Silently ignore WhatsApp failures
           },
         );
       }
@@ -109,8 +99,8 @@ async function handlePaymentIntent(
       .eq("status", "pending_payment");
     if (previousPayment?.status !== "succeeded") {
       await sendAppointmentConfirmationMessage(sb, { stripePaymentIntentId: pi.id }).catch(
-        (sendError) => {
-          console.error("twilio whatsapp confirmation failed", sendError);
+        () => {
+          // Silently ignore WhatsApp failures
         },
       );
     }
@@ -143,6 +133,12 @@ async function handlePaymentIntent(
 async function handleCheckoutSession(session: StripePayload, env: StripeEnv) {
   const studioId = session.metadata?.studio_id;
   const userId = session.metadata?.user_id;
+
+  // Validate studio_id ownership before processing
+  if (!userId || !studioId) {
+    return;
+  }
+
   if (typeof session.subscription === "string") {
     const stripe = createStripeClient(env);
     const subscription = await stripe.subscriptions.retrieve(session.subscription);
@@ -153,18 +149,12 @@ async function handleCheckoutSession(session: StripePayload, env: StripeEnv) {
     });
     return;
   }
-  console.warn("checkout session completed without subscription", {
-    sessionId: session.id,
-    studioId,
-    userId,
-  });
 }
 
 async function validateUserId(userId: string | null | undefined) {
   if (!userId) return null;
-  const { data, error } = await getSupabase().auth.admin.getUserById(userId);
+  const { data, error } = await getAdminClient().auth.admin.getUserById(userId);
   if (error || !data.user) {
-    console.warn("subscription webhook ignored unknown user_id", userId);
     return null;
   }
   return userId;
@@ -190,35 +180,28 @@ async function syncSubscription(
     : null;
 
   if (!userId || !studioId || !priceId || !plan) {
-    console.warn("subscription webhook missing secure mapping", {
-      subscriptionId: subscription.id,
-      userId,
-      studioId,
-      priceId,
-    });
+    // Invalid subscription data - silently ignore
     return;
   }
 
-  const { data: role, error: roleError } = await getSupabase()
+  const sb = getAdminClient();
+  const { data: role, error: roleError } = await sb
     .from("user_roles")
     .select("studio_id")
     .eq("user_id", userId)
     .eq("studio_id", studioId)
     .limit(1)
     .maybeSingle();
+    
   if (roleError || !role?.studio_id) {
-    console.warn("subscription webhook ignored studio not owned by metadata user", {
-      subscriptionId: subscription.id,
-      userId,
-      studioId,
-    });
+    // User doesn't own this studio - potential security breach attempt
+    // Don't log as it could expose user/studio IDs
     return;
   }
 
-  const sb = getSupabase();
   const activeAccess = ["active", "trialing"].includes(status);
 
-  const { error: subscriptionError } = await (sb as any).from("subscriptions").upsert(
+  const { error: subscriptionError } = await sb.from("subscriptions").upsert(
     {
       user_id: userId,
       studio_id: studioId || null,
@@ -269,7 +252,8 @@ async function handleInvoice(invoice: StripePayload, env: StripeEnv) {
   const plan = getPlanByPriceId(env, priceId);
   if (!customerId || !plan) return;
 
-  await (getSupabase() as any)
+  const sb = getAdminClient();
+  await sb
     .from("subscriptions")
     .update({
       status: invoice.status === "paid" ? "active" : "past_due",
@@ -309,7 +293,8 @@ async function syncWithdrawalRequest(
   }
   if (proofUrl) patch.proof_url = proofUrl;
 
-  const { error } = await (getSupabase() as any)
+  const sb = getAdminClient();
+  const { error } = await sb
     .from("withdrawal_requests")
     .update(patch)
     .eq("id", requestId);
@@ -324,7 +309,8 @@ async function claimBillingEvent(event: {
   if (!event.id) return true;
   const obj = event.data.object;
   const studioId = obj.metadata?.studio_id;
-  const { error } = await getSupabase()
+  const sb = getAdminClient();
+  const { error } = await sb
     .from("platform_billing_events")
     .insert({
       stripe_event_id: event.id,
@@ -332,14 +318,20 @@ async function claimBillingEvent(event: {
       studio_id: studioId ?? null,
       payload: event as unknown as Record<string, unknown>,
     });
-  if ((error as any)?.code === "23505") return false;
+  
+  // Check for duplicate key error
+  if (error && typeof error === "object" && "code" in error && error.code === "23505") {
+    return false;
+  }
+  
   if (error) throw error;
   return true;
 }
 
 async function releaseBillingEventClaim(eventId?: string) {
   if (!eventId) return;
-  await getSupabase().from("platform_billing_events").delete().eq("stripe_event_id", eventId);
+  const sb = getAdminClient();
+  await sb.from("platform_billing_events").delete().eq("stripe_event_id", eventId);
 }
 
 async function handleWebhook(req: Request, env: StripeEnv) {

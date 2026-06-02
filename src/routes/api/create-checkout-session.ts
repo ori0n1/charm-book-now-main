@@ -1,18 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 import { getSubscriptionPlans, isSubscriptionPlanId } from "@/lib/subscription-plans.server";
-
-let _admin: SupabaseClient | null = null;
-
-function admin() {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
-}
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 function stripeEnv(): StripeEnv {
   return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
@@ -38,7 +27,7 @@ async function getUserFromRequest(request: Request) {
 }
 
 async function loadPrimaryStudio(userId: string) {
-  const db = admin() as any;
+  const db = getAdminClient();
   const { data } = await db
     .from("user_roles")
     .select("studio_id,studios(id,name,email,stripe_customer_id,subscription_status,trial_ends_at)")
@@ -59,7 +48,7 @@ async function loadPrimaryStudio(userId: string) {
 }
 
 async function assertNoDuplicateActiveSubscription(studioId: string) {
-  const db = admin() as any;
+  const db = getAdminClient();
   const { data, error } = await db
     .from("subscriptions")
     .select("id,status")
