@@ -3,6 +3,7 @@ import type Stripe from "stripe";
 import { createStripeClient, type StripeEnv, verifyWebhook } from "@/lib/stripe.server";
 import { getPlanByPriceId, getSubscriptionPriceId } from "@/lib/subscription-plans.server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { markTrialUsed } from "@/lib/subscription-helpers";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
 
 type StripeMetadata = Record<string, string | undefined>;
@@ -217,6 +218,15 @@ async function syncSubscription(
     { onConflict: "stripe_subscription_id" },
   );
   if (subscriptionError) throw subscriptionError;
+
+  // Mark trial as used when subscription enters trialing/active status (prevents reuse exploit)
+  if (["trialing", "active"].includes(status) && studioId) {
+    try {
+      await markTrialUsed(sb, studioId);
+    } catch {
+      // Silently ignore if trial_used_at is already set (second webhook for same subscription)
+    }
+  }
 
   const patch = {
     stripe_customer_id: customerId,
