@@ -34,9 +34,15 @@ function createSupabaseClient() {
       storage: typeof window !== "undefined" ? localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,
+      flowType: isBrowser ? "implicit" : "pkce",
     },
   });
 }
+
+export const supabasePublicConfig = {
+  url: PUBLIC_SUPABASE_URL,
+  publishableKey: PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+};
 
 let _supabase: ReturnType<typeof createSupabaseClient> | undefined;
 

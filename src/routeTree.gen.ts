@@ -25,6 +25,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SSlugRouteImport } from './routes/s.$slug'
 import { Route as MarcacaoTokenRouteImport } from './routes/marcacao.$token'
 import { Route as ConviteEquipaTokenRouteImport } from './routes/convite-equipa.$token'
+import { Route as AuthDebugRouteImport } from './routes/auth.debug'
 import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as ApiCreateCheckoutSessionRouteImport } from './routes/api/create-checkout-session'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
@@ -123,6 +124,11 @@ const MarcacaoTokenRoute = MarcacaoTokenRouteImport.update({
 const ConviteEquipaTokenRoute = ConviteEquipaTokenRouteImport.update({
   id: '/convite-equipa/$token',
   path: '/convite-equipa/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthDebugRoute = AuthDebugRouteImport.update({
+  id: '/auth/debug',
+  path: '/auth/debug',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
@@ -257,6 +263,7 @@ export interface FileRoutesByFullPath {
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/auth/debug': typeof AuthDebugRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -293,6 +300,7 @@ export interface FileRoutesByTo {
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/auth/debug': typeof AuthDebugRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -332,6 +340,7 @@ export interface FileRoutesById {
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
   '/auth/callback': typeof AuthCallbackRoute
+  '/auth/debug': typeof AuthDebugRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -371,6 +380,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/api/create-checkout-session'
     | '/auth/callback'
+    | '/auth/debug'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -407,6 +417,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/api/create-checkout-session'
     | '/auth/callback'
+    | '/auth/debug'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -445,6 +456,7 @@ export interface FileRouteTypes {
     | '/_authenticated/onboarding'
     | '/api/create-checkout-session'
     | '/auth/callback'
+    | '/auth/debug'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -482,6 +494,7 @@ export interface RootRouteChildren {
   TermosRoute: typeof TermosRoute
   ApiCreateCheckoutSessionRoute: typeof ApiCreateCheckoutSessionRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
+  AuthDebugRoute: typeof AuthDebugRoute
   ConviteEquipaTokenRoute: typeof ConviteEquipaTokenRoute
   MarcacaoTokenRoute: typeof MarcacaoTokenRoute
   SSlugRoute: typeof SSlugRoute
@@ -600,6 +613,13 @@ declare module '@tanstack/react-router' {
       path: '/convite-equipa/$token'
       fullPath: '/convite-equipa/$token'
       preLoaderRoute: typeof ConviteEquipaTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/debug': {
+      id: '/auth/debug'
+      path: '/auth/debug'
+      fullPath: '/auth/debug'
+      preLoaderRoute: typeof AuthDebugRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/callback': {
@@ -814,6 +834,7 @@ const rootRouteChildren: RootRouteChildren = {
   TermosRoute: TermosRoute,
   ApiCreateCheckoutSessionRoute: ApiCreateCheckoutSessionRoute,
   AuthCallbackRoute: AuthCallbackRoute,
+  AuthDebugRoute: AuthDebugRoute,
   ConviteEquipaTokenRoute: ConviteEquipaTokenRoute,
   MarcacaoTokenRoute: MarcacaoTokenRoute,
   SSlugRoute: SSlugRoute,
