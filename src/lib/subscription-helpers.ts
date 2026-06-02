@@ -71,6 +71,7 @@ export async function ensureCustomer(
 
 /**
  * Ensure no duplicate active subscription for studio
+ * Also checks for pending checkout sessions to prevent race condition
  * Prevents multiple concurrent billing relationships
  */
 export async function assertNoDuplicateActiveSubscription(sb: SupabaseClient, studioId: string) {
@@ -78,7 +79,7 @@ export async function assertNoDuplicateActiveSubscription(sb: SupabaseClient, st
     .from("subscriptions")
     .select("id,status")
     .eq("studio_id", studioId)
-    .in("status", ["active", "trialing", "incomplete"])
+    .in("status", ["active", "trialing", "incomplete", "checkout_pending"])
     .maybeSingle();
 
   if (!error && data?.id) throw new Error("subscription_already_exists");
@@ -143,6 +144,33 @@ export async function markTrialUsed(sb: SupabaseClient, studioId: string) {
     .eq("id", studioId)
     .is("trial_used_at", null); // Only mark if not already marked
   
+  if (error) throw error;
+}
+
+/**
+ * Create a checkout_pending subscription record to prevent race condition
+ * This reserves the checkout and prevents concurrent checkout sessions
+ * The stripe webhook will update this to "active" or "trialing"
+ */
+export async function reserveCheckoutSession(
+  sb: SupabaseClient,
+  input: {
+    userId: string;
+    studioId: string;
+    planId: string;
+    customerId: string;
+  },
+) {
+  const { error } = await sb.from("subscriptions").insert({
+    user_id: input.userId,
+    studio_id: input.studioId,
+    stripe_customer_id: input.customerId,
+    plan: input.planId,
+    status: "checkout_pending",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+
   if (error) throw error;
 }
 

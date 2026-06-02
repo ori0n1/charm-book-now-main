@@ -7,6 +7,7 @@ import {
   assertNoDuplicateActiveSubscription,
   ensureCustomer,
   trialEndUnix,
+  reserveCheckoutSession,
 } from "@/lib/subscription-helpers";
 
 function stripeEnv(): StripeEnv {
@@ -56,6 +57,16 @@ export const Route = createFileRoute("/api/create-checkout-session")({
             userId: user.id,
             email: user.email ?? null,
             studio,
+          });
+
+          // Reserve checkout session to prevent race condition
+          // This record will be updated by webhook when Stripe confirms
+          const sb = getAdminClient();
+          await reserveCheckoutSession(sb, {
+            userId: user.id,
+            studioId: studio.id,
+            planId: planId,
+            customerId,
           });
 
           const stripe = createStripeClient(stripeEnv());
