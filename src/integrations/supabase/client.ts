@@ -5,6 +5,8 @@ import type { Database } from "./types";
 const PUBLIC_SUPABASE_URL = "https://pwmdzpvnatrvfpgcvnzg.supabase.co";
 const PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP";
 export const AUTH_DEBUG_STORAGE_KEY = "bellza:auth-debug-events";
+let debugFetchInstalled = false;
+let nativeFetch: typeof fetch | null = null;
 
 function createSupabaseClient() {
   const env = import.meta.env;
@@ -30,9 +32,11 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
+  if (isBrowser) installGlobalDebugFetch();
+
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     global: {
-      fetch: isBrowser ? createSupabaseDebugFetch() : undefined,
+      fetch: isBrowser ? ((input, init) => debugFetch(input, init, nativeFetch ?? fetch)) : undefined,
     },
     auth: {
       storage: typeof window !== "undefined" ? localStorage : undefined,
@@ -63,34 +67,41 @@ export function recordAuthDebugEvent(event: Omit<AuthDebugEvent, "at">) {
   }
 }
 
-function createSupabaseDebugFetch(): typeof fetch {
-  return async (input, init) => {
-    const response = await fetch(input, init);
-    const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+function installGlobalDebugFetch() {
+  if (debugFetchInstalled || typeof window === "undefined") return;
+  debugFetchInstalled = true;
+  nativeFetch = window.fetch.bind(window);
+  window.fetch = ((input, init) => debugFetch(input, init, nativeFetch ?? fetch)) as typeof fetch;
+}
 
-    try {
-      const url = new URL(rawUrl);
-      if (url.hostname.endsWith("supabase.co")) {
-        const event: Omit<AuthDebugEvent, "at"> = {
-          kind: "supabase_fetch",
-          url: `${url.origin}${url.pathname}`,
-          status: response.status,
-          ok: response.ok,
-        };
+async function debugFetch(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1], fetcher: typeof fetch = fetch) {
+  const response = await fetcher(input, init);
+  const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 
-        if (!response.ok) {
-          const text = await response.clone().text().catch(() => "");
-          event.message = text.slice(0, 500);
-        }
+  try {
+    const url = new URL(rawUrl, typeof window !== "undefined" ? window.location.origin : undefined);
+    const isSupabase = url.hostname.endsWith("supabase.co");
+    const isSameOrigin = typeof window !== "undefined" && url.origin === window.location.origin;
+    if (isSupabase || (isSameOrigin && !url.pathname.startsWith("/assets/"))) {
+      const event: Omit<AuthDebugEvent, "at"> = {
+        kind: isSupabase ? "supabase_fetch" : "app_fetch",
+        url: `${url.origin}${url.pathname}`,
+        status: response.status,
+        ok: response.ok,
+      };
 
-        recordAuthDebugEvent(event);
+      if (!response.ok) {
+        const text = await response.clone().text().catch(() => "");
+        event.message = text.slice(0, 500);
       }
-    } catch {
-      // ignore diagnostics failures
-    }
 
-    return response;
-  };
+      recordAuthDebugEvent(event);
+    }
+  } catch {
+    // ignore diagnostics failures
+  }
+
+  return response;
 }
 
 export const supabasePublicConfig = {

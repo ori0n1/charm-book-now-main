@@ -5,7 +5,7 @@ import { GoogleAuthButton } from "@/components/google-auth-button";
 import { AuthField, AuthPrimaryButton } from "@/components/public/auth-field";
 import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
-import { supabase } from "@/integrations/supabase/client";
+import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
 import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
 import { resolveTeamLoginIdentifier } from "@/lib/access.functions";
@@ -52,8 +52,10 @@ function LoginPage() {
     setLoading(true);
     setNeedsConfirm(false);
     const loginId = await normalizeLoginIdentifier(email, resolveLoginIdentifier);
+    recordAuthDebugEvent({ kind: "password_login_start", message: loginId.includes("@") ? "email" : "identifier" });
     const { data, error } = await supabase.auth.signInWithPassword({ email: loginId, password });
     if (error) {
+      recordAuthDebugEvent({ kind: "password_login_error", message: error.message });
       setLoading(false);
       const msg = error.message.toLowerCase();
       if (msg.includes("not confirmed") || msg.includes("email not confirmed")) {
@@ -65,6 +67,7 @@ function LoginPage() {
       return;
     }
     if (data.session) {
+      recordAuthDebugEvent({ kind: "password_login_success" });
       const landing = await resolveAuthLanding(data.user.id);
       navigate({ to: landing as never });
     } else {

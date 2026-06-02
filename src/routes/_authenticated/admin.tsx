@@ -185,7 +185,7 @@ function AdminLayout() {
             </button>
             <button
               type="button"
-              onClick={logout}
+              onClick={() => navigate({ to: "/login" })}
               className="h-10 rounded-2xl bg-foreground text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90"
             >
               Entrar
