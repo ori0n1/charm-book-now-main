@@ -34,6 +34,18 @@ export async function getSettledSession(maxAttempts = 8): Promise<Session | null
   return null;
 }
 
+export async function settleSessionFromCurrentUrl(cleanPath?: string): Promise<Session | null> {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get("code");
+  if (code) await supabase.auth.exchangeCodeForSession(code);
+
+  if (window.location.hash || code) {
+    window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
+  }
+
+  return getSettledSession();
+}
+
 export async function resolveAuthLanding(userId: string): Promise<AuthLandingPath> {
   const { data: roles, error: rolesError } = await supabase
     .from("user_roles")

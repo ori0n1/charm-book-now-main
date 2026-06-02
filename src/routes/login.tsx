@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { GoogleAuthButton } from "@/components/google-auth-button";
 import { AuthField, AuthPrimaryButton } from "@/components/public/auth-field";
@@ -7,7 +7,7 @@ import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
 import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
-import { resolveAuthLanding } from "@/lib/auth-landing";
+import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
 import { resolveTeamLoginIdentifier } from "@/lib/access.functions";
 import { toast } from "sonner";
 
@@ -25,6 +25,26 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [resending, setResending] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function redirectIfAlreadySignedIn() {
+      try {
+        const session = await settleSessionFromCurrentUrl("/login");
+        if (cancelled || !session?.user?.id) return;
+        const landing = await resolveAuthLanding(session.user.id);
+        if (!cancelled) navigate({ to: landing as never, replace: true });
+      } catch {
+        // Let the user submit the login form if an existing session cannot be resolved.
+      }
+    }
+
+    void redirectIfAlreadySignedIn();
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

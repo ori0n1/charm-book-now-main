@@ -1,8 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import { getSettledSession, resolveAuthLanding } from "@/lib/auth-landing";
+import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
 
 export const Route = createFileRoute("/auth/callback")({
   component: AuthCallbackPage,
@@ -17,15 +16,7 @@ function AuthCallbackPage() {
 
     async function settleOAuthSession() {
       try {
-        const url = new URL(window.location.href);
-        const code = url.searchParams.get("code");
-        if (code) await supabase.auth.exchangeCodeForSession(code);
-
-        if (window.location.hash || window.location.search) {
-          window.history.replaceState({}, document.title, "/auth/callback");
-        }
-
-        const session = await getSettledSession();
+        const session = await settleSessionFromCurrentUrl("/auth/callback");
         if (!session?.user?.id) {
           navigate({ to: "/login", replace: true });
           return;

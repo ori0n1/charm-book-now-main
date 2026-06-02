@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -21,6 +21,7 @@ import { LandingHeader } from "@/components/landing/landing-header";
 import { ProductPreview } from "@/components/landing/product-preview";
 import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND, LANDING_SEO } from "@/lib/app-brand";
+import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
 import {
   FEATURE_BLOCKS,
   LANDING_FAQS,
@@ -67,6 +68,26 @@ function LandingPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(0);
   const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function redirectAuthenticatedVisitor() {
+      try {
+        const session = await settleSessionFromCurrentUrl("/");
+        if (cancelled || !session?.user?.id) return;
+        const landing = await resolveAuthLanding(session.user.id);
+        if (!cancelled) navigate({ to: landing as never, replace: true });
+      } catch {
+        // Keep the public landing usable if an old or partial OAuth URL cannot be settled.
+      }
+    }
+
+    void redirectAuthenticatedVisitor();
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
 
   async function startPlanCheckout(plan: "monthly" | "quarterly" | "yearly") {
     setCheckoutPlan(plan);
