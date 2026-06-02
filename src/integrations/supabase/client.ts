@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
 
 const PUBLIC_SUPABASE_URL = "https://pwmdzpvnatrvfpgcvnzg.supabase.co";
-const PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQ";
+const PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP";
 
 function createSupabaseClient() {
   const env = import.meta.env;
