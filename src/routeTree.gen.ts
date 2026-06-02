@@ -25,6 +25,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SSlugRouteImport } from './routes/s.$slug'
 import { Route as MarcacaoTokenRouteImport } from './routes/marcacao.$token'
 import { Route as ConviteEquipaTokenRouteImport } from './routes/convite-equipa.$token'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as ApiCreateCheckoutSessionRouteImport } from './routes/api/create-checkout-session'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
@@ -122,6 +123,11 @@ const MarcacaoTokenRoute = MarcacaoTokenRouteImport.update({
 const ConviteEquipaTokenRoute = ConviteEquipaTokenRouteImport.update({
   id: '/convite-equipa/$token',
   path: '/convite-equipa/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCreateCheckoutSessionRoute =
@@ -250,6 +256,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -285,6 +292,7 @@ export interface FileRoutesByTo {
   '/termos': typeof TermosRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -323,6 +331,7 @@ export interface FileRoutesById {
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
+  '/auth/callback': typeof AuthCallbackRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
@@ -361,6 +370,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/onboarding'
     | '/api/create-checkout-session'
+    | '/auth/callback'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -396,6 +406,7 @@ export interface FileRouteTypes {
     | '/termos'
     | '/onboarding'
     | '/api/create-checkout-session'
+    | '/auth/callback'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -433,6 +444,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin'
     | '/_authenticated/onboarding'
     | '/api/create-checkout-session'
+    | '/auth/callback'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
@@ -469,6 +481,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TermosRoute: typeof TermosRoute
   ApiCreateCheckoutSessionRoute: typeof ApiCreateCheckoutSessionRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
   ConviteEquipaTokenRoute: typeof ConviteEquipaTokenRoute
   MarcacaoTokenRoute: typeof MarcacaoTokenRoute
   SSlugRoute: typeof SSlugRoute
@@ -587,6 +600,13 @@ declare module '@tanstack/react-router' {
       path: '/convite-equipa/$token'
       fullPath: '/convite-equipa/$token'
       preLoaderRoute: typeof ConviteEquipaTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/create-checkout-session': {
@@ -793,6 +813,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TermosRoute: TermosRoute,
   ApiCreateCheckoutSessionRoute: ApiCreateCheckoutSessionRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
   ConviteEquipaTokenRoute: ConviteEquipaTokenRoute,
   MarcacaoTokenRoute: MarcacaoTokenRoute,
   SSlugRoute: SSlugRoute,

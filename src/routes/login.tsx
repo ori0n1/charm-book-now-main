@@ -7,6 +7,7 @@ import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
 import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
+import { resolveAuthLanding } from "@/lib/auth-landing";
 import { resolveTeamLoginIdentifier } from "@/lib/access.functions";
 import { toast } from "sonner";
 
@@ -44,25 +45,12 @@ function LoginPage() {
       return;
     }
     if (data.session) {
-      const landing = await resolveAdminLanding(data.user.id);
-      navigate({
-        to: landing === "desk" ? "/admin/balcao" : landing === "limited" ? "/admin/agenda" : "/admin",
-      });
+      const landing = await resolveAuthLanding(data.user.id);
+      navigate({ to: landing as never });
     } else {
       setLoading(false);
       toast.error("Não foi possível iniciar sessão. Tente novamente.");
     }
-  }
-
-  async function resolveAdminLanding(userId: string) {
-    const { data: roles } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId);
-    if (!roles || roles.length === 0) return "admin";
-    if (roles.every((role) => role.role === "desk_staff")) return "desk";
-    if (roles.every((role) => role.role === "staff" || role.role === "desk_staff")) return "limited";
-    return "admin";
   }
 
   async function resendConfirmation() {
@@ -74,7 +62,7 @@ function LoginPage() {
     const { error } = await supabase.auth.resend({
       type: "signup",
       email,
-      options: { emailRedirectTo: `${window.location.origin}/onboarding` },
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
     });
     setResending(false);
     if (error) toast.error(error.message);

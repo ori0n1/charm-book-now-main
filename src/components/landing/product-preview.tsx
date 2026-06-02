@@ -25,7 +25,7 @@ export function ProductPreview() {
   const bookingUrl = exampleBookingUrl();
 
   return (
-    <div id="produto" className="scroll-mt-28">
+    <div id="produto" className="min-w-0 max-w-full scroll-mt-28">
       <div className="relative">
         <div className="absolute -inset-4 rounded-[2rem] bg-[radial-gradient(circle_at_20%_20%,color-mix(in_oklch,var(--accent)_22%,transparent),transparent_34%),radial-gradient(circle_at_80%_10%,color-mix(in_oklch,var(--foreground)_12%,transparent),transparent_30%)] blur-2xl" />
         <div className="relative overflow-hidden rounded-[1.35rem] border border-border/80 bg-card/80 p-2 shadow-[0_24px_80px_oklch(0_0_0/0.12)] backdrop-blur">

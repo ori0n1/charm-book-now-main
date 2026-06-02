@@ -3,6 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
 import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
+import { getSettledSession, resolveAuthLanding } from "@/lib/auth-landing";
 import { SEGMENT_OPTIONS, type BusinessSegment } from "@/lib/segments";
 import { toast } from "sonner";
 
@@ -21,9 +22,22 @@ function OnboardingPage() {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
-      const { data: userData } = await supabase.auth.getUser();
-      const metadata = userData.user?.user_metadata ?? {};
+      const session = await getSettledSession();
+      if (!session?.user?.id) {
+        navigate({ to: "/login", replace: true });
+        return;
+      }
+
+      const destination = await resolveAuthLanding(session.user.id);
+      if (destination !== "/onboarding") {
+        navigate({ to: destination as never, replace: true });
+        return;
+      }
+
+      const metadata = session.user.user_metadata ?? {};
       const profileName =
         typeof metadata.full_name === "string"
           ? metadata.full_name
@@ -35,13 +49,14 @@ function OnboardingPage() {
         setSlug((current) => current || slugify(profileName));
       }
 
-      const { data } = await supabase.from("user_roles").select("studio_id").limit(1);
-      if (data && data.length > 0 && data[0].studio_id) {
-        navigate({ to: "/admin" });
-      } else {
+      if (!cancelled) {
         setChecking(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [navigate]);
 
   async function onSubmit(e: FormEvent) {
