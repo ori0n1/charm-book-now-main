@@ -9,7 +9,7 @@ import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 export async function loadPrimaryStudio(sb: SupabaseClient, userId: string) {
   const { data } = await sb
     .from("user_roles")
-    .select("studio_id,studios(id,name,email,stripe_customer_id,subscription_status,trial_ends_at)")
+    .select("studio_id,studios(id,name,email,stripe_customer_id,subscription_status,trial_ends_at,trial_used_at)")
     .eq("user_id", userId)
     .limit(1)
     .maybeSingle();
@@ -22,6 +22,7 @@ export async function loadPrimaryStudio(sb: SupabaseClient, userId: string) {
         stripe_customer_id: string | null;
         subscription_status: string | null;
         trial_ends_at: string | null;
+        trial_used_at: string | null;
       }
     | null;
 }
@@ -32,7 +33,7 @@ export async function loadPrimaryStudio(sb: SupabaseClient, userId: string) {
 export async function loadStudioForBilling(sb: SupabaseClient, studioId: string) {
   const { data, error } = await sb
     .from("studios")
-    .select("id,name,email,stripe_customer_id,subscription_status,trial_ends_at")
+    .select("id,name,email,stripe_customer_id,subscription_status,trial_ends_at,trial_used_at")
     .eq("id", studioId)
     .maybeSingle();
   if (error || !data) throw new Error("studio_not_found");
@@ -43,6 +44,7 @@ export async function loadStudioForBilling(sb: SupabaseClient, studioId: string)
     stripe_customer_id: string | null;
     subscription_status: string | null;
     trial_ends_at: string | null;
+    trial_used_at: string | null;
   };
 }
 
@@ -109,10 +111,12 @@ export async function loadSubscriptionForStudio(sb: SupabaseClient, studioId: st
  * Get trial end time as Unix timestamp
  * Only valid if status is "trialing" and trial hasn't expired
  */
-export function trialEndUnix(trialEndsAt?: string | null, status?: string | null): number | null {
+export function trialEndUnix(trialEndsAt?: string | null, status?: string | null, trialUsedAt?: string | null): number | null {
   // Only return if currently in trialing status
   if (status && status !== "trialing") return null;
   if (!trialEndsAt) return null;
+  // Prevent reuse - if trial already claimed, don't allow another one
+  if (trialUsedAt) return null;
 
   const timestamp = Math.floor(new Date(trialEndsAt).getTime() / 1000);
   // Only return if trial hasn't expired yet
@@ -126,6 +130,20 @@ export function getDaysRemaining(value?: string | null): number | null {
   if (!value) return null;
   const diff = new Date(value).getTime() - Date.now();
   return Math.max(0, Math.ceil(diff / 86400000));
+}
+
+/**
+ * Mark trial as used when subscription becomes active/trialing
+ * Prevents exploit where user could cancel and restart trial infinitely
+ */
+export async function markTrialUsed(sb: SupabaseClient, studioId: string) {
+  const { error } = await sb
+    .from("studios")
+    .update({ trial_used_at: new Date().toISOString() })
+    .eq("id", studioId)
+    .is("trial_used_at", null); // Only mark if not already marked
+  
+  if (error) throw error;
 }
 
 /**

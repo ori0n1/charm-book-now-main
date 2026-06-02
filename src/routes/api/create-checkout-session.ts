@@ -75,8 +75,8 @@ export const Route = createFileRoute("/api/create-checkout-session")({
                 studio_id: studio.id,
                 plan: plan.id,
               },
-              ...(trialEndUnix(studio.trial_ends_at, studio.subscription_status)
-                ? { trial_end: trialEndUnix(studio.trial_ends_at, studio.subscription_status) }
+              ...(trialEndUnix(studio.trial_ends_at, studio.subscription_status, studio.trial_used_at)
+                ? { trial_end: trialEndUnix(studio.trial_ends_at, studio.subscription_status, studio.trial_used_at) }
                 : {}),
             },
             success_url: `${appBaseUrl()}/admin/pagamentos?billing=success`,
