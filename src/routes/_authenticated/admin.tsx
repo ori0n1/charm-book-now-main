@@ -115,7 +115,7 @@ function AdminLayout() {
         status: string;
       },
   });
-  const premiumLocked = Boolean(billingQuery.data && !billingQuery.data.premiumActive);
+  const premiumLocked = Boolean(billingQuery.data && billingQuery.data.status !== "trialing" && !billingQuery.data.premiumActive);
   const isPremiumPage = pathname.startsWith("/admin/premium");
 
   useEffect(() => {
@@ -517,3 +517,8 @@ function AdminLayout() {
 function capitalize(value: string) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
+
+
+
+
+

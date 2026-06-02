@@ -716,7 +716,7 @@ function TrialPremiumBanner({
   checkoutPlan: PlanId | null;
   onChoosePremiumPlan: () => void;
 }) {
-  if (!billing || billing.status !== "trialing" || !billing.premiumActive) return null;
+  if (!billing || billing.status !== "trialing") return null;
   const remaining = getRemainingDays(billing);
   const urgent = remaining !== null && remaining <= 3;
   const progress = remaining === null ? 35 : Math.min(100, Math.max(6, ((14 - remaining) / 14) * 100));
@@ -1841,3 +1841,6 @@ function MoneyValue({ value, className = "" }: { value: string; className?: stri
     </p>
   );
 }
+
+
+

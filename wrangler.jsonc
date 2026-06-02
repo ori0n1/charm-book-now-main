@@ -1,7 +1,32 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tanstack-start-app",
-  "compatibility_date": "2025-09-24",
-  "compatibility_flags": ["nodejs_compat"],
-  "main": "src/server.ts",
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "tanstack-start-app",
+	"compatibility_date": "2025-09-24",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"main": "src/server.ts",
+	"routes": [
+		{
+			"pattern": "www.bellza.pt",
+			"zone_name": "bellza.pt",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false
+		},
+		{
+			"pattern": "bellza.pt",
+			"zone_name": "bellza.pt",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false
+		}
+	],
+	"vars": {
+		"STRIPE_ENV": "sandbox",
+		"VITE_STRIPE_PUBLISHABLE_KEY": "pk_test_51Rla7YKbvF5Ti1rY426CkmKNcrTiYIzya0LNZK2dSLb5x3aufyrQTrR4Fn7J2CylqTCf6GgiX7SoTf58AzSe4x2r00ngKcZgZE",
+		"VITE_SUPABASE_PROJECT_ID": "pwmdzpvnatrvfpgcvnzg",
+		"VITE_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQ",
+		"VITE_SUPABASE_URL": "https://pwmdzpvnatrvfpgcvnzg.supabase.co\n"
+	},
 }
