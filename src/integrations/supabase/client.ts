@@ -8,16 +8,16 @@ const PUBLIC_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_F76-CiLv1Rvar307TdLRjg_8
 function createSupabaseClient() {
   const env = import.meta.env;
   const processEnv = typeof process !== "undefined" && process.env ? process.env : {};
-  const SUPABASE_URL =
-    env.VITE_SUPABASE_URL ||
-    processEnv.SUPABASE_URL ||
-    processEnv.VITE_SUPABASE_URL ||
-    PUBLIC_SUPABASE_URL;
-  const SUPABASE_PUBLISHABLE_KEY =
-    env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    processEnv.SUPABASE_PUBLISHABLE_KEY ||
-    processEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  const isBrowser = typeof window !== "undefined";
+  const SUPABASE_URL = isBrowser
+    ? PUBLIC_SUPABASE_URL
+    : env.VITE_SUPABASE_URL || processEnv.SUPABASE_URL || processEnv.VITE_SUPABASE_URL || PUBLIC_SUPABASE_URL;
+  const SUPABASE_PUBLISHABLE_KEY = isBrowser
+    ? PUBLIC_SUPABASE_PUBLISHABLE_KEY
+    : processEnv.SUPABASE_PUBLISHABLE_KEY ||
+      env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      processEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [
