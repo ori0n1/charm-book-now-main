@@ -77,7 +77,7 @@ function WithdrawalsPage() {
   async function requestWithdraw() {
     if (!studio) return;
     if (available <= 0) {
-      toast.message("Ainda não existem sinais online disponÃ­veis para levantamento.");
+      toast.message("Ainda não existem sinais online disponíveis para levantamento.");
       return;
     }
     if (!data?.settings) {
@@ -96,7 +96,7 @@ function WithdrawalsPage() {
       await queryClient.invalidateQueries({ queryKey: ["withdrawals-page-summary", studio.id] });
       toast.success("Pedido de levantamento criado.");
     } catch {
-      toast.error("NÃ£o foi possÃ­vel criar o pedido de levantamento.");
+      toast.error("Não foi possível criar o pedido de levantamento.");
     } finally {
       setSubmitting(false);
     }
@@ -138,14 +138,14 @@ function WithdrawalsPage() {
               <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
                 <HandCoins className="h-4 w-4" />
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em]">
-                  Saldo disponÃ­vel
+                  Saldo disponível
                 </p>
               </div>
               <p className="mt-3 font-mono text-4xl font-semibold tracking-tight text-emerald-700 dark:text-emerald-400">
                 {formatEUR(available)}
               </p>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-                Valor disponÃ­vel a partir dos sinais pagos online pelas clientes. O restante dos
+                Valor disponível a partir dos sinais pagos online pelas clientes. O restante dos
                 serviços continua a ser recebido presencialmente no estúdio.
               </p>
             </div>
@@ -251,7 +251,7 @@ function WithdrawalsPage() {
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {formatDate(request.requestedAt)} Â· {formatPayoutMethod(request.payoutMethod)}
+                          {formatDate(request.requestedAt)} · {formatPayoutMethod(request.payoutMethod)}
                         </p>
                       </div>
                       {request.status === "completed" && request.proofUrl && (
@@ -320,7 +320,7 @@ function WithdrawalTimeline({ request }: { request: WithdrawalSummary["requests"
   const steps = [
     { key: "in_review", label: "Em análise", date: request.reviewedAt ?? request.requestedAt },
     { key: "processing", label: "Processando", date: request.processedAt },
-    { key: "completed", label: "ConcluÃ­do", date: request.paidAt },
+    { key: "completed", label: "Concluído", date: request.paidAt },
   ] as const;
   const index = stepIndex(request.status);
   const failed = request.status === "failed" || request.status === "canceled";
@@ -381,11 +381,11 @@ function WithdrawalSetupModal({
   async function submit() {
     const cleanNif = nif.replace(/\D/g, "");
     if (!fiscalName.trim() || !/^\d{9}$/.test(cleanNif)) {
-      toast.error("Preencha o nome fiscal e um NIF vÃ¡lido.");
+      toast.error("Preencha o nome fiscal e um NIF válido.");
       return;
     }
     if (payoutMethod === "iban" && !iban.trim()) {
-      toast.error("Indique o IBAN para transferÃªncia.");
+      toast.error("Indique o IBAN para transferência.");
       return;
     }
     if (payoutMethod === "mb_way" && !mbWayPhone.trim()) {
@@ -396,7 +396,7 @@ function WithdrawalSetupModal({
     try {
       await onSave({ fiscalName: fiscalName.trim(), nif: cleanNif, payoutMethod, iban, mbWayPhone });
     } catch {
-      toast.error("NÃ£o foi possÃ­vel guardar os dados financeiros.");
+      toast.error("Não foi possível guardar os dados financeiros.");
     } finally {
       setSaving(false);
     }
@@ -433,7 +433,7 @@ function WithdrawalSetupModal({
           <div className="grid gap-2 sm:grid-cols-2">
             <ChoiceButton
               active={payoutMethod === "iban"}
-              label="TransferÃªncia bancÃ¡ria"
+              label="Transferência bancária"
               onClick={() => setPayoutMethod("iban")}
             />
             <ChoiceButton
@@ -512,7 +512,7 @@ function formatWithdrawalStatus(status: WithdrawalSummary["requests"][number]["s
   const map = {
     in_review: "Em análise",
     processing: "Processando",
-    completed: "ConcluÃ­do",
+    completed: "Concluído",
     failed: "Falhou",
     canceled: "Cancelado",
   };
@@ -526,7 +526,7 @@ function statusClass(status: WithdrawalSummary["requests"][number]["status"]) {
 }
 
 function formatPayoutMethod(method?: "iban" | "mb_way" | null) {
-  return method === "mb_way" ? "MB WAY" : "TransferÃªncia bancÃ¡ria";
+  return method === "mb_way" ? "MB WAY" : "Transferência bancária";
 }
 
 function formatCents(value: number, currency = "eur") {
@@ -537,7 +537,7 @@ function formatCents(value: number, currency = "eur") {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "Data não disponÃ­vel";
+  if (!value) return "Data não disponível";
   return new Date(value).toLocaleDateString("pt-PT", {
     day: "2-digit",
     month: "short",

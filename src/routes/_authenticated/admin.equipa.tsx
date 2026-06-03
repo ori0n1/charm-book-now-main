@@ -646,7 +646,7 @@ function TeamPage() {
       toast.success("Novo link criado.");
       await loadTeamAccess();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Nao foi possivel criar um novo link.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível criar um novo link.");
     } finally {
       setAccessBusy(false);
     }

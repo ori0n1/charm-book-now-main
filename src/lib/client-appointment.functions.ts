@@ -72,7 +72,7 @@ export const requestClientRefund = createServerFn({ method: "POST" })
       })
       .select("id")
       .maybeSingle();
-    if (error) throw new Error("Nao foi possivel enviar o pedido de reembolso.");
+    if (error) throw new Error("Não foi possível enviar o pedido de reembolso.");
     return { ok: true, refundId: refund?.id ?? null };
   });
 

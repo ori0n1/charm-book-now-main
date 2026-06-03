@@ -255,7 +255,7 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
       }
     }
 
-    if (!userId) throw new Error("Nao foi possivel ativar a conta.");
+    if (!userId) throw new Error("Não foi possível ativar a conta.");
     await sb
       .from("staff")
       .update({ user_id: userId, invite_status: "password_created", updated_at: new Date().toISOString() })

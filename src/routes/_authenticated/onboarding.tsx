@@ -8,7 +8,7 @@ import { SEGMENT_OPTIONS, type BusinessSegment } from "@/lib/segments";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/onboarding")({
-  head: () => ({ meta: [{ title: `Configurar negocio - ${APP_BRAND.name}` }] }),
+  head: () => ({ meta: [{ title: `Configurar negócio - ${APP_BRAND.name}` }] }),
   component: OnboardingPage,
 });
 
@@ -69,10 +69,10 @@ function OnboardingPage() {
     });
     setLoading(false);
     if (error) {
-      toast.error(error.message.includes("duplicate") ? "Esse link ja existe." : error.message);
+      toast.error(error.message.includes("duplicate") ? "Esse link já existe." : error.message);
       return;
     }
-    toast.success("Negocio criado!");
+    toast.success("Negócio criado!");
     navigate({ to: "/admin" });
   }
 
@@ -90,10 +90,10 @@ function OnboardingPage() {
         <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
           Passo 1 de 1
         </p>
-        <h1 className="mt-4 text-3xl font-light tracking-tight">O seu negocio</h1>
+        <h1 className="mt-4 text-3xl font-light tracking-tight">O seu negócio</h1>
         <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
-          Escolha o segmento, defina o nome e crie o link publico. O painel usa a mesma estrutura
-          para todos os negocios.
+          Escolha o segmento, defina o nome e crie o link público. O painel usa a mesma estrutura
+          para todos os negócios.
         </p>
 
         <form onSubmit={onSubmit} className="mt-8 space-y-5">
@@ -140,13 +140,13 @@ function OnboardingPage() {
                 if (!slug) setSlug(slugify(e.target.value));
               }}
               className="mt-1 w-full rounded-md border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
-              placeholder="Nome do negocio"
+              placeholder="Nome do negócio"
             />
           </div>
 
           <div>
             <label className="text-xs uppercase tracking-wide text-muted-foreground">
-              Link publico
+              Link público
             </label>
             <div className="mt-1 flex items-center rounded-md border border-border bg-background px-4 py-3 text-sm">
               <span className="text-muted-foreground">/</span>
@@ -167,7 +167,7 @@ function OnboardingPage() {
             disabled={loading}
             className="w-full rounded-md bg-foreground py-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
           >
-            {loading ? "A criar..." : "Criar negocio"}
+            {loading ? "A criar..." : "Criar negócio"}
           </button>
         </form>
       </div>

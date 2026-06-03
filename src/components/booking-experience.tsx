@@ -1165,7 +1165,7 @@ function ProfessionalsPublicTab({
               <div className="min-w-0 flex-1">
                 <h3 className="truncate text-base font-extrabold">{professional.name}</h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  {professional.role || `${capitalizeLabel(labels.professional)} do negocio`}
+                  {professional.role || `${capitalizeLabel(labels.professional)} do negócio`}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
                   <span className="inline-flex items-center gap-1 rounded-full bg-accent/12 px-2.5 py-1 font-bold text-accent">
