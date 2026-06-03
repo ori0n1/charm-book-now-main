@@ -99,7 +99,7 @@ export async function assertNoDuplicateActiveSubscription(sb: SupabaseClient, st
 export async function loadSubscriptionForStudio(sb: SupabaseClient, studioId: string, userId: string) {
   const { data } = await sb
     .from("subscriptions")
-    .select("plan,status,current_period_end,cancel_at_period_end")
+    .select("plan,status,current_period_end,cancel_at_period_end,stripe_customer_id,stripe_subscription_id")
     .eq("user_id", userId)
     .eq("studio_id", studioId)
     .order("updated_at", { ascending: false })
@@ -112,6 +112,8 @@ export async function loadSubscriptionForStudio(sb: SupabaseClient, studioId: st
         status: string;
         current_period_end: string | null;
         cancel_at_period_end: boolean;
+        stripe_customer_id: string | null;
+        stripe_subscription_id: string | null;
       }
     | null;
 }

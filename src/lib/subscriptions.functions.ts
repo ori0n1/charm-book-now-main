@@ -311,6 +311,18 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
         message: error instanceof Error ? error.message : String(error),
       });
     });
+    const existingSubscription = await loadSubscriptionForStudio(sb, studio.id, userId);
+    if (
+      existingSubscription?.stripe_subscription_id &&
+      !existingSubscription.stripe_subscription_id.startsWith("checkout_pending:") &&
+      ["active", "trialing"].includes(existingSubscription.status)
+    ) {
+      const portal = await stripe.billingPortal.sessions.create({
+        customer: existingSubscription.stripe_customer_id ?? customerId,
+        return_url: `${appBaseUrl()}/admin/pagamentos`,
+      });
+      return { url: portal.url };
+    }
     await assertNoDuplicateActiveSubscription(sb, studio.id);
     try {
       const price = await stripe.prices.retrieve(plan.priceId);

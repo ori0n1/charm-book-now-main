@@ -80,7 +80,12 @@ function PremiumAccessPage() {
     typeof summary?.daysRemaining === "number"
       ? summary.daysRemaining
       : getDaysRemaining(summary?.trialEndsAt ?? summary?.nextBillingAt);
-  const hasPaidSubscription = summary?.status === "active" || summary?.cancelAtPeriodEnd;
+  const hasStripeSubscription = Boolean(
+    summary &&
+      (summary.status === "active" ||
+        summary.cancelAtPeriodEnd ||
+        ["monthly", "quarterly", "yearly"].includes(summary.plan ?? "")),
+  );
 
   async function activate(plan: PlanId) {
     if (!studio) return;
@@ -190,7 +195,7 @@ function PremiumAccessPage() {
               </p>
             </div>
 
-            {hasPaidSubscription && (
+            {hasStripeSubscription && (
               <button
                 type="button"
                 onClick={() => void manageSubscription()}
@@ -228,15 +233,23 @@ function PremiumAccessPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => void activate(plan.id)}
-                    disabled={checkoutPlan !== null}
+                    onClick={() =>
+                      hasStripeSubscription ? void manageSubscription() : void activate(plan.id)
+                    }
+                    disabled={checkoutPlan !== null || portalLoading}
                     className={`mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 ${
                       plan.highlighted
                         ? "bg-emerald-600 text-white shadow-lg shadow-emerald-950/15 hover:bg-emerald-700"
                         : "bg-foreground text-background hover:opacity-90"
                     }`}
                   >
-                    {checkoutPlan === plan.id ? "A abrir checkout..." : "Escolher plano"}
+                    {hasStripeSubscription
+                      ? portalLoading
+                        ? "A abrir gestão..."
+                        : "Gerir assinatura"
+                      : checkoutPlan === plan.id
+                        ? "A abrir checkout..."
+                        : "Escolher plano"}
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 </article>

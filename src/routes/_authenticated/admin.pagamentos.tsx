@@ -1087,7 +1087,11 @@ function BillingSection({
   onRefresh: () => void;
 }) {
   const active = billing?.premiumActive ?? true;
-  const hasSubscription = Boolean(billing && billing.status !== "trialing");
+  const hasSubscription = Boolean(
+    billing &&
+      (billing.status !== "trialing" ||
+        ["monthly", "quarterly", "yearly"].includes(billing.plan ?? "")),
+  );
   return (
     <div className="space-y-5">
       <div className="grid gap-4 xl:grid-cols-[1fr_22rem] xl:items-start">
