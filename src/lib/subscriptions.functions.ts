@@ -20,8 +20,28 @@ import {
   getDaysRemaining,
   loadRecentInvoices,
   reserveCheckoutSession,
+  releaseCheckoutSession,
 } from "@/lib/subscription-helpers";
 
+function priceRef(priceId: string) {
+  return priceId.length > 8 ? `...${priceId.slice(-8)}` : priceId;
+}
+
+function logCheckoutError(error: unknown, details: Record<string, unknown>) {
+  const stripeError = error as {
+    code?: string;
+    type?: string;
+    param?: string;
+    message?: string;
+  };
+  console.error("stripe_checkout_failed", {
+    ...details,
+    code: stripeError.code ?? "unknown",
+    type: stripeError.type ?? "unknown",
+    param: stripeError.param ?? null,
+    message: stripeError.message ?? String(error),
+  });
+}
 
 function stripeEnv(): StripeEnv {
   return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
@@ -124,10 +144,26 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       windowMs: 10 * 60 * 1000,
     });
     const studio = await loadStudioForBilling(sb, data.studioId);
-    const plan = getSubscriptionPlans(stripeEnv())[data.plan ?? defaultPlanId()];
-    const stripe = createStripeClient(stripeEnv());
+    const env = stripeEnv();
+    const plan = getSubscriptionPlans(env)[data.plan ?? defaultPlanId()];
+    const stripe = createStripeClient(env);
     const customerId = await ensureCustomer(sb, stripe, studio);
     await assertNoDuplicateActiveSubscription(sb, studio.id);
+    try {
+      const price = await stripe.prices.retrieve(plan.priceId);
+      if (price.livemode !== (env === "live")) {
+        throw new Error("stripe_price_environment_mismatch");
+      }
+    } catch (error) {
+      logCheckoutError(error, {
+        stage: "price_lookup",
+        stripeEnv: env,
+        studioId: studio.id,
+        plan: plan.id,
+        price: priceRef(plan.priceId),
+      });
+      throw error;
+    }
     await reserveCheckoutSession(sb, {
       userId,
       studioId: studio.id,
@@ -140,18 +176,31 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       studio.subscription_status,
       studio.trial_used_at,
     );
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer: customerId,
-      line_items: [{ price: plan.priceId, quantity: 1 }],
-      success_url: `${appBaseUrl()}/admin/pagamentos?billing=success`,
-      cancel_url: `${appBaseUrl()}/admin/pagamentos?billing=cancelled`,
-      metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
-      subscription_data: {
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        customer: customerId,
+        line_items: [{ price: plan.priceId, quantity: 1 }],
+        success_url: `${appBaseUrl()}/admin/pagamentos?billing=success`,
+        cancel_url: `${appBaseUrl()}/admin/pagamentos?billing=cancelled`,
         metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
-        ...(trialEnd ? { trial_end: trialEnd } : {}),
-      },
-    });
+        subscription_data: {
+          metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
+          ...(trialEnd ? { trial_end: trialEnd } : {}),
+        },
+      });
+    } catch (error) {
+      await releaseCheckoutSession(sb, { userId, studioId: studio.id });
+      logCheckoutError(error, {
+        stage: "session_create",
+        stripeEnv: env,
+        studioId: studio.id,
+        plan: plan.id,
+        price: priceRef(plan.priceId),
+      });
+      throw error;
+    }
     return { url: session.url };
   });
 

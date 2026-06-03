@@ -57,7 +57,15 @@ export async function ensureCustomer(
   stripe: Stripe,
   studio: { id: string; name: string | null; email: string | null; stripe_customer_id: string | null },
 ) {
-  if (studio.stripe_customer_id) return studio.stripe_customer_id;
+  if (studio.stripe_customer_id) {
+    try {
+      const existing = await stripe.customers.retrieve(studio.stripe_customer_id);
+      if (!existing.deleted) return existing.id as string;
+    } catch {
+      // A sandbox customer ID can be stored before switching Stripe to live.
+      // In that case create a fresh live customer and replace the stale ID.
+    }
+  }
 
   const customer = await stripe.customers.create({
     name: studio.name ?? undefined,
@@ -162,6 +170,13 @@ export async function reserveCheckoutSession(
     customerId: string;
   },
 ) {
+  await sb
+    .from("subscriptions")
+    .delete()
+    .eq("studio_id", input.studioId)
+    .eq("user_id", input.userId)
+    .eq("status", "checkout_pending");
+
   const { error } = await sb.from("subscriptions").insert({
     user_id: input.userId,
     studio_id: input.studioId,
@@ -175,6 +190,24 @@ export async function reserveCheckoutSession(
   });
 
   if (error) throw error;
+}
+
+/**
+ * Remove a checkout reservation when Stripe session creation fails.
+ */
+export async function releaseCheckoutSession(
+  sb: SupabaseClient,
+  input: {
+    userId: string;
+    studioId: string;
+  },
+) {
+  await sb
+    .from("subscriptions")
+    .delete()
+    .eq("studio_id", input.studioId)
+    .eq("user_id", input.userId)
+    .eq("status", "checkout_pending");
 }
 
 /**
