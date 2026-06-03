@@ -30,6 +30,7 @@ import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { APP_BRAND } from "@/lib/app-brand";
 import { getSegmentConfig } from "@/lib/segments";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
+import { getSettledSession } from "@/lib/auth-landing";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: APP_BRAND.name }] }),
@@ -102,11 +103,12 @@ function AdminLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [sidebarStateReady, setSidebarStateReady] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
   const accessMode =
     studio?.role === "desk_staff" ? "desk" : studio?.role === "staff" ? "limited" : "full";
   const billingQuery = useQuery({
     queryKey: ["platform-subscription-summary", studio?.id],
-    enabled: !!studio,
+    enabled: sessionReady && !!studio,
     staleTime: 30 * 1000,
     retry: 1,
     queryFn: async () =>
@@ -117,6 +119,16 @@ function AdminLayout() {
   });
   const premiumLocked = Boolean(billingQuery.data && billingQuery.data.status !== "trialing" && !billingQuery.data.premiumActive);
   const isPremiumPage = pathname.startsWith("/admin/premium");
+
+  useEffect(() => {
+    let cancelled = false;
+    void getSettledSession().then((session) => {
+      if (!cancelled) setSessionReady(Boolean(session?.access_token));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!loading && studios.length === 0) {
