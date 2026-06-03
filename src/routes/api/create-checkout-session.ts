@@ -90,8 +90,8 @@ export const Route = createFileRoute("/api/create-checkout-session")({
               },
               ...(trialEnd ? { trial_end: trialEnd } : {}),
             },
-            success_url: `${appBaseUrl()}/admin/pagamentos?billing=success`,
-            cancel_url: `${appBaseUrl()}/?billing=cancelled`,
+            success_url: `${appBaseUrl()}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${appBaseUrl()}/admin/pagamentos?billing=cancelled`,
           });
 
           return Response.json({ url: session.url });

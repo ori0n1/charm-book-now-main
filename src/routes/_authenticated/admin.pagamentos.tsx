@@ -201,7 +201,7 @@ function PaymentsPage() {
         await refreshBilling(studio.id);
       } finally {
         setBillingLoading(false);
-        navigate({ to: "/admin/pagamentos", replace: true });
+        navigate({ to: "/admin", replace: true });
       }
     })();
   }, [checkoutReturnSynced, navigate, studio?.id, syncCheckoutReturn]);
@@ -391,6 +391,19 @@ function PaymentsPage() {
     .filter((member) => member.total > 0);
   return (
     <div className="space-y-4">
+      {checkoutReturnSynced && billingLoading && (
+        <section className="rounded-3xl border border-emerald-700/25 bg-emerald-950/5 p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <RefreshCw className="mt-0.5 h-4 w-4 animate-spin text-emerald-700 dark:text-emerald-400" />
+            <div>
+              <p className="text-sm font-semibold">A confirmar assinatura</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Estamos a validar o pagamento na Stripe e a ativar o plano premium no painel.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
       <header className="overflow-hidden rounded-3xl border border-emerald-700/20 bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_42%,rgba(16,185,129,0.06))] p-4 shadow-sm md:p-5">
         <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
           <div>

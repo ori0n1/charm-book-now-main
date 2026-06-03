@@ -722,9 +722,10 @@ function TrialPremiumBanner({
   onChoosePremiumPlan: () => void;
 }) {
   if (!billing || billing.status !== "trialing") return null;
+  const hasStripeSubscription = ["monthly", "quarterly", "yearly"].includes(billing.plan ?? "");
+  if (hasStripeSubscription) return null;
   const remaining = getRemainingDays(billing);
   const urgent = remaining !== null && remaining <= 3;
-  const hasStripeSubscription = ["monthly", "quarterly", "yearly"].includes(billing.plan ?? "");
   const planLabel = formatPlan(billing.plan);
   const dateLabel = formatDate(billing.nextBillingAt ?? billing.trialEndsAt);
   const progress = remaining === null ? 35 : Math.min(100, Math.max(6, ((14 - remaining) / 14) * 100));

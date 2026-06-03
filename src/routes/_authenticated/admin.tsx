@@ -95,6 +95,17 @@ const NAV = [
   },
 ] as const;
 
+type BillingSummary = {
+  available?: boolean;
+  plan: string;
+  status: string;
+  nextBillingAt: string | null;
+  trialEndsAt?: string | null;
+  daysRemaining?: number | null;
+  cancelAtPeriodEnd?: boolean;
+  premiumActive: boolean;
+};
+
 function AdminLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -112,10 +123,7 @@ function AdminLayout() {
     staleTime: 30 * 1000,
     retry: 1,
     queryFn: async () =>
-      (await loadBilling({ data: { studioId: studio!.id } })) as {
-        premiumActive: boolean;
-        status: string;
-      },
+      (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
   const premiumLocked = Boolean(billingQuery.data && billingQuery.data.status !== "trialing" && !billingQuery.data.premiumActive);
   const isPremiumPage = pathname.startsWith("/admin/premium");
@@ -404,6 +412,9 @@ function AdminLayout() {
         }`}
       >
         <div className="admin-content mx-auto max-w-6xl px-4 pb-28 pt-4 md:px-8 md:pb-10 md:pt-8">
+          {accessMode === "full" && billingQuery.data && (
+            <PremiumPlanStatusCard billing={billingQuery.data} />
+          )}
           <Outlet />
         </div>
       </main>
@@ -528,6 +539,118 @@ function AdminLayout() {
 
 function capitalize(value: string) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function PremiumPlanStatusCard({ billing }: { billing: BillingSummary }) {
+  const hasStripePlan = isStripePlan(billing.plan);
+  const active = billing.premiumActive;
+  const date = billing.nextBillingAt ?? billing.trialEndsAt ?? null;
+  const remaining = getBillingDaysRemaining(billing);
+  const dateTitle =
+    billing.status === "trialing" && hasStripePlan
+      ? "Primeira cobrança"
+      : active
+        ? "Próxima renovação"
+        : "Regularização";
+  const title = hasStripePlan
+    ? `${formatBillingPlan(billing.plan)} ativo`
+    : active
+      ? "Teste gratuito ativo"
+      : "Plano pendente";
+  const subtitle = hasStripePlan
+    ? billing.status === "trialing"
+      ? "O plano premium já está configurado e a primeira cobrança fica agendada para o fim do período experimental."
+      : "A assinatura está sincronizada com a Stripe e o acesso premium está liberado."
+    : "Escolha um plano quando quiser manter o acesso premium depois do teste.";
+
+  return (
+    <section className="mb-5 overflow-hidden rounded-[1.35rem] border border-emerald-700/20 bg-[linear-gradient(135deg,rgba(16,185,129,0.13),rgba(255,255,255,0.03)_45%,rgba(14,165,233,0.08))] p-4 shadow-sm shadow-black/5 md:mb-7 md:rounded-[1.55rem] md:p-5">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white shadow-sm">
+              <BadgeCheck className="h-3.5 w-3.5" />
+              {active ? "Premium ativo" : "Ação necessária"}
+            </span>
+            <span className="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              {getBillingStatusLabel(billing.status, hasStripePlan)}
+            </span>
+          </div>
+          <h2 className="mt-3 text-xl font-light tracking-tight md:text-2xl">{title}</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            {subtitle}
+          </p>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[30rem]">
+          <BillingMiniStat label="Plano atual" value={formatBillingPlan(billing.plan)} />
+          <BillingMiniStat label={dateTitle} value={formatBillingDate(date)} />
+          <BillingMiniStat
+            label={hasStripePlan ? "Teste restante" : "Dias restantes"}
+            value={remaining === null ? "Não disponível" : `${remaining} dias`}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BillingMiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-border/70 bg-background/72 px-3.5 py-3 shadow-sm">
+      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-sm font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function isStripePlan(plan?: string | null) {
+  return plan === "monthly" || plan === "quarterly" || plan === "yearly";
+}
+
+function formatBillingPlan(plan?: string | null) {
+  const labels: Record<string, string> = {
+    trial: "Teste gratuito",
+    monthly: "Premium Mensal",
+    quarterly: "Premium Trimestral",
+    yearly: "Premium Anual",
+    pro: "Premium",
+  };
+  return labels[plan ?? ""] ?? "Não definido";
+}
+
+function getBillingStatusLabel(status?: string | null, hasStripePlan = false) {
+  if (status === "trialing" && hasStripePlan) return "Período experimental";
+  const labels: Record<string, string> = {
+    trialing: "Teste gratuito",
+    active: "Ativa",
+    past_due: "Pagamento pendente",
+    canceled: "Cancelada",
+    unpaid: "Por regularizar",
+    incomplete: "A confirmar",
+    incomplete_expired: "Expirada",
+    paused: "Pausada",
+  };
+  return labels[status ?? ""] ?? "Não disponível";
+}
+
+function formatBillingDate(value?: string | null) {
+  if (!value) return "Não disponível";
+  return new Date(value).toLocaleDateString("pt-PT", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getBillingDaysRemaining(billing: BillingSummary) {
+  if (typeof billing.daysRemaining === "number") return billing.daysRemaining;
+  const target =
+    billing.status === "trialing" ? billing.trialEndsAt ?? billing.nextBillingAt : billing.nextBillingAt;
+  if (!target) return null;
+  return Math.max(0, Math.ceil((new Date(target).getTime() - Date.now()) / 86400000));
 }
 
 
