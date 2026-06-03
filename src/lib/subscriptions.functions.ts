@@ -75,9 +75,17 @@ const CheckoutReturnInput = z.object({
 });
 
 function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
-  const value = (subscription as Stripe.Subscription & { current_period_end?: number | null })
-    .current_period_end;
-  return typeof value === "number" ? value : null;
+  const extended = subscription as Stripe.Subscription & {
+    current_period_end?: number | null;
+    trial_end?: number | null;
+    items?: { data?: Array<{ current_period_end?: number | null }> };
+  };
+  const direct = extended.current_period_end;
+  if (typeof direct === "number") return direct;
+  const trialEnd = extended.trial_end;
+  if (typeof trialEnd === "number") return trialEnd;
+  const itemPeriodEnd = extended.items?.data?.[0]?.current_period_end;
+  return typeof itemPeriodEnd === "number" ? itemPeriodEnd : null;
 }
 
 async function syncCheckoutSubscription(
@@ -152,6 +160,35 @@ async function syncCheckoutSubscription(
   if (studioError) throw studioError;
 
   return { status, plan: plan.id, currentPeriodEnd };
+}
+
+async function repairSubscriptionPeriodIfMissing(
+  sb: ReturnType<typeof getAdminClient>,
+  input: {
+    userId: string;
+    studioId: string;
+    subscription: NonNullable<Awaited<ReturnType<typeof loadSubscriptionForStudio>>>;
+    env: StripeEnv;
+  },
+) {
+  if (
+    input.subscription.current_period_end ||
+    !input.subscription.stripe_subscription_id ||
+    input.subscription.stripe_subscription_id.startsWith("checkout_pending:")
+  ) {
+    return input.subscription;
+  }
+
+  const stripe = createStripeClient(input.env);
+  const stripeSubscription = await stripe.subscriptions.retrieve(
+    input.subscription.stripe_subscription_id,
+  );
+  await syncCheckoutSubscription(sb, stripeSubscription, input.env, {
+    userId: input.userId,
+    studioId: input.studioId,
+    customerId: input.subscription.stripe_customer_id,
+  });
+  return loadSubscriptionForStudio(sb, input.studioId, input.userId);
 }
 
 async function recoverPendingCheckout(
@@ -237,12 +274,28 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         subscription = await loadSubscriptionForStudio(sb, studio.id as string, userId);
       }
     }
+    if (subscription) {
+      subscription =
+        (await repairSubscriptionPeriodIfMissing(sb, {
+          userId,
+          studioId: studio.id as string,
+          subscription,
+          env: stripeEnv(),
+        }).catch((error) => {
+          console.error("stripe_subscription_period_repair_failed", {
+            studioId: studio.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
+          return subscription;
+        })) ?? subscription;
+    }
     const rawStatus = (subscription?.status ?? studio.subscription_status ?? "trialing") as string;
     const premiumUntil =
       subscription?.current_period_end ??
       studio.premium_access_until ??
       studio.subscription_current_period_end;
     const trialEndsAt = studio.trial_ends_at ?? null;
+    const hasStripePlan = ["monthly", "quarterly", "yearly"].includes(subscription?.plan ?? "");
     const studioTrialActive =
       studio.subscription_status === "trialing" &&
       trialEndsAt &&
@@ -260,19 +313,22 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
     const trialActive = Boolean(studioTrialActive || subscriptionTrialActive);
     const premiumActive = paidActive || trialActive;
     const status = paidActive ? "active" : trialActive ? "trialing" : rawStatus;
+    const nextBillingAt =
+      subscription?.current_period_end ??
+      studio.subscription_current_period_end ??
+      studio.trial_ends_at ??
+      null;
     const daysRemaining = getDaysRemaining(
-      status === "trialing" ? trialEndsAt : subscription?.current_period_end ?? studio.subscription_current_period_end,
+      status === "trialing" && !hasStripePlan
+        ? trialEndsAt
+        : nextBillingAt,
     );
 
     return {
       available: true,
       plan: subscription?.plan ?? studio.plan ?? "trial",
       status,
-      nextBillingAt:
-        subscription?.current_period_end ??
-        studio.subscription_current_period_end ??
-        studio.trial_ends_at ??
-        null,
+      nextBillingAt,
       trialEndsAt,
       daysRemaining,
       cancelAtPeriodEnd: Boolean(

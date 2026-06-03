@@ -24,11 +24,18 @@ type StripePayload = Record<string, unknown> & {
 
 type SubscriptionWithPeriodEnd = Stripe.Subscription & {
   current_period_end?: number | null;
+  trial_end?: number | null;
+  items?: { data?: Array<{ current_period_end?: number | null }> };
 };
 
 function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
-  const direct = (subscription as SubscriptionWithPeriodEnd).current_period_end;
-  return typeof direct === "number" ? direct : null;
+  const extended = subscription as SubscriptionWithPeriodEnd;
+  const direct = extended.current_period_end;
+  if (typeof direct === "number") return direct;
+  const trialEnd = extended.trial_end;
+  if (typeof trialEnd === "number") return trialEnd;
+  const itemPeriodEnd = extended.items?.data?.[0]?.current_period_end;
+  return typeof itemPeriodEnd === "number" ? itemPeriodEnd : null;
 }
 
 async function handlePaymentIntent(

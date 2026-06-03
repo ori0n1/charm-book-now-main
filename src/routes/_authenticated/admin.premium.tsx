@@ -74,18 +74,18 @@ function PremiumAccessPage() {
       (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
   const summary = billing.data;
-  const trialActive = summary?.premiumActive && summary.status === "trialing";
-  const ended = summary && !summary.premiumActive;
-  const daysRemaining =
-    typeof summary?.daysRemaining === "number"
-      ? summary.daysRemaining
-      : getDaysRemaining(summary?.trialEndsAt ?? summary?.nextBillingAt);
   const hasStripeSubscription = Boolean(
     summary &&
       (summary.status === "active" ||
         summary.cancelAtPeriodEnd ||
         ["monthly", "quarterly", "yearly"].includes(summary.plan ?? "")),
   );
+  const trialActive = summary?.premiumActive && summary.status === "trialing";
+  const ended = summary && !summary.premiumActive;
+  const daysRemaining =
+    typeof summary?.daysRemaining === "number"
+      ? summary.daysRemaining
+      : getDaysRemaining(summary?.trialEndsAt ?? summary?.nextBillingAt);
 
   async function activate(plan: PlanId) {
     if (!studio) return;
@@ -125,7 +125,7 @@ function PremiumAccessPage() {
         <SubscriptionMetric label="Plano atual" value={formatPlan(summary?.plan)} />
         <SubscriptionMetric label="Estado" value={formatStatus(summary?.status)} />
         <SubscriptionMetric
-          label={trialActive ? "Fim do teste" : "Renovação"}
+          label={hasStripeSubscription ? "Primeira cobrança" : trialActive ? "Fim do teste" : "Renovação"}
           value={formatDate(summary?.nextBillingAt)}
         />
         <SubscriptionMetric
@@ -146,13 +146,17 @@ function PremiumAccessPage() {
               <h1 className="mt-5 max-w-xl text-3xl font-light tracking-tight md:text-4xl">
                 {ended
                   ? "O seu teste gratuito terminou."
-                  : trialActive
+                  : hasStripeSubscription && trialActive
+                    ? `${formatPlan(summary?.plan)} ativo em período experimental.`
+                    : trialActive
                     ? "Teste gratuito ativo."
                     : "Assinatura Premium do Bellza."}
               </h1>
               <p className="mt-4 max-w-xl text-sm leading-relaxed text-background/72 md:text-base">
                 {ended
                   ? "Escolha um plano premium para continuar a usar o Bellza."
+                  : hasStripeSubscription && trialActive
+                    ? `O cartão foi validado e a primeira cobrança está agendada para ${formatDate(summary?.nextBillingAt)}.`
                   : trialActive
                     ? `Ainda tem ${daysRemaining ?? "--"} dias de teste. Pode escolher um plano antecipadamente sem cancelar o período gratuito.`
                     : "Consulte o estado da assinatura, renove, altere o plano ou faça a gestão de cancelamento quando necessário."}
