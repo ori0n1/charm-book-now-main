@@ -12,6 +12,10 @@ export function useAuthRedirectError() {
       hashParams.get("error");
 
     if (!message) return;
+    if (message === "auth_callback") {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
 
     toast.error(decodeURIComponent(message).replace(/\+/g, " "));
 

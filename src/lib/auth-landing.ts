@@ -56,6 +56,15 @@ export async function settleSessionFromCurrentUrl(cleanPath?: string): Promise<S
   });
 
   if (code) {
+    const codeKey = `bellza:pkce-code:${code}`;
+    const alreadyHandled = sessionStorage.getItem(codeKey) === "1";
+    window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
+
+    if (alreadyHandled) {
+      return getSettledSession();
+    }
+
+    sessionStorage.setItem(codeKey, "1");
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     recordAuthDebugEvent({
       kind: "exchange_code_for_session",
@@ -63,10 +72,20 @@ export async function settleSessionFromCurrentUrl(cleanPath?: string): Promise<S
       ok: !error,
       message: error?.message,
     });
-    if (error) throw error;
+    if (error) {
+      const existingSession = await getSettledSession(2);
+      const message = error.message.toLowerCase();
+      const isDuplicatePkceExchange =
+        message.includes("code verifier") ||
+        message.includes("invalid flow state") ||
+        message.includes("auth code");
+
+      if (existingSession && isDuplicatePkceExchange) return existingSession;
+      throw error;
+    }
   }
 
-  if (window.location.hash || code) {
+  if (window.location.hash) {
     window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
   }
 
