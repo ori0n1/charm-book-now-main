@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -15,6 +15,7 @@ import {
   createPlatformBillingPortalSession,
   createPlatformCheckoutSession,
   getPlatformSubscriptionSummary,
+  syncPlatformCheckoutReturn,
 } from "@/lib/subscriptions.functions";
 import { computeAttendanceRevenue, computeFinancialSplit, formatEUR } from "@/lib/utils";
 import {
@@ -145,6 +146,8 @@ function PaymentsPage() {
   const loadBilling = useServerFn(getPlatformSubscriptionSummary);
   const startCheckout = useServerFn(createPlatformCheckoutSession);
   const openPortal = useServerFn(createPlatformBillingPortalSession);
+  const syncCheckoutReturn = useServerFn(syncPlatformCheckoutReturn);
+  const navigate = useNavigate();
   const [studio, setStudio] = useState<StudioRow | null>(null);
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
@@ -154,6 +157,7 @@ function PaymentsPage() {
   const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [saving, setSaving] = useState(false);
   const [billingLoading, setBillingLoading] = useState(false);
+  const [checkoutReturnSynced, setCheckoutReturnSynced] = useState(false);
   const [manualFilters, setManualFilters] = useState({
     staffId: "all",
     paymentMethod: "all",
@@ -176,6 +180,31 @@ function PaymentsPage() {
       setStaffOptions(result.staffOptions);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!studio?.id || checkoutReturnSynced) return;
+    const params = new URLSearchParams(window.location.search);
+    const billingResult = params.get("billing");
+    const sessionId = params.get("session_id");
+    if (billingResult !== "success" || !sessionId) return;
+
+    setCheckoutReturnSynced(true);
+    setBillingLoading(true);
+    (async () => {
+      try {
+        await syncCheckoutReturn({ data: { studioId: studio.id, sessionId } });
+        await refreshBilling(studio.id);
+        toast.success("Assinatura sincronizada com sucesso.");
+      } catch (error) {
+        console.error("checkout_return_sync_failed", error);
+        toast.info("Pagamento recebido. A assinatura pode demorar alguns instantes a sincronizar.");
+        await refreshBilling(studio.id);
+      } finally {
+        setBillingLoading(false);
+        navigate({ to: "/admin/pagamentos", replace: true });
+      }
+    })();
+  }, [checkoutReturnSynced, navigate, studio?.id, syncCheckoutReturn]);
 
   async function refreshBilling(studioId: string) {
     setBillingLoading(true);

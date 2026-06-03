@@ -4,6 +4,8 @@ import { z } from "zod";
 import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 import {
   getSubscriptionPlans,
+  getPlanByPriceId,
+  getSubscriptionPriceId,
   isSubscriptionPlanId,
   type SubscriptionPlanId,
 } from "@/lib/subscription-plans.server";
@@ -21,6 +23,7 @@ import {
   loadRecentInvoices,
   reserveCheckoutSession,
   releaseCheckoutSession,
+  markTrialUsed,
 } from "@/lib/subscription-helpers";
 
 function priceRef(priceId: string) {
@@ -66,6 +69,125 @@ const StudioInput = z.object({
   plan: z.enum(["monthly", "quarterly", "yearly"]).optional(),
 });
 
+const CheckoutReturnInput = z.object({
+  studioId: z.string().uuid(),
+  sessionId: z.string().min(8),
+});
+
+function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
+  const value = (subscription as Stripe.Subscription & { current_period_end?: number | null })
+    .current_period_end;
+  return typeof value === "number" ? value : null;
+}
+
+async function syncCheckoutSubscription(
+  sb: ReturnType<typeof getAdminClient>,
+  subscription: Stripe.Subscription,
+  env: StripeEnv,
+  fallback: { userId: string; studioId: string; customerId: string | null },
+) {
+  const metadata = subscription.metadata ?? {};
+  const userId = metadata.user_id || fallback.userId;
+  const studioId = metadata.studio_id || fallback.studioId;
+  const customerId =
+    typeof subscription.customer === "string" ? subscription.customer : fallback.customerId;
+  const priceId = getSubscriptionPriceId(subscription);
+  const plan = getPlanByPriceId(env, priceId);
+  const status = subscription.status ?? "incomplete";
+  const periodEnd = getCurrentPeriodEnd(subscription);
+  const currentPeriodEnd = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+
+  if (!userId || !studioId || !customerId || !priceId || !plan) {
+    throw new Error("stripe_subscription_sync_incomplete");
+  }
+
+  const activeAccess = ["active", "trialing"].includes(status);
+  const subscriptionPatch = {
+    user_id: userId,
+    studio_id: studioId,
+    stripe_customer_id: customerId,
+    stripe_subscription_id: subscription.id,
+    stripe_price_id: priceId,
+    plan: plan.id,
+    status,
+    current_period_end: currentPeriodEnd,
+    cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: pendingSubscription, error: pendingError } = await sb
+    .from("subscriptions")
+    .select("id")
+    .eq("studio_id", studioId)
+    .eq("status", "checkout_pending")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (pendingError) throw pendingError;
+
+  const { error: subscriptionError } = pendingSubscription?.id
+    ? await sb.from("subscriptions").update(subscriptionPatch).eq("id", pendingSubscription.id)
+    : await sb.from("subscriptions").upsert(subscriptionPatch, {
+        onConflict: "stripe_subscription_id",
+      });
+  if (subscriptionError) throw subscriptionError;
+
+  if (["trialing", "active"].includes(status)) {
+    await markTrialUsed(sb, studioId).catch(() => undefined);
+  }
+
+  const { error: studioError } = await sb
+    .from("studios")
+    .update({
+      stripe_customer_id: customerId,
+      stripe_subscription_id: subscription.id,
+      subscription_status: status,
+      subscription_current_period_end: currentPeriodEnd,
+      subscription_cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+      premium_access_until: activeAccess ? currentPeriodEnd : null,
+      plan: activeAccess ? "pro" : "trial",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", studioId);
+  if (studioError) throw studioError;
+
+  return { status, plan: plan.id, currentPeriodEnd };
+}
+
+async function recoverPendingCheckout(
+  sb: ReturnType<typeof getAdminClient>,
+  input: {
+    userId: string;
+    studioId: string;
+    customerId: string | null;
+    env: StripeEnv;
+  },
+) {
+  if (!input.customerId) return false;
+  const stripe = createStripeClient(input.env);
+  const sessions = await stripe.checkout.sessions.list({
+    customer: input.customerId,
+    limit: 10,
+  });
+  const session = sessions.data.find(
+    (item) =>
+      item.mode === "subscription" &&
+      item.status === "complete" &&
+      item.metadata?.studio_id === input.studioId &&
+      item.metadata?.user_id === input.userId &&
+      typeof item.subscription === "string",
+  );
+  if (!session || typeof session.subscription !== "string") return false;
+
+  const subscription = await stripe.subscriptions.retrieve(session.subscription);
+  await syncCheckoutSubscription(sb, subscription, input.env, {
+    userId: input.userId,
+    studioId: input.studioId,
+    customerId: typeof session.customer === "string" ? session.customer : input.customerId,
+  });
+  return true;
+}
+
 export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
@@ -96,18 +218,48 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
 
     if (!studio) throw new Error("studio_not_found");
 
-    const subscription = await loadSubscriptionForStudio(sb, studio.id as string, (context as any).userId);
-    const status = (subscription?.status ?? studio.subscription_status ?? "trialing") as string;
+    const userId = (context as any).userId as string;
+    let subscription = await loadSubscriptionForStudio(sb, studio.id as string, userId);
+    if (subscription?.status === "checkout_pending") {
+      const recovered = await recoverPendingCheckout(sb, {
+        userId,
+        studioId: studio.id as string,
+        customerId: studio.stripe_customer_id as string | null,
+        env: stripeEnv(),
+      }).catch((error) => {
+        console.error("stripe_checkout_recovery_failed", {
+          studioId: studio.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      });
+      if (recovered) {
+        subscription = await loadSubscriptionForStudio(sb, studio.id as string, userId);
+      }
+    }
+    const rawStatus = (subscription?.status ?? studio.subscription_status ?? "trialing") as string;
     const premiumUntil =
       subscription?.current_period_end ??
       studio.premium_access_until ??
       studio.subscription_current_period_end;
     const trialEndsAt = studio.trial_ends_at ?? null;
-    const trialActive =
-      status === "trialing" && trialEndsAt
-        ? new Date(trialEndsAt as string).getTime() > Date.now()
-        : status === "trialing" && Boolean(subscription);
-    const premiumActive = status === "active" || trialActive;
+    const studioTrialActive =
+      studio.subscription_status === "trialing" &&
+      trialEndsAt &&
+      new Date(trialEndsAt as string).getTime() > Date.now();
+    const subscriptionTrialActive =
+      rawStatus === "trialing" &&
+      (!subscription?.current_period_end ||
+        new Date(subscription.current_period_end as string).getTime() > Date.now());
+    const paidActive =
+      rawStatus === "active" ||
+      studio.subscription_status === "active" ||
+      (studio.premium_access_until
+        ? new Date(studio.premium_access_until as string).getTime() > Date.now()
+        : false);
+    const trialActive = Boolean(studioTrialActive || subscriptionTrialActive);
+    const premiumActive = paidActive || trialActive;
+    const status = paidActive ? "active" : trialActive ? "trialing" : rawStatus;
     const daysRemaining = getDaysRemaining(
       status === "trialing" ? trialEndsAt : subscription?.current_period_end ?? studio.subscription_current_period_end,
     );
@@ -182,7 +334,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
         mode: "subscription",
         customer: customerId,
         line_items: [{ price: plan.priceId, quantity: 1 }],
-        success_url: `${appBaseUrl()}/admin/pagamentos?billing=success`,
+        success_url: `${appBaseUrl()}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${appBaseUrl()}/admin/pagamentos?billing=cancelled`,
         metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
         subscription_data: {
@@ -202,6 +354,42 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       throw error;
     }
     return { url: session.url };
+  });
+
+export const syncPlatformCheckoutReturn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => CheckoutReturnInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = getAdminClient();
+    const userId = (context as any).userId as string;
+    await assertStudioAccess(sb, userId, data.studioId);
+    await rateLimitOrThrow({
+      key: `billing-checkout-sync:${userId}:${data.studioId}`,
+      limit: 12,
+      windowMs: 10 * 60 * 1000,
+    });
+
+    const env = stripeEnv();
+    const stripe = createStripeClient(env);
+    const session = await stripe.checkout.sessions.retrieve(data.sessionId);
+
+    if (session.mode !== "subscription") throw new Error("checkout_session_not_subscription");
+    if (session.metadata?.studio_id !== data.studioId || session.metadata?.user_id !== userId) {
+      throw new Error("checkout_session_owner_mismatch");
+    }
+    if (session.payment_status !== "paid" && session.status !== "complete") {
+      throw new Error("checkout_session_not_complete");
+    }
+    if (typeof session.subscription !== "string") {
+      throw new Error("checkout_session_missing_subscription");
+    }
+
+    const subscription = await stripe.subscriptions.retrieve(session.subscription);
+    return syncCheckoutSubscription(sb, subscription, env, {
+      userId,
+      studioId: data.studioId,
+      customerId: typeof session.customer === "string" ? session.customer : null,
+    });
   });
 
 export const createPlatformBillingPortalSession = createServerFn({ method: "POST" })
