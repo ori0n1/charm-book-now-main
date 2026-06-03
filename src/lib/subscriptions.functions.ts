@@ -300,6 +300,17 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
     const plan = getSubscriptionPlans(env)[data.plan ?? defaultPlanId()];
     const stripe = createStripeClient(env);
     const customerId = await ensureCustomer(sb, stripe, studio);
+    await recoverPendingCheckout(sb, {
+      userId,
+      studioId: studio.id,
+      customerId,
+      env,
+    }).catch((error) => {
+      console.error("stripe_checkout_recovery_before_create_failed", {
+        studioId: studio.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
     await assertNoDuplicateActiveSubscription(sb, studio.id);
     try {
       const price = await stripe.prices.retrieve(plan.priceId);

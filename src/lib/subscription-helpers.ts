@@ -79,7 +79,7 @@ export async function ensureCustomer(
 
 /**
  * Ensure no duplicate active subscription for studio
- * Also checks for pending checkout sessions to prevent race condition
+ * Pending checkout rows are handled by reserveCheckoutSession/recovery.
  * Prevents multiple concurrent billing relationships
  */
 export async function assertNoDuplicateActiveSubscription(sb: SupabaseClient, studioId: string) {
@@ -87,7 +87,7 @@ export async function assertNoDuplicateActiveSubscription(sb: SupabaseClient, st
     .from("subscriptions")
     .select("id,status")
     .eq("studio_id", studioId)
-    .in("status", ["active", "trialing", "incomplete", "checkout_pending"])
+    .in("status", ["active", "trialing", "incomplete"])
     .maybeSingle();
 
   if (!error && data?.id) throw new Error("subscription_already_exists");
