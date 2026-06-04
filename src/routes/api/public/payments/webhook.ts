@@ -38,6 +38,13 @@ function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
   return typeof itemPeriodEnd === "number" ? itemPeriodEnd : null;
 }
 
+function hasPeriodAccess(status: string, currentPeriodEnd: string | null) {
+  if (status === "active" || status === "trialing") return true;
+  if (!currentPeriodEnd) return false;
+  const hasFutureAccess = new Date(currentPeriodEnd).getTime() > Date.now();
+  return hasFutureAccess && (status === "canceled" || status === "past_due" || status === "unpaid");
+}
+
 async function handlePaymentIntent(
   pi: StripePayload,
   kind: "succeeded" | "failed" | "processing" | "canceled",
@@ -217,7 +224,7 @@ async function syncSubscription(
     return;
   }
 
-  const activeAccess = ["active", "trialing"].includes(status);
+  const activeAccess = hasPeriodAccess(status, currentPeriodEnd);
 
   const subscriptionPatch = {
     user_id: userId,

@@ -88,7 +88,9 @@ function PremiumAccessPage() {
       ? summary.daysRemaining
       : getDaysRemaining(summary?.trialEndsAt ?? summary?.nextBillingAt);
   const nextBillingLabel =
-    hasStripeSubscription && summary?.status === "trialing"
+    summary?.cancelAtPeriodEnd
+      ? "Ativo até"
+      : hasStripeSubscription && summary?.status === "trialing"
       ? "Primeira cobrança"
       : trialActive
         ? "Fim do teste"
@@ -153,8 +155,12 @@ function PremiumAccessPage() {
               <h1 className="mt-5 max-w-xl text-3xl font-light tracking-tight md:text-4xl">
                 {ended
                   ? "O seu teste gratuito terminou."
-                  : hasStripeSubscription && trialActive
+                  : summary?.cancelAtPeriodEnd && hasStripeSubscription
+                    ? `${formatPlan(summary?.plan)} ativo até ${formatDate(nextBillingDate)}.`
+                    : hasStripeSubscription && trialActive
                     ? `${formatPlan(summary?.plan)} ativo em período experimental.`
+                    : hasStripeSubscription
+                      ? `${formatPlan(summary?.plan)} ativo.`
                     : trialActive
                       ? "Teste gratuito ativo."
                       : "Assinatura Premium do Bellza."}
@@ -162,8 +168,12 @@ function PremiumAccessPage() {
               <p className="mt-4 max-w-xl text-sm leading-relaxed text-background/72 md:text-base">
                 {ended
                   ? "Escolha um plano premium para continuar a usar o Bellza."
-                  : hasStripeSubscription && trialActive
+                  : summary?.cancelAtPeriodEnd && hasStripeSubscription
+                    ? `O cancelamento está agendado, mas o plano permanece ativo até ${formatDate(nextBillingDate)}.`
+                    : hasStripeSubscription && trialActive
                     ? `O cartão foi validado e a primeira cobrança está agendada para ${formatDate(nextBillingDate)}.`
+                    : hasStripeSubscription
+                      ? `A assinatura está sincronizada com a Stripe. A próxima renovação está prevista para ${formatDate(nextBillingDate)}.`
                     : trialActive
                       ? `Ainda tem ${daysRemaining ?? "--"} dias de teste. Pode escolher um plano antecipadamente sem cancelar o período gratuito.`
                       : "Consulte o estado da assinatura, renove, altere o plano ou faça a gestão de cancelamento quando necessário."}
@@ -206,66 +216,68 @@ function PremiumAccessPage() {
               </p>
             </div>
 
-            {hasStripeSubscription && (
-              <button
-                type="button"
-                onClick={() => void manageSubscription()}
-                disabled={portalLoading}
-                className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-foreground text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:opacity-60"
-              >
-                {portalLoading ? "A abrir gestão..." : "Gerir assinatura"}
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            )}
-
-            <div className="mt-4 grid gap-3">
-              {PLANS.map((plan) => (
-                <article
-                  key={plan.id}
-                  className={`rounded-2xl border p-4 transition ${
-                    plan.highlighted
-                      ? "border-emerald-700/40 bg-emerald-950/5 shadow-lg shadow-emerald-950/5"
-                      : "border-border bg-card"
-                  }`}
+            {hasStripeSubscription ? (
+              <div className="mt-4 rounded-2xl border border-border bg-card p-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <SubscriptionInline label="Plano atual" value={formatPlan(summary?.plan)} />
+                  <SubscriptionInline label={nextBillingLabel} value={formatDate(nextBillingDate)} />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void manageSubscription()}
+                  disabled={portalLoading}
+                  className="mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-foreground text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:opacity-60"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="text-base font-semibold">{plan.name}</h2>
-                        {plan.badge && (
-                          <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-background">
-                            {plan.badge}
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{plan.detail}</p>
-                    </div>
-                    <p className="shrink-0 text-right text-sm font-semibold">{plan.price}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      hasStripeSubscription ? void manageSubscription() : void activate(plan.id)
-                    }
-                    disabled={checkoutPlan !== null || portalLoading}
-                    className={`mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 ${
+                  {portalLoading ? "A abrir gestão..." : "Gerir assinatura"}
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : null}
+
+            {!hasStripeSubscription && (
+              <div className="mt-4 grid gap-3">
+                {PLANS.map((plan) => (
+                  <article
+                    key={plan.id}
+                    className={`rounded-2xl border p-4 transition ${
                       plan.highlighted
-                        ? "bg-emerald-600 text-white shadow-lg shadow-emerald-950/15 hover:bg-emerald-700"
-                        : "bg-foreground text-background hover:opacity-90"
+                        ? "border-emerald-700/40 bg-emerald-950/5 shadow-lg shadow-emerald-950/5"
+                        : "border-border bg-card"
                     }`}
                   >
-                    {hasStripeSubscription
-                      ? portalLoading
-                        ? "A abrir gestão..."
-                        : "Gerir assinatura"
-                      : checkoutPlan === plan.id
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="text-base font-semibold">{plan.name}</h2>
+                          {plan.badge && (
+                            <span className="rounded-full bg-foreground px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-background">
+                              {plan.badge}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{plan.detail}</p>
+                      </div>
+                      <p className="shrink-0 text-right text-sm font-semibold">{plan.price}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void activate(plan.id)}
+                      disabled={checkoutPlan !== null}
+                      className={`mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 ${
+                        plan.highlighted
+                          ? "bg-emerald-600 text-white shadow-lg shadow-emerald-950/15 hover:bg-emerald-700"
+                          : "bg-foreground text-background hover:opacity-90"
+                      }`}
+                    >
+                      {checkoutPlan === plan.id
                         ? "A abrir checkout..."
                         : "Escolher plano"}
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
-                </article>
-              ))}
-            </div>
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            )}
 
             <a
               href="mailto:info@bellza.pt"
@@ -289,6 +301,17 @@ function SubscriptionMetric({ label, value }: { label: string; value: string }) 
       </p>
       <p className="mt-2 truncate text-sm font-semibold">{value}</p>
     </article>
+  );
+}
+
+function SubscriptionInline({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl bg-muted/35 px-3.5 py-3">
+      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-sm font-semibold">{value}</p>
+    </div>
   );
 }
 
