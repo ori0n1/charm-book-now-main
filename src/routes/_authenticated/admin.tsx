@@ -412,7 +412,7 @@ function AdminLayout() {
         }`}
       >
         <div className="admin-content mx-auto max-w-6xl px-4 pb-28 pt-4 md:px-8 md:pb-10 md:pt-8">
-          {accessMode === "full" && billingQuery.data && (
+          {accessMode === "full" && billingQuery.data && !isPremiumPage && (
             <PremiumPlanStatusCard billing={billingQuery.data} />
           )}
           <Outlet />
@@ -544,7 +544,7 @@ function capitalize(value: string) {
 function PremiumPlanStatusCard({ billing }: { billing: BillingSummary }) {
   const hasStripePlan = isStripePlan(billing.plan);
   const active = billing.premiumActive;
-  const date = billing.nextBillingAt ?? billing.trialEndsAt ?? null;
+  const date = futureBillingDate(billing.nextBillingAt) ?? futureBillingDate(billing.trialEndsAt);
   const remaining = getBillingDaysRemaining(billing);
   const dateTitle =
     billing.status === "trialing" && hasStripePlan
@@ -572,9 +572,11 @@ function PremiumPlanStatusCard({ billing }: { billing: BillingSummary }) {
               <BadgeCheck className="h-3.5 w-3.5" />
               {active ? "Premium ativo" : "Ação necessária"}
             </span>
-            <span className="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              {getBillingStatusLabel(billing.status, hasStripePlan)}
-            </span>
+            {!active && (
+              <span className="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                {getBillingStatusLabel(billing.status, hasStripePlan, active)}
+              </span>
+            )}
           </div>
           <h2 className="mt-3 text-xl font-light tracking-tight md:text-2xl">{title}</h2>
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
@@ -585,10 +587,12 @@ function PremiumPlanStatusCard({ billing }: { billing: BillingSummary }) {
         <div className="grid gap-2 sm:grid-cols-3 lg:min-w-[30rem]">
           <BillingMiniStat label="Plano atual" value={formatBillingPlan(billing.plan)} />
           <BillingMiniStat label={dateTitle} value={formatBillingDate(date)} />
-          <BillingMiniStat
-            label={hasStripePlan ? "Teste restante" : "Dias restantes"}
-            value={remaining === null ? "Não disponível" : `${remaining} dias`}
-          />
+          {!hasStripePlan && (
+            <BillingMiniStat
+              label="Dias restantes"
+              value={remaining === null ? "A sincronizar" : `${remaining} dias`}
+            />
+          )}
         </div>
       </div>
     </section>
@@ -621,7 +625,8 @@ function formatBillingPlan(plan?: string | null) {
   return labels[plan ?? ""] ?? "Não definido";
 }
 
-function getBillingStatusLabel(status?: string | null, hasStripePlan = false) {
+function getBillingStatusLabel(status?: string | null, hasStripePlan = false, active = false) {
+  if (active && hasStripePlan) return "Ativa";
   if (status === "trialing" && hasStripePlan) return "Período experimental";
   const labels: Record<string, string> = {
     trialing: "Teste gratuito",
@@ -633,11 +638,11 @@ function getBillingStatusLabel(status?: string | null, hasStripePlan = false) {
     incomplete_expired: "Expirada",
     paused: "Pausada",
   };
-  return labels[status ?? ""] ?? "Não disponível";
+  return labels[status ?? ""] ?? "A sincronizar";
 }
 
 function formatBillingDate(value?: string | null) {
-  if (!value) return "Não disponível";
+  if (!value) return "A sincronizar";
   return new Date(value).toLocaleDateString("pt-PT", {
     day: "2-digit",
     month: "short",
@@ -651,6 +656,11 @@ function getBillingDaysRemaining(billing: BillingSummary) {
     billing.status === "trialing" ? billing.trialEndsAt ?? billing.nextBillingAt : billing.nextBillingAt;
   if (!target) return null;
   return Math.max(0, Math.ceil((new Date(target).getTime() - Date.now()) / 86400000));
+}
+
+function futureBillingDate(value?: string | null) {
+  if (!value) return null;
+  return new Date(value).getTime() > Date.now() ? value : null;
 }
 
 

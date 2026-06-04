@@ -81,6 +81,11 @@ const StudioInput = z.object({
   plan: z.enum(["monthly", "quarterly", "yearly"]).optional(),
 });
 
+const PlanChangeInput = z.object({
+  studioId: z.string().uuid(),
+  plan: z.enum(["monthly", "quarterly", "yearly"]),
+});
+
 const CheckoutReturnInput = z.object({
   studioId: z.string().uuid(),
   sessionId: z.string().min(8),
@@ -105,6 +110,11 @@ function hasPeriodAccess(status: string, currentPeriodEnd: string | null) {
   if (!currentPeriodEnd) return false;
   const hasFutureAccess = new Date(currentPeriodEnd).getTime() > Date.now();
   return hasFutureAccess && (status === "canceled" || status === "past_due" || status === "unpaid");
+}
+
+function futureDateOrNull(value: string | null | undefined) {
+  if (!value) return null;
+  return new Date(value).getTime() > Date.now() ? value : null;
 }
 
 function shouldRefreshFromStripe(input: {
@@ -485,11 +495,15 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
           : trialActive
             ? "trialing"
             : rawStatus;
-    const nextBillingAt =
+    const rawNextBillingAt =
       subscription?.current_period_end ??
       studio.subscription_current_period_end ??
       studio.trial_ends_at ??
       null;
+    const nextBillingAt =
+      status === "trialing" && !hasStripePlan
+        ? rawNextBillingAt
+        : futureDateOrNull(rawNextBillingAt);
     const daysRemaining = getDaysRemaining(
       status === "trialing" && !hasStripePlan
         ? trialEndsAt
@@ -696,4 +710,80 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
       return_url: `${appBaseUrl()}/admin/pagamentos`,
     });
     return { url: session.url };
+  });
+
+export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => PlanChangeInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = getAdminClient();
+    const userId = (context as any).userId as string;
+    await assertStudioAccess(sb, userId, data.studioId);
+    await rateLimitOrThrow({
+      key: `billing-plan-change:${userId}:${data.studioId}`,
+      limit: 6,
+      windowMs: 10 * 60 * 1000,
+    });
+
+    const studio = await loadStudioForBilling(sb, data.studioId);
+    const env = stripeEnv();
+    const stripe = createStripeClient(env);
+    const customerId = await ensureCustomer(sb, stripe, studio);
+    let existingSubscription = await loadSubscriptionForStudio(sb, studio.id, userId);
+    existingSubscription =
+      (await refreshSubscriptionFromStripe(sb, {
+        userId,
+        studioId: studio.id,
+        customerId,
+        studioSubscriptionId:
+          existingSubscription?.stripe_subscription_id ?? null,
+        subscription: existingSubscription,
+        env,
+        reason: "before_plan_change",
+      }).catch((error) => {
+        console.error("stripe_subscription_reconcile_before_plan_change_failed", {
+          studioId: studio.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return existingSubscription;
+      })) ?? existingSubscription;
+
+    if (
+      !existingSubscription?.stripe_subscription_id ||
+      existingSubscription.stripe_subscription_id.startsWith("checkout_pending:")
+    ) {
+      throw new Error("stripe_subscription_missing");
+    }
+
+    const plan = getSubscriptionPlans(env)[data.plan];
+    const stripeSubscription = await stripe.subscriptions.retrieve(
+      existingSubscription.stripe_subscription_id,
+    );
+    const itemId = stripeSubscription.items.data[0]?.id;
+    if (!itemId) throw new Error("stripe_subscription_item_missing");
+
+    const updated = await stripe.subscriptions.update(stripeSubscription.id, {
+      cancel_at_period_end: false,
+      items: [{ id: itemId, price: plan.priceId }],
+      metadata: {
+        ...stripeSubscription.metadata,
+        studio_id: studio.id,
+        user_id: userId,
+        plan: plan.id,
+      },
+      proration_behavior: "create_prorations",
+    });
+
+    console.info("stripe_subscription_plan_changed", {
+      studioId: studio.id,
+      subscriptionId: updated.id,
+      plan: plan.id,
+      status: updated.status,
+    });
+
+    return syncCheckoutSubscription(sb, updated, env, {
+      userId,
+      studioId: studio.id,
+      customerId,
+    });
   });
