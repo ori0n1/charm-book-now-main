@@ -179,10 +179,11 @@ function PremiumAccessPage() {
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-5 py-2 md:py-6">
-      <section className="overflow-hidden rounded-[1.65rem] border border-border bg-card shadow-xl shadow-black/5">
-        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_20rem]">
-          <div className={`relative overflow-hidden p-6 md:p-9 ${status.heroClass}`}>
-            <div className="relative">
+      <section className="overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-[0_24px_70px_rgba(0,0,0,0.08)]">
+        <div className={`relative grid gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_24rem] ${status.heroClass}`}>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(16,185,129,0.18),transparent_30%),radial-gradient(circle_at_88%_5%,rgba(255,255,255,0.12),transparent_28%)]" />
+          <div className="relative p-6 md:p-10">
+            <div className="relative max-w-2xl">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] shadow-sm ${status.badgeClass}`}>
                   <status.icon className="h-3.5 w-3.5" />
@@ -190,43 +191,37 @@ function PremiumAccessPage() {
                 </span>
               </div>
 
-              <h1 className="mt-6 max-w-2xl text-4xl font-light tracking-tight md:text-5xl">
+              <h1 className="mt-6 text-4xl font-light tracking-tight md:text-6xl">
                 {activeSubscription || canceledButValid ? titlePlan : status.title}
               </h1>
-              <p className="mt-4 text-base font-medium text-muted-foreground">
+              <p className="mt-4 text-base font-medium text-muted-foreground md:text-lg">
                 {renewalText || status.description}
               </p>
-
-              <div className="mt-8 grid gap-3 sm:grid-cols-2">
-                {hasStripeSubscription && (
-                  <>
-                    <SummaryTile
-                      label="Estado"
-                      value={formatStatus(summary?.status, activeSubscription)}
-                    />
-                    <SummaryTile
-                      label={canceledButValid ? "Ativo até" : "Próxima renovação"}
-                      value={formatDate(renewalDate, activeSubscription)}
-                    />
-                  </>
-                )}
-                {!hasStripeSubscription && (
-                  <>
-                    <SummaryTile
-                      label={trialOnly ? "Fim do teste" : "Acesso"}
-                      value={trialOnly ? formatDate(trialDate) : locked ? "Bloqueado" : "A confirmar"}
-                    />
-                    <SummaryTile
-                      label="Plano atual"
-                      value={formatPlan(summary?.plan)}
-                    />
-                  </>
-                )}
-              </div>
             </div>
           </div>
 
-          <aside className="border-t border-border bg-background/70 p-5 lg:border-l lg:border-t-0 md:p-6">
+          <aside className="relative border-t border-border/70 bg-background/60 p-5 backdrop-blur-xl lg:border-l lg:border-t-0 md:p-6">
+            <div className="mb-4 grid gap-3">
+              {hasStripeSubscription && (
+                <>
+                  <SummaryTile label="Plano atual" value={titlePlan} />
+                  <SummaryTile
+                    label={canceledButValid ? "Ativo até" : "Próxima cobrança"}
+                    value={formatDate(renewalDate, activeSubscription)}
+                  />
+                  <SummaryTile label="Estado" value={formatStatus(summary?.status, activeSubscription)} />
+                </>
+              )}
+              {!hasStripeSubscription && (
+                <>
+                  <SummaryTile label="Plano atual" value={formatPlan(summary?.plan)} />
+                  <SummaryTile
+                    label={trialOnly ? "Fim do teste" : "Acesso"}
+                    value={trialOnly ? formatDate(trialDate) : locked ? "Bloqueado" : "A confirmar"}
+                  />
+                </>
+              )}
+            </div>
             <div className="grid gap-2">
               {hasStripeSubscription && (
                 <>
@@ -352,7 +347,7 @@ function PremiumAccessPage() {
 
 function SummaryTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-border/70 bg-background/76 px-4 py-3 shadow-sm">
+    <div className="min-w-0 rounded-2xl border border-white/10 bg-background/72 px-4 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.06)] backdrop-blur-xl">
       <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
         {label}
       </p>

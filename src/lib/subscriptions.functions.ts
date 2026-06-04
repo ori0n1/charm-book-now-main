@@ -118,22 +118,33 @@ function futureDateOrNull(value: string | null | undefined) {
   return new Date(value).getTime() > Date.now() ? value : null;
 }
 
-async function ensureBillingPortalConfiguration(stripe: Stripe, env: StripeEnv) {
-  const existing = await stripe.billingPortal.configurations.list({
-    active: true,
-    limit: 10,
-  });
-  const managed = existing.data.find(
-    (configuration) => configuration.metadata?.managed_by === "bellza",
-  );
-  if (managed) return managed.id;
+function portalConfigSignature(input: {
+  env: StripeEnv;
+  prices: string[];
+  products: Array<{ product: string; prices: string[] }>;
+}) {
+  const prices = [...new Set(input.prices)].sort().join(",");
+  const products = input.products
+    .map((item) => `${item.product}:${[...new Set(item.prices)].sort().join("|")}`)
+    .sort()
+    .join(",");
+  return `${input.env}:${prices}:${products}`;
+}
 
-  const plans = Object.values(getSubscriptionPlans(env));
+async function ensureBillingPortalConfiguration(
+  stripe: Stripe,
+  env: StripeEnv,
+  currentSubscription?: Stripe.Subscription | null,
+) {
+  const configuredPlans = Object.values(getSubscriptionPlans(env));
+  const configuredPriceIds = configuredPlans.map((plan) => plan.priceId);
+  const currentPriceId = currentSubscription ? getSubscriptionPriceId(currentSubscription) : null;
+  const allPriceIds = [...new Set([...configuredPriceIds, ...(currentPriceId ? [currentPriceId] : [])])];
   const productPrices = await Promise.all(
-    plans.map(async (plan) => {
-      const price = await stripe.prices.retrieve(plan.priceId);
+    allPriceIds.map(async (priceId) => {
+      const price = await stripe.prices.retrieve(priceId);
       const product = typeof price.product === "string" ? price.product : price.product.id;
-      return { product, prices: [plan.priceId] };
+      return { product, prices: [priceId] };
     }),
   );
   const products = Object.values(
@@ -143,6 +154,18 @@ async function ensureBillingPortalConfiguration(stripe: Stripe, env: StripeEnv) 
       return acc;
     }, {}),
   );
+  const signature = portalConfigSignature({ env, prices: allPriceIds, products });
+  const existing = await stripe.billingPortal.configurations.list({
+    active: true,
+    limit: 10,
+  });
+  const managed = existing.data.find(
+    (configuration) =>
+      configuration.metadata?.managed_by === "bellza" &&
+      configuration.metadata?.environment === env &&
+      configuration.metadata?.signature === signature,
+  );
+  if (managed) return managed.id;
 
   const configuration = await stripe.billingPortal.configurations.create({
     business_profile: {
@@ -173,6 +196,7 @@ async function ensureBillingPortalConfiguration(stripe: Stripe, env: StripeEnv) 
     metadata: {
       managed_by: "bellza",
       environment: env,
+      signature,
     },
   } as any);
 
@@ -640,9 +664,12 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       !existingSubscription.stripe_subscription_id.startsWith("checkout_pending:") &&
       hasPeriodAccess(existingSubscription.status, existingSubscription.current_period_end)
     ) {
+      const stripeSubscription = await stripe.subscriptions.retrieve(
+        existingSubscription.stripe_subscription_id,
+      );
       const portal = await stripe.billingPortal.sessions.create({
         customer: existingSubscription.stripe_customer_id ?? customerId,
-        configuration: await ensureBillingPortalConfiguration(stripe, env),
+        configuration: await ensureBillingPortalConfiguration(stripe, env, stripeSubscription),
         return_url: `${appBaseUrl()}/admin/pagamentos`,
       });
       return { url: portal.url };
@@ -756,7 +783,7 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
     const stripe = createStripeClient(env);
     const customerId = await ensureCustomer(sb, stripe, studio);
     const subscription = await loadSubscriptionForStudio(sb, studio.id, userId);
-    await refreshSubscriptionFromStripe(sb, {
+    const refreshedSubscription = await refreshSubscriptionFromStripe(sb, {
       userId,
       studioId: studio.id,
       customerId,
@@ -769,25 +796,35 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
         studioId: studio.id,
         message: error instanceof Error ? error.message : String(error),
       });
+      return subscription;
     });
-    const configuration = await ensureBillingPortalConfiguration(stripe, env);
-    const activeSubscription =
-      subscription?.stripe_subscription_id &&
-      !subscription.stripe_subscription_id.startsWith("checkout_pending:")
-        ? subscription
-        : await loadSubscriptionForStudio(sb, studio.id, userId);
+    const stripeSubscription = await findStripeSubscriptionForStudio(stripe, {
+      customerId,
+      studioSubscriptionId:
+        refreshedSubscription?.stripe_subscription_id ??
+        subscription?.stripe_subscription_id ??
+        null,
+      studioId: studio.id,
+      env,
+    }).catch((error) => {
+      console.error("stripe_subscription_portal_lookup_failed", {
+        studioId: studio.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    const configuration = await ensureBillingPortalConfiguration(stripe, env, stripeSubscription);
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
       configuration,
       return_url: `${appBaseUrl()}/admin/premium`,
       ...(data.action === "cancel" &&
-      activeSubscription?.stripe_subscription_id &&
-      !activeSubscription.stripe_subscription_id.startsWith("checkout_pending:")
+      stripeSubscription?.id
         ? {
             flow_data: {
               type: "subscription_cancel",
               subscription_cancel: {
-                subscription: activeSubscription.stripe_subscription_id,
+                subscription: stripeSubscription.id,
               },
               after_completion: {
                 type: "redirect",
