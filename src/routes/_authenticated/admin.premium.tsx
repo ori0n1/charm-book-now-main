@@ -151,7 +151,7 @@ function PremiumAccessPage() {
     setChangingPlan(plan);
     try {
       await changePlan({ data: { studioId: studio.id, plan } });
-      toast.success("Plano atualizado e sincronizado com a Stripe.");
+      toast.success("Plano atualizado.");
       await billing.refetch();
     } catch {
       toast.error("Não foi possível alterar o plano. Abra a gestão da assinatura ou tente novamente.");
@@ -189,14 +189,14 @@ function PremiumAccessPage() {
                 {hasStripeSubscription && (
                   <>
                     <SummaryTile
-                      label={canceledButValid ? "Ativo até" : "Próxima renovação"}
-                      value={formatDate(renewalDate)}
-                      helper={renewalDate ? "Data sincronizada pela Stripe" : "Aguardando atualização da Stripe"}
-                    />
-                    <SummaryTile
                       label="Estado"
                       value={formatStatus(summary?.status, activeSubscription)}
-                      helper={canceledButValid ? "Cancelamento agendado" : "Acesso premium liberado"}
+                      helper={canceledButValid ? "Cancelamento agendado" : "Premium liberado"}
+                    />
+                    <SummaryTile
+                      label={canceledButValid ? "Ativo até" : "Próxima renovação"}
+                      value={formatDate(renewalDate, activeSubscription)}
+                      helper={renewalDate ? "Plano em dia" : "Plano ativo"}
                     />
                   </>
                 )}
@@ -205,7 +205,7 @@ function PremiumAccessPage() {
                     <SummaryTile
                       label={trialOnly ? "Fim do teste" : "Acesso"}
                       value={trialOnly ? formatDate(trialDate) : locked ? "Bloqueado" : "A confirmar"}
-                      helper={trialOnly ? `${summary?.daysRemaining ?? "--"} dias restantes` : "Escolha um plano para liberar o premium"}
+                      helper={trialOnly ? `${summary?.daysRemaining ?? "--"} dias restantes` : "Escolha um plano premium"}
                     />
                     <SummaryTile
                       label="Plano atual"
@@ -227,7 +227,7 @@ function PremiumAccessPage() {
                 </p>
               </div>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                Alterações de cartão, faturas e cancelamento são feitas no portal seguro da Stripe.
+                Atualize pagamento, consulte faturas ou cancele quando precisar.
               </p>
             </div>
 
@@ -242,7 +242,7 @@ function PremiumAccessPage() {
                     primary
                   />
                   <ActionButton
-                    label="Cancelar no portal"
+                    label="Cancelar assinatura"
                     icon={ShieldCheck}
                     disabled={portalLoading}
                     onClick={() => void manageSubscription()}
@@ -294,7 +294,7 @@ function PremiumAccessPage() {
           </div>
           {hasStripeSubscription && (
             <p className="max-w-md text-sm text-muted-foreground">
-              O plano atual fica destacado. Alterações são aplicadas na Stripe e sincronizadas com o painel.
+              Escolha outro plano quando quiser ajustar o ciclo de pagamento.
             </p>
           )}
         </div>
@@ -330,8 +330,8 @@ function PremiumAccessPage() {
                   </p>
                 </div>
                 <div className="mt-5 space-y-2 text-sm text-muted-foreground">
-                  <Feature text="Checkout seguro" />
-                  <Feature text="Gestão pela Stripe" />
+                  <Feature text="Pagamento seguro" />
+                  <Feature text="Cancelamento simples" />
                   <Feature text="Suporte por email" />
                 </div>
                 <button
@@ -446,8 +446,8 @@ function futureDate(value?: string | null) {
   return new Date(value).getTime() > Date.now() ? value : null;
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "A sincronizar";
+function formatDate(value?: string | null, activeSubscription = false) {
+  if (!value) return activeSubscription ? "Plano ativo" : "Pendente";
   return new Date(value).toLocaleDateString("pt-PT", {
     day: "2-digit",
     month: "long",
@@ -478,7 +478,7 @@ function formatStatus(status?: string | null, activeSubscription = false) {
     unpaid: "Por regularizar",
     paused: "Pausada",
   };
-  return map[status ?? ""] ?? "A sincronizar";
+  return map[status ?? ""] ?? "Ativo";
 }
 
 function getVisualStatus(input: {
@@ -493,7 +493,7 @@ function getVisualStatus(input: {
       badge: "Pagamento pendente",
       title: "Atualize o pagamento para manter o premium.",
       description:
-        "A Stripe ainda não confirmou a cobrança. Atualize o método de pagamento para regularizar a assinatura.",
+        "Atualize o método de pagamento para manter o acesso premium.",
       icon: AlertCircle,
       badgeClass: "bg-amber-500 text-amber-950",
       heroClass: "bg-amber-50 dark:bg-amber-950/10",
@@ -502,9 +502,9 @@ function getVisualStatus(input: {
   if (input.canceledButValid) {
     return {
       badge: "Premium ativo",
-      title: "O plano permanece ativo até ao fim do ciclo.",
+      title: "Plano premium ativo.",
       description:
-        "O cancelamento está agendado, mas o acesso premium continua liberado até à data indicada pela Stripe.",
+        "O cancelamento está agendado. O acesso permanece disponível até ao fim do ciclo.",
       icon: BadgeCheck,
       badgeClass: "bg-emerald-600 text-white",
       heroClass: "bg-emerald-50 dark:bg-emerald-950/10",
@@ -513,9 +513,9 @@ function getVisualStatus(input: {
   if (input.activeSubscription) {
     return {
       badge: "Premium ativo",
-      title: "Sua assinatura está ativa.",
+      title: "Plano premium ativo.",
       description:
-        "A assinatura está sincronizada com a Stripe e o acesso premium está liberado no painel Bellza.",
+        "Acesso premium liberado para a sua equipa.",
       icon: BadgeCheck,
       badgeClass: "bg-emerald-600 text-white",
       heroClass: "bg-emerald-50 dark:bg-emerald-950/10",
@@ -526,7 +526,7 @@ function getVisualStatus(input: {
       badge: "Teste gratuito",
       title: "Teste gratuito ativo.",
       description:
-        "Pode escolher um plano antecipadamente. A assinatura premium será gerida pela Stripe.",
+        "Escolha um plano quando quiser manter o acesso após o teste.",
       icon: Sparkles,
       badgeClass: "bg-sky-600 text-white",
       heroClass: "bg-sky-50 dark:bg-sky-950/10",

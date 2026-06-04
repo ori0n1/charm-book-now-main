@@ -117,6 +117,67 @@ function futureDateOrNull(value: string | null | undefined) {
   return new Date(value).getTime() > Date.now() ? value : null;
 }
 
+async function ensureBillingPortalConfiguration(stripe: Stripe, env: StripeEnv) {
+  const existing = await stripe.billingPortal.configurations.list({
+    active: true,
+    limit: 10,
+  });
+  const managed = existing.data.find(
+    (configuration) => configuration.metadata?.managed_by === "bellza",
+  );
+  if (managed) return managed.id;
+
+  const plans = Object.values(getSubscriptionPlans(env));
+  const productPrices = await Promise.all(
+    plans.map(async (plan) => {
+      const price = await stripe.prices.retrieve(plan.priceId);
+      const product = typeof price.product === "string" ? price.product : price.product.id;
+      return { product, prices: [plan.priceId] };
+    }),
+  );
+  const products = Object.values(
+    productPrices.reduce<Record<string, { product: string; prices: string[] }>>((acc, item) => {
+      acc[item.product] ??= { product: item.product, prices: [] };
+      acc[item.product].prices.push(...item.prices);
+      return acc;
+    }, {}),
+  );
+
+  const configuration = await stripe.billingPortal.configurations.create({
+    business_profile: {
+      headline: "Gerir assinatura Bellza",
+    },
+    features: {
+      customer_update: {
+        enabled: true,
+        allowed_updates: ["email", "name", "address"],
+      },
+      invoice_history: { enabled: true },
+      payment_method_update: { enabled: true },
+      subscription_cancel: {
+        enabled: true,
+        mode: "at_period_end",
+        cancellation_reason: {
+          enabled: true,
+          options: ["too_expensive", "missing_features", "switched_service", "unused", "other"],
+        },
+      },
+      subscription_update: {
+        enabled: true,
+        default_allowed_updates: ["price"],
+        proration_behavior: "create_prorations",
+        products,
+      },
+    },
+    metadata: {
+      managed_by: "bellza",
+      environment: env,
+    },
+  } as any);
+
+  return configuration.id;
+}
+
 function shouldRefreshFromStripe(input: {
   subscription: Awaited<ReturnType<typeof loadSubscriptionForStudio>>;
   studioSubscriptionId: string | null;
@@ -580,6 +641,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
     ) {
       const portal = await stripe.billingPortal.sessions.create({
         customer: existingSubscription.stripe_customer_id ?? customerId,
+        configuration: await ensureBillingPortalConfiguration(stripe, env),
         return_url: `${appBaseUrl()}/admin/pagamentos`,
       });
       return { url: portal.url };
@@ -707,6 +769,7 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
     });
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
+      configuration: await ensureBillingPortalConfiguration(stripe, stripeEnv()),
       return_url: `${appBaseUrl()}/admin/pagamentos`,
     });
     return { url: session.url };
