@@ -5,14 +5,13 @@ import {
   AlertCircle,
   ArrowRight,
   BadgeCheck,
-  Check,
   CreditCard,
   LifeBuoy,
   RefreshCcw,
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import {
@@ -44,7 +43,6 @@ const PLANS: {
   name: string;
   price: string;
   cadence: string;
-  detail: string;
   savings?: string;
   highlighted?: boolean;
 }[] = [
@@ -53,23 +51,20 @@ const PLANS: {
     name: "Mensal",
     price: "8,99 €",
     cadence: "por mês",
-    detail: "Flexível, sem fidelização.",
   },
   {
     id: "quarterly",
     name: "Trimestral",
     price: "22,49 €",
     cadence: "a cada 3 meses",
-    detail: "Equivale a 7,50 €/mês.",
-    savings: "Poupa face ao mensal",
+    savings: "7,50 €/mês",
   },
   {
     id: "yearly",
     name: "Anual",
     price: "71,99 €",
     cadence: "por ano",
-    detail: "Equivale a 6,00 €/mês.",
-    savings: "Melhor valor",
+    savings: "6,00 €/mês",
     highlighted: true,
   },
 ];
@@ -87,7 +82,9 @@ function PremiumAccessPage() {
   const billing = useQuery({
     queryKey: ["premium-page-subscription-summary", studio?.id],
     enabled: !!studio,
-    staleTime: 15 * 1000,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
     queryFn: async () =>
       (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
@@ -113,6 +110,26 @@ function PremiumAccessPage() {
     trialOnly,
     locked,
   });
+  const titlePlan = currentPlan ? formatPlan(currentPlan) : formatPlan(summary?.plan);
+  const renewalText = getRenewalText({
+    activeSubscription,
+    canceledButValid,
+    renewalDate,
+    trialOnly,
+    trialDate,
+  });
+
+  useEffect(() => {
+    const refresh = () => {
+      if (studio) void billing.refetch();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [billing, studio]);
 
   async function activate(plan: PlanId) {
     if (!studio) return;
@@ -130,11 +147,11 @@ function PremiumAccessPage() {
     }
   }
 
-  async function manageSubscription() {
+  async function manageSubscription(action: "manage" | "cancel" = "manage") {
     if (!studio) return;
     setPortalLoading(true);
     try {
-      const result = (await openBillingPortal({ data: { studioId: studio.id } })) as {
+      const result = (await openBillingPortal({ data: { studioId: studio.id, action } })) as {
         url?: string | null;
       };
       if (!result.url) throw new Error("portal_unavailable");
@@ -163,40 +180,33 @@ function PremiumAccessPage() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-5 py-2 md:py-6">
       <section className="overflow-hidden rounded-[1.65rem] border border-border bg-card shadow-xl shadow-black/5">
-        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className={`relative overflow-hidden p-6 md:p-8 ${status.heroClass}`}>
+        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_20rem]">
+          <div className={`relative overflow-hidden p-6 md:p-9 ${status.heroClass}`}>
             <div className="relative">
               <div className="flex flex-wrap items-center gap-2">
-                <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] ${status.badgeClass}`}>
+                <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] shadow-sm ${status.badgeClass}`}>
                   <status.icon className="h-3.5 w-3.5" />
                   {status.badge}
                 </span>
-                {currentPlan && (
-                  <span className="rounded-full border border-border/70 bg-background/72 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                    {formatPlan(currentPlan)}
-                  </span>
-                )}
               </div>
 
-              <h1 className="mt-5 max-w-2xl text-3xl font-light tracking-tight md:text-4xl">
-                {status.title}
+              <h1 className="mt-6 max-w-2xl text-4xl font-light tracking-tight md:text-5xl">
+                {activeSubscription || canceledButValid ? titlePlan : status.title}
               </h1>
-              <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground md:text-base">
-                {status.description}
+              <p className="mt-4 text-base font-medium text-muted-foreground">
+                {renewalText || status.description}
               </p>
 
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <div className="mt-8 grid gap-3 sm:grid-cols-2">
                 {hasStripeSubscription && (
                   <>
                     <SummaryTile
                       label="Estado"
                       value={formatStatus(summary?.status, activeSubscription)}
-                      helper={canceledButValid ? "Cancelamento agendado" : "Premium liberado"}
                     />
                     <SummaryTile
                       label={canceledButValid ? "Ativo até" : "Próxima renovação"}
                       value={formatDate(renewalDate, activeSubscription)}
-                      helper={renewalDate ? "Plano em dia" : "Plano ativo"}
                     />
                   </>
                 )}
@@ -205,12 +215,10 @@ function PremiumAccessPage() {
                     <SummaryTile
                       label={trialOnly ? "Fim do teste" : "Acesso"}
                       value={trialOnly ? formatDate(trialDate) : locked ? "Bloqueado" : "A confirmar"}
-                      helper={trialOnly ? `${summary?.daysRemaining ?? "--"} dias restantes` : "Escolha um plano premium"}
                     />
                     <SummaryTile
                       label="Plano atual"
                       value={formatPlan(summary?.plan)}
-                      helper={trialOnly ? "Teste gratuito" : "Sem plano premium ativo"}
                     />
                   </>
                 )}
@@ -218,34 +226,22 @@ function PremiumAccessPage() {
             </div>
           </div>
 
-          <aside className="border-t border-border bg-background/65 p-5 lg:border-l lg:border-t-0 md:p-6">
-            <div className="rounded-2xl border border-emerald-700/20 bg-emerald-950/5 p-4">
-              <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-                <Sparkles className="h-4 w-4" />
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em]">
-                  Gestão premium
-                </p>
-              </div>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                Atualize pagamento, consulte faturas ou cancele quando precisar.
-              </p>
-            </div>
-
-            <div className="mt-4 grid gap-2">
+          <aside className="border-t border-border bg-background/70 p-5 lg:border-l lg:border-t-0 md:p-6">
+            <div className="grid gap-2">
               {hasStripeSubscription && (
                 <>
                   <ActionButton
                     label={portalLoading ? "A abrir gestão..." : "Gerir assinatura"}
                     icon={CreditCard}
                     disabled={portalLoading}
-                    onClick={() => void manageSubscription()}
+                    onClick={() => void manageSubscription("manage")}
                     primary
                   />
                   <ActionButton
                     label="Cancelar assinatura"
                     icon={ShieldCheck}
                     disabled={portalLoading}
-                    onClick={() => void manageSubscription()}
+                    onClick={() => void manageSubscription("cancel")}
                   />
                 </>
               )}
@@ -254,7 +250,7 @@ function PremiumAccessPage() {
                   label="Atualizar pagamento"
                   icon={RefreshCcw}
                   disabled={portalLoading}
-                  onClick={() => void manageSubscription()}
+                  onClick={() => void manageSubscription("manage")}
                   primary
                 />
               )}
@@ -283,7 +279,7 @@ function PremiumAccessPage() {
       </section>
 
       <section className="rounded-[1.5rem] border border-border bg-card p-5 shadow-sm md:p-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Planos disponíveis
@@ -292,58 +288,46 @@ function PremiumAccessPage() {
               {hasStripeSubscription ? "Alterar plano" : "Escolha o plano ideal"}
             </h2>
           </div>
-          {hasStripeSubscription && (
-            <p className="max-w-md text-sm text-muted-foreground">
-              Escolha outro plano quando quiser ajustar o ciclo de pagamento.
-            </p>
-          )}
         </div>
 
-        <div className="mt-5 grid gap-3 lg:grid-cols-3">
+        <div className="mt-6 grid gap-4 lg:grid-cols-3">
           {PLANS.map((plan) => {
             const current = plan.id === currentPlan;
             return (
               <article
                 key={plan.id}
-                className={`flex min-h-[15rem] flex-col rounded-2xl border p-4 transition ${
+                className={`relative flex min-h-[13.5rem] flex-col overflow-hidden rounded-[1.35rem] border p-5 transition ${
                   current
-                    ? "border-emerald-600 bg-emerald-950/5 shadow-lg shadow-emerald-950/5"
+                    ? "border-emerald-500/70 bg-[linear-gradient(145deg,rgba(16,185,129,0.12),rgba(255,255,255,0.03))] shadow-[0_18px_45px_rgba(16,185,129,0.13)]"
                     : plan.highlighted
-                      ? "border-emerald-700/35 bg-emerald-950/5"
-                      : "border-border bg-background/55"
+                      ? "border-foreground/15 bg-background/80 shadow-sm hover:-translate-y-0.5 hover:shadow-xl"
+                      : "border-border bg-background/70 shadow-sm hover:-translate-y-0.5 hover:shadow-xl"
                 }`}
               >
+                {current && <div className="absolute inset-x-5 top-0 h-px bg-emerald-400" />}
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="text-lg font-semibold">{plan.name}</h3>
-                      {current && <PlanBadge label="Plano atual" />}
-                      {!current && plan.savings && <PlanBadge label={plan.savings} muted />}
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">{plan.detail}</p>
-                  </div>
+                  <h3 className="text-xl font-semibold">{plan.name}</h3>
+                  {current && <PlanBadge label="Plano atual" />}
                 </div>
                 <div className="mt-5">
-                  <p className="text-3xl font-light tracking-tight">{plan.price}</p>
+                  <p className="text-4xl font-light tracking-tight">{plan.price}</p>
                   <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
                     {plan.cadence}
                   </p>
                 </div>
-                <div className="mt-5 space-y-2 text-sm text-muted-foreground">
-                  <Feature text="Pagamento seguro" />
-                  <Feature text="Cancelamento simples" />
-                  <Feature text="Suporte por email" />
-                </div>
+                <p className="mt-4 min-h-5 text-sm font-medium text-emerald-600 dark:text-emerald-300">
+                  {current ? "Ativo" : plan.savings ?? ""}
+                </p>
                 <button
                   type="button"
                   disabled={checkoutPlan !== null || changingPlan !== null || current}
                   onClick={() =>
                     hasStripeSubscription ? void switchPlan(plan.id) : void activate(plan.id)
                   }
-                  className={`mt-auto flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-xs font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  className={`mt-auto flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-xs font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-70 ${
                     current
-                      ? "border border-emerald-700/30 bg-emerald-950/5 text-emerald-700 dark:text-emerald-300"
-                      : "bg-foreground text-background hover:opacity-90"
+                      ? "border border-emerald-600/25 bg-emerald-950/5 text-emerald-700 dark:text-emerald-300"
+                      : "bg-foreground text-background shadow-lg shadow-black/10 hover:-translate-y-0.5 hover:opacity-90"
                   }`}
                 >
                   {current
@@ -366,14 +350,13 @@ function PremiumAccessPage() {
   );
 }
 
-function SummaryTile({ label, value, helper }: { label: string; value: string; helper: string }) {
+function SummaryTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-border/70 bg-background/72 px-4 py-3 shadow-sm">
+    <div className="min-w-0 rounded-2xl border border-border/70 bg-background/76 px-4 py-3 shadow-sm">
       <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
         {label}
       </p>
       <p className="mt-1 truncate text-base font-semibold">{value}</p>
-      <p className="mt-1 truncate text-xs text-muted-foreground">{helper}</p>
     </div>
   );
 }
@@ -396,10 +379,10 @@ function ActionButton({
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 ${
+      className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl px-4 text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 ${
         primary
-          ? "bg-foreground text-background hover:opacity-90"
-          : "border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"
+          ? "bg-foreground text-background shadow-lg shadow-black/10 hover:-translate-y-0.5 hover:opacity-90"
+          : "border border-border bg-card text-muted-foreground hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
       }`}
     >
       <Icon className="h-4 w-4" />
@@ -422,17 +405,6 @@ function PlanBadge({ label, muted }: { label: string; muted?: boolean }) {
   );
 }
 
-function Feature({ text }: { text: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="grid size-5 place-items-center rounded-full bg-emerald-500 text-white">
-        <Check className="h-3 w-3" />
-      </span>
-      {text}
-    </div>
-  );
-}
-
 function isStripePlan(plan?: string | null): plan is PlanId {
   return plan === "monthly" || plan === "quarterly" || plan === "yearly";
 }
@@ -447,7 +419,7 @@ function futureDate(value?: string | null) {
 }
 
 function formatDate(value?: string | null, activeSubscription = false) {
-  if (!value) return activeSubscription ? "Plano ativo" : "Pendente";
+  if (!value) return activeSubscription ? "Renovação ativa" : "Pendente";
   return new Date(value).toLocaleDateString("pt-PT", {
     day: "2-digit",
     month: "long",
@@ -481,6 +453,19 @@ function formatStatus(status?: string | null, activeSubscription = false) {
   return map[status ?? ""] ?? "Ativo";
 }
 
+function getRenewalText(input: {
+  activeSubscription: boolean;
+  canceledButValid: boolean;
+  renewalDate: string | null;
+  trialOnly: boolean;
+  trialDate: string | null;
+}) {
+  if (input.canceledButValid) return `Ativo até ${formatDate(input.renewalDate, true)}`;
+  if (input.activeSubscription) return `Renovação em ${formatDate(input.renewalDate, true)}`;
+  if (input.trialOnly) return `Termina em ${formatDate(input.trialDate)}`;
+  return null;
+}
+
 function getVisualStatus(input: {
   activeSubscription: boolean;
   canceledButValid: boolean;
@@ -491,9 +476,8 @@ function getVisualStatus(input: {
   if (input.paymentPending) {
     return {
       badge: "Pagamento pendente",
-      title: "Atualize o pagamento para manter o premium.",
-      description:
-        "Atualize o método de pagamento para manter o acesso premium.",
+      title: "Pagamento pendente",
+      description: "Atualize o pagamento para manter o acesso premium.",
       icon: AlertCircle,
       badgeClass: "bg-amber-500 text-amber-950",
       heroClass: "bg-amber-50 dark:bg-amber-950/10",
@@ -502,9 +486,8 @@ function getVisualStatus(input: {
   if (input.canceledButValid) {
     return {
       badge: "Premium ativo",
-      title: "Plano premium ativo.",
-      description:
-        "O cancelamento está agendado. O acesso permanece disponível até ao fim do ciclo.",
+      title: "Plano premium ativo",
+      description: "Acesso disponível até ao fim do ciclo.",
       icon: BadgeCheck,
       badgeClass: "bg-emerald-600 text-white",
       heroClass: "bg-emerald-50 dark:bg-emerald-950/10",
@@ -513,9 +496,8 @@ function getVisualStatus(input: {
   if (input.activeSubscription) {
     return {
       badge: "Premium ativo",
-      title: "Plano premium ativo.",
-      description:
-        "Acesso premium liberado para a sua equipa.",
+      title: "Plano premium ativo",
+      description: "Acesso premium liberado.",
       icon: BadgeCheck,
       badgeClass: "bg-emerald-600 text-white",
       heroClass: "bg-emerald-50 dark:bg-emerald-950/10",
@@ -524,9 +506,8 @@ function getVisualStatus(input: {
   if (input.trialOnly) {
     return {
       badge: "Teste gratuito",
-      title: "Teste gratuito ativo.",
-      description:
-        "Escolha um plano quando quiser manter o acesso após o teste.",
+      title: "Teste gratuito ativo",
+      description: "Escolha um plano para manter o acesso.",
       icon: Sparkles,
       badgeClass: "bg-sky-600 text-white",
       heroClass: "bg-sky-50 dark:bg-sky-950/10",

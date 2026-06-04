@@ -79,6 +79,7 @@ function defaultPlanId(): SubscriptionPlanId {
 const StudioInput = z.object({
   studioId: z.string().uuid(),
   plan: z.enum(["monthly", "quarterly", "yearly"]).optional(),
+  action: z.enum(["manage", "cancel"]).optional(),
 });
 
 const PlanChangeInput = z.object({
@@ -751,15 +752,17 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
       windowMs: 10 * 60 * 1000,
     });
     const studio = await loadStudioForBilling(sb, data.studioId);
-    const stripe = createStripeClient(stripeEnv());
+    const env = stripeEnv();
+    const stripe = createStripeClient(env);
     const customerId = await ensureCustomer(sb, stripe, studio);
+    const subscription = await loadSubscriptionForStudio(sb, studio.id, userId);
     await refreshSubscriptionFromStripe(sb, {
       userId,
       studioId: studio.id,
       customerId,
       studioSubscriptionId: null,
-      subscription: await loadSubscriptionForStudio(sb, studio.id, userId),
-      env: stripeEnv(),
+      subscription,
+      env,
       reason: "before_portal",
     }).catch((error) => {
       console.error("stripe_subscription_reconcile_before_portal_failed", {
@@ -767,10 +770,34 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
         message: error instanceof Error ? error.message : String(error),
       });
     });
+    const configuration = await ensureBillingPortalConfiguration(stripe, env);
+    const activeSubscription =
+      subscription?.stripe_subscription_id &&
+      !subscription.stripe_subscription_id.startsWith("checkout_pending:")
+        ? subscription
+        : await loadSubscriptionForStudio(sb, studio.id, userId);
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      configuration: await ensureBillingPortalConfiguration(stripe, stripeEnv()),
-      return_url: `${appBaseUrl()}/admin/pagamentos`,
+      configuration,
+      return_url: `${appBaseUrl()}/admin/premium`,
+      ...(data.action === "cancel" &&
+      activeSubscription?.stripe_subscription_id &&
+      !activeSubscription.stripe_subscription_id.startsWith("checkout_pending:")
+        ? {
+            flow_data: {
+              type: "subscription_cancel",
+              subscription_cancel: {
+                subscription: activeSubscription.stripe_subscription_id,
+              },
+              after_completion: {
+                type: "redirect",
+                redirect: {
+                  return_url: `${appBaseUrl()}/admin/premium`,
+                },
+              },
+            },
+          }
+        : {}),
     });
     return { url: session.url };
   });
