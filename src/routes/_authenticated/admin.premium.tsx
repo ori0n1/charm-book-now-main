@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
 import { useQuery } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { ArrowRight, Check, LifeBuoy, LockKeyhole, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -78,14 +78,21 @@ function PremiumAccessPage() {
     summary &&
       (summary.status === "active" ||
         summary.cancelAtPeriodEnd ||
-        ["monthly", "quarterly", "yearly"].includes(summary.plan ?? "")),
+        isStripePlan(summary.plan)),
   );
-  const trialActive = summary?.premiumActive && summary.status === "trialing";
-  const ended = summary && !summary.premiumActive;
+  const trialActive = Boolean(summary?.premiumActive && summary.status === "trialing");
+  const ended = Boolean(summary && !summary.premiumActive);
+  const nextBillingDate = summary?.nextBillingAt ?? summary?.trialEndsAt;
   const daysRemaining =
     typeof summary?.daysRemaining === "number"
       ? summary.daysRemaining
       : getDaysRemaining(summary?.trialEndsAt ?? summary?.nextBillingAt);
+  const nextBillingLabel =
+    hasStripeSubscription && summary?.status === "trialing"
+      ? "Primeira cobrança"
+      : trialActive
+        ? "Fim do teste"
+        : "Renovação";
 
   async function activate(plan: PlanId) {
     if (!studio) return;
@@ -123,13 +130,13 @@ function PremiumAccessPage() {
     <div className="mx-auto flex max-w-5xl flex-col gap-5 py-2 md:py-6">
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SubscriptionMetric label="Plano atual" value={formatPlan(summary?.plan)} />
-        <SubscriptionMetric label="Estado" value={formatStatus(summary?.status)} />
         <SubscriptionMetric
-          label={hasStripeSubscription ? "Primeira cobrança" : trialActive ? "Fim do teste" : "Renovação"}
-          value={formatDate(summary?.nextBillingAt)}
+          label="Estado"
+          value={formatStatus(summary?.status, hasStripeSubscription)}
         />
+        <SubscriptionMetric label={nextBillingLabel} value={formatDate(nextBillingDate)} />
         <SubscriptionMetric
-          label="Dias restantes"
+          label={hasStripeSubscription ? "Teste restante" : "Dias restantes"}
           value={daysRemaining === null ? "Não disponível" : `${daysRemaining} dias`}
         />
       </section>
@@ -149,17 +156,17 @@ function PremiumAccessPage() {
                   : hasStripeSubscription && trialActive
                     ? `${formatPlan(summary?.plan)} ativo em período experimental.`
                     : trialActive
-                    ? "Teste gratuito ativo."
-                    : "Assinatura Premium do Bellza."}
+                      ? "Teste gratuito ativo."
+                      : "Assinatura Premium do Bellza."}
               </h1>
               <p className="mt-4 max-w-xl text-sm leading-relaxed text-background/72 md:text-base">
                 {ended
                   ? "Escolha um plano premium para continuar a usar o Bellza."
                   : hasStripeSubscription && trialActive
-                    ? `O cartão foi validado e a primeira cobrança está agendada para ${formatDate(summary?.nextBillingAt)}.`
-                  : trialActive
-                    ? `Ainda tem ${daysRemaining ?? "--"} dias de teste. Pode escolher um plano antecipadamente sem cancelar o período gratuito.`
-                    : "Consulte o estado da assinatura, renove, altere o plano ou faça a gestão de cancelamento quando necessário."}
+                    ? `O cartão foi validado e a primeira cobrança está agendada para ${formatDate(nextBillingDate)}.`
+                    : trialActive
+                      ? `Ainda tem ${daysRemaining ?? "--"} dias de teste. Pode escolher um plano antecipadamente sem cancelar o período gratuito.`
+                      : "Consulte o estado da assinatura, renove, altere o plano ou faça a gestão de cancelamento quando necessário."}
               </p>
               {trialActive && (
                 <div className="mt-5 inline-flex rounded-full bg-background/10 px-3 py-1.5 text-xs text-background/78">
@@ -285,13 +292,17 @@ function SubscriptionMetric({ label, value }: { label: string; value: string }) 
   );
 }
 
+function isStripePlan(plan?: string | null) {
+  return plan === "monthly" || plan === "quarterly" || plan === "yearly";
+}
+
 function getDaysRemaining(value?: string | null) {
   if (!value) return null;
   return Math.max(0, Math.ceil((new Date(value).getTime() - Date.now()) / 86400000));
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "Data não disponível";
+  if (!value) return "Não disponível";
   return new Date(value).toLocaleDateString("pt-PT", {
     day: "2-digit",
     month: "short",
@@ -302,21 +313,25 @@ function formatDate(value?: string | null) {
 function formatPlan(plan?: string | null) {
   const map: Record<string, string> = {
     trial: "Teste gratuito",
-    monthly: "Premium mensal",
-    quarterly: "Premium trimestral",
-    yearly: "Premium anual",
+    monthly: "Premium Mensal",
+    quarterly: "Premium Trimestral",
+    yearly: "Premium Anual",
+    pro: "Premium",
   };
   return map[plan ?? "trial"] ?? "Premium";
 }
 
-function formatStatus(status?: string | null) {
+function formatStatus(status?: string | null, hasStripeSubscription = false) {
+  if (status === "trialing" && hasStripeSubscription) return "Período experimental";
   const map: Record<string, string> = {
     active: "Ativa",
     trialing: "Teste gratuito",
     past_due: "Pagamento pendente",
     canceled: "Cancelada",
-    incomplete: "Incompleta",
+    incomplete: "A confirmar",
+    incomplete_expired: "Expirada",
     unpaid: "Por regularizar",
+    paused: "Pausada",
   };
   return map[status ?? "trialing"] ?? "Em análise";
 }

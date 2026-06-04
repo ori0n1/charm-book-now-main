@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import type Stripe from "stripe";
 import { z } from "zod";
 import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
@@ -51,12 +52,23 @@ function stripeEnv(): StripeEnv {
 }
 
 function appBaseUrl() {
-  return (
+  const configured = (
     process.env.APP_URL ??
     process.env.VITE_APP_URL ??
     process.env.PUBLIC_APP_URL ??
-    "http://127.0.0.1:5173"
+    ""
   ).replace(/\/$/, "");
+  if (configured) return configured;
+
+  const request = getRequest();
+  const origin = request?.headers.get("origin");
+  if (origin) return origin.replace(/\/$/, "");
+  const host = request?.headers.get("host");
+  if (host) {
+    const proto = request?.headers.get("x-forwarded-proto") || "https";
+    return `${proto}://${host}`.replace(/\/$/, "");
+  }
+  return "http://127.0.0.1:5173";
 }
 
 function defaultPlanId(): SubscriptionPlanId {

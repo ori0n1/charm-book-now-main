@@ -14,13 +14,23 @@ function stripeEnv(): StripeEnv {
   return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
 }
 
-function appBaseUrl() {
-  return (
+function appBaseUrl(request: Request) {
+  const configured = (
     process.env.APP_URL ??
     process.env.VITE_APP_URL ??
     process.env.PUBLIC_APP_URL ??
-    "http://127.0.0.1:5173"
+    ""
   ).replace(/\/$/, "");
+  if (configured) return configured;
+
+  const origin = request.headers.get("origin");
+  if (origin) return origin.replace(/\/$/, "");
+  const host = request.headers.get("host");
+  if (host) {
+    const proto = request.headers.get("x-forwarded-proto") || "https";
+    return `${proto}://${host}`.replace(/\/$/, "");
+  }
+  return "http://127.0.0.1:5173";
 }
 
 async function getUserFromRequest(request: Request) {
@@ -90,8 +100,8 @@ export const Route = createFileRoute("/api/create-checkout-session")({
               },
               ...(trialEnd ? { trial_end: trialEnd } : {}),
             },
-            success_url: `${appBaseUrl()}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${appBaseUrl()}/admin/pagamentos?billing=cancelled`,
+            success_url: `${appBaseUrl(request)}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${appBaseUrl(request)}/admin/pagamentos?billing=cancelled`,
           });
 
           return Response.json({ url: session.url });
