@@ -21,6 +21,7 @@ type IntentInfo = {
   status: string;
   client_secret: string | null;
   mb_way_phone?: string | null;
+  checkout_url?: string | null;
   multibanco_entity: string | null;
   multibanco_reference: string | null;
   amount_cents: number;
@@ -143,6 +144,12 @@ export function PaymentPendingView({
 
       if (isTerminalFailure(res.status)) {
         throw new Error("O pagamento não pôde ser iniciado. O horário voltou a ficar disponível.");
+      }
+
+      if (res.checkout_url) {
+        toast.message("A abrir pagamento seguro...");
+        window.location.assign(res.checkout_url);
+        return;
       }
 
       if (res.method === "mb_way") {

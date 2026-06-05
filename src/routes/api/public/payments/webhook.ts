@@ -13,6 +13,8 @@ import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
 type StripeMetadata = Record<string, string | undefined>;
 type StripePayload = Record<string, unknown> & {
   id?: string;
+  amount?: number | null;
+  currency?: string | null;
   customer?: string | null;
   subscription?: string | null;
   status?: string;
@@ -92,6 +94,23 @@ async function handlePaymentIntent(
     .select("status")
     .eq("stripe_payment_intent_id", pi.id)
     .maybeSingle();
+
+  if (!previousPayment && bookingRequestId && pi.metadata?.studio_id) {
+    await sb.from("payment_intents").insert({
+      studio_id: pi.metadata.studio_id,
+      booking_request_id: bookingRequestId,
+      appointment_id: appointmentId ?? null,
+      stripe_payment_intent_id: pi.id,
+      amount_cents: Number(pi.amount ?? 0),
+      currency: typeof pi.currency === "string" ? pi.currency : "eur",
+      method:
+        pi.metadata?.method === "mb_way" || pi.metadata?.method === "multibanco"
+          ? pi.metadata.method
+          : "multibanco",
+      status: piStatus,
+      updated_at: new Date().toISOString(),
+    });
+  }
 
   await sb
     .from("payment_intents")
