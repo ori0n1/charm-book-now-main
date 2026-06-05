@@ -19,6 +19,8 @@ type PaymentMethod = "mb_way" | "multibanco";
 type IntentInfo = {
   method: PaymentMethod;
   status: string;
+  client_secret: string | null;
+  mb_way_phone?: string | null;
   multibanco_entity: string | null;
   multibanco_reference: string | null;
   amount_cents: number;
@@ -35,6 +37,19 @@ type StatusResponse = {
   reservationStatus?: string | null;
   payment: (IntentInfo & { status: string }) | null;
 };
+
+type StripeJs = {
+  confirmMbWayPayment: (
+    clientSecret: string,
+    data: { payment_method: { billing_details: { phone: string } } },
+  ) => Promise<{ error?: { message?: string }; paymentIntent?: { status?: string } }>;
+};
+
+declare global {
+  interface Window {
+    Stripe?: (publishableKey: string) => StripeJs;
+  }
+}
 
 export function PaymentPendingView({
   appointmentId,
@@ -130,6 +145,10 @@ export function PaymentPendingView({
         throw new Error("O pagamento não pôde ser iniciado. O horário voltou a ficar disponível.");
       }
 
+      if (res.method === "mb_way") {
+        await confirmMbWayPayment(res);
+      }
+
       setMethod(res.method);
       setIntent(res);
       toast.message(
@@ -143,6 +162,28 @@ export function PaymentPendingView({
       setIntent(null);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function confirmMbWayPayment(payment: IntentInfo) {
+    if (!payment.client_secret || !payment.mb_way_phone) {
+      throw new Error("Não foi possível iniciar MB WAY. Verifique o número de telemóvel.");
+    }
+    const stripe = await loadStripe();
+    const result = await stripe.confirmMbWayPayment(payment.client_secret, {
+      payment_method: {
+        billing_details: {
+          phone: payment.mb_way_phone,
+        },
+      },
+    });
+    if (result.error) {
+      if (targetPayload) {
+        await checkStatus({ data: targetPayload }).catch(() => {
+          // Best effort sync; the next reservation attempt will also expire stale payments.
+        });
+      }
+      throw new Error(result.error.message || "O pagamento MB WAY não foi confirmado.");
     }
   }
 
@@ -373,6 +414,37 @@ function ErrorPanel({ text }: { text: string }) {
 
 function isTerminalFailure(status?: string | null) {
   return status === "failed" || status === "canceled" || status === "expired";
+}
+
+let stripePromise: Promise<StripeJs> | null = null;
+
+function loadStripe() {
+  if (stripePromise) return stripePromise;
+  stripePromise = new Promise((resolve, reject) => {
+    const publishableKey =
+      (import.meta.env as Record<string, string | undefined>).VITE_STRIPE_PUBLISHABLE_KEY ?? "";
+    if (!publishableKey) {
+      reject(new Error("Configuração de pagamento indisponível."));
+      return;
+    }
+    if (window.Stripe) {
+      resolve(window.Stripe(publishableKey));
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://js.stripe.com/clover/stripe.js";
+    script.async = true;
+    script.onload = () => {
+      if (!window.Stripe) {
+        reject(new Error("Não foi possível carregar o pagamento seguro."));
+        return;
+      }
+      resolve(window.Stripe(publishableKey));
+    };
+    script.onerror = () => reject(new Error("Não foi possível carregar o pagamento seguro."));
+    document.head.appendChild(script);
+  });
+  return stripePromise;
 }
 
 function formatMoney(cents: number, currency: string) {

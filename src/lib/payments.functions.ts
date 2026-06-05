@@ -154,7 +154,11 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
 
     if (existing) {
       const source = await loadPaymentSource(sb, bookingRequestId, appointmentId);
-      return formatIntentResponse(existing, source.totalCents, source.depositPercent);
+      return {
+        ...formatIntentResponse(existing, source.totalCents, source.depositPercent),
+        mb_way_phone:
+          existing.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : null,
+      };
     }
 
     const source = await loadPaymentSource(sb, bookingRequestId, appointmentId);
@@ -170,11 +174,71 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const billingPhone =
       data.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : source.clientPhone;
     if (data.method === "mb_way" && !billingPhone) {
-      await failBookingRequest(sb, bookingRequestId, "mb_way_phone_invalid");
       throw new Error(PAYMENT_METHOD_MESSAGES.mb_way_phone_invalid);
     }
 
     const stripe = createStripeClient(stripeEnv());
+    if (data.method === "mb_way") {
+      let intent;
+      try {
+        intent = await stripe.paymentIntents.create({
+          amount: amountCents,
+          currency: source.currency,
+          payment_method_types: ["mb_way"],
+          description: `Reserva ${source.studioName} - ${new Date(source.startsAt).toLocaleString("pt-PT")}`,
+          receipt_email: source.clientEmail || undefined,
+          metadata: {
+            ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
+            ...(appointmentId ? { appointment_id: appointmentId } : {}),
+            studio_id: source.studioId,
+            client_phone: billingPhone || source.clientPhone,
+          },
+        });
+      } catch (error) {
+        const reason = stripePaymentFailureReason(error, data.method);
+        throw new Error(
+          PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
+        );
+      }
+
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      const { data: row, error: insErr } = await sb
+        .from("payment_intents")
+        .insert({
+          studio_id: source.studioId,
+          appointment_id: appointmentId,
+          booking_request_id: bookingRequestId,
+          stripe_payment_intent_id: intent.id,
+          client_secret: intent.client_secret ?? null,
+          amount_cents: amountCents,
+          currency: source.currency,
+          method: data.method,
+          status: "requires_action",
+          expires_at: expiresAt,
+        })
+        .select()
+        .single();
+
+      if (insErr) throw new Error(insErr.message);
+
+      if (bookingRequestId) {
+        await sb
+          .from("booking_payment_requests")
+          .update({
+            status: "processing",
+            expires_at: expiresAt,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", bookingRequestId)
+          .in("status", ["awaiting_payment", "processing"]);
+      }
+
+      return {
+        ...formatIntentResponse(row, totalCents, source.depositPercent),
+        mb_way_phone: billingPhone,
+      };
+    }
+
     let intentId: string | null = null;
     let confirmed: Awaited<ReturnType<typeof stripe.paymentIntents.confirm>>;
     try {
@@ -211,7 +275,6 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         });
       }
       const reason = stripePaymentFailureReason(error, data.method);
-      await failBookingRequest(sb, bookingRequestId, reason, intentId);
       throw new Error(
         PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
       );
@@ -320,16 +383,70 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
       ? await query.eq("booking_request_id", data.bookingRequestId).maybeSingle()
       : await query.eq("appointment_id", data.appointmentId).maybeSingle();
 
+    let currentPi = pi;
+    if (
+      currentPi?.stripe_payment_intent_id &&
+      ["requires_action", "processing"].includes(currentPi.status as string)
+    ) {
+      const stripe = createStripeClient(stripeEnv());
+      const fresh = await stripe.paymentIntents.retrieve(
+        currentPi.stripe_payment_intent_id as string,
+        { expand: ["latest_charge"] },
+      );
+      const freshStatus = normalizeStripeStatus(fresh.status);
+      const nextAction = (fresh as any).next_action;
+      const latestCharge = typeof fresh.latest_charge === "object" ? (fresh.latest_charge as any) : null;
+      const chargeDetails = latestCharge?.payment_method_details ?? null;
+      const multibancoDetails =
+        nextAction?.multibanco_display_details ?? chargeDetails?.multibanco ?? null;
+      const expiresAt = multibancoDetails?.expires_at
+        ? new Date(multibancoDetails.expires_at * 1000).toISOString()
+        : currentPi.expires_at;
+
+      await sb
+        .from("payment_intents")
+        .update({
+          status: freshStatus,
+          multibanco_entity: multibancoDetails?.entity ?? currentPi.multibanco_entity ?? null,
+          multibanco_reference:
+            multibancoDetails?.reference ?? currentPi.multibanco_reference ?? null,
+          hosted_voucher_url:
+            multibancoDetails?.hosted_voucher_url ?? currentPi.hosted_voucher_url ?? null,
+          expires_at: expiresAt,
+          failure_reason: freshStatus === "failed" ? fresh.last_payment_error?.message ?? "payment_failed" : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("stripe_payment_intent_id", currentPi.stripe_payment_intent_id);
+
+      currentPi = {
+        ...currentPi,
+        status: freshStatus,
+        multibanco_entity: multibancoDetails?.entity ?? currentPi.multibanco_entity,
+        multibanco_reference: multibancoDetails?.reference ?? currentPi.multibanco_reference,
+        hosted_voucher_url: multibancoDetails?.hosted_voucher_url ?? currentPi.hosted_voucher_url,
+        expires_at: expiresAt,
+      };
+
+      if (freshStatus === "failed" || freshStatus === "canceled") {
+        await failBookingRequest(
+          sb,
+          data.bookingRequestId ?? null,
+          fresh.last_payment_error?.message ?? "payment_failed",
+          currentPi.stripe_payment_intent_id as string,
+        );
+      }
+    }
+
     const statusInfo = await loadReservationStatus(sb, data.bookingRequestId, data.appointmentId);
 
-    if (pi?.stripe_payment_intent_id && pi.status === "succeeded") {
+    if (currentPi?.stripe_payment_intent_id && currentPi.status === "succeeded") {
       if (data.bookingRequestId && statusInfo.reservationStatus !== "confirmed") {
         let appointmentId: string;
         try {
           appointmentId = await confirmBookingRequest(
             sb,
             data.bookingRequestId,
-            pi.stripe_payment_intent_id as string,
+            currentPi.stripe_payment_intent_id as string,
           );
         } catch (error) {
           await sb
@@ -344,11 +461,11 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
             appointmentStatus: null,
             reservationStatus: "failed",
             appointmentId: null,
-            payment: { ...pi, status: "failed" },
+            payment: { ...currentPi, status: "failed" },
           };
         }
         await sendAppointmentConfirmationMessage(sb, {
-          stripePaymentIntentId: pi.stripe_payment_intent_id as string,
+          stripePaymentIntentId: currentPi.stripe_payment_intent_id as string,
         }).catch((sendError) => {
           console.error("twilio whatsapp confirmation failed", sendError);
         });
@@ -356,7 +473,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
           appointmentStatus: "confirmed",
           reservationStatus: "confirmed",
           appointmentId,
-          payment: { ...pi, appointment_id: appointmentId },
+          payment: { ...currentPi, appointment_id: appointmentId },
         };
       }
       if (data.appointmentId && statusInfo.appointmentStatus !== "confirmed") {
@@ -366,7 +483,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
           .eq("id", data.appointmentId)
           .eq("status", "pending_payment");
         await sendAppointmentConfirmationMessage(sb, {
-          stripePaymentIntentId: pi.stripe_payment_intent_id as string,
+          stripePaymentIntentId: currentPi.stripe_payment_intent_id as string,
         }).catch((sendError) => {
           console.error("twilio whatsapp confirmation failed", sendError);
         });
@@ -374,12 +491,12 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
           appointmentStatus: "confirmed",
           reservationStatus: "confirmed",
           appointmentId: data.appointmentId,
-          payment: pi,
+          payment: currentPi,
         };
       }
     }
 
-    return { ...statusInfo, payment: pi ?? null };
+    return { ...statusInfo, payment: currentPi ?? null };
   });
 
 async function loadPaymentSource(
