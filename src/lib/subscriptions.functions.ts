@@ -119,6 +119,15 @@ function futureDateOrNull(value: string | null | undefined) {
   return new Date(value).getTime() > Date.now() ? value : null;
 }
 
+async function getUserEmail(sb: ReturnType<typeof getAdminClient>, userId: string) {
+  const { data } = await sb.auth.admin.getUserById(userId);
+  return data.user?.email ?? null;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))];
+}
+
 function portalConfigSignature(input: {
   env: StripeEnv;
   prices: string[];
@@ -249,10 +258,11 @@ function subscriptionScore(subscription: Stripe.Subscription, env: StripeEnv, st
 async function findStripeSubscriptionForStudio(
   stripe: Stripe,
   input: {
-    customerId: string;
+    customerId: string | null;
     studioSubscriptionId: string | null;
     studioId: string;
     env: StripeEnv;
+    emails?: Array<string | null | undefined>;
   },
 ) {
   if (input.studioSubscriptionId && !input.studioSubscriptionId.startsWith("checkout_pending:")) {
@@ -270,12 +280,27 @@ async function findStripeSubscriptionForStudio(
     }
   }
 
-  const subscriptions = await stripe.subscriptions.list({
-    customer: input.customerId,
-    status: "all",
-    limit: 20,
-  });
-  return subscriptions.data
+  const customerIds = new Set<string>();
+  if (input.customerId) customerIds.add(input.customerId);
+
+  for (const email of uniqueStrings(input.emails ?? [])) {
+    const customers = await stripe.customers.list({ email, limit: 10 });
+    for (const customer of customers.data) {
+      if (!customer.deleted) customerIds.add(customer.id);
+    }
+  }
+
+  const subscriptions: Stripe.Subscription[] = [];
+  for (const customerId of customerIds) {
+    const customerSubscriptions = await stripe.subscriptions.list({
+      customer: customerId,
+      status: "all",
+      limit: 20,
+    });
+    subscriptions.push(...customerSubscriptions.data);
+  }
+
+  return subscriptions
     .filter((subscription) => getPlanIdFromSubscription(input.env, subscription))
     .sort(
       (a, b) =>
@@ -292,12 +317,12 @@ async function refreshSubscriptionFromStripe(
     studioId: string;
     customerId: string | null;
     studioSubscriptionId: string | null;
+    emails?: Array<string | null | undefined>;
     subscription: Awaited<ReturnType<typeof loadSubscriptionForStudio>>;
     env: StripeEnv;
     reason: string;
   },
 ) {
-  if (!input.customerId) return input.subscription;
   if (
     !shouldRefreshFromStripe({
       subscription: input.subscription,
@@ -313,6 +338,7 @@ async function refreshSubscriptionFromStripe(
     studioSubscriptionId: input.studioSubscriptionId ?? input.subscription?.stripe_subscription_id ?? null,
     studioId: input.studioId,
     env: input.env,
+    emails: input.emails,
   });
   if (!stripeSubscription) {
     console.info("stripe_subscription_reconcile_none", {
@@ -343,8 +369,8 @@ async function syncCheckoutSubscription(
   fallback: { userId: string; studioId: string; customerId: string | null },
 ) {
   const metadata = subscription.metadata ?? {};
-  const userId = metadata.user_id || fallback.userId;
-  const studioId = metadata.studio_id || fallback.studioId;
+  const userId = metadata.user_id === fallback.userId ? metadata.user_id : fallback.userId;
+  const studioId = metadata.studio_id === fallback.studioId ? metadata.studio_id : fallback.studioId;
   const customerId =
     typeof subscription.customer === "string" ? subscription.customer : fallback.customerId;
   const priceId = getSubscriptionPriceId(subscription);
@@ -482,7 +508,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
     const { data: studio, error } = await sb
       .from("studios")
       .select(
-        "id,plan,stripe_customer_id,stripe_subscription_id,subscription_status,subscription_current_period_end,subscription_cancel_at_period_end,premium_access_until,trial_ends_at",
+        "id,email,plan,stripe_customer_id,stripe_subscription_id,subscription_status,subscription_current_period_end,subscription_cancel_at_period_end,premium_access_until,trial_ends_at",
       )
       .eq("id", data.studioId)
       .maybeSingle();
@@ -504,6 +530,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
     if (!studio) throw new Error("studio_not_found");
 
     const userId = (context as any).userId as string;
+    const userEmail = await getUserEmail(sb, userId).catch(() => null);
     let subscription = await loadSubscriptionForStudio(sb, studio.id as string, userId);
     if (subscription?.status === "checkout_pending") {
       const recovered = await recoverPendingCheckout(sb, {
@@ -546,6 +573,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
           subscription?.stripe_customer_id ??
           null,
         studioSubscriptionId: studio.stripe_subscription_id as string | null,
+        emails: [userEmail, studio.email as string | null],
         subscription,
         env: stripeEnv(),
         reason: "summary",
@@ -632,6 +660,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
     const env = stripeEnv();
     const plan = getSubscriptionPlans(env)[data.plan ?? defaultPlanId()];
     const stripe = createStripeClient(env);
+    const userEmail = await getUserEmail(sb, userId).catch(() => null);
     const customerId = await ensureCustomer(sb, stripe, studio);
     await recoverPendingCheckout(sb, {
       userId,
@@ -651,6 +680,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
         studioId: studio.id,
         customerId,
         studioSubscriptionId: existingSubscription?.stripe_subscription_id ?? null,
+        emails: [userEmail, studio.email],
         subscription: existingSubscription,
         env,
         reason: "before_checkout",
@@ -783,13 +813,14 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
     const studio = await loadStudioForBilling(sb, data.studioId);
     const env = stripeEnv();
     const stripe = createStripeClient(env);
-    const customerId = await ensureCustomer(sb, stripe, studio);
+    const userEmail = await getUserEmail(sb, userId).catch(() => null);
     const subscription = await loadSubscriptionForStudio(sb, studio.id, userId);
     const refreshedSubscription = await refreshSubscriptionFromStripe(sb, {
       userId,
       studioId: studio.id,
-      customerId,
+      customerId: studio.stripe_customer_id,
       studioSubscriptionId: null,
+      emails: [userEmail, studio.email],
       subscription,
       env,
       reason: "before_portal",
@@ -801,13 +832,18 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
       return subscription;
     });
     const stripeSubscription = await findStripeSubscriptionForStudio(stripe, {
-      customerId,
+      customerId:
+        refreshedSubscription?.stripe_customer_id ??
+        subscription?.stripe_customer_id ??
+        studio.stripe_customer_id ??
+        null,
       studioSubscriptionId:
         refreshedSubscription?.stripe_subscription_id ??
         subscription?.stripe_subscription_id ??
         null,
       studioId: studio.id,
       env,
+      emails: [userEmail, studio.email],
     }).catch((error) => {
       console.error("stripe_subscription_portal_lookup_failed", {
         studioId: studio.id,
@@ -815,6 +851,24 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
       });
       return null;
     });
+    const customerId =
+      (typeof stripeSubscription?.customer === "string" ? stripeSubscription.customer : null) ??
+      refreshedSubscription?.stripe_customer_id ??
+      subscription?.stripe_customer_id ??
+      studio.stripe_customer_id ??
+      (await ensureCustomer(sb, stripe, studio));
+    if (stripeSubscription) {
+      await syncCheckoutSubscription(sb, stripeSubscription, env, {
+        userId,
+        studioId: studio.id,
+        customerId,
+      }).catch((error) => {
+        console.error("stripe_subscription_sync_before_portal_failed", {
+          studioId: studio.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     const configuration = await ensureBillingPortalConfiguration(stripe, env, stripeSubscription);
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
@@ -857,15 +911,19 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
     const studio = await loadStudioForBilling(sb, data.studioId);
     const env = stripeEnv();
     const stripe = createStripeClient(env);
-    const customerId = await ensureCustomer(sb, stripe, studio);
+    const userEmail = await getUserEmail(sb, userId).catch(() => null);
     let existingSubscription = await loadSubscriptionForStudio(sb, studio.id, userId);
     existingSubscription =
       (await refreshSubscriptionFromStripe(sb, {
         userId,
         studioId: studio.id,
-        customerId,
+        customerId:
+          existingSubscription?.stripe_customer_id ??
+          studio.stripe_customer_id ??
+          null,
         studioSubscriptionId:
           existingSubscription?.stripe_subscription_id ?? null,
+        emails: [userEmail, studio.email],
         subscription: existingSubscription,
         env,
         reason: "before_plan_change",
@@ -877,17 +935,25 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
         return existingSubscription;
       })) ?? existingSubscription;
 
-    if (
-      !existingSubscription?.stripe_subscription_id ||
-      existingSubscription.stripe_subscription_id.startsWith("checkout_pending:")
-    ) {
+    const stripeSubscription = await findStripeSubscriptionForStudio(stripe, {
+      customerId:
+        existingSubscription?.stripe_customer_id ??
+        studio.stripe_customer_id ??
+        null,
+      studioSubscriptionId:
+        existingSubscription?.stripe_subscription_id ??
+        studio.stripe_subscription_id ??
+        null,
+      studioId: studio.id,
+      env,
+      emails: [userEmail, studio.email],
+    });
+
+    if (!stripeSubscription) {
       throw new Error("stripe_subscription_missing");
     }
 
     const plan = getSubscriptionPlans(env)[data.plan];
-    const stripeSubscription = await stripe.subscriptions.retrieve(
-      existingSubscription.stripe_subscription_id,
-    );
     const itemId = stripeSubscription.items.data[0]?.id;
     if (!itemId) throw new Error("stripe_subscription_item_missing");
 
@@ -913,6 +979,6 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
     return syncCheckoutSubscription(sb, updated, env, {
       userId,
       studioId: studio.id,
-      customerId,
+      customerId: typeof updated.customer === "string" ? updated.customer : studio.stripe_customer_id,
     });
   });

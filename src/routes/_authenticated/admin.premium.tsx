@@ -178,10 +178,10 @@ function PremiumAccessPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-5 py-2 md:py-6">
-      <section className="overflow-hidden rounded-[1.5rem] border border-border bg-card shadow-sm">
-        <div className={`grid gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_22rem] ${status.heroClass}`}>
-          <div className="relative p-6 md:p-10">
+    <div className="mx-auto flex max-w-6xl flex-col gap-6 py-2 md:py-6">
+      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[#080808] text-white shadow-[0_24px_70px_rgba(0,0,0,0.18)]">
+        <div className="grid gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_23rem]">
+          <div className="relative p-6 md:p-10 lg:p-12">
             <div className="relative max-w-2xl">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] shadow-sm ${status.badgeClass}`}>
@@ -193,13 +193,13 @@ function PremiumAccessPage() {
               <h1 className="mt-6 text-4xl font-light tracking-tight md:text-5xl">
                 {activeSubscription || canceledButValid ? titlePlan : status.title}
               </h1>
-              <p className="mt-4 text-base font-medium text-muted-foreground">
+              <p className="mt-4 text-base font-medium text-white/68">
                 {renewalText || status.description}
               </p>
             </div>
           </div>
 
-          <aside className="border-t border-border bg-background/55 p-5 lg:border-l lg:border-t-0 md:p-6">
+          <aside className="border-t border-white/10 bg-white/[0.055] p-5 lg:border-l lg:border-t-0 md:p-6">
             <div className="mb-4 grid gap-3">
               {hasStripeSubscription && (
                 <>
@@ -262,7 +262,7 @@ function PremiumAccessPage() {
               )}
               <a
                 href="mailto:info@bellza.pt"
-                className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-border bg-card px-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-white/12 bg-white/[0.04] px-4 text-xs font-semibold uppercase tracking-wide text-white/62 transition hover:bg-white/[0.1] hover:text-white"
               >
                 <LifeBuoy className="h-4 w-4" />
                 Contactar suporte
@@ -346,11 +346,11 @@ function PremiumAccessPage() {
 
 function SummaryTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-white/10 bg-background/72 px-4 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.06)] backdrop-blur-xl">
-      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+    <div className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.075] px-4 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.16)]">
+      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-white/48">
         {label}
       </p>
-      <p className="mt-1 truncate text-base font-semibold">{value}</p>
+      <p className="mt-1 truncate text-base font-semibold text-white">{value}</p>
     </div>
   );
 }
@@ -375,8 +375,8 @@ function ActionButton({
       onClick={onClick}
       className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl px-4 text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 ${
         primary
-          ? "bg-foreground text-background shadow-lg shadow-black/10 hover:-translate-y-0.5 hover:opacity-90"
-          : "border border-border bg-card text-muted-foreground hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
+          ? "bg-white text-black shadow-lg shadow-black/20 hover:-translate-y-0.5 hover:bg-white/92"
+          : "border border-white/12 bg-white/[0.06] text-white/72 hover:-translate-y-0.5 hover:bg-white/[0.1] hover:text-white"
       }`}
     >
       <Icon className="h-4 w-4" />

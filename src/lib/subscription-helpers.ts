@@ -33,7 +33,7 @@ export async function loadPrimaryStudio(sb: SupabaseClient, userId: string) {
 export async function loadStudioForBilling(sb: SupabaseClient, studioId: string) {
   const { data, error } = await sb
     .from("studios")
-    .select("id,name,email,stripe_customer_id,subscription_status,trial_ends_at,trial_used_at")
+    .select("id,name,email,stripe_customer_id,stripe_subscription_id,subscription_status,trial_ends_at,trial_used_at")
     .eq("id", studioId)
     .maybeSingle();
   if (error || !data) throw new Error("studio_not_found");
@@ -42,6 +42,7 @@ export async function loadStudioForBilling(sb: SupabaseClient, studioId: string)
     name: string;
     email: string | null;
     stripe_customer_id: string | null;
+    stripe_subscription_id: string | null;
     subscription_status: string | null;
     trial_ends_at: string | null;
     trial_used_at: string | null;
