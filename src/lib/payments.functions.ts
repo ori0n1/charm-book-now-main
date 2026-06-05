@@ -201,8 +201,17 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const stripe = createStripeClient(stripeEnv());
     const checkoutExpiresAt =
       Math.floor(Date.now() / 1000) + (data.method === "multibanco" ? 24 * 60 * 60 : 30 * 60);
+    const paymentMetadata = {
+      ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
+      ...(appointmentId ? { appointment_id: appointmentId } : {}),
+      studio_id: source.studioId,
+      client_phone: billingPhone || source.clientPhone,
+      payment_kind: "booking_deposit",
+      method: data.method,
+    };
     const checkoutSessionPayload = {
       mode: "payment" as const,
+      payment_method_types: [paymentMethodType],
       customer_email: source.clientEmail || undefined,
       line_items: [
         {
@@ -225,66 +234,39 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         method: data.method,
       },
       payment_intent_data: {
-        metadata: {
-          ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
-          ...(appointmentId ? { appointment_id: appointmentId } : {}),
-          studio_id: source.studioId,
-          client_phone: billingPhone || source.clientPhone,
-          payment_kind: "booking_deposit",
-          method: data.method,
-        },
+        metadata: paymentMetadata,
       },
       success_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=success`,
       cancel_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=cancelled`,
       expires_at: checkoutExpiresAt,
       expand: ["payment_intent"],
-    };
+    } satisfies Parameters<typeof stripe.checkout.sessions.create>[0];
     let checkoutSession;
+    let directPaymentIntent;
     try {
-      checkoutSession = await stripe.checkout.sessions.create({
-        mode: "payment",
-        payment_method_types: [paymentMethodType],
-        customer_email: source.clientEmail || undefined,
-        line_items: [
-          {
-            quantity: 1,
-            price_data: {
-              currency: source.currency,
-              unit_amount: amountCents,
-              product_data: {
-                name: `Sinal de reserva - ${source.studioName}`,
-                description: new Date(source.startsAt).toLocaleString("pt-PT"),
-              },
-            },
-          },
-        ],
-        metadata: {
-          ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
-          ...(appointmentId ? { appointment_id: appointmentId } : {}),
-          studio_id: source.studioId,
-          payment_kind: "booking_deposit",
-          method: data.method,
-        },
-        payment_intent_data: {
-          metadata: {
-            ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
-            ...(appointmentId ? { appointment_id: appointmentId } : {}),
-            studio_id: source.studioId,
-            client_phone: billingPhone || source.clientPhone,
-            payment_kind: "booking_deposit",
-            method: data.method,
-          },
-        },
-        success_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=success`,
-        cancel_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=cancelled`,
-        expires_at: checkoutExpiresAt,
-        expand: ["payment_intent"],
-      });
+      checkoutSession = await stripe.checkout.sessions.create(checkoutSessionPayload);
     } catch (error) {
       if (data.method === "multibanco") {
         try {
-          checkoutSession = await stripe.checkout.sessions.create(checkoutSessionPayload);
-          console.warn("stripe_booking_checkout_dynamic_fallback", {
+          directPaymentIntent = await stripe.paymentIntents.create({
+            amount: amountCents,
+            currency: source.currency,
+            confirm: true,
+            payment_method_types: ["multibanco"],
+            payment_method_data: {
+              type: "multibanco",
+              billing_details: {
+                name: source.clientName || "Cliente",
+                email: resolveBillingEmail(source.clientEmail),
+                phone: billingPhone || undefined,
+              },
+            },
+            description: `Reserva ${source.studioName} - ${new Date(source.startsAt).toLocaleString("pt-PT")}`,
+            receipt_email: source.clientEmail || undefined,
+            metadata: paymentMetadata,
+            expand: ["latest_charge"],
+          });
+          console.warn("stripe_booking_multibanco_voucher_fallback", {
             method: data.method,
             originalMessage: error instanceof Error ? error.message : String(error),
           });
@@ -314,12 +296,24 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
       }
     }
     const checkoutPaymentIntent =
-      typeof checkoutSession.payment_intent === "object" ? checkoutSession.payment_intent : null;
-    const expiresAt = checkoutSession.expires_at
-      ? new Date(checkoutSession.expires_at * 1000).toISOString()
-      : data.method === "multibanco"
-        ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-        : new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      directPaymentIntent ??
+      (typeof checkoutSession?.payment_intent === "object" ? checkoutSession.payment_intent : null);
+    const latestCharge =
+      checkoutPaymentIntent && typeof checkoutPaymentIntent.latest_charge === "object"
+        ? (checkoutPaymentIntent.latest_charge as any)
+        : null;
+    const multibancoDetails =
+      (checkoutPaymentIntent as any)?.next_action?.multibanco_display_details ??
+      latestCharge?.payment_method_details?.multibanco ??
+      null;
+    const expiresAt = multibancoDetails?.expires_at
+      ? new Date(multibancoDetails.expires_at * 1000).toISOString()
+      : checkoutSession?.expires_at
+        ? new Date(checkoutSession.expires_at * 1000).toISOString()
+        : data.method === "multibanco"
+          ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+          : new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    const paymentUrl = checkoutSession?.url ?? multibancoDetails?.hosted_voucher_url ?? null;
 
     const { data: checkoutRow, error: checkoutInsertError } = await sb
       .from("payment_intents")
@@ -333,7 +327,9 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         currency: source.currency,
         method: data.method,
         status: normalizeStripeStatus(checkoutPaymentIntent?.status ?? "requires_action"),
-        hosted_voucher_url: checkoutSession.url ?? null,
+        multibanco_entity: multibancoDetails?.entity ?? null,
+        multibanco_reference: multibancoDetails?.reference ?? null,
+        hosted_voucher_url: paymentUrl,
         expires_at: expiresAt,
       })
       .select()
@@ -355,7 +351,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
 
     return {
       ...formatIntentResponse(checkoutRow, totalCents, source.depositPercent),
-      checkout_url: checkoutSession.url,
+      checkout_url: paymentUrl,
     };
   });
 
