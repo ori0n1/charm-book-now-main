@@ -57,8 +57,7 @@ type ManualEntry = {
 const PAYMENT_METHODS = [
   { value: "cash", label: "Dinheiro" },
   { value: "mb_way", label: "MB Way" },
-  { value: "multibanco", label: "Multibanco" },
-  { value: "card", label: "Cartão" },
+  { value: "card", label: "Apple Pay, Google Pay ou cartão" },
   { value: "bank_transfer", label: "Transferência" },
   { value: "other", label: "Outro" },
 ];
@@ -390,10 +389,17 @@ function normalizeStudio(
     ...studio,
     id: studio?.id ?? "",
     payment_policy: studio?.payment_policy === "pre_payment" ? "pre_payment" : "pay_in_studio",
-    accepted_payment_methods: studio?.accepted_payment_methods ?? [],
+    accepted_payment_methods: normalizeAcceptedPaymentMethods(studio?.accepted_payment_methods),
     deposit_percent: studio?.deposit_percent ?? 0,
     commission_percent: studio?.commission_percent ?? 0,
   };
+}
+
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method) => method === "mb_way" || method === "card" || method === "cash",
+  );
+  return normalized.length ? normalized : ["mb_way", "card"];
 }
 
 function Field({

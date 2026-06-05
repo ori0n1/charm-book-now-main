@@ -104,8 +104,7 @@ type ManualEntry = {
 const PAYMENT_METHODS = [
   { value: "cash", label: "Dinheiro" },
   { value: "mb_way", label: "MB Way" },
-  { value: "multibanco", label: "Multibanco" },
-  { value: "card", label: "Cartão" },
+  { value: "card", label: "Apple Pay, Google Pay ou cartão" },
   { value: "bank_transfer", label: "Transferência" },
   { value: "other", label: "Outro" },
 ];
@@ -631,7 +630,7 @@ function normalizeStudio(row: unknown): StudioRow | null {
   return {
     id: studio.id,
     payment_policy: studio.payment_policy ?? "pay_in_studio",
-    accepted_payment_methods: studio.accepted_payment_methods ?? ["mb_way", "multibanco"],
+    accepted_payment_methods: normalizeAcceptedPaymentMethods(studio.accepted_payment_methods),
     deposit_percent: studio.deposit_percent ?? 25,
     commission_percent: studio.commission_percent ?? 50,
   };
@@ -724,6 +723,13 @@ function localDateValue(date: Date) {
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method) => method === "mb_way" || method === "card" || method === "cash",
+  );
+  return normalized.length ? normalized : ["mb_way", "card"];
 }
 
 function paymentMethodLabel(value: string) {

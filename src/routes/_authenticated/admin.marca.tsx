@@ -36,7 +36,6 @@ type PublicAmenities = {
   wifi: boolean;
   payments: {
     mb_way: boolean;
-    multibanco: boolean;
     card: boolean;
     cash: boolean;
     other: string;
@@ -61,8 +60,7 @@ const defaultAmenities: PublicAmenities = {
   wifi: true,
   payments: {
     mb_way: true,
-    multibanco: true,
-    card: false,
+    card: true,
     cash: true,
     other: "",
   },
@@ -139,7 +137,7 @@ function BrandPage() {
       whatsapp: data.whatsapp,
       email: data.email,
       instagram: data.instagram,
-      accepted_payment_methods: data.accepted_payment_methods,
+      accepted_payment_methods: normalizeAcceptedPaymentMethods(data.accepted_payment_methods),
       public_amenities: data.public_amenities,
       business_segment: data.business_segment,
     };
@@ -245,7 +243,6 @@ function BrandPage() {
     if (!data) return;
     const paymentMethods = [
       next.payments.mb_way && "mb_way",
-      next.payments.multibanco && "multibanco",
       next.payments.card && "card",
       next.payments.cash && "cash",
     ].filter(Boolean) as string[];
@@ -445,21 +442,8 @@ function BrandPage() {
               }
             />
             <ChipButton
-              checked={amenities.payments.multibanco}
-              label="Multibanco"
-              onClick={() =>
-                updateAmenities({
-                  ...amenities,
-                  payments: {
-                    ...amenities.payments,
-                    multibanco: !amenities.payments.multibanco,
-                  },
-                })
-              }
-            />
-            <ChipButton
               checked={amenities.payments.card}
-              label="Cartão"
+              label="Apple Pay, Google Pay e cartão"
               onClick={() =>
                 updateAmenities({
                   ...amenities,
@@ -760,12 +744,13 @@ function InlineTextField({
 
 function normalizeAmenities(value: Json | null): PublicAmenities {
   const input = (value ?? {}) as Partial<PublicAmenities>;
+  const payments = {
+    ...defaultAmenities.payments,
+    ...(isRecord(input.payments) ? input.payments : {}),
+  };
   return {
     wifi: typeof input.wifi === "boolean" ? input.wifi : defaultAmenities.wifi,
-    payments: {
-      ...defaultAmenities.payments,
-      ...(isRecord(input.payments) ? input.payments : {}),
-    },
+    payments,
     parking: {
       ...defaultAmenities.parking,
       ...(isRecord(input.parking) ? input.parking : {}),
@@ -779,6 +764,13 @@ function normalizeAmenities(value: Json | null): PublicAmenities {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method) => method === "mb_way" || method === "card" || method === "cash",
+  );
+  return normalized.length ? normalized : ["mb_way", "card"];
 }
 
 function normalizeStringArray(value: unknown) {

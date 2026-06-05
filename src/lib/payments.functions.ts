@@ -9,8 +9,8 @@ import { getAdminClient } from "@/lib/supabase-admin.server";
 const PAYMENT_METHOD_MESSAGES: Record<string, string> = {
   mb_way_unavailable:
     "MB WAY não está disponível nesta configuração. Escolha outro método ou contacte o estúdio.",
-  multibanco_unavailable:
-    "Multibanco não está disponível nesta configuração. Escolha outro método ou contacte o estúdio.",
+  card_unavailable:
+    "Cartão, Apple Pay e Google Pay não estão disponíveis nesta configuração. Escolha outro método ou contacte o estúdio.",
   mb_way_phone_invalid:
     "MB WAY exige um telemóvel português válido. Verifique o número e recomece a reserva.",
   payment_method_unavailable:
@@ -49,7 +49,7 @@ const CreateIntentInput = z
   .object({
     appointmentId: z.string().uuid().optional(),
     bookingRequestId: z.string().uuid().optional(),
-    method: z.enum(["mb_way", "multibanco"]),
+    method: z.enum(["mb_way", "card"]),
   })
   .refine((v) => v.appointmentId || v.bookingRequestId, {
     message: "booking_request_required",
@@ -156,7 +156,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const existingQuery = sb
       .from("payment_intents")
       .select(
-        "id, stripe_payment_intent_id, client_secret, amount_cents, currency, method, status, multibanco_entity, multibanco_reference, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
+        "id, stripe_payment_intent_id, client_secret, amount_cents, currency, method, status, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -191,7 +191,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const amountCents = source.amountCents;
     if (amountCents < 50) throw new Error("amount_too_low");
 
-    const paymentMethodType = data.method === "mb_way" ? "mb_way" : "multibanco";
+    const paymentMethodType = data.method === "mb_way" ? "mb_way" : "card";
     const billingPhone =
       data.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : source.clientPhone;
     if (data.method === "mb_way" && !billingPhone) {
@@ -199,8 +199,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     }
 
     const stripe = createStripeClient(stripeEnv());
-    const checkoutExpiresAt =
-      Math.floor(Date.now() / 1000) + (data.method === "multibanco" ? 24 * 60 * 60 : 30 * 60);
+    const checkoutExpiresAt = Math.floor(Date.now() / 1000) + 30 * 60;
     const paymentMetadata = {
       ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
       ...(appointmentId ? { appointment_id: appointmentId } : {}),
@@ -242,78 +241,25 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
       expand: ["payment_intent"],
     } satisfies Parameters<typeof stripe.checkout.sessions.create>[0];
     let checkoutSession;
-    let directPaymentIntent;
     try {
       checkoutSession = await stripe.checkout.sessions.create(checkoutSessionPayload);
     } catch (error) {
-      if (data.method === "multibanco") {
-        try {
-          directPaymentIntent = await stripe.paymentIntents.create({
-            amount: amountCents,
-            currency: source.currency,
-            confirm: true,
-            payment_method_types: ["multibanco"],
-            payment_method_data: {
-              type: "multibanco",
-              billing_details: {
-                name: source.clientName || "Cliente",
-                email: resolveBillingEmail(source.clientEmail),
-                phone: billingPhone || undefined,
-              },
-            },
-            description: `Reserva ${source.studioName} - ${new Date(source.startsAt).toLocaleString("pt-PT")}`,
-            receipt_email: source.clientEmail || undefined,
-            metadata: paymentMetadata,
-            expand: ["latest_charge"],
-          });
-          console.warn("stripe_booking_multibanco_voucher_fallback", {
-            method: data.method,
-            originalMessage: error instanceof Error ? error.message : String(error),
-          });
-        } catch (fallbackError) {
-          const reason = stripePaymentFailureReason(fallbackError, data.method);
-          console.error("stripe_booking_checkout_failed", {
-            method: data.method,
-            reason,
-            fallback: "dynamic_payment_methods",
-            message:
-              fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-          });
-          throw new Error(
-            PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
-          );
-        }
-      } else {
-        const reason = stripePaymentFailureReason(error, data.method);
-        console.error("stripe_booking_checkout_failed", {
-          method: data.method,
-          reason,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        throw new Error(
-          PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
-        );
-      }
+      const reason = stripePaymentFailureReason(error, data.method);
+      console.error("stripe_booking_checkout_failed", {
+        method: data.method,
+        reason,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw new Error(
+        PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
+      );
     }
     const checkoutPaymentIntent =
-      directPaymentIntent ??
-      (typeof checkoutSession?.payment_intent === "object" ? checkoutSession.payment_intent : null);
-    const latestCharge =
-      checkoutPaymentIntent && typeof checkoutPaymentIntent.latest_charge === "object"
-        ? (checkoutPaymentIntent.latest_charge as any)
-        : null;
-    const multibancoDetails =
-      (checkoutPaymentIntent as any)?.next_action?.multibanco_display_details ??
-      latestCharge?.payment_method_details?.multibanco ??
-      null;
-    const expiresAt = multibancoDetails?.expires_at
-      ? new Date(multibancoDetails.expires_at * 1000).toISOString()
-      : checkoutSession?.expires_at
-        ? new Date(checkoutSession.expires_at * 1000).toISOString()
-        : data.method === "multibanco"
-          ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-          : new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    const paymentUrl = checkoutSession?.url ?? multibancoDetails?.hosted_voucher_url ?? null;
+      typeof checkoutSession.payment_intent === "object" ? checkoutSession.payment_intent : null;
+    const expiresAt = checkoutSession.expires_at
+      ? new Date(checkoutSession.expires_at * 1000).toISOString()
+      : new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const paymentUrl = checkoutSession.url ?? null;
 
     const { data: checkoutRow, error: checkoutInsertError } = await sb
       .from("payment_intents")
@@ -327,8 +273,6 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         currency: source.currency,
         method: data.method,
         status: normalizeStripeStatus(checkoutPaymentIntent?.status ?? "requires_action"),
-        multibanco_entity: multibancoDetails?.entity ?? null,
-        multibanco_reference: multibancoDetails?.reference ?? null,
         hosted_voucher_url: paymentUrl,
         expires_at: expiresAt,
       })
@@ -376,7 +320,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
     const query = sb
       .from("payment_intents")
       .select(
-        "status, stripe_payment_intent_id, multibanco_entity, multibanco_reference, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+        "status, stripe_payment_intent_id, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -393,27 +337,14 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
       const stripe = createStripeClient(stripeEnv());
       const fresh = await stripe.paymentIntents.retrieve(
         currentPi.stripe_payment_intent_id as string,
-        { expand: ["latest_charge"] },
       );
       const freshStatus = normalizeStripeStatus(fresh.status);
-      const nextAction = (fresh as any).next_action;
-      const latestCharge = typeof fresh.latest_charge === "object" ? (fresh.latest_charge as any) : null;
-      const chargeDetails = latestCharge?.payment_method_details ?? null;
-      const multibancoDetails =
-        nextAction?.multibanco_display_details ?? chargeDetails?.multibanco ?? null;
-      const expiresAt = multibancoDetails?.expires_at
-        ? new Date(multibancoDetails.expires_at * 1000).toISOString()
-        : currentPi.expires_at;
+      const expiresAt = currentPi.expires_at;
 
       await sb
         .from("payment_intents")
         .update({
           status: freshStatus,
-          multibanco_entity: multibancoDetails?.entity ?? currentPi.multibanco_entity ?? null,
-          multibanco_reference:
-            multibancoDetails?.reference ?? currentPi.multibanco_reference ?? null,
-          hosted_voucher_url:
-            multibancoDetails?.hosted_voucher_url ?? currentPi.hosted_voucher_url ?? null,
           expires_at: expiresAt,
           failure_reason: freshStatus === "failed" ? fresh.last_payment_error?.message ?? "payment_failed" : null,
           updated_at: new Date().toISOString(),
@@ -423,9 +354,6 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
       currentPi = {
         ...currentPi,
         status: freshStatus,
-        multibanco_entity: multibancoDetails?.entity ?? currentPi.multibanco_entity,
-        multibanco_reference: multibancoDetails?.reference ?? currentPi.multibanco_reference,
-        hosted_voucher_url: multibancoDetails?.hosted_voucher_url ?? currentPi.hosted_voucher_url,
         expires_at: expiresAt,
       };
 
@@ -589,21 +517,14 @@ function buildPaymentSource(input: {
     clientName: input.clientName,
     clientEmail: input.clientEmail,
     clientPhone: input.clientPhone,
-    acceptedMethods: (input.studio.accepted_payment_methods as string[] | null) ?? [
-      "mb_way",
-      "multibanco",
-    ],
+    acceptedMethods: normalizeAcceptedPaymentMethods(
+      input.studio.accepted_payment_methods as string[] | null,
+    ),
     currency: ((input.studio.currency as string) || "eur").toLowerCase(),
     depositPercent,
     totalCents,
     amountCents,
   };
-}
-
-function resolveBillingEmail(email?: string | null) {
-  const trimmed = email?.trim();
-  if (trimmed && /\S+@\S+\.\S+/.test(trimmed)) return trimmed;
-  return "reservas@charmbooknow.test";
 }
 
 function normalizePortugueseMobile(phone?: string | null) {
@@ -648,7 +569,14 @@ function normalizeStripeStatus(status: string) {
   return "requires_action";
 }
 
-function stripePaymentFailureReason(error: unknown, method: "mb_way" | "multibanco") {
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method): method is "mb_way" | "card" => method === "mb_way" || method === "card",
+  );
+  return normalized.length > 0 ? normalized : ["mb_way", "card"];
+}
+
+function stripePaymentFailureReason(error: unknown, method: "mb_way" | "card") {
   const err = error as {
     code?: string;
     param?: string;
@@ -662,7 +590,7 @@ function stripePaymentFailureReason(error: unknown, method: "mb_way" | "multiban
     message.includes("payment method type") ||
     message.includes("activated in your dashboard")
   ) {
-    return method === "multibanco" ? "multibanco_unavailable" : "mb_way_unavailable";
+    return method === "card" ? "card_unavailable" : "mb_way_unavailable";
   }
   if (method === "mb_way" && (message.includes("phone") || message.includes("telem"))) {
     return "mb_way_phone_invalid";
@@ -680,8 +608,6 @@ function formatIntentResponse(row: any, totalCents: number, depositPercent: numb
     booking_request_id: row.booking_request_id ?? null,
     method: row.method,
     status: row.status,
-    multibanco_entity: row.multibanco_entity ?? null,
-    multibanco_reference: row.multibanco_reference ?? null,
     hosted_voucher_url: row.hosted_voucher_url ?? null,
     amount_cents: row.amount_cents,
     total_cents: totalCents,

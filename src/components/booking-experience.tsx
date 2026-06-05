@@ -71,7 +71,6 @@ type PublicAmenities = {
   wifi: boolean;
   payments: {
     mb_way: boolean;
-    multibanco: boolean;
     card: boolean;
     cash: boolean;
     other: string;
@@ -96,8 +95,7 @@ const defaultAmenities: PublicAmenities = {
   wifi: true,
   payments: {
     mb_way: true,
-    multibanco: true,
-    card: false,
+    card: true,
     cash: true,
     other: "",
   },
@@ -512,7 +510,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           appointmentId={pendingPayment.appointmentId}
           bookingRequestId={pendingPayment.bookingRequestId}
           acceptedMethods={
-            (studio.accepted_payment_methods as string[] | undefined) ?? ["mb_way", "multibanco"]
+            (studio.accepted_payment_methods as string[] | undefined) ?? ["mb_way", "card"]
           }
           totalPrice={total}
           policySummary={buildPublicPolicyText(studio)}
@@ -1248,8 +1246,7 @@ function buildAmenityItems(amenities: PublicAmenities) {
   }
   const payments = [
     amenities.payments.mb_way && "MB Way",
-    amenities.payments.multibanco && "Multibanco",
-    amenities.payments.card && "cartão",
+    amenities.payments.card && "Apple Pay, Google Pay e cartão",
     amenities.payments.cash && "dinheiro",
     amenities.payments.other.trim(),
   ].filter(Boolean);
@@ -1308,7 +1305,6 @@ function normalizePublicAmenities(value: unknown): PublicAmenities {
     wifi: typeof input.wifi === "boolean" ? input.wifi : defaultAmenities.wifi,
     payments: {
       mb_way: boolOr(payments.mb_way, defaultAmenities.payments.mb_way),
-      multibanco: boolOr(payments.multibanco, defaultAmenities.payments.multibanco),
       card: boolOr(payments.card, defaultAmenities.payments.card),
       cash: boolOr(payments.cash, defaultAmenities.payments.cash),
       other: typeof payments.other === "string" ? payments.other : "",

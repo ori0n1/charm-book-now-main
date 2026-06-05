@@ -22,11 +22,6 @@ type StripePayload = Record<string, unknown> & {
   failure_code?: string | null;
   receipt_url?: string | null;
   hosted_invoice_url?: string | null;
-  next_action?: {
-    multibanco_display_details?: {
-      expires_at?: number | null;
-    } | null;
-  } | null;
   current_period_end?: number;
   cancel_at_period_end?: boolean;
   metadata?: StripeMetadata;
@@ -57,13 +52,6 @@ function hasPeriodAccess(status: string, currentPeriodEnd: string | null) {
     return Boolean(currentPeriodEnd && new Date(currentPeriodEnd).getTime() > Date.now());
   }
   return false;
-}
-
-function getPaymentIntentExpiresAt(pi: StripePayload, kind: "succeeded" | "failed" | "processing" | "canceled") {
-  if (kind !== "processing") return null;
-  const expiresAt = pi.next_action?.multibanco_display_details?.expires_at;
-  if (typeof expiresAt === "number") return new Date(expiresAt * 1000).toISOString();
-  return null;
 }
 
 async function handlePaymentIntent(
@@ -104,9 +92,9 @@ async function handlePaymentIntent(
       amount_cents: Number(pi.amount ?? 0),
       currency: typeof pi.currency === "string" ? pi.currency : "eur",
       method:
-        pi.metadata?.method === "mb_way" || pi.metadata?.method === "multibanco"
+        pi.metadata?.method === "mb_way" || pi.metadata?.method === "card"
           ? pi.metadata.method
-          : "multibanco",
+          : "card",
       status: piStatus,
       updated_at: new Date().toISOString(),
     });
@@ -168,12 +156,10 @@ async function handlePaymentIntent(
     }
   } else if (kind === "processing") {
     if (bookingRequestId) {
-      const expiresAt = getPaymentIntentExpiresAt(pi, kind);
       await sb
         .from("booking_payment_requests")
         .update({
           status: "processing",
-          ...(expiresAt ? { expires_at: expiresAt } : {}),
           updated_at: new Date().toISOString(),
         })
         .eq("id", bookingRequestId)
