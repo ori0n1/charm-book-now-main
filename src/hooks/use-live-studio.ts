@@ -240,6 +240,16 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
         {
           event: "*",
           schema: "public",
+          table: "booking_payment_requests",
+          filter: `studio_id=eq.${studioId}`,
+        },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
           table: "upsell_offers",
           filter: `studio_id=eq.${studioId}`,
         },

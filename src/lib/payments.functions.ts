@@ -70,9 +70,12 @@ async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIn
 }
 
 async function expireStaleReservations(sb: any) {
-  await sb.rpc("expire_pending_appointments").catch((error: unknown) => {
+  try {
+    const { error } = await sb.rpc("expire_pending_appointments");
+    if (error) console.error("expire_pending_appointments_failed", error);
+  } catch (error) {
     console.error("expire_pending_appointments_failed", error);
-  });
+  }
 }
 
 export const createBookingPaymentIntent = createServerFn({ method: "POST" })

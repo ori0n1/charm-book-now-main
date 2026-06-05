@@ -1727,6 +1727,13 @@ function DateTimeStep({
   const [slots, setSlots] = useState<import("@/lib/availability").AvailableSlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    if (!date) return;
+    const interval = window.setInterval(() => setRefreshTick((value) => value + 1), 8000);
+    return () => window.clearInterval(interval);
+  }, [date]);
 
   // Fetch slots whenever date/staff/duration changes
   useEffect(() => {
@@ -1773,7 +1780,7 @@ function DateTimeStep({
     return () => {
       active = false;
     };
-  }, [studioSlug, staffId, eligibleStaffIds, date, durationMin, minBookingNoticeMin]);
+  }, [studioSlug, staffId, eligibleStaffIds, date, durationMin, minBookingNoticeMin, refreshTick]);
 
   const grouped = useMemo(() => {
     if (slots.length === 0) return { morning: [], afternoon: [], evening: [] };
