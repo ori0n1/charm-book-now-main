@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, Copy, Loader2, ShieldCheck } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, Copy, Loader2, ShieldCheck } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { createBookingPaymentIntent, getPaymentStatus } from "@/lib/payments.functions";
@@ -14,8 +14,10 @@ type Props = {
   onCancel: () => void;
 };
 
+type PaymentMethod = "mb_way" | "multibanco";
+
 type IntentInfo = {
-  method: "mb_way" | "multibanco";
+  method: PaymentMethod;
   status: string;
   multibanco_entity: string | null;
   multibanco_reference: string | null;
@@ -26,6 +28,12 @@ type IntentInfo = {
   currency: string;
   hosted_voucher_url: string | null;
   expires_at: string | null;
+};
+
+type StatusResponse = {
+  appointmentStatus: string | null;
+  reservationStatus?: string | null;
+  payment: (IntentInfo & { status: string }) | null;
 };
 
 export function PaymentPendingView({
@@ -39,78 +47,100 @@ export function PaymentPendingView({
 }: Props) {
   const createIntent = useServerFn(createBookingPaymentIntent);
   const checkStatus = useServerFn(getPaymentStatus);
-  const [method, setMethod] = useState<"mb_way" | "multibanco" | null>(null);
+  const [method, setMethod] = useState<PaymentMethod | null>(null);
   const [intent, setIntent] = useState<IntentInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [polling, setPolling] = useState(false);
+  const [expired, setExpired] = useState(false);
 
-  const targetPayload = bookingRequestId
-    ? { bookingRequestId }
-    : appointmentId
-      ? { appointmentId }
-      : null;
+  const targetPayload = useMemo(
+    () =>
+      bookingRequestId
+        ? { bookingRequestId }
+        : appointmentId
+          ? { appointmentId }
+          : null,
+    [appointmentId, bookingRequestId],
+  );
 
   useEffect(() => {
-    if (!intent || intent.status === "succeeded" || !targetPayload) return;
+    if (!intent || intent.status === "succeeded" || !targetPayload || expired) return;
+    const activeIntent = intent;
+    let stopped = false;
     setPolling(true);
-    const interval = setInterval(async () => {
+
+    async function tick() {
+      if (stopped) return;
+      if (activeIntent.expires_at && new Date(activeIntent.expires_at).getTime() <= Date.now()) {
+        setExpired(true);
+        setPolling(false);
+        toast.error("O prazo de pagamento terminou. O horário voltou a ficar disponível.");
+        return;
+      }
+
       try {
-        const res = (await checkStatus({ data: targetPayload })) as {
-          appointmentStatus: string | null;
-          reservationStatus?: string | null;
-          payment: { status: string } | null;
-        };
+        const res = (await checkStatus({ data: targetPayload })) as StatusResponse;
         if (
           res.appointmentStatus === "confirmed" ||
           res.reservationStatus === "confirmed" ||
           res.payment?.status === "succeeded"
         ) {
-          clearInterval(interval);
+          stopped = true;
           setPolling(false);
           toast.success("Pagamento confirmado. Horário reservado com sucesso.");
           onConfirmed();
           return;
         }
-        if (
-          res.payment?.status === "failed" ||
-          res.payment?.status === "canceled" ||
-          res.payment?.status === "expired" ||
-          res.reservationStatus === "failed" ||
-          res.reservationStatus === "canceled" ||
-          res.reservationStatus === "expired"
-        ) {
-          clearInterval(interval);
+
+        if (isTerminalFailure(res.payment?.status) || isTerminalFailure(res.reservationStatus)) {
+          stopped = true;
           setPolling(false);
+          setExpired(res.payment?.status === "expired" || res.reservationStatus === "expired");
           toast.error("O pagamento não foi confirmado. O horário voltou a ficar disponível.");
           setIntent(null);
           setMethod(null);
         }
       } catch {
-        // Keep polling; transient status checks should not interrupt the client.
+        // Transient polling failures should not interrupt the customer.
       }
-    }, 4000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intent, bookingRequestId, appointmentId]);
+    }
 
-  async function start(nextMethod: "mb_way" | "multibanco") {
+    void tick();
+    const interval = window.setInterval(tick, 4000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [intent, targetPayload, checkStatus, onConfirmed, expired]);
+
+  async function start(nextMethod: PaymentMethod) {
     if (!targetPayload) {
       toast.error("Reserva inválida. Recomece a marcação.");
       return;
     }
     setMethod(nextMethod);
+    setExpired(false);
     setLoading(true);
     try {
       const res = (await createIntent({
         data: { ...targetPayload, method: nextMethod },
-      })) as IntentInfo & {
-        payment_intent_id: string;
-      };
+      })) as IntentInfo & { payment_intent_id: string };
+
+      if (isTerminalFailure(res.status)) {
+        throw new Error("O pagamento não pôde ser iniciado. O horário voltou a ficar disponível.");
+      }
+
+      setMethod(res.method);
       setIntent(res);
-      toast.message("Horário reservado temporariamente. Aguardamos a confirmação do pagamento.");
+      toast.message(
+        res.method === "multibanco"
+          ? "Referência criada. O horário fica reservado até ao fim do prazo."
+          : "Pedido MB WAY enviado. Confirme na app do seu banco.",
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Erro ao iniciar pagamento.");
       setMethod(null);
+      setIntent(null);
     } finally {
       setLoading(false);
     }
@@ -121,12 +151,12 @@ export function PaymentPendingView({
       await navigator.clipboard.writeText(text);
       toast.success("Copiado");
     } catch {
-      /* noop */
+      toast.error("Não foi possível copiar.");
     }
   }
 
   const allowedMethods = acceptedMethods.filter(
-    (item): item is "mb_way" | "multibanco" => item === "mb_way" || item === "multibanco",
+    (item): item is PaymentMethod => item === "mb_way" || item === "multibanco",
   );
 
   const depositPct = intent?.deposit_percent ?? 100;
@@ -145,26 +175,19 @@ export function PaymentPendingView({
           {isDeposit ? "Pague o sinal para confirmar" : "Confirme o pagamento da reserva"}
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          O horário fica bloqueado temporariamente enquanto aguardamos a confirmação do pagamento.
+          O horário fica bloqueado enquanto aguardamos a confirmação do pagamento.
         </p>
 
         <div className="mt-4 rounded-2xl border border-border bg-muted/35 p-4 text-sm">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted-foreground">Total do serviço</span>
-            <span className="font-semibold text-foreground">{formatMoney(totalPrice * 100, "eur")}</span>
-          </div>
+          <SummaryRow label="Total do serviço" value={formatMoney(totalPrice * 100, "eur")} />
           {intent && isDeposit && (
             <>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Sinal agora</span>
-                <span className="font-semibold text-foreground">
-                  {formatMoney(intent.amount_cents, intent.currency)} ({depositPct}%)
-                </span>
-              </div>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Restante no estúdio</span>
-                <span className="font-semibold text-foreground">{remaining}</span>
-              </div>
+              <SummaryRow
+                className="mt-3"
+                label="Sinal agora"
+                value={`${formatMoney(intent.amount_cents, intent.currency)} (${depositPct}%)`}
+              />
+              <SummaryRow className="mt-3" label="Restante no estúdio" value={remaining} />
             </>
           )}
         </div>
@@ -176,13 +199,13 @@ export function PaymentPendingView({
           </div>
         )}
 
-        {!intent && (
+        {!intent && !expired && (
           <div className="mt-6 space-y-3">
             {allowedMethods.includes("mb_way") && (
               <PaymentMethodButton
                 disabled={loading}
                 title="MB WAY"
-                description="Confirme em segundos na app do seu banco"
+                description="Confirme na app do seu banco"
                 onClick={() => start("mb_way")}
               />
             )}
@@ -190,17 +213,30 @@ export function PaymentPendingView({
               <PaymentMethodButton
                 disabled={loading}
                 title="Multibanco"
-                description="Use a entidade e referência dentro do prazo indicado"
+                description="Use a entidade e referência dentro do prazo"
                 onClick={() => start("multibanco")}
               />
             )}
-            {loading && (
-              <StatusLine text="A reservar horário e preparar pagamento..." />
+            {allowedMethods.length === 0 && (
+              <ErrorPanel text="Este estúdio ainda não tem métodos de pagamento online disponíveis." />
             )}
+            {loading && <StatusLine text="A reservar horário e preparar pagamento..." />}
           </div>
         )}
 
-        {intent && method === "multibanco" && (
+        {expired && (
+          <div className="mt-6 space-y-3">
+            <ErrorPanel text="O prazo de pagamento terminou. Escolha novamente o horário para garantir disponibilidade." />
+            <button
+              onClick={onCancel}
+              className="w-full rounded-xl bg-foreground px-4 py-3 text-sm font-semibold text-background transition hover:opacity-90"
+            >
+              Escolher outro horário
+            </button>
+          </div>
+        )}
+
+        {intent && method === "multibanco" && !expired && (
           <div className="mt-6 space-y-4 rounded-2xl border border-border bg-muted/40 p-4 text-sm">
             <ReferenceRow label="Entidade" value={intent.multibanco_entity} onCopy={copy} />
             <ReferenceRow label="Referência" value={intent.multibanco_reference} onCopy={copy} />
@@ -227,28 +263,41 @@ export function PaymentPendingView({
           </div>
         )}
 
-        {intent && method === "mb_way" && (
+        {intent && method === "mb_way" && !expired && (
           <div className="mt-6 space-y-3 rounded-2xl border border-border bg-muted/40 p-4 text-sm">
-            <p>
-              Verifique a notificação no seu telemóvel e confirme o pagamento na app do seu banco.
-            </p>
-            {expiresLabel && (
-              <p className="text-xs text-muted-foreground">
-                Pedido válido até {expiresLabel}.
-              </p>
-            )}
+            <p>Verifique a notificação no telemóvel e confirme o pagamento na app do seu banco.</p>
+            {expiresLabel && <p className="text-xs text-muted-foreground">Pedido válido até {expiresLabel}.</p>}
             {polling && <StatusLine text="A aguardar confirmação..." compact />}
           </div>
         )}
 
-        <button onClick={onCancel} className="mt-6 w-full text-xs text-muted-foreground underline">
-          Cancelar reserva
-        </button>
+        {!expired && (
+          <button onClick={onCancel} className="mt-6 w-full text-xs text-muted-foreground underline">
+            Cancelar reserva
+          </button>
+        )}
       </div>
 
       <div className="mt-4 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
         <Check className="h-3 w-3" /> Pagamento seguro
       </div>
+    </div>
+  );
+}
+
+function SummaryRow({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className={`flex items-center justify-between gap-3 ${className ?? ""}`}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-semibold text-foreground">{value}</span>
     </div>
   );
 }
@@ -311,6 +360,19 @@ function StatusLine({ text, compact }: { text: string; compact?: boolean }) {
       {text}
     </div>
   );
+}
+
+function ErrorPanel({ text }: { text: string }) {
+  return (
+    <div className="flex gap-2 rounded-2xl border border-destructive/25 bg-destructive/10 p-4 text-sm text-destructive">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <p>{text}</p>
+    </div>
+  );
+}
+
+function isTerminalFailure(status?: string | null) {
+  return status === "failed" || status === "canceled" || status === "expired";
 }
 
 function formatMoney(cents: number, currency: string) {

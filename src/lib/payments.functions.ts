@@ -5,6 +5,17 @@ import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
 import { getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 
+const PAYMENT_METHOD_MESSAGES: Record<string, string> = {
+  mb_way_unavailable:
+    "MB WAY não está disponível nesta configuração. Escolha outro método ou contacte o estúdio.",
+  multibanco_unavailable:
+    "Multibanco não está disponível nesta configuração. Escolha outro método ou contacte o estúdio.",
+  mb_way_phone_invalid:
+    "MB WAY exige um telemóvel português válido. Verifique o número e recomece a reserva.",
+  payment_method_unavailable:
+    "Este método de pagamento não está disponível de momento. Escolha outro método.",
+};
+
 function admin(): any {
   return getAdminClient();
 }
@@ -78,6 +89,35 @@ async function expireStaleReservations(sb: any) {
   }
 }
 
+async function failBookingRequest(
+  sb: any,
+  bookingRequestId: string | null,
+  reason: string,
+  stripePaymentIntentId?: string | null,
+) {
+  if (bookingRequestId) {
+    await sb
+      .from("booking_payment_requests")
+      .update({
+        status: "failed",
+        failure_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", bookingRequestId)
+      .in("status", ["awaiting_payment", "processing"]);
+  }
+  if (stripePaymentIntentId) {
+    await sb
+      .from("payment_intents")
+      .update({
+        status: "failed",
+        failure_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_payment_intent_id", stripePaymentIntentId);
+  }
+}
+
 export const createBookingPaymentIntent = createServerFn({ method: "POST" })
   .inputValidator((input) => CreateIntentInput.parse(input))
   .handler(async ({ data }) => {
@@ -125,34 +165,57 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const amountCents = source.amountCents;
     if (amountCents < 50) throw new Error("amount_too_low");
 
-    const stripe = createStripeClient(stripeEnv());
     const paymentMethodType = data.method === "mb_way" ? "mb_way" : "multibanco";
     const billingEmail = resolveBillingEmail(source.clientEmail);
-    const intent = await stripe.paymentIntents.create({
-      amount: amountCents,
-      currency: source.currency,
-      payment_method_types: [paymentMethodType],
-      description: `Reserva ${source.studioName} — ${new Date(source.startsAt).toLocaleString("pt-PT")}`,
-      receipt_email: source.clientEmail || undefined,
-      metadata: {
-        ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
-        ...(appointmentId ? { appointment_id: appointmentId } : {}),
-        studio_id: source.studioId,
-        client_phone: source.clientPhone,
-      },
-    });
+    const billingPhone =
+      data.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : source.clientPhone;
+    if (data.method === "mb_way" && !billingPhone) {
+      await failBookingRequest(sb, bookingRequestId, "mb_way_phone_invalid");
+      throw new Error(PAYMENT_METHOD_MESSAGES.mb_way_phone_invalid);
+    }
 
-    const confirmed = await stripe.paymentIntents.confirm(intent.id, {
-      payment_method_data: {
-        type: paymentMethodType as "mb_way" | "multibanco",
-        billing_details: {
-          name: source.clientName || "Cliente",
-          email: billingEmail,
-          phone: source.clientPhone || undefined,
+    const stripe = createStripeClient(stripeEnv());
+    let intentId: string | null = null;
+    let confirmed: Awaited<ReturnType<typeof stripe.paymentIntents.confirm>>;
+    try {
+      const intent = await stripe.paymentIntents.create({
+        amount: amountCents,
+        currency: source.currency,
+        payment_method_types: [paymentMethodType],
+        description: `Reserva ${source.studioName} - ${new Date(source.startsAt).toLocaleString("pt-PT")}`,
+        receipt_email: source.clientEmail || undefined,
+        metadata: {
+          ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
+          ...(appointmentId ? { appointment_id: appointmentId } : {}),
+          studio_id: source.studioId,
+          client_phone: billingPhone || source.clientPhone,
         },
-      },
-      expand: ["latest_charge"],
-    });
+      });
+      intentId = intent.id;
+
+      confirmed = await stripe.paymentIntents.confirm(intent.id, {
+        payment_method_data: {
+          type: paymentMethodType as "mb_way" | "multibanco",
+          billing_details: {
+            name: source.clientName || "Cliente",
+            email: billingEmail,
+            phone: billingPhone || undefined,
+          },
+        },
+        expand: ["latest_charge"],
+      });
+    } catch (error) {
+      if (intentId) {
+        await stripe.paymentIntents.cancel(intentId).catch(() => {
+          // It may already be terminal; local failed state below is still authoritative.
+        });
+      }
+      const reason = stripePaymentFailureReason(error, data.method);
+      await failBookingRequest(sb, bookingRequestId, reason, intentId);
+      throw new Error(
+        PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
+      );
+    }
 
     const nextAction = (confirmed as any).next_action;
     const latestCharge =
@@ -190,6 +253,15 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
       .single();
 
     if (insErr) throw new Error(insErr.message);
+
+    if (status === "failed" || status === "canceled") {
+      await failBookingRequest(sb, bookingRequestId, "payment_failed", confirmed.id);
+      return formatIntentResponse(
+        { ...row, status: "failed" },
+        totalCents,
+        source.depositPercent,
+      );
+    }
 
     if (status === "succeeded" && bookingRequestId) {
       const confirmedAppointmentId = await confirmBookingRequest(
@@ -414,6 +486,15 @@ function resolveBillingEmail(email?: string | null) {
   return "reservas@charmbooknow.test";
 }
 
+function normalizePortugueseMobile(phone?: string | null) {
+  const raw = phone?.trim() ?? "";
+  const digits = raw.replace(/\D/g, "");
+  if (/^9\d{8}$/.test(digits)) return `+351${digits}`;
+  if (/^3519\d{8}$/.test(digits)) return `+${digits}`;
+  if (/^003519\d{8}$/.test(digits)) return `+${digits.slice(2)}`;
+  return null;
+}
+
 async function loadReservationStatus(sb: any, bookingRequestId?: string, appointmentId?: string) {
   if (bookingRequestId) {
     const { data: req } = await sb
@@ -445,6 +526,29 @@ function normalizeStripeStatus(status: string) {
   if (status === "canceled") return "canceled";
   if (status === "requires_payment_method") return "failed";
   return "requires_action";
+}
+
+function stripePaymentFailureReason(error: unknown, method: "mb_way" | "multibanco") {
+  const err = error as {
+    code?: string;
+    param?: string;
+    message?: string;
+    raw?: { code?: string; param?: string; message?: string };
+  };
+  const message = `${err.message ?? ""} ${err.raw?.message ?? ""}`.toLowerCase();
+  const param = err.param ?? err.raw?.param ?? "";
+  if (
+    param.includes("payment_method_types") ||
+    message.includes("payment method type") ||
+    message.includes("activated in your dashboard")
+  ) {
+    return method === "multibanco" ? "multibanco_unavailable" : "mb_way_unavailable";
+  }
+  if (method === "mb_way" && (message.includes("phone") || message.includes("telem"))) {
+    return "mb_way_phone_invalid";
+  }
+  if (err.code === "payment_intent_payment_attempt_expired") return "payment_expired";
+  return "payment_method_unavailable";
 }
 
 function formatIntentResponse(row: any, totalCents: number, depositPercent: number) {
