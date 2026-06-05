@@ -1,7 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type Stripe from "stripe";
 import { createStripeClient, type StripeEnv, verifyWebhook } from "@/lib/stripe.server";
-import { getPlanByPriceId, getSubscriptionPriceId } from "@/lib/subscription-plans.server";
+import {
+  getPlanByPriceId,
+  getPlanIdFromSubscription,
+  getSubscriptionPriceId,
+} from "@/lib/subscription-plans.server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { markTrialUsed } from "@/lib/subscription-helpers";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
@@ -197,14 +201,14 @@ async function syncSubscription(
       ? subscription.customer
       : fallback?.customerId ?? null;
   const priceId = getSubscriptionPriceId(subscription);
-  const plan = getPlanByPriceId(env, priceId);
+  const planId = getPlanIdFromSubscription(env, subscription);
   const status = subscription.status ?? "incomplete";
   const periodEnd = getCurrentPeriodEnd(subscription);
   const currentPeriodEnd = periodEnd
     ? new Date(periodEnd * 1000).toISOString()
     : null;
 
-  if (!userId || !studioId || !priceId || !plan) {
+  if (!userId || !studioId || !priceId || !planId) {
     // Invalid subscription data - silently ignore
     return;
   }
@@ -232,7 +236,7 @@ async function syncSubscription(
     stripe_customer_id: customerId,
     stripe_subscription_id: subscription.id,
     stripe_price_id: priceId,
-    plan: plan.id,
+    plan: planId,
     status,
     current_period_end: currentPeriodEnd,
     cancel_at_period_end: Boolean(subscription.cancel_at_period_end),

@@ -179,9 +179,8 @@ function PremiumAccessPage() {
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-5 py-2 md:py-6">
-      <section className="overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-[0_24px_70px_rgba(0,0,0,0.08)]">
-        <div className={`relative grid gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_24rem] ${status.heroClass}`}>
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_18%,rgba(16,185,129,0.18),transparent_30%),radial-gradient(circle_at_88%_5%,rgba(255,255,255,0.12),transparent_28%)]" />
+      <section className="overflow-hidden rounded-[1.5rem] border border-border bg-card shadow-sm">
+        <div className={`grid gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_22rem] ${status.heroClass}`}>
           <div className="relative p-6 md:p-10">
             <div className="relative max-w-2xl">
               <div className="flex flex-wrap items-center gap-2">
@@ -191,16 +190,16 @@ function PremiumAccessPage() {
                 </span>
               </div>
 
-              <h1 className="mt-6 text-4xl font-light tracking-tight md:text-6xl">
+              <h1 className="mt-6 text-4xl font-light tracking-tight md:text-5xl">
                 {activeSubscription || canceledButValid ? titlePlan : status.title}
               </h1>
-              <p className="mt-4 text-base font-medium text-muted-foreground md:text-lg">
+              <p className="mt-4 text-base font-medium text-muted-foreground">
                 {renewalText || status.description}
               </p>
             </div>
           </div>
 
-          <aside className="relative border-t border-border/70 bg-background/60 p-5 backdrop-blur-xl lg:border-l lg:border-t-0 md:p-6">
+          <aside className="border-t border-border bg-background/55 p-5 lg:border-l lg:border-t-0 md:p-6">
             <div className="mb-4 grid gap-3">
               {hasStripeSubscription && (
                 <>
@@ -217,7 +216,7 @@ function PremiumAccessPage() {
                   <SummaryTile label="Plano atual" value={formatPlan(summary?.plan)} />
                   <SummaryTile
                     label={trialOnly ? "Fim do teste" : "Acesso"}
-                    value={trialOnly ? formatDate(trialDate) : locked ? "Bloqueado" : "A confirmar"}
+                    value={trialOnly ? formatDate(trialDate) : locked ? "Bloqueado" : "Pendente"}
                   />
                 </>
               )}
@@ -293,7 +292,7 @@ function PremiumAccessPage() {
                 key={plan.id}
                 className={`relative flex min-h-[13.5rem] flex-col overflow-hidden rounded-[1.35rem] border p-5 transition ${
                   current
-                    ? "border-emerald-500/70 bg-[linear-gradient(145deg,rgba(16,185,129,0.12),rgba(255,255,255,0.03))] shadow-[0_18px_45px_rgba(16,185,129,0.13)]"
+                    ? "border-emerald-500/70 bg-emerald-500/5 shadow-[0_18px_40px_rgba(16,185,129,0.10)]"
                     : plan.highlighted
                       ? "border-foreground/15 bg-background/80 shadow-sm hover:-translate-y-0.5 hover:shadow-xl"
                       : "border-border bg-background/70 shadow-sm hover:-translate-y-0.5 hover:shadow-xl"
@@ -414,7 +413,7 @@ function futureDate(value?: string | null) {
 }
 
 function formatDate(value?: string | null, activeSubscription = false) {
-  if (!value) return activeSubscription ? "Renovação ativa" : "Pendente";
+  if (!value) return activeSubscription ? "Ativa" : "Pendente";
   return new Date(value).toLocaleDateString("pt-PT", {
     day: "2-digit",
     month: "long",
@@ -456,7 +455,9 @@ function getRenewalText(input: {
   trialDate: string | null;
 }) {
   if (input.canceledButValid) return `Ativo até ${formatDate(input.renewalDate, true)}`;
-  if (input.activeSubscription) return `Renovação em ${formatDate(input.renewalDate, true)}`;
+  if (input.activeSubscription) {
+    return input.renewalDate ? `Renovação em ${formatDate(input.renewalDate, true)}` : "Assinatura ativa";
+  }
   if (input.trialOnly) return `Termina em ${formatDate(input.trialDate)}`;
   return null;
 }

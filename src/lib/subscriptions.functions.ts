@@ -6,6 +6,7 @@ import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 import {
   getSubscriptionPlans,
   getPlanByPriceId,
+  getPlanIdFromSubscription,
   getSubscriptionPriceId,
   isSubscriptionPlanId,
   type SubscriptionPlanId,
@@ -224,9 +225,13 @@ function shouldRefreshFromStripe(input: {
   return true;
 }
 
-function subscriptionScore(subscription: Stripe.Subscription, env: StripeEnv) {
-  const plan = getPlanByPriceId(env, getSubscriptionPriceId(subscription));
-  if (!plan) return 999;
+function subscriptionScore(subscription: Stripe.Subscription, env: StripeEnv, studioId?: string) {
+  const priceId = getSubscriptionPriceId(subscription);
+  const planId = getPlanIdFromSubscription(env, subscription);
+  if (!planId) return 999;
+  const mappedPricePenalty = getPlanByPriceId(env, priceId) ? 0 : 0.25;
+  const metadataStudioId = subscription.metadata?.studio_id;
+  const metadataPenalty = !metadataStudioId || metadataStudioId === studioId ? 0 : 4;
   const statusRank: Record<string, number> = {
     active: 0,
     trialing: 1,
@@ -238,7 +243,7 @@ function subscriptionScore(subscription: Stripe.Subscription, env: StripeEnv) {
   };
   const periodEnd = getCurrentPeriodEnd(subscription);
   const futurePeriod = periodEnd && periodEnd * 1000 > Date.now() ? -0.5 : 0;
-  return (statusRank[subscription.status] ?? 50) + futurePeriod;
+  return (statusRank[subscription.status] ?? 50) + futurePeriod + mappedPricePenalty + metadataPenalty;
 }
 
 async function findStripeSubscriptionForStudio(
@@ -253,7 +258,7 @@ async function findStripeSubscriptionForStudio(
   if (input.studioSubscriptionId && !input.studioSubscriptionId.startsWith("checkout_pending:")) {
     try {
       const subscription = await stripe.subscriptions.retrieve(input.studioSubscriptionId);
-      if (getPlanByPriceId(input.env, getSubscriptionPriceId(subscription))) {
+      if (getPlanIdFromSubscription(input.env, subscription)) {
         return subscription;
       }
     } catch (error) {
@@ -271,14 +276,11 @@ async function findStripeSubscriptionForStudio(
     limit: 20,
   });
   return subscriptions.data
-    .filter((subscription) => getPlanByPriceId(input.env, getSubscriptionPriceId(subscription)))
-    .filter((subscription) => {
-      const metadataStudioId = subscription.metadata?.studio_id;
-      return !metadataStudioId || metadataStudioId === input.studioId;
-    })
+    .filter((subscription) => getPlanIdFromSubscription(input.env, subscription))
     .sort(
       (a, b) =>
-        subscriptionScore(a, input.env) - subscriptionScore(b, input.env) ||
+        subscriptionScore(a, input.env, input.studioId) -
+          subscriptionScore(b, input.env, input.studioId) ||
         (b.created ?? 0) - (a.created ?? 0),
     )[0];
 }
@@ -346,12 +348,12 @@ async function syncCheckoutSubscription(
   const customerId =
     typeof subscription.customer === "string" ? subscription.customer : fallback.customerId;
   const priceId = getSubscriptionPriceId(subscription);
-  const plan = getPlanByPriceId(env, priceId);
+  const planId = getPlanIdFromSubscription(env, subscription);
   const status = subscription.status ?? "incomplete";
   const periodEnd = getCurrentPeriodEnd(subscription);
   const currentPeriodEnd = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
 
-  if (!userId || !studioId || !customerId || !priceId || !plan) {
+  if (!userId || !studioId || !customerId || !priceId || !planId) {
     throw new Error("stripe_subscription_sync_incomplete");
   }
 
@@ -362,7 +364,7 @@ async function syncCheckoutSubscription(
     stripe_customer_id: customerId,
     stripe_subscription_id: subscription.id,
     stripe_price_id: priceId,
-    plan: plan.id,
+    plan: planId,
     status,
     current_period_end: currentPeriodEnd,
     cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
@@ -405,7 +407,7 @@ async function syncCheckoutSubscription(
     .eq("id", studioId);
   if (studioError) throw studioError;
 
-  return { status, plan: plan.id, currentPeriodEnd };
+  return { status, plan: planId, currentPeriodEnd };
 }
 
 async function repairSubscriptionPeriodIfMissing(
@@ -670,7 +672,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       const portal = await stripe.billingPortal.sessions.create({
         customer: existingSubscription.stripe_customer_id ?? customerId,
         configuration: await ensureBillingPortalConfiguration(stripe, env, stripeSubscription),
-        return_url: `${appBaseUrl()}/admin/pagamentos`,
+        return_url: `${appBaseUrl()}/admin/premium`,
       });
       return { url: portal.url };
     }
@@ -708,8 +710,8 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
         mode: "subscription",
         customer: customerId,
         line_items: [{ price: plan.priceId, quantity: 1 }],
-        success_url: `${appBaseUrl()}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${appBaseUrl()}/admin/pagamentos?billing=cancelled`,
+        success_url: `${appBaseUrl()}/admin/premium?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${appBaseUrl()}/admin/premium?billing=cancelled`,
         metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
         subscription_data: {
           metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
