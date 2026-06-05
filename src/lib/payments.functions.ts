@@ -69,10 +69,17 @@ async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIn
   return data as string;
 }
 
+async function expireStaleReservations(sb: any) {
+  await sb.rpc("expire_pending_appointments").catch((error: unknown) => {
+    console.error("expire_pending_appointments_failed", error);
+  });
+}
+
 export const createBookingPaymentIntent = createServerFn({ method: "POST" })
   .inputValidator((input) => CreateIntentInput.parse(input))
   .handler(async ({ data }) => {
     const sb = admin();
+    await expireStaleReservations(sb);
 
     const bookingRequestId = data.bookingRequestId ?? null;
     const appointmentId = data.appointmentId ?? null;
@@ -94,10 +101,12 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
       ? await existingQuery
           .eq("booking_request_id", bookingRequestId)
           .in("status", ["requires_action", "processing", "succeeded"])
+          .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
           .maybeSingle()
       : await existingQuery
           .eq("appointment_id", appointmentId)
           .in("status", ["requires_action", "processing", "succeeded"])
+          .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
           .maybeSingle();
 
     if (existing) {
@@ -199,7 +208,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     if (bookingRequestId && (status === "requires_action" || status === "processing")) {
       await sb
         .from("booking_payment_requests")
-        .update({ status: "processing" })
+        .update({ status: "processing", expires_at: expiresAt, updated_at: new Date().toISOString() })
         .eq("id", bookingRequestId);
     }
 
@@ -218,6 +227,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const sb = admin();
+    await expireStaleReservations(sb);
     await rateLimitOrThrow({
       key: `payment-status:${data.bookingRequestId ?? data.appointmentId}:${getRequestFingerprint()}`,
       limit: 80,
@@ -291,75 +301,6 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
           appointmentId: data.appointmentId,
           payment: pi,
         };
-      }
-    }
-
-    if (
-      pi?.stripe_payment_intent_id &&
-      (pi.status === "requires_action" || pi.status === "processing")
-    ) {
-      try {
-        const stripe = createStripeClient(stripeEnv());
-        const fresh = await stripe.paymentIntents.retrieve(pi.stripe_payment_intent_id as string);
-        const nextStatus = normalizeStripeStatus(fresh.status);
-        if (nextStatus !== pi.status) {
-          await sb
-            .from("payment_intents")
-            .update({ status: nextStatus, updated_at: new Date().toISOString() })
-            .eq("stripe_payment_intent_id", fresh.id);
-        }
-        if (fresh.status === "succeeded") {
-          if (data.bookingRequestId) {
-            const appointmentId = await confirmBookingRequest(sb, data.bookingRequestId, fresh.id);
-            await sendAppointmentConfirmationMessage(sb, {
-              stripePaymentIntentId: fresh.id,
-            }).catch((sendError) => {
-              console.error("twilio whatsapp confirmation failed", sendError);
-            });
-            return {
-              appointmentStatus: "confirmed",
-              reservationStatus: "confirmed",
-              appointmentId,
-              payment: { ...pi, status: "succeeded", appointment_id: appointmentId },
-            };
-          }
-          if (data.appointmentId) {
-            await sb
-              .from("appointments")
-              .update({ status: "confirmed", updated_at: new Date().toISOString() })
-              .eq("id", data.appointmentId)
-              .eq("status", "pending_payment");
-            await sendAppointmentConfirmationMessage(sb, {
-              stripePaymentIntentId: fresh.id,
-            }).catch((sendError) => {
-              console.error("twilio whatsapp confirmation failed", sendError);
-            });
-            return {
-              appointmentStatus: "confirmed",
-              reservationStatus: "confirmed",
-              appointmentId: data.appointmentId,
-              payment: { ...pi, status: "succeeded" },
-            };
-          }
-        }
-        if (fresh.status === "canceled" || fresh.status === "requires_payment_method") {
-          if (data.bookingRequestId) {
-            await sb
-              .from("booking_payment_requests")
-              .update({ status: "failed", failure_reason: "payment_failed" })
-              .eq("id", data.bookingRequestId);
-          }
-          await sb
-            .from("payment_intents")
-            .update({
-              status: fresh.status === "canceled" ? "canceled" : "failed",
-              failure_reason: "payment_failed",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("stripe_payment_intent_id", fresh.id);
-        }
-      } catch (e) {
-        console.error("stripe retrieve failed", e);
       }
     }
 

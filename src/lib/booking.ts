@@ -65,8 +65,7 @@ async function recordPolicyAcceptance(
     p_payload: {
       cancellation_notice_hours: acceptance.cancellationNoticeHours,
       after_deadline_policy: acceptance.afterDeadlinePolicy,
-      accepted_label:
-        "Li e concordo com as políticas de cancelamento e utilização do sinal.",
+      accepted_label: "Li e concordo com as políticas de cancelamento e utilização do sinal.",
     },
   });
   if (error) throw new Error("Não foi possível registar a aceitação das políticas.");
@@ -77,6 +76,8 @@ function translateBookingError(msg: string): string {
     return "Este horário já não está disponível para agendamento imediato.";
   if (msg.includes("slot_unavailable"))
     return "Este horário acabou de ser reservado. Escolha outro, por favor.";
+  if (msg.includes("booking_request_expired"))
+    return "A reserva temporária expirou. Escolha novamente o horário para garantir disponibilidade.";
   if (msg.includes("outside_hours")) return "O estúdio está fechado neste horário. Escolha outro.";
   if (msg.includes("staff_off"))
     return "A profissional está de folga neste período. Escolha outro horário.";

@@ -314,6 +314,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     }
 
     setSubmitting(true);
+    toast.message("A reservar horário...");
     try {
       const result = await createPublicBooking({
         studioSlug: studio.slug,
@@ -338,6 +339,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       }
       if (result.requires_payment) {
         if (result.booking_request_id) {
+          toast.message("Horário reservado temporariamente. Conclua o pagamento para confirmar.");
           setConfirmedTarget({ bookingRequestId: result.booking_request_id });
           setPendingPayment({ bookingRequestId: result.booking_request_id });
         } else if (result.appointment_id) {
