@@ -11,6 +11,11 @@ function admin(): SupabaseClient {
 
 const StudioInput = z.object({ studioId: z.string().uuid() });
 
+const CancelWithdrawalInput = z.object({
+  studioId: z.string().uuid(),
+  requestId: z.string().uuid(),
+});
+
 const PayoutSettingsInput = z.object({
   studioId: z.string().uuid(),
   fiscalName: z.string().trim().min(2).max(160),
@@ -127,6 +132,30 @@ export const requestStudioWithdrawal = createServerFn({ method: "POST" })
     return { needsSetup: false, requestId: inserted.id as string, amountCents: availableCents, status };
   });
 
+export const cancelStudioWithdrawal = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => CancelWithdrawalInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = admin();
+    const userId = (context as any).userId;
+    await assertStudioAccessWithOptions(sb, userId, data.studioId, { requirePremium: true });
+
+    const { error } = await (sb as any)
+      .from("withdrawal_requests")
+      .update({
+        status: "canceled",
+        failure_reason: "Pedido cancelado pelo estúdio.",
+        status_updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.requestId)
+      .eq("studio_id", data.studioId)
+      .eq("status", "in_review");
+
+    if (error) throw error;
+    return { ok: true };
+  });
+
 async function loadSettings(sb: SupabaseClient, studioId: string) {
   const { data } = await (sb as any)
     .from("studio_payout_settings")
@@ -193,7 +222,7 @@ async function loadWithdrawalTotals(sb: SupabaseClient, studioId: string) {
         : sum,
     0,
   );
-  return { paidOnlineCents, reservedCents };
+  return { paidOnlineCents, reservedCents: Math.min(reservedCents, paidOnlineCents) };
 }
 
 async function loadRecentRequests(sb: SupabaseClient, studioId: string) {

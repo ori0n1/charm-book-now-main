@@ -6,6 +6,7 @@ import { useState, type InputHTMLAttributes } from "react";
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import {
+  cancelStudioWithdrawal,
   getWithdrawalSummary,
   requestStudioWithdrawal,
   savePayoutSettings,
@@ -49,9 +50,11 @@ function WithdrawalsPage() {
   const queryClient = useQueryClient();
   const loadWithdrawal = useServerFn(getWithdrawalSummary);
   const requestWithdrawal = useServerFn(requestStudioWithdrawal);
+  const cancelWithdrawal = useServerFn(cancelStudioWithdrawal);
   const saveWithdrawalSettings = useServerFn(savePayoutSettings);
   const [setupOpen, setSetupOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const withdrawal = useQuery({
     queryKey: ["withdrawals-page-summary", studio?.id],
@@ -99,6 +102,20 @@ function WithdrawalsPage() {
       toast.error("Não foi possível criar o pedido de levantamento.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function cancelRequest(requestId: string) {
+    if (!studio) return;
+    setCancellingId(requestId);
+    try {
+      await cancelWithdrawal({ data: { studioId: studio.id, requestId } });
+      await queryClient.invalidateQueries({ queryKey: ["withdrawals-page-summary", studio.id] });
+      toast.success("Pedido cancelado. O saldo foi libertado.");
+    } catch {
+      toast.error("Não foi possível cancelar este pedido.");
+    } finally {
+      setCancellingId(null);
     }
   }
 
@@ -170,6 +187,13 @@ function WithdrawalsPage() {
             icon={<Download className="h-4 w-4" />}
           />
         </section>
+
+        {reserved > 0 && available <= 0 && (
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+            O saldo recebido está reservado em pedidos de levantamento em análise. Cancele um pedido
+            pendente se quiser libertar esse valor para um novo levantamento.
+          </div>
+        )}
 
         <section className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]">
           <article className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
@@ -254,17 +278,29 @@ function WithdrawalsPage() {
                           {formatDate(request.requestedAt)} · {formatPayoutMethod(request.payoutMethod)}
                         </p>
                       </div>
-                      {request.status === "completed" && request.proofUrl && (
-                        <a
-                          href={request.proofUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          Descarregar comprovativo
-                        </a>
-                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {request.status === "in_review" && (
+                          <button
+                            type="button"
+                            onClick={() => cancelRequest(request.id)}
+                            disabled={cancellingId === request.id}
+                            className="inline-flex h-10 items-center justify-center rounded-2xl border border-border px-4 text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {cancellingId === request.id ? "A cancelar..." : "Cancelar pedido"}
+                          </button>
+                        )}
+                        {request.status === "completed" && request.proofUrl && (
+                          <a
+                            href={request.proofUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Descarregar comprovativo
+                          </a>
+                        )}
+                      </div>
                     </div>
                     <WithdrawalTimeline request={request} />
                     {request.failureReason && (
