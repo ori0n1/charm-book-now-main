@@ -72,6 +72,14 @@ const NAV = [
     exact: false,
   },
   {
+    to: "/admin/central-levantamentos",
+    label: "Central",
+    mobileLabel: "Central",
+    icon: ShieldCheck,
+    exact: false,
+    saasOnly: true,
+  },
+  {
     to: "/admin/whatsapp",
     label: "WhatsApp",
     mobileLabel: "WhatsApp",
@@ -270,7 +278,7 @@ function AdminLayout() {
         ? NAV.filter((item) =>
             ["/admin/agenda", "/admin/clientes", "/admin/balcao"].includes(item.to),
           )
-        : NAV;
+        : NAV.filter((item) => !("saasOnly" in item) || studio.role === "saas_owner");
   const roleNav = allowedNav;
 
   const primaryMobileNav = roleNav.filter((item) =>
@@ -483,6 +491,7 @@ function AdminLayout() {
                         {item.to === "/admin/politicas" && "Cancelamentos e reembolsos"}
                         {item.to === "/admin/premium" && "Plano, teste e renovação"}
                         {item.to === "/admin/levantamentos" && "Saldo, pedidos e comprovativos"}
+                        {item.to === "/admin/central-levantamentos" && "Aprovação segura de levantamentos"}
                       </span>
                     </span>
                     <span className="text-lg text-muted-foreground">›</span>
