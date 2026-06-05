@@ -1,8 +1,10 @@
 import { forwardRef, useEffect, useMemo, useState, type ButtonHTMLAttributes } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { Bell, BellRing, CalendarCheck, CreditCard, RefreshCcw, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
+import { reconcileStudioBookingPayments } from "@/lib/payments.functions";
 
 type StudioNotification = {
   id: string;
@@ -31,6 +33,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   const [items, setItems] = useState<StudioNotification[]>([]);
   const [open, setOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const reconcilePayments = useServerFn(reconcileStudioBookingPayments);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
     "unsupported",
   );
@@ -68,7 +71,16 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
       }
     }
 
-    void loadNotifications();
+    async function syncAndLoadNotifications() {
+      try {
+        await reconcilePayments({ data: { studioId } });
+      } catch (error) {
+        console.warn("studio_payment_reconcile_skipped", error);
+      }
+      await loadNotifications();
+    }
+
+    void syncAndLoadNotifications();
 
     const channel = supabase
       .channel(`studio-notifications-${studioId}`)
@@ -108,7 +120,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [studioId, studioName]);
+  }, [reconcilePayments, studioId, studioName]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

@@ -55,6 +55,10 @@ const CreateIntentInput = z
     message: "booking_request_required",
   });
 
+const ReconcileStudioInput = z.object({
+  studioId: z.string().uuid(),
+});
+
 async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIntentId: string) {
   const stripe = createStripeClient(stripeEnv());
   const fresh = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
@@ -139,6 +143,96 @@ async function failBookingRequest(
   }
 }
 
+function extractCheckoutSessionId(value: string | null | undefined) {
+  if (!value) return null;
+  return value.match(/cs_(?:test|live)_[A-Za-z0-9]+/)?.[0] ?? null;
+}
+
+async function selectPaymentIntentById(sb: any, id: string) {
+  const { data } = await sb
+    .from("payment_intents")
+    .select(
+      "id, status, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  return data;
+}
+
+async function reconcileCheckoutSessionPayment(sb: any, row: any) {
+  if (!row || row.status === "succeeded") return row;
+
+  const checkoutSessionId =
+    row.stripe_checkout_session_id ?? extractCheckoutSessionId(row.hosted_voucher_url);
+  if (!checkoutSessionId) return row;
+
+  const stripe = createStripeClient(stripeEnv());
+  const session = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
+    expand: ["payment_intent"],
+  });
+  const paymentIntent =
+    typeof session.payment_intent === "object" && session.payment_intent
+      ? session.payment_intent
+      : null;
+  const stripePaymentIntentId =
+    typeof session.payment_intent === "string" ? session.payment_intent : paymentIntent?.id ?? null;
+
+  if (!stripePaymentIntentId && session.payment_status !== "paid") {
+    return row;
+  }
+
+  const freshStatus = paymentIntent
+    ? normalizeStripeStatus(paymentIntent.status)
+    : session.payment_status === "paid"
+      ? "succeeded"
+      : session.status === "expired"
+        ? "expired"
+        : row.status;
+  const patch: Record<string, unknown> = {
+    stripe_checkout_session_id: checkoutSessionId,
+    stripe_payment_intent_id: stripePaymentIntentId ?? row.stripe_payment_intent_id,
+    client_secret: paymentIntent?.client_secret ?? row.client_secret ?? null,
+    status: freshStatus,
+    failure_reason:
+      freshStatus === "failed"
+        ? paymentIntent?.last_payment_error?.message ?? "payment_failed"
+        : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  await sb.from("payment_intents").update(patch).eq("id", row.id);
+
+  if (freshStatus === "succeeded" && stripePaymentIntentId) {
+    if (row.booking_request_id) {
+      try {
+        await confirmBookingRequest(sb, row.booking_request_id, stripePaymentIntentId);
+      } catch (error) {
+        console.error("checkout_session_booking_confirm_failed", {
+          bookingRequestId: row.booking_request_id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } else if (row.appointment_id) {
+      await sb
+        .from("appointments")
+        .update({ status: "confirmed", updated_at: new Date().toISOString() })
+        .eq("id", row.appointment_id)
+        .eq("status", "pending_payment");
+    }
+  }
+
+  if (freshStatus === "failed" || freshStatus === "canceled" || freshStatus === "expired") {
+    await failBookingRequest(
+      sb,
+      row.booking_request_id ?? null,
+      freshStatus === "expired" ? "payment_expired" : "payment_failed",
+      stripePaymentIntentId,
+    );
+  }
+
+  return (await selectPaymentIntentById(sb, row.id)) ?? { ...row, ...patch };
+}
+
 export const createBookingPaymentIntent = createServerFn({ method: "POST" })
   .inputValidator((input) => CreateIntentInput.parse(input))
   .handler(async ({ data }) => {
@@ -156,7 +250,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const existingQuery = sb
       .from("payment_intents")
       .select(
-        "id, stripe_payment_intent_id, client_secret, amount_cents, currency, method, status, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
+        "id, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, amount_cents, currency, method, status, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -174,12 +268,13 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
           .maybeSingle();
 
     if (existing) {
+      const reconciledExisting = await reconcileCheckoutSessionPayment(sb, existing);
       const source = await loadPaymentSource(sb, bookingRequestId, appointmentId);
       return {
-        ...formatIntentResponse(existing, source.totalCents, source.depositPercent),
+        ...formatIntentResponse(reconciledExisting, source.totalCents, source.depositPercent),
         mb_way_phone:
-          existing.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : null,
-        checkout_url: existing.hosted_voucher_url,
+          reconciledExisting.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : null,
+        checkout_url: reconciledExisting.hosted_voucher_url,
       };
     }
 
@@ -267,6 +362,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         studio_id: source.studioId,
         appointment_id: appointmentId,
         booking_request_id: bookingRequestId,
+        stripe_checkout_session_id: checkoutSession.id,
         stripe_payment_intent_id: checkoutPaymentIntent?.id ?? null,
         client_secret: checkoutPaymentIntent?.client_secret ?? null,
         amount_cents: amountCents,
@@ -320,7 +416,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
     const query = sb
       .from("payment_intents")
       .select(
-        "status, stripe_payment_intent_id, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -330,6 +426,14 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
       : await query.eq("appointment_id", data.appointmentId).maybeSingle();
 
     let currentPi = pi;
+    if (
+      currentPi &&
+      ["requires_action", "processing"].includes(currentPi.status as string) &&
+      !currentPi.stripe_payment_intent_id
+    ) {
+      currentPi = await reconcileCheckoutSessionPayment(sb, currentPi);
+    }
+
     if (
       currentPi?.stripe_payment_intent_id &&
       ["requires_action", "processing"].includes(currentPi.status as string)
@@ -427,6 +531,45 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
     }
 
     return { ...statusInfo, payment: currentPi ?? null };
+  });
+
+export const reconcileStudioBookingPayments = createServerFn({ method: "POST" })
+  .inputValidator((input) => ReconcileStudioInput.parse(input))
+  .handler(async ({ data }) => {
+    const sb = admin();
+    await rateLimitOrThrow({
+      key: `payment-reconcile:${data.studioId}:${getRequestFingerprint()}`,
+      limit: 20,
+      windowMs: 10 * 60 * 1000,
+    });
+
+    const { data: rows, error } = await sb
+      .from("payment_intents")
+      .select(
+        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+      )
+      .eq("studio_id", data.studioId)
+      .in("status", ["requires_action", "processing"])
+      .order("created_at", { ascending: false })
+      .limit(12);
+
+    if (error) throw new Error(error.message);
+
+    let updated = 0;
+    for (const row of rows ?? []) {
+      try {
+        const before = row.status;
+        const next = await reconcileCheckoutSessionPayment(sb, row);
+        if (next?.status !== before || next?.appointment_id !== row.appointment_id) updated += 1;
+      } catch (error) {
+        console.error("studio_payment_reconcile_failed", {
+          paymentIntentId: row.id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    return { checked: rows?.length ?? 0, updated };
   });
 
 async function loadPaymentSource(
