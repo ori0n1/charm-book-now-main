@@ -179,6 +179,7 @@ async function loadWithdrawalTotals(sb: SupabaseClient, studioId: string) {
       .select("id,amount_cents,appointment_id")
       .eq("studio_id", studioId)
       .eq("status", "succeeded")
+      .like("stripe_checkout_session_id", "cs_live_%")
       .not("appointment_id", "is", null),
     (sb as any)
       .from("refund_requests")
