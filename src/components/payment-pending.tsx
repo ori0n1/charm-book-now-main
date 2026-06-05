@@ -159,20 +159,23 @@ export function PaymentPendingView({
   const expiresLabel = intent?.expires_at ? formatDateTime(intent.expires_at) : null;
 
   return (
-    <div className="mx-auto max-w-md p-6">
-      <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+    <div className="mx-auto w-full max-w-lg px-4 py-6 sm:px-6">
+      <div className="overflow-hidden rounded-[1.65rem] border border-border/80 bg-card shadow-xl shadow-black/5">
+        <div className="border-b border-border/70 bg-muted/20 px-5 py-5 sm:px-6">
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5" />
           Checkout seguro
         </div>
-        <h2 className="mt-3 text-2xl font-light tracking-tight">
+        <h2 className="mt-3 text-2xl font-light tracking-tight sm:text-[1.7rem]">
           {isDeposit ? "Pague o sinal para confirmar" : "Confirme o pagamento da reserva"}
         </h2>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Escolha um método rápido. O horário fica bloqueado enquanto o pagamento é concluído.
+        <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+          O horário fica reservado enquanto conclui o pagamento.
         </p>
+        </div>
 
-        <div className="mt-4 rounded-2xl border border-border bg-muted/35 p-4 text-sm">
+        <div className="space-y-5 px-5 py-5 sm:px-6">
+        <div className="rounded-2xl border border-border/80 bg-background/70 p-4 text-sm shadow-sm">
           <SummaryRow label="Total do serviço" value={formatMoney(totalPrice * 100, "eur")} />
           {intent && isDeposit && (
             <>
@@ -187,21 +190,22 @@ export function PaymentPendingView({
         </div>
 
         {policySummary && (
-          <div className="mt-4 rounded-2xl border border-border bg-background p-4 text-xs leading-relaxed text-muted-foreground">
+          <div className="rounded-2xl border border-border/70 bg-muted/25 p-4 text-xs leading-relaxed text-muted-foreground">
             <p className="font-semibold text-foreground">Sinal, cancelamento e reembolso</p>
             <p className="mt-1">{policySummary}</p>
           </div>
         )}
 
         {!intent && !expired && (
-          <div className="mt-6 space-y-3">
+          <div className="space-y-3">
             {hasCard && (
               <PaymentMethodButton
                 disabled={loading !== null}
-                title="Apple Pay / Google Pay / Cartão"
-                description="O método mais rápido aparece automaticamente no checkout"
+                title="Apple Pay, Google Pay ou cartão"
+                description="O checkout mostra automaticamente a opção mais rápida"
                 loading={loading === "card"}
                 onClick={() => start("card")}
+                featured
                 icon={
                   <div className="flex items-center gap-1.5">
                     <SiApplepay className="h-5 w-8" />
@@ -228,7 +232,7 @@ export function PaymentPendingView({
         )}
 
         {expired && (
-          <div className="mt-6 space-y-3">
+          <div className="space-y-3">
             <ErrorPanel text="O prazo de pagamento terminou. Escolha novamente o horário para garantir disponibilidade." />
             <button
               onClick={onCancel}
@@ -240,7 +244,7 @@ export function PaymentPendingView({
         )}
 
         {intent && !expired && (
-          <div className="mt-6 space-y-3 rounded-2xl border border-border bg-muted/40 p-4 text-sm">
+          <div className="space-y-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm">
             <p>Aguardamos a confirmação do checkout seguro para fechar a reserva.</p>
             {expiresLabel && <p className="text-xs text-muted-foreground">Pedido válido até {expiresLabel}.</p>}
             {polling && <StatusLine text="A confirmar pagamento..." compact />}
@@ -248,10 +252,11 @@ export function PaymentPendingView({
         )}
 
         {!expired && (
-          <button onClick={onCancel} className="mt-6 w-full text-xs text-muted-foreground underline">
+          <button onClick={onCancel} className="w-full rounded-xl px-4 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground">
             Cancelar reserva
           </button>
         )}
+        </div>
       </div>
 
       <div className="mt-4 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
@@ -285,6 +290,7 @@ function PaymentMethodButton({
   icon,
   loading,
   onClick,
+  featured = false,
 }: {
   disabled: boolean;
   title: string;
@@ -292,18 +298,23 @@ function PaymentMethodButton({
   icon: ReactNode;
   loading: boolean;
   onClick: () => void;
+  featured?: boolean;
 }) {
   return (
     <button
       disabled={disabled}
       onClick={onClick}
-      className="flex w-full items-center justify-between gap-4 rounded-2xl border border-border bg-background/60 px-4 py-3 text-left text-sm shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/20 hover:bg-muted disabled:translate-y-0 disabled:opacity-50"
+      className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-4 py-4 text-left text-sm shadow-sm transition hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-50 ${
+        featured
+          ? "border-emerald-500/30 bg-emerald-500/[0.08] shadow-emerald-950/5 hover:border-emerald-500/45 hover:bg-emerald-500/[0.12]"
+          : "border-border bg-background/70 hover:border-foreground/20 hover:bg-muted"
+      }`}
     >
-      <span>
+      <span className="min-w-0">
         <span className="block font-semibold">{title}</span>
         <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>
       </span>
-      <span className="grid min-w-14 place-items-center text-foreground">
+      <span className="grid min-w-16 place-items-center rounded-xl bg-background/75 px-2 py-1.5 text-foreground shadow-sm">
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
       </span>
     </button>

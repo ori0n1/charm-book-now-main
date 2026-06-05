@@ -53,7 +53,7 @@ function PrivacyPage() {
       <LegalSection title="Subcontratantes e pagamentos">
         <p>
           A Bellza pode recorrer a fornecedores técnicos, incluindo alojamento, autenticação, email,
-          comunicações e pagamentos. Pagamentos online podem ser processados por Stripe ou fornecedores
+          comunicações e pagamentos. Pagamentos online podem ser processados por fornecedores
           equivalentes certificados.
         </p>
       </LegalSection>

@@ -124,7 +124,7 @@ function LandingPage() {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Não foi possível abrir o checkout seguro da Stripe.",
+          : "Não foi possível abrir o checkout seguro.",
       );
       setCheckoutPlan(null);
     }
@@ -190,7 +190,7 @@ function LandingPage() {
               </a>
             </div>
             <ul className="mt-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[11px] font-semibold text-muted-foreground sm:gap-x-5 sm:text-xs lg:justify-start">
-              {["Sem fidelização", "Cancelamento simples", "Suporte premium", "Pronto para Stripe"].map((item) => (
+              {["Sem fidelização", "Cancelamento simples", "Suporte premium", "Pagamentos online"].map((item) => (
                 <li key={item} className="flex items-center gap-1.5">
                   <Check className="size-3.5 text-accent" aria-hidden="true" />
                   {item}
@@ -292,7 +292,7 @@ function LandingPage() {
                     disabled={checkoutPlan === plan.id}
                     className={`mt-7 w-full disabled:opacity-60 ${plan.highlighted ? "public-btn-primary" : "public-btn-secondary bg-background text-foreground"}`}
                   >
-                    {checkoutPlan === plan.id ? "A abrir Stripe..." : "Começar grátis"}
+                    {checkoutPlan === plan.id ? "A abrir checkout..." : "Começar grátis"}
                   </button>
                 </article>
               ))}

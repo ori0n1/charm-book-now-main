@@ -7,7 +7,12 @@ import { supabase } from "@/integrations/supabase/client";
 type StudioNotification = {
   id: string;
   studio_id: string;
-  kind: "new_appointment" | "payment_confirmed" | "refund_request" | "withdrawal_requested";
+  kind:
+    | "new_appointment"
+    | "payment_confirmed"
+    | "payment_failed"
+    | "refund_request"
+    | "withdrawal_requested";
   title: string;
   body: string;
   payload: Record<string, unknown> | null;
@@ -200,7 +205,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
               const Icon =
                 item.kind === "payment_confirmed"
                   ? CreditCard
-                  : item.kind === "refund_request" || item.kind === "withdrawal_requested"
+                  : item.kind === "payment_failed" ||
+                      item.kind === "refund_request" ||
+                      item.kind === "withdrawal_requested"
                     ? RefreshCcw
                     : CalendarCheck;
               return (
@@ -218,7 +225,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
                     className={`mt-0.5 grid size-9 shrink-0 place-items-center rounded-2xl ${
                       item.kind === "payment_confirmed"
                         ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                        : item.kind === "refund_request" || item.kind === "withdrawal_requested"
+                        : item.kind === "payment_failed" ||
+                            item.kind === "refund_request" ||
+                            item.kind === "withdrawal_requested"
                           ? "bg-amber-500/15 text-amber-600 dark:text-amber-300"
                           : "bg-primary/10 text-primary"
                     }`}

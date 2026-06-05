@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type Stripe from "stripe";
-import { createStripeClient, type StripeEnv, verifyWebhook } from "@/lib/stripe.server";
+import { createStripeClient, type StripeEnv, verifyWebhook, verifyWebhookBody } from "@/lib/stripe.server";
 import {
   getPlanByPriceId,
   getPlanIdFromSubscription,
@@ -14,8 +14,12 @@ type StripeMetadata = Record<string, string | undefined>;
 type StripePayload = Record<string, unknown> & {
   id?: string;
   amount?: number | null;
+  amount_received?: number | null;
+  amount_total?: number | null;
   currency?: string | null;
   customer?: string | null;
+  payment_intent?: string | StripePayload | null;
+  payment_status?: string | null;
   subscription?: string | null;
   status?: string;
   failure_message?: string | null;
@@ -100,13 +104,25 @@ async function handlePaymentIntent(
     });
   }
 
-  await sb
+  const paymentPatch = {
+    stripe_payment_intent_id: pi.id,
+    status: piStatus,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: updatedByStripeId } = await sb
     .from("payment_intents")
-    .update({
-      status: piStatus,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("stripe_payment_intent_id", pi.id);
+    .update(paymentPatch)
+    .eq("stripe_payment_intent_id", pi.id)
+    .select("id");
+
+  if ((!updatedByStripeId || updatedByStripeId.length === 0) && bookingRequestId) {
+    await sb
+      .from("payment_intents")
+      .update(paymentPatch)
+      .eq("booking_request_id", bookingRequestId)
+      .is("stripe_payment_intent_id", null);
+  }
 
   if (kind === "succeeded") {
     if (bookingRequestId) {
@@ -192,6 +208,11 @@ async function handlePaymentIntent(
 }
 
 async function handleCheckoutSession(session: StripePayload, env: StripeEnv) {
+  if (isBookingCheckoutSession(session)) {
+    await handleBookingCheckoutSession(session, env);
+    return;
+  }
+
   const studioId = session.metadata?.studio_id;
   const userId = session.metadata?.user_id;
 
@@ -210,6 +231,49 @@ async function handleCheckoutSession(session: StripePayload, env: StripeEnv) {
     });
     return;
   }
+}
+
+function isBookingCheckoutSession(session: StripePayload) {
+  return (
+    session.metadata?.payment_kind === "booking_deposit" ||
+    Boolean(session.metadata?.booking_request_id || session.metadata?.appointment_id)
+  );
+}
+
+async function handleBookingCheckoutSession(session: StripePayload, env: StripeEnv) {
+  const metadata = session.metadata ?? {};
+  const paymentIntentId =
+    typeof session.payment_intent === "string"
+      ? session.payment_intent
+      : typeof session.payment_intent?.id === "string"
+        ? session.payment_intent.id
+        : null;
+
+  if (!paymentIntentId) return;
+
+  const stripe = createStripeClient(env);
+  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+  const mergedMetadata = {
+    ...metadata,
+    ...(paymentIntent.metadata ?? {}),
+  };
+
+  const paid =
+    session.payment_status === "paid" ||
+    paymentIntent.status === "succeeded" ||
+    session.status === "complete";
+
+  await handlePaymentIntent(
+    {
+      id: paymentIntent.id,
+      amount: paymentIntent.amount_received || paymentIntent.amount || session.amount_total || 0,
+      amount_received: paymentIntent.amount_received,
+      currency: paymentIntent.currency || session.currency || "eur",
+      metadata: mergedMetadata,
+      status: paymentIntent.status,
+    },
+    paid ? "succeeded" : paymentIntent.status === "processing" ? "processing" : "failed",
+  );
 }
 
 async function validateUserId(userId: string | null | undefined) {
@@ -417,12 +481,14 @@ async function releaseBillingEventClaim(eventId?: string) {
   await sb.from("platform_billing_events").delete().eq("stripe_event_id", eventId);
 }
 
-async function handleWebhook(req: Request, env: StripeEnv) {
-  const event = await verifyWebhook(req, env);
+async function processWebhookEvent(
+  event: { id?: string; type: string; livemode?: boolean; data: { object: StripePayload } },
+  env: StripeEnv,
+) {
   if (typeof event.livemode === "boolean" && event.livemode !== (env === "live")) {
     throw new Error("webhook_environment_mismatch");
   }
-  const obj = event.data.object as StripePayload;
+  const obj = event.data.object;
   const claimed = await claimBillingEvent(event as { id?: string; type: string; data: { object: StripePayload } });
   if (!claimed) return;
   try {
@@ -476,18 +542,56 @@ async function handleWebhook(req: Request, env: StripeEnv) {
   }
 }
 
+async function handleWebhook(req: Request, env: StripeEnv) {
+  const event = (await verifyWebhook(req, env)) as {
+    id?: string;
+    type: string;
+    livemode?: boolean;
+    data: { object: StripePayload };
+  };
+  await processWebhookEvent(event, env);
+}
+
+async function handleWebhookWithoutEnv(req: Request) {
+  const signature = req.headers.get("stripe-signature");
+  const body = await req.text();
+  const attempts: StripeEnv[] = ["live", "sandbox"];
+  let lastError: unknown;
+
+  for (const env of attempts) {
+    try {
+      const event = (await verifyWebhookBody(body, signature, env)) as {
+        id?: string;
+        type: string;
+        livemode?: boolean;
+        data: { object: StripePayload };
+      };
+      await processWebhookEvent(event, env);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("webhook_verification_failed");
+}
+
 export const Route = createFileRoute("/api/public/payments/webhook")({
   server: {
     handlers: {
       POST: async ({ request }) => {
         const rawEnv = new URL(request.url).searchParams.get("env");
-        if (rawEnv !== "sandbox" && rawEnv !== "live") {
-          return Response.json({ received: false, error: "invalid_env" }, { status: 400 });
-        }
         try {
-          await handleWebhook(request, rawEnv);
+          if (rawEnv === "sandbox" || rawEnv === "live") {
+            await handleWebhook(request, rawEnv);
+          } else {
+            await handleWebhookWithoutEnv(request);
+          }
           return Response.json({ received: true });
-        } catch {
+        } catch (error) {
+          console.error("stripe_webhook_failed", {
+            reason: error instanceof Error ? error.message : "unknown",
+          });
           return new Response("Webhook error", { status: 400 });
         }
       },

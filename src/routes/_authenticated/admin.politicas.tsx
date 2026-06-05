@@ -303,7 +303,7 @@ function PoliciesPage() {
             <h2 className="mt-1 text-lg font-medium">Análise manual</h2>
           </div>
           <p className="text-xs text-muted-foreground">
-            Estrutura preparada para futura integração com Stripe Refunds.
+            Estrutura preparada para futura integração de reembolsos automáticos.
           </p>
         </div>
         <div className="mt-4 space-y-3">

@@ -397,7 +397,7 @@ function PaymentsPage() {
             <div>
               <p className="text-sm font-semibold">A confirmar assinatura</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Estamos a validar o pagamento na Stripe e a ativar o plano premium no painel.
+                Estamos a validar o pagamento e a ativar o plano premium no painel.
               </p>
             </div>
           </div>
@@ -1122,7 +1122,7 @@ function BillingSection({
           <h2 className="mt-2 text-base font-medium">Plano, cobrança e acesso premium</h2>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             Gira a assinatura mensal recorrente do estúdio, atualize o método de pagamento e
-            consulte faturas emitidas pela Stripe.
+            consulte faturas emitidas para a sua assinatura.
           </p>
 
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -1192,7 +1192,7 @@ function BillingSection({
               className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center"
             >
               <div>
-                <p className="font-medium">{invoice.number ?? "Fatura Stripe"}</p>
+                <p className="font-medium">{invoice.number ?? "Fatura"}</p>
                 <p className="text-xs text-muted-foreground">
                   {formatDate(invoice.createdAt)} · {formatSubscriptionStatus(invoice.status)}
                 </p>
