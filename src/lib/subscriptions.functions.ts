@@ -108,10 +108,13 @@ function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
 }
 
 function hasPeriodAccess(status: string, currentPeriodEnd: string | null) {
-  if (status === "active" || status === "trialing") return true;
-  if (!currentPeriodEnd) return false;
-  const hasFutureAccess = new Date(currentPeriodEnd).getTime() > Date.now();
-  return hasFutureAccess && (status === "canceled" || status === "past_due" || status === "unpaid");
+  if (status === "active") {
+    return !currentPeriodEnd || new Date(currentPeriodEnd).getTime() > Date.now();
+  }
+  if (status === "trialing") {
+    return Boolean(currentPeriodEnd && new Date(currentPeriodEnd).getTime() > Date.now());
+  }
+  return false;
 }
 
 function futureDateOrNull(value: string | null | undefined) {
@@ -597,9 +600,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       new Date(trialEndsAt as string).getTime() > Date.now();
     const subscriptionTrialActive = rawStatus === "trialing" && hasPeriodAccess(rawStatus, premiumUntil);
     const paidActive =
-      rawStatus === "active" ||
       hasPeriodAccess(rawStatus, premiumUntil) ||
-      studio.subscription_status === "active" ||
       hasPeriodAccess(studio.subscription_status as string, premiumUntil);
     const trialActive = Boolean(studioTrialActive || subscriptionTrialActive);
     const premiumActive = paidActive || trialActive;

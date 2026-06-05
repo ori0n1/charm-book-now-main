@@ -178,30 +178,25 @@ function PremiumAccessPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-6 py-2 md:py-6">
-      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[#080808] text-white shadow-[0_24px_70px_rgba(0,0,0,0.18)]">
-        <div className="grid gap-0 overflow-hidden lg:grid-cols-[minmax(0,1fr)_23rem]">
-          <div className="relative p-6 md:p-10 lg:p-12">
-            <div className="relative max-w-2xl">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] shadow-sm ${status.badgeClass}`}>
-                  <status.icon className="h-3.5 w-3.5" />
-                  {status.badge}
-                </span>
-              </div>
-
-              <h1 className="mt-6 text-4xl font-light tracking-tight md:text-5xl">
-                {activeSubscription || canceledButValid ? titlePlan : status.title}
-              </h1>
-              <p className="mt-4 text-base font-medium text-white/68">
-                {renewalText || status.description}
-              </p>
-            </div>
+    <div className="mx-auto flex max-w-5xl flex-col gap-5 py-2 md:py-5">
+      <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_19rem]">
+          <div className="p-5 md:p-7">
+            <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] shadow-sm ${status.badgeClass}`}>
+              <status.icon className="h-3.5 w-3.5" />
+              {status.badge}
+            </span>
+            <h1 className="mt-4 text-3xl font-light tracking-tight text-foreground md:text-4xl">
+              {activeSubscription || canceledButValid ? titlePlan : status.title}
+            </h1>
+            <p className="mt-2 max-w-xl text-sm font-medium leading-6 text-muted-foreground">
+              {renewalText || status.description}
+            </p>
           </div>
 
-          <aside className="border-t border-white/10 bg-white/[0.055] p-5 lg:border-l lg:border-t-0 md:p-6">
-            <div className="mb-4 grid gap-3">
-              {hasStripeSubscription && (
+          <aside className="border-t border-border bg-muted/30 p-4 lg:border-l lg:border-t-0 md:p-5">
+            <div className="grid gap-2">
+              {hasStripeSubscription ? (
                 <>
                   <SummaryTile label="Plano atual" value={titlePlan} />
                   <SummaryTile
@@ -210,8 +205,7 @@ function PremiumAccessPage() {
                   />
                   <SummaryTile label="Estado" value={formatStatus(summary?.status, activeSubscription)} />
                 </>
-              )}
-              {!hasStripeSubscription && (
+              ) : (
                 <>
                   <SummaryTile label="Plano atual" value={formatPlan(summary?.plan)} />
                   <SummaryTile
@@ -221,119 +215,122 @@ function PremiumAccessPage() {
                 </>
               )}
             </div>
-            <div className="grid gap-2">
-              {hasStripeSubscription && (
-                <>
-                  <ActionButton
-                    label={portalLoading ? "A abrir gestão..." : "Gerir assinatura"}
-                    icon={CreditCard}
-                    disabled={portalLoading}
-                    onClick={() => void manageSubscription("manage")}
-                    primary
-                  />
-                  <ActionButton
-                    label="Cancelar assinatura"
-                    icon={ShieldCheck}
-                    disabled={portalLoading}
-                    onClick={() => void manageSubscription("cancel")}
-                  />
-                </>
-              )}
-              {paymentPending && (
-                <ActionButton
-                  label="Atualizar pagamento"
-                  icon={RefreshCcw}
-                  disabled={portalLoading}
-                  onClick={() => void manageSubscription("manage")}
-                  primary
-                />
-              )}
-              {!hasStripeSubscription && (
-                <ActionButton
-                  label="Escolher plano premium"
-                  icon={ArrowRight}
-                  disabled={false}
-                  onClick={() => {
-                    const plan = PLANS.find((item) => item.highlighted)?.id ?? "monthly";
-                    void activate(plan);
-                  }}
-                  primary
-                />
-              )}
-              <a
-                href="mailto:info@bellza.pt"
-                className="flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-white/12 bg-white/[0.04] px-4 text-xs font-semibold uppercase tracking-wide text-white/62 transition hover:bg-white/[0.1] hover:text-white"
-              >
-                <LifeBuoy className="h-4 w-4" />
-                Contactar suporte
-              </a>
-            </div>
           </aside>
         </div>
       </section>
 
-      <section className="rounded-[1.5rem] border border-border bg-card p-5 shadow-sm md:p-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="grid gap-3 sm:grid-cols-3">
+        {hasStripeSubscription && (
+          <>
+            <ActionButton
+              label={portalLoading ? "A abrir gestão..." : "Gerir assinatura"}
+              icon={CreditCard}
+              disabled={portalLoading}
+              onClick={() => void manageSubscription("manage")}
+              primary
+            />
+            <ActionButton
+              label="Cancelar assinatura"
+              icon={ShieldCheck}
+              disabled={portalLoading}
+              onClick={() => void manageSubscription("cancel")}
+            />
+          </>
+        )}
+        {paymentPending && (
+          <ActionButton
+            label="Atualizar pagamento"
+            icon={RefreshCcw}
+            disabled={portalLoading}
+            onClick={() => void manageSubscription("manage")}
+            primary
+          />
+        )}
+        {!hasStripeSubscription && (
+          <ActionButton
+            label="Escolher plano premium"
+            icon={ArrowRight}
+            disabled={false}
+            onClick={() => {
+              const plan = PLANS.find((item) => item.highlighted)?.id ?? "monthly";
+              void activate(plan);
+            }}
+            primary
+          />
+        )}
+        <a
+          href="mailto:info@bellza.pt"
+          className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-card px-4 text-xs font-bold uppercase tracking-wide text-muted-foreground shadow-sm transition hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
+        >
+          <LifeBuoy className="h-4 w-4" />
+          Contactar suporte
+        </a>
+      </div>
+
+      <section className="rounded-3xl border border-border bg-card p-4 shadow-sm md:p-5">
+        <div className="flex items-end justify-between gap-4">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Planos disponíveis
             </p>
-            <h2 className="mt-2 text-2xl font-light tracking-tight">
+            <h2 className="mt-1 text-2xl font-light tracking-tight">
               {hasStripeSubscription ? "Alterar plano" : "Escolha o plano ideal"}
             </h2>
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-3">
+        <div className="mt-5 grid gap-3 lg:grid-cols-3">
           {PLANS.map((plan) => {
             const current = plan.id === currentPlan;
+            const currentAndActive = current && activeSubscription;
             return (
               <article
                 key={plan.id}
-                className={`relative flex min-h-[13.5rem] flex-col overflow-hidden rounded-[1.35rem] border p-5 transition ${
+                className={`relative flex min-h-[12rem] flex-col rounded-3xl border p-4 transition ${
                   current
-                    ? "border-emerald-500/70 bg-emerald-500/5 shadow-[0_18px_40px_rgba(16,185,129,0.10)]"
+                    ? "border-emerald-500/60 bg-emerald-500/[0.045] shadow-[0_14px_34px_rgba(16,185,129,0.10)]"
                     : plan.highlighted
-                      ? "border-foreground/15 bg-background/80 shadow-sm hover:-translate-y-0.5 hover:shadow-xl"
-                      : "border-border bg-background/70 shadow-sm hover:-translate-y-0.5 hover:shadow-xl"
+                      ? "border-foreground/15 bg-background shadow-sm hover:-translate-y-0.5 hover:shadow-lg"
+                      : "border-border bg-background shadow-sm hover:-translate-y-0.5 hover:shadow-lg"
                 }`}
               >
-                {current && <div className="absolute inset-x-5 top-0 h-px bg-emerald-400" />}
-                <div className="flex items-start justify-between gap-3">
-                  <h3 className="text-xl font-semibold">{plan.name}</h3>
-                  {current && <PlanBadge label="Plano atual" />}
+                <div className="flex min-h-7 items-start justify-between gap-3">
+                  <h3 className="text-lg font-semibold leading-7">{plan.name}</h3>
+                  {current && <PlanBadge label={currentAndActive ? "Plano atual" : "Último plano"} />}
                 </div>
-                <div className="mt-5">
-                  <p className="text-4xl font-light tracking-tight">{plan.price}</p>
-                  <p className="mt-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
+                <div className="mt-4 rounded-2xl border border-border bg-muted/30 px-4 py-3">
+                  <p className="text-3xl font-light tracking-tight">{plan.price}</p>
+                  <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     {plan.cadence}
                   </p>
                 </div>
-                <p className="mt-4 min-h-5 text-sm font-medium text-emerald-600 dark:text-emerald-300">
-                  {current ? "Ativo" : plan.savings ?? ""}
+                <p className="mt-3 min-h-5 text-sm font-semibold text-emerald-600 dark:text-emerald-300">
+                  {currentAndActive ? "Ativo" : plan.savings ?? ""}
                 </p>
                 <button
                   type="button"
-                  disabled={checkoutPlan !== null || changingPlan !== null || current}
+                  disabled={checkoutPlan !== null || changingPlan !== null || currentAndActive}
                   onClick={() =>
-                    hasStripeSubscription ? void switchPlan(plan.id) : void activate(plan.id)
+                    activeSubscription ? void switchPlan(plan.id) : void activate(plan.id)
                   }
-                  className={`mt-auto flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-xs font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-70 ${
-                    current
-                      ? "border border-emerald-600/25 bg-emerald-950/5 text-emerald-700 dark:text-emerald-300"
-                      : "bg-foreground text-background shadow-lg shadow-black/10 hover:-translate-y-0.5 hover:opacity-90"
+                  className={`mt-auto flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-xs font-bold uppercase tracking-wide transition disabled:cursor-not-allowed disabled:opacity-70 ${
+                    currentAndActive
+                      ? "border border-emerald-600/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : "bg-foreground text-background shadow-sm hover:-translate-y-0.5 hover:opacity-90"
                   }`}
                 >
-                  {current
+                  {currentAndActive
                     ? "Plano atual"
                     : changingPlan === plan.id
                       ? "A alterar..."
                       : checkoutPlan === plan.id
                         ? "A abrir checkout..."
-                        : hasStripeSubscription
+                        : activeSubscription
                           ? "Alterar para este plano"
-                          : "Escolher plano"}
-                  {!current && <ArrowRight className="h-3.5 w-3.5" />}
+                          : current
+                            ? "Reativar plano"
+                            : "Escolher plano"}
+                  {!currentAndActive && <ArrowRight className="h-3.5 w-3.5" />}
                 </button>
               </article>
             );
@@ -346,11 +343,11 @@ function PremiumAccessPage() {
 
 function SummaryTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.075] px-4 py-3 shadow-[0_14px_34px_rgba(0,0,0,0.16)]">
-      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-white/48">
+    <div className="min-w-0 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
+      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
         {label}
       </p>
-      <p className="mt-1 truncate text-base font-semibold text-white">{value}</p>
+      <p className="mt-1 truncate text-sm font-semibold text-foreground">{value}</p>
     </div>
   );
 }
@@ -375,8 +372,8 @@ function ActionButton({
       onClick={onClick}
       className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl px-4 text-xs font-bold uppercase tracking-wide transition disabled:opacity-60 ${
         primary
-          ? "bg-white text-black shadow-lg shadow-black/20 hover:-translate-y-0.5 hover:bg-white/92"
-          : "border border-white/12 bg-white/[0.06] text-white/72 hover:-translate-y-0.5 hover:bg-white/[0.1] hover:text-white"
+          ? "bg-foreground text-background shadow-sm hover:-translate-y-0.5 hover:opacity-90"
+          : "border border-border bg-card text-muted-foreground shadow-sm hover:-translate-y-0.5 hover:bg-muted hover:text-foreground"
       }`}
     >
       <Icon className="h-4 w-4" />
