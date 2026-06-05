@@ -179,6 +179,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         ...formatIntentResponse(existing, source.totalCents, source.depositPercent),
         mb_way_phone:
           existing.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : null,
+        checkout_url: existing.hosted_voucher_url,
       };
     }
 
@@ -200,6 +201,44 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const stripe = createStripeClient(stripeEnv());
     const checkoutExpiresAt =
       Math.floor(Date.now() / 1000) + (data.method === "multibanco" ? 24 * 60 * 60 : 30 * 60);
+    const checkoutSessionPayload = {
+      mode: "payment" as const,
+      customer_email: source.clientEmail || undefined,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: source.currency,
+            unit_amount: amountCents,
+            product_data: {
+              name: `Sinal de reserva - ${source.studioName}`,
+              description: new Date(source.startsAt).toLocaleString("pt-PT"),
+            },
+          },
+        },
+      ],
+      metadata: {
+        ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
+        ...(appointmentId ? { appointment_id: appointmentId } : {}),
+        studio_id: source.studioId,
+        payment_kind: "booking_deposit",
+        method: data.method,
+      },
+      payment_intent_data: {
+        metadata: {
+          ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
+          ...(appointmentId ? { appointment_id: appointmentId } : {}),
+          studio_id: source.studioId,
+          client_phone: billingPhone || source.clientPhone,
+          payment_kind: "booking_deposit",
+          method: data.method,
+        },
+      },
+      success_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=success`,
+      cancel_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=cancelled`,
+      expires_at: checkoutExpiresAt,
+      expand: ["payment_intent"],
+    };
     let checkoutSession;
     try {
       checkoutSession = await stripe.checkout.sessions.create({
@@ -242,15 +281,37 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         expand: ["payment_intent"],
       });
     } catch (error) {
-      const reason = stripePaymentFailureReason(error, data.method);
-      console.error("stripe_booking_checkout_failed", {
-        method: data.method,
-        reason,
-        message: error instanceof Error ? error.message : String(error),
-      });
-      throw new Error(
-        PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
-      );
+      if (data.method === "multibanco") {
+        try {
+          checkoutSession = await stripe.checkout.sessions.create(checkoutSessionPayload);
+          console.warn("stripe_booking_checkout_dynamic_fallback", {
+            method: data.method,
+            originalMessage: error instanceof Error ? error.message : String(error),
+          });
+        } catch (fallbackError) {
+          const reason = stripePaymentFailureReason(fallbackError, data.method);
+          console.error("stripe_booking_checkout_failed", {
+            method: data.method,
+            reason,
+            fallback: "dynamic_payment_methods",
+            message:
+              fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+          });
+          throw new Error(
+            PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
+          );
+        }
+      } else {
+        const reason = stripePaymentFailureReason(error, data.method);
+        console.error("stripe_booking_checkout_failed", {
+          method: data.method,
+          reason,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw new Error(
+          PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
+        );
+      }
     }
     const checkoutPaymentIntent =
       typeof checkoutSession.payment_intent === "object" ? checkoutSession.payment_intent : null;
