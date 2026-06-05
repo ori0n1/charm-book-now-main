@@ -36,6 +36,13 @@ type BillingSummary = {
   trialEndsAt?: string | null;
   daysRemaining?: number | null;
   cancelAtPeriodEnd?: boolean;
+  pendingChange?: {
+    plan: string;
+    effectiveAt: string;
+    amount?: number | null;
+    currency?: string | null;
+    immediateCharge?: boolean;
+  } | null;
 };
 
 const PLANS: {
@@ -94,6 +101,9 @@ function PremiumAccessPage() {
 
   const summary = billing.data;
   const currentPlan = isStripePlan(summary?.plan) ? (summary?.plan as PlanId) : null;
+  const pendingPlan = isStripePlan(summary?.pendingChange?.plan)
+    ? (summary?.pendingChange?.plan as PlanId)
+    : null;
   const hasStripeSubscription = Boolean(currentPlan);
   const paymentPending = isPaymentPending(summary?.status);
   const canceledButValid = Boolean(
@@ -114,6 +124,7 @@ function PremiumAccessPage() {
     locked,
   });
   const titlePlan = currentPlan ? formatPlan(currentPlan) : formatPlan(summary?.plan);
+  const pendingPlanTitle = pendingPlan ? formatPlan(pendingPlan) : null;
   const renewalText = getRenewalText({
     activeSubscription,
     canceledButValid,
@@ -121,6 +132,7 @@ function PremiumAccessPage() {
     trialOnly,
     trialDate,
   });
+  const pendingEffectiveDate = futureDate(summary?.pendingChange?.effectiveAt);
 
   useEffect(() => {
     const refresh = () => {
@@ -167,15 +179,17 @@ function PremiumAccessPage() {
   }
 
   async function switchPlan(plan: PlanId) {
-    if (!studio || plan === currentPlan) return;
+    if (!studio || plan === currentPlan || plan === pendingPlan) return;
     setChangingPlan(plan);
     setActionFeedback("updating");
     try {
-      await changePlan({ data: { studioId: studio.id, plan } });
+      const result = (await changePlan({ data: { studioId: studio.id, plan } })) as {
+        pending?: boolean;
+      };
       setActionFeedback("syncing");
       await billing.refetch();
       setActionFeedback("success");
-      toast.success("Plano atualizado.");
+      toast.success(result.pending ? "Mudança agendada." : "Plano atualizado.");
       window.setTimeout(() => setActionFeedback(null), 2600);
     } catch {
       setActionFeedback("error");
@@ -190,15 +204,17 @@ function PremiumAccessPage() {
     actionFeedback === "updating"
       ? "A atualizar assinatura..."
       : actionFeedback === "syncing"
-        ? "Sincronizando assinatura."
+        ? "A confirmar alteração..."
         : actionFeedback === "success"
-          ? "Plano atualizado com sucesso."
+          ? pendingPlan
+            ? "Mudança agendada com sucesso."
+            : "Alteração confirmada."
           : actionFeedback === "error"
             ? "Não foi possível confirmar a alteração."
             : billing.isFetching
               ? paymentPending
                 ? "Aguardando confirmação do pagamento."
-                : "Sincronizando assinatura."
+                : "A atualizar dados..."
               : null;
 
   return (
@@ -229,6 +245,9 @@ function PremiumAccessPage() {
                 label={canceledButValid ? "Ativo até" : "Renovação"}
                 value={formatDate(activeSubscription || canceledButValid ? renewalDate : trialDate, activeSubscription)}
               />
+              {pendingPlanTitle && pendingEffectiveDate && (
+                <MiniMetric label="Próximo plano" value={pendingPlanTitle} />
+              )}
             </div>
           </div>
 
@@ -241,7 +260,14 @@ function PremiumAccessPage() {
                     label={canceledButValid ? "Ativo até" : "Próxima cobrança"}
                     value={formatDate(renewalDate, activeSubscription)}
                   />
-                  <SummaryTile label="Estado" value={formatStatus(summary?.status, activeSubscription)} />
+                  <SummaryTile
+                    label={pendingPlanTitle ? "Alteração" : "Estado"}
+                    value={
+                      pendingPlanTitle && pendingEffectiveDate
+                        ? formatDate(pendingEffectiveDate, true)
+                        : formatStatus(summary?.status, activeSubscription)
+                    }
+                  />
                 </>
               ) : (
                 <>
@@ -261,6 +287,16 @@ function PremiumAccessPage() {
         <StatusNotice
           kind={actionFeedback ?? (paymentPending ? "updating" : "syncing")}
           text={syncNotice}
+        />
+      )}
+
+      {pendingPlanTitle && pendingEffectiveDate && currentPlan && (
+        <PendingChangePanel
+          currentPlan={formatPlan(currentPlan)}
+          nextPlan={pendingPlanTitle}
+          effectiveAt={pendingEffectiveDate}
+          amount={summary?.pendingChange?.amount}
+          currency={summary?.pendingChange?.currency}
         />
       )}
 
@@ -328,6 +364,7 @@ function PremiumAccessPage() {
           {PLANS.map((plan) => {
             const current = plan.id === currentPlan;
             const currentAndActive = current && activeSubscription;
+            const pending = plan.id === pendingPlan;
             return (
               <article
                 key={plan.id}
@@ -342,6 +379,7 @@ function PremiumAccessPage() {
                 <div className="flex min-h-7 items-start justify-between gap-3">
                   <h3 className="text-lg font-semibold leading-7">{plan.name}</h3>
                   {current && <PlanBadge label={currentAndActive ? "Plano atual" : "Último plano"} />}
+                  {!current && pending && <PlanBadge label="Agendado" muted />}
                 </div>
                 <div className="mt-5 rounded-2xl border border-border bg-muted/25 px-4 py-4">
                   <p className="text-3xl font-light leading-none tracking-tight">{plan.price}</p>
@@ -350,15 +388,19 @@ function PremiumAccessPage() {
                   </p>
                 </div>
                 <div className="mt-4 min-h-7">
-                  {(currentAndActive || plan.savings) && (
+                  {(currentAndActive || pending || plan.savings) && (
                     <span className="inline-flex rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-                      {currentAndActive ? "Ativo" : plan.savings}
+                      {currentAndActive
+                        ? "Ativo"
+                        : pending && pendingEffectiveDate
+                          ? `Entra em ${formatDate(pendingEffectiveDate, true)}`
+                          : plan.savings}
                     </span>
                   )}
                 </div>
                 <button
                   type="button"
-                  disabled={checkoutPlan !== null || changingPlan !== null || currentAndActive}
+                  disabled={checkoutPlan !== null || changingPlan !== null || currentAndActive || pending}
                   onClick={() =>
                     activeSubscription ? void switchPlan(plan.id) : void activate(plan.id)
                   }
@@ -370,12 +412,14 @@ function PremiumAccessPage() {
                 >
                   {currentAndActive
                     ? "Plano atual"
+                    : pending
+                      ? "Troca agendada"
                     : changingPlan === plan.id
                       ? "A alterar..."
                       : checkoutPlan === plan.id
                         ? "A abrir checkout..."
                         : activeSubscription
-                          ? "Alterar para este plano"
+                          ? "Agendar troca"
                           : current
                             ? "Reativar plano"
                             : "Escolher plano"}
@@ -387,6 +431,43 @@ function PremiumAccessPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function PendingChangePanel({
+  currentPlan,
+  nextPlan,
+  effectiveAt,
+  amount,
+  currency,
+}: {
+  currentPlan: string;
+  nextPlan: string;
+  effectiveAt: string;
+  amount?: number | null;
+  currency?: string | null;
+}) {
+  return (
+    <section className="grid gap-3 rounded-[1.35rem] border border-emerald-500/25 bg-emerald-500/[0.035] p-4 shadow-sm md:grid-cols-[1.1fr_1fr] md:p-5">
+      <div>
+        <span className="inline-flex rounded-full bg-emerald-600 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white">
+          Mudança agendada
+        </span>
+        <h2 className="mt-3 text-xl font-semibold tracking-tight text-foreground">
+          {nextPlan} entra em {formatDate(effectiveAt, true)}
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Até essa data, {currentPlan} continua ativo. A página só será atualizada como
+          novo plano ativo depois da confirmação oficial.
+        </p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1">
+        <SummaryTile label="Plano atual" value={currentPlan} />
+        <SummaryTile label="Próximo plano" value={nextPlan} />
+        <SummaryTile label="Próxima cobrança" value={formatMoney(amount, currency)} />
+        <SummaryTile label="Cobrança imediata" value="Não" />
+      </div>
+    </section>
   );
 }
 
@@ -489,6 +570,14 @@ function isPaymentPending(status?: string | null) {
 function futureDate(value?: string | null) {
   if (!value) return null;
   return new Date(value).getTime() > Date.now() ? value : null;
+}
+
+function formatMoney(amount?: number | null, currency?: string | null) {
+  if (typeof amount !== "number" || !currency) return "A confirmar";
+  return new Intl.NumberFormat("pt-PT", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+  }).format(amount / 100);
 }
 
 function formatDate(value?: string | null, activeSubscription = false) {

@@ -122,6 +122,14 @@ function futureDateOrNull(value: string | null | undefined) {
   return new Date(value).getTime() > Date.now() ? value : null;
 }
 
+function getSubscriptionScheduleId(subscription: Stripe.Subscription) {
+  const schedule = (subscription as Stripe.Subscription & {
+    schedule?: string | { id?: string } | null;
+  }).schedule;
+  if (!schedule) return null;
+  return typeof schedule === "string" ? schedule : schedule.id ?? null;
+}
+
 async function getUserEmail(sb: ReturnType<typeof getAdminClient>, userId: string) {
   const { data } = await sb.auth.admin.getUserById(userId);
   return data.user?.email ?? null;
@@ -311,6 +319,45 @@ async function findStripeSubscriptionForStudio(
           subscriptionScore(b, input.env, input.studioId) ||
         (b.created ?? 0) - (a.created ?? 0),
     )[0];
+}
+
+async function loadScheduledPlanChange(
+  stripe: Stripe,
+  env: StripeEnv,
+  subscription: Stripe.Subscription | null | undefined,
+) {
+  if (!subscription) return null;
+  const scheduleId = getSubscriptionScheduleId(subscription);
+  if (!scheduleId) return null;
+
+  const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+  if (!["active", "not_started"].includes(schedule.status)) return null;
+
+  const currentPeriodEnd = getCurrentPeriodEnd(subscription);
+  const nextPhase =
+    schedule.phases.find(
+      (phase) =>
+        typeof phase.start_date === "number" &&
+        Boolean(currentPeriodEnd) &&
+        phase.start_date >= currentPeriodEnd!,
+    ) ?? schedule.phases[1];
+  if (!nextPhase || typeof nextPhase.start_date !== "number") return null;
+
+  const nextPrice = nextPhase.items?.[0]?.price;
+  const nextPriceId = typeof nextPrice === "string" ? nextPrice : nextPrice?.id ?? null;
+  const nextPlan = getPlanByPriceId(env, nextPriceId);
+  const currentPlanId = getPlanIdFromSubscription(env, subscription);
+  if (!nextPlan || nextPlan.id === currentPlanId) return null;
+
+  const price = await stripe.prices.retrieve(nextPlan.priceId);
+  return {
+    plan: nextPlan.id,
+    effectiveAt: new Date(nextPhase.start_date * 1000).toISOString(),
+    priceId: nextPlan.priceId,
+    amount: price.unit_amount ?? null,
+    currency: price.currency,
+    immediateCharge: false,
+  };
 }
 
 async function refreshSubscriptionFromStripe(
@@ -626,6 +673,36 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         ? trialEndsAt
         : nextBillingAt,
     );
+    const env = stripeEnv();
+    const stripe = createStripeClient(env);
+    const stripeSubscription = await findStripeSubscriptionForStudio(stripe, {
+      customerId:
+        subscription?.stripe_customer_id ??
+        (studio.stripe_customer_id as string | null) ??
+        null,
+      studioSubscriptionId:
+        subscription?.stripe_subscription_id ??
+        (studio.stripe_subscription_id as string | null) ??
+        null,
+      studioId: studio.id as string,
+      env,
+      emails: [userEmail, studio.email as string | null],
+    }).catch((error) => {
+      console.error("stripe_subscription_schedule_lookup_failed", {
+        studioId: studio.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    const pendingChange = await loadScheduledPlanChange(stripe, env, stripeSubscription).catch(
+      (error) => {
+        console.error("stripe_subscription_schedule_summary_failed", {
+          studioId: studio.id,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      },
+    );
 
     return {
       available: true,
@@ -637,9 +714,10 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       cancelAtPeriodEnd: Boolean(
         subscription?.cancel_at_period_end ?? studio.subscription_cancel_at_period_end,
       ),
+      pendingChange,
       premiumActive,
       invoices: await loadRecentInvoices(
-        stripeEnv(),
+        env,
         subscription?.stripe_customer_id ?? (studio.stripe_customer_id as string | null),
       ),
     };
@@ -957,29 +1035,83 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
     const plan = getSubscriptionPlans(env)[data.plan];
     const itemId = stripeSubscription.items.data[0]?.id;
     if (!itemId) throw new Error("stripe_subscription_item_missing");
+    const currentPlanId = getPlanIdFromSubscription(env, stripeSubscription);
+    if (currentPlanId === plan.id) {
+      return {
+        pending: false,
+        plan: currentPlanId,
+        currentPeriodEnd: existingSubscription?.current_period_end ?? null,
+      };
+    }
 
-    const updated = await stripe.subscriptions.update(stripeSubscription.id, {
-      cancel_at_period_end: false,
-      items: [{ id: itemId, price: plan.priceId }],
+    const currentPeriodEnd = getCurrentPeriodEnd(stripeSubscription);
+    if (!currentPeriodEnd || currentPeriodEnd * 1000 <= Date.now()) {
+      throw new Error("stripe_subscription_period_missing");
+    }
+
+    const currentItem = stripeSubscription.items.data[0];
+    const currentPriceId = currentItem.price.id;
+    const quantity = currentItem.quantity ?? 1;
+    const scheduleId = getSubscriptionScheduleId(stripeSubscription);
+    const schedule = scheduleId
+      ? await stripe.subscriptionSchedules.retrieve(scheduleId)
+      : await stripe.subscriptionSchedules.create({
+          from_subscription: stripeSubscription.id,
+        });
+    const currentPhase = schedule.phases[0];
+    const phaseStart =
+      currentPhase?.start_date ??
+      (stripeSubscription as Stripe.Subscription & { current_period_start?: number })
+        .current_period_start ??
+      Math.floor(Date.now() / 1000);
+
+    const updatedSchedule = await stripe.subscriptionSchedules.update(schedule.id, {
+      end_behavior: "release",
+      phases: [
+        {
+          start_date: phaseStart,
+          end_date: currentPeriodEnd,
+          items: [{ price: currentPriceId, quantity }],
+          metadata: {
+            ...stripeSubscription.metadata,
+            studio_id: studio.id,
+            user_id: userId,
+            plan: currentPlanId ?? "monthly",
+          },
+        },
+        {
+          start_date: currentPeriodEnd,
+          items: [{ price: plan.priceId, quantity }],
+          metadata: {
+            ...stripeSubscription.metadata,
+            studio_id: studio.id,
+            user_id: userId,
+            plan: plan.id,
+          },
+        },
+      ],
       metadata: {
-        ...stripeSubscription.metadata,
+        managed_by: "bellza",
         studio_id: studio.id,
         user_id: userId,
-        plan: plan.id,
+        pending_plan: plan.id,
       },
-      proration_behavior: "create_prorations",
-    });
+    } as any);
 
-    console.info("stripe_subscription_plan_changed", {
+    console.info("stripe_subscription_plan_change_scheduled", {
       studioId: studio.id,
-      subscriptionId: updated.id,
+      subscriptionId: stripeSubscription.id,
+      scheduleId: updatedSchedule.id,
       plan: plan.id,
-      status: updated.status,
+      status: updatedSchedule.status,
     });
 
-    return syncCheckoutSubscription(sb, updated, env, {
-      userId,
-      studioId: studio.id,
-      customerId: typeof updated.customer === "string" ? updated.customer : studio.stripe_customer_id,
-    });
+    return {
+      pending: true,
+      plan: currentPlanId,
+      nextPlan: plan.id,
+      effectiveAt: new Date(currentPeriodEnd * 1000).toISOString(),
+      immediateCharge: false,
+      scheduleId: updatedSchedule.id,
+    };
   });
