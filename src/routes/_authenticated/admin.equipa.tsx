@@ -42,6 +42,14 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const DAY_MS = 86400000;
 
@@ -1053,23 +1061,32 @@ function TeamPage() {
               </div>
               <label className="block text-xs">
                 <span className="text-muted-foreground">Tipo de acesso</span>
-                <select
+                <Select
                   value={accessRole}
-                  onChange={(event) => setAccessRole(event.target.value as AccessRole)}
-                  className="mt-1 h-11 w-full appearance-none rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:border-foreground/40"
+                  onValueChange={(value) => setAccessRole(value as AccessRole)}
                 >
-                  <option value="desk_staff">Apenas Balcão</option>
-                  <option value="staff">Limitado</option>
-                  <option value="manager">Completo</option>
-                </select>
+                  <SelectTrigger className="mt-1 h-11 rounded-2xl border-border bg-background px-4 text-sm shadow-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                    <SelectItem value="desk_staff" className="rounded-xl px-3 py-2.5 text-sm">
+                      Apenas Balcão
+                    </SelectItem>
+                    <SelectItem value="staff" className="rounded-xl px-3 py-2.5 text-sm">
+                      Limitado
+                    </SelectItem>
+                    <SelectItem value="manager" className="rounded-xl px-3 py-2.5 text-sm">
+                      Completo
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
               </label>
               <label className="block text-xs">
                 <span className="text-muted-foreground">Expira em</span>
-                <input
-                  type="date"
+                <PremiumDatePicker
                   value={inviteExpiry}
-                  onChange={(event) => setInviteExpiry(event.target.value)}
-                  className="mt-1 h-11 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:border-foreground/40"
+                  onChange={setInviteExpiry}
+                  className="mt-1 h-11 bg-background"
                 />
                 <span className="mt-1 block text-[11px] text-muted-foreground">
                   Deixe vazio para manter o convite sem expiração.
@@ -1913,17 +1930,18 @@ function ServicesPicker({
           </label>
           <label className="block text-xs">
             <span className="text-muted-foreground">Categoria detectada</span>
-            <select
-              value={currentCategoryLabel}
-              onChange={(e) => setSelectedCategoryLabel(e.target.value)}
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            >
-              {categoryOptions.map((label) => (
-                <option key={label} value={label}>
-                  {label}
-                </option>
-              ))}
-            </select>
+            <Select value={currentCategoryLabel} onValueChange={setSelectedCategoryLabel}>
+              <SelectTrigger className="mt-1 rounded-xl border-border bg-background px-3 text-sm shadow-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                {categoryOptions.map((label) => (
+                  <SelectItem key={label} value={label} className="rounded-xl px-3 py-2.5 text-sm">
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[11px] text-muted-foreground">

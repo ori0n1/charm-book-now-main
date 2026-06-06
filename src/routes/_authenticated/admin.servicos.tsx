@@ -6,6 +6,13 @@ import { getSegmentConfig, inferSegmentCategory, normalizeSegmentText } from "@/
 import { isStudioImageFile, uploadStudioAsset } from "@/lib/upload";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Upload, Star, Check, Sparkles, Search, Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export const Route = createFileRoute("/_authenticated/admin/servicos")({
   component: ServicesPage,
@@ -803,18 +810,21 @@ function CategoryPicker({
         </button>
       </div>
 
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-      >
-        <option value="">— Sem categoria —</option>
-        {categories.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.label}
-          </option>
-        ))}
-      </select>
+      <Select value={value || "__none"} onValueChange={(nextValue) => onChange(nextValue === "__none" ? "" : nextValue)}>
+        <SelectTrigger className="rounded-xl border-border bg-background px-3 text-sm shadow-sm">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+          <SelectItem value="__none" className="rounded-xl px-3 py-2.5 text-sm">
+            Sem categoria
+          </SelectItem>
+          {categories.map((c) => (
+            <SelectItem key={c.id} value={c.id} className="rounded-xl px-3 py-2.5 text-sm">
+              {c.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {!value && (
         <p className="text-[11px] leading-relaxed text-muted-foreground">
           Se não escolher uma categoria, este serviço será classificado automaticamente em{" "}
@@ -990,26 +1000,33 @@ function UpsellEditor({
                 className="space-y-2 rounded-md border border-border bg-background p-3"
               >
                 <div className="flex items-start gap-2">
-                  <select
-                    value={r.offered_service_id}
-                    onChange={(e) => {
-                      const s = allServices.find((x) => x.id === e.target.value);
+                  <Select
+                    value={r.offered_service_id || "__none"}
+                    onValueChange={(nextValue) => {
+                      const serviceId = nextValue === "__none" ? "" : nextValue;
+                      const s = allServices.find((x) => x.id === serviceId);
                       updateRow(r.rowKey, {
-                        offered_service_id: e.target.value,
+                        offered_service_id: serviceId,
                         discounted_price: s
                           ? Math.round(Number(s.price) * 0.8 * 100) / 100
                           : r.discounted_price,
                       });
                     }}
-                    className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                   >
-                    <option value="">— Escolher serviço —</option>
-                    {allServices.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} · {s.duration_min}min · €{Number(s.price).toFixed(0)}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger className="flex-1 rounded-xl border-border bg-background px-2 text-sm shadow-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                      <SelectItem value="__none" className="rounded-xl px-3 py-2.5 text-sm">
+                        Escolher serviço
+                      </SelectItem>
+                      {allServices.map((s) => (
+                        <SelectItem key={s.id} value={s.id} className="rounded-xl px-3 py-2.5 text-sm">
+                          {s.name} · {s.duration_min}min · €{Number(s.price).toFixed(0)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <button
                     type="button"
                     onClick={() => removeRow(r.rowKey)}
