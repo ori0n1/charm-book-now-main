@@ -22,6 +22,12 @@ function AuthCallbackPage() {
           return;
         }
 
+        const publicReturnTo = readPublicReturnTo();
+        if (publicReturnTo) {
+          if (!cancelled) navigate({ to: publicReturnTo as never, replace: true });
+          return;
+        }
+
         setMessage("A carregar conta...");
         const destination = await resolveAuthLanding(session.user.id);
         if (!cancelled) navigate({ to: destination as never, replace: true });
@@ -44,4 +50,16 @@ function AuthCallbackPage() {
       <p className="text-sm text-muted-foreground">{message}</p>
     </div>
   );
+}
+
+function readPublicReturnTo() {
+  try {
+    const stored = window.localStorage.getItem("bellza.public.returnTo");
+    window.localStorage.removeItem("bellza.public.returnTo");
+    if (!stored || !stored.startsWith("/s/")) return null;
+    if (stored.includes("//") || stored.includes("\\") || stored.startsWith("/admin")) return null;
+    return stored;
+  } catch {
+    return null;
+  }
 }

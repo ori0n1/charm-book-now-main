@@ -1,8 +1,17 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
   ArrowLeft,
+  Bell,
   CalendarDays,
   Car,
   Check,
@@ -14,7 +23,9 @@ import {
   Droplets,
   Download,
   Info,
+  LogIn,
   MapPin,
+  Mail,
   QrCode,
   RefreshCcw,
   Search,
@@ -41,10 +52,12 @@ import {
   type Upsell,
 } from "@/data/studio";
 import { useLiveStudio } from "@/hooks/use-live-studio";
+import { useAuth } from "@/hooks/use-auth";
 import { getSegmentConfig, type SegmentLabels } from "@/lib/segments";
 import heroImg from "@/assets/studio-hero.jpg";
 import { cn } from "@/lib/utils";
 import { createPublicBooking } from "@/lib/booking";
+import { getPublicClientArea } from "@/lib/public-client.functions";
 import { sendAppointmentConfirmationForAppointment } from "@/lib/whatsapp.functions";
 import { submitRefundRequest } from "@/lib/refunds";
 import {
@@ -66,6 +79,47 @@ type ConfirmedPaymentStatus = "paid_online" | "pay_in_studio" | "unknown";
 
 type ClientForm = { name: string; phone: string; email: string; notes: string };
 const STORAGE_KEY = "lumiere.booking.draft";
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice?: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+type PublicClientAreaPayload = {
+  profile: {
+    name: string;
+    phone: string;
+    email: string;
+    totalVisits: number;
+    totalSpent: number;
+  };
+  appointments: Array<{
+    id: string;
+    token: string | null;
+    startsAt: string;
+    endsAt: string | null;
+    status: string;
+    totalPrice: number;
+    paidAmount: number;
+    pendingAmount: number;
+    staffName: string;
+    services: Array<{ name: string; price: number; durationMin: number }>;
+    canOpen: boolean;
+    isUpcoming: boolean;
+  }>;
+  pendingPayments: Array<{
+    appointmentId: string | null;
+    bookingRequestId: string | null;
+    amount: number;
+    method: string;
+    status: string;
+  }>;
+  totals: {
+    paid: number;
+    deposits: number;
+    pending: number;
+  };
+};
 
 type PublicAmenities = {
   wifi: boolean;
@@ -212,6 +266,7 @@ function hexToRgb(hex: string) {
 }
 
 export function BookingExperience({ studioId }: { studioId?: string } = {}) {
+  const { user, loading: authLoading } = useAuth();
   const live = useLiveStudio(studioId ?? staticStudio.id);
   const studio = live.studio;
   const segment = getSegmentConfig((studio as { business_segment?: string }).business_segment);
@@ -249,8 +304,16 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const [heroIndex, setHeroIndex] = useState(0);
   const [showHeroControls, setShowHeroControls] = useState(false);
   const sendAppointmentConfirmation = useServerFn(sendAppointmentConfirmationForAppointment);
+  const loadPublicClientArea = useServerFn(getPublicClientArea);
   const heroTouchStartX = useRef<number | null>(null);
   const heroControlsTimer = useRef<number | null>(null);
+  const [clientArea, setClientArea] = useState<PublicClientAreaPayload | null>(null);
+  const [clientAreaLoading, setClientAreaLoading] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installDismissed, setInstallDismissed] = useState(false);
+  const [notificationsConsent, setNotificationsConsent] = useState<"unknown" | "granted" | "denied">(
+    "unknown",
+  );
 
   // Auto-save client form to sessionStorage
   useEffect(() => {
@@ -268,6 +331,49 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       /* noop */
     }
   }, [client]);
+
+  useEffect(() => {
+    let active = true;
+    if (!user?.id || !studio.id) {
+      setClientArea(null);
+      return;
+    }
+
+    setClientAreaLoading(true);
+    loadPublicClientArea({ data: { studioId: studio.id } })
+      .then((payload) => {
+        if (!active) return;
+        const normalized = payload as PublicClientAreaPayload;
+        setClientArea(normalized);
+        setClient((current) => ({
+          ...current,
+          name: normalized.profile.name || current.name,
+          phone: normalized.profile.phone || current.phone,
+          email: normalized.profile.email || current.email,
+        }));
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.warn("public_client_area_failed", error);
+        setClientArea(null);
+      })
+      .finally(() => {
+        if (active) setClientAreaLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [loadPublicClientArea, studio.id, user?.id]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    setNotificationsConsent(readNotificationPermission());
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
 
   const hasSensitiveNotes = client.notes.trim().length > 0;
   const clientValid =
@@ -570,6 +676,33 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const studioTagline = getMeaningfulText(studio.tagline);
   const studioIntro = studioDescription || studioTagline;
 
+  async function handleInstallApp() {
+    if (!installPrompt) {
+      setInstallDismissed(true);
+      toast.message("Pode adicionar esta página ao ecrã inicial pelo menu do navegador.");
+      return;
+    }
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice?.catch(() => null);
+    if (choice?.outcome === "accepted") toast.success("Página adicionada ao ecrã inicial.");
+    setInstallPrompt(null);
+    setInstallDismissed(true);
+  }
+
+  async function handleNotificationConsent() {
+    if (!("Notification" in window)) {
+      toast.error("Este navegador não suporta notificações.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationsConsent(permission === "default" ? "unknown" : permission);
+    if (permission === "granted") {
+      toast.success("Notificações ativadas. Receberá lembretes quando estiverem configurados.");
+    } else {
+      toast.message("Pode ativar notificações mais tarde nas definições do navegador.");
+    }
+  }
+
   return (
     <div className="public-booking min-h-screen bg-background" style={brandStyle}>
       <div className="mx-auto w-full max-w-[560px] pb-32 md:max-w-6xl md:px-6">
@@ -720,6 +853,44 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           </div>
         </header>
 
+        <div className="space-y-3 px-4 pt-4 md:px-0">
+          <PublicClientAccountCard
+            userEmail={user?.email ?? null}
+            authLoading={authLoading}
+            clientArea={clientArea}
+            loading={clientAreaLoading}
+            studioName={studio.name}
+            onAutofill={() => {
+              if (!clientArea) return;
+              setClient((current) => ({
+                ...current,
+                name: clientArea.profile.name || current.name,
+                phone: clientArea.profile.phone || current.phone,
+                email: clientArea.profile.email || current.email,
+              }));
+              toast.success("Dados preenchidos para esta marcação.");
+            }}
+            onReload={() => {
+              if (!user?.id) return;
+              setClientAreaLoading(true);
+              loadPublicClientArea({ data: { studioId: studio.id } })
+                .then((payload) => setClientArea(payload as PublicClientAreaPayload))
+                .catch(() => toast.error("Não foi possível atualizar a sua área."))
+                .finally(() => setClientAreaLoading(false));
+            }}
+          />
+          {!installDismissed && (
+            <PublicPwaCard
+              studioName={studio.name}
+              canPrompt={Boolean(installPrompt)}
+              notificationStatus={notificationsConsent}
+              onInstall={handleInstallApp}
+              onDismiss={() => setInstallDismissed(true)}
+              onEnableNotifications={handleNotificationConsent}
+            />
+          )}
+        </div>
+
         {/* Stepper */}
         {step > 0 && <Stepper current={step} professionalLabel={segment.labels.professional} />}
 
@@ -852,6 +1023,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               duration={totalDuration}
               savings={upsellsSavings}
               client={client}
+              clientAccountEmail={clientArea?.profile.email ?? user?.email ?? null}
               onClientChange={setClient}
               contactConsent={contactConsent}
               onContactConsentChange={setContactConsent}
@@ -979,6 +1151,48 @@ function capitalizeLabel(value: string) {
 
 function formatMoney(value: number, decimals = 2) {
   return `${value.toFixed(decimals)}€`;
+}
+
+function rememberPublicReturn() {
+  try {
+    window.localStorage.setItem(
+      "bellza.public.returnTo",
+      `${window.location.pathname}${window.location.search}`,
+    );
+  } catch {
+    /* noop */
+  }
+}
+
+function readNotificationPermission(): "unknown" | "granted" | "denied" {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unknown";
+  return Notification.permission === "granted"
+    ? "granted"
+    : Notification.permission === "denied"
+      ? "denied"
+      : "unknown";
+}
+
+function clientStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    confirmed: "Confirmado",
+    pending_payment: "A aguardar sinal",
+    completed: "Concluído",
+    cancelled: "Cancelado",
+    no_show: "Não compareceu",
+  };
+  return labels[status] ?? capitalizeLabel(status.replace(/_/g, " "));
+}
+
+function formatDateTimeShort(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("pt-PT", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 /* ---------- Stepper ---------- */
@@ -2265,6 +2479,7 @@ function ReviewStep({
   duration,
   savings,
   client,
+  clientAccountEmail,
   onClientChange,
   contactConsent,
   onContactConsentChange,
@@ -2286,6 +2501,7 @@ function ReviewStep({
   duration: number;
   savings: number;
   client: ClientForm;
+  clientAccountEmail?: string | null;
   onClientChange: (c: ClientForm) => void;
   contactConsent: boolean;
   onContactConsentChange: (value: boolean) => void;
@@ -2310,6 +2526,11 @@ function ReviewStep({
       {/* Identification card */}
       <div className="space-y-3">
         <SectionTitle>Os seus dados</SectionTitle>
+        {clientAccountEmail && (
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs leading-relaxed text-emerald-800 dark:text-emerald-200">
+            Sessão iniciada com {clientAccountEmail}. Os dados podem ser editados antes de confirmar.
+          </div>
+        )}
         <div className="space-y-2">
           <FieldInput
             label="Nome"
@@ -2433,6 +2654,7 @@ function ReviewStepPremium({
   duration,
   savings,
   client,
+  clientAccountEmail,
   onClientChange,
   contactConsent,
   onContactConsentChange,
@@ -2454,6 +2676,7 @@ function ReviewStepPremium({
   duration: number;
   savings: number;
   client: ClientForm;
+  clientAccountEmail?: string | null;
   onClientChange: (c: ClientForm) => void;
   contactConsent: boolean;
   onContactConsentChange: (value: boolean) => void;
@@ -2478,6 +2701,11 @@ function ReviewStepPremium({
     <section className="animate-slide-up space-y-5 pt-4">
       <div className="space-y-3">
         <SectionTitle>Os seus dados</SectionTitle>
+        {clientAccountEmail && (
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs leading-relaxed text-emerald-800 dark:text-emerald-200">
+            Sessão iniciada com {clientAccountEmail}. Os dados podem ser editados antes de confirmar.
+          </div>
+        )}
         <div className="space-y-2">
           <FieldInput
             label="Nome"
@@ -2675,6 +2903,336 @@ function PolicyInfoItem({
         </p>
         <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+function PublicClientAccountCard({
+  userEmail,
+  authLoading,
+  clientArea,
+  loading,
+  studioName,
+  onAutofill,
+  onReload,
+}: {
+  userEmail: string | null;
+  authLoading: boolean;
+  clientArea: PublicClientAreaPayload | null;
+  loading: boolean;
+  studioName: string;
+  onAutofill: () => void;
+  onReload: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const upcoming = clientArea?.appointments.filter((appointment) => appointment.isUpcoming).slice(0, 3) ?? [];
+  const history = clientArea?.appointments.filter((appointment) => !appointment.isUpcoming).slice(0, 3) ?? [];
+
+  if (authLoading) {
+    return (
+      <div className="rounded-3xl border border-border bg-card/80 px-4 py-3 text-sm text-muted-foreground shadow-sm">
+        A preparar acesso rápido...
+      </div>
+    );
+  }
+
+  if (!userEmail) {
+    return (
+      <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition hover:bg-muted/40"
+        >
+          <span>
+            <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <LogIn className="size-4" />
+              Entrar para marcar mais rápido
+            </span>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              Entre uma vez e evite preencher os dados nas próximas reservas.
+            </span>
+          </span>
+          <span className="rounded-full bg-foreground px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-background">
+            Opcional
+          </span>
+        </button>
+        {open && <PublicClientAuthForm studioName={studioName} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+      <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <UserRound className="size-4" />
+            Área da cliente
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">{userEmail}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onAutofill}
+            disabled={!clientArea?.profile.email}
+            className="rounded-full bg-foreground px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            Usar dados
+          </button>
+          <button
+            type="button"
+            onClick={onReload}
+            disabled={loading}
+            className="rounded-full border border-border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-foreground transition hover:bg-muted disabled:opacity-50"
+          >
+            {loading ? "A atualizar" : "Atualizar"}
+          </button>
+          <button
+            type="button"
+            onClick={() => supabase.auth.signOut()}
+            className="rounded-full border border-border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-px bg-border/60 sm:grid-cols-3">
+        <ClientMetric label="Valores pagos" value={formatMoney(clientArea?.totals.paid ?? 0)} />
+        <ClientMetric label="Sinais pagos" value={formatMoney(clientArea?.totals.deposits ?? 0)} />
+        <ClientMetric label="Pendente" value={formatMoney(clientArea?.totals.pending ?? 0)} />
+      </div>
+
+      <div className="grid gap-3 p-4 lg:grid-cols-2">
+        <ClientAppointmentList title="Próximos agendamentos" items={upcoming} empty="Sem marcações futuras." />
+        <ClientAppointmentList title="Histórico recente" items={history} empty="Sem histórico neste estúdio." />
+      </div>
+    </div>
+  );
+}
+
+function PublicClientAuthForm({ studioName }: { studioName: string }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function signInWithGoogle() {
+    rememberPublicReturn();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+    if (error) toast.error("Não foi possível iniciar sessão com Google.");
+  }
+
+  async function submitEmail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!email.trim() || password.length < 6) {
+      toast.error("Indique um e-mail válido e uma senha com pelo menos 6 caracteres.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (mode === "signup") {
+        rememberPublicReturn();
+        const { error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            data: { full_name: name.trim() || undefined },
+          },
+        });
+        if (error) throw error;
+        toast.success("Conta criada. Confirme o e-mail se for solicitado.");
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+        if (error) throw error;
+        toast.success("Sessão iniciada.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível iniciar sessão.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border px-4 pb-4 pt-3">
+      <button
+        type="button"
+        onClick={signInWithGoogle}
+        className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-foreground text-sm font-bold text-background transition hover:opacity-90"
+      >
+        <LogIn className="size-4" />
+        Entrar com Google
+      </button>
+
+      <form onSubmit={submitEmail} className="mt-3 space-y-2">
+        {mode === "signup" && (
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Nome"
+            autoComplete="name"
+            className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:ring-2 focus:ring-foreground/15"
+          />
+        )}
+        <input
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="E-mail"
+          type="email"
+          autoComplete="email"
+          className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:ring-2 focus:ring-foreground/15"
+        />
+        <input
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="Senha"
+          type="password"
+          autoComplete={mode === "signup" ? "new-password" : "current-password"}
+          className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:ring-2 focus:ring-foreground/15"
+        />
+        <button
+          type="submit"
+          disabled={busy}
+          className="h-12 w-full rounded-2xl border border-border bg-card text-xs font-bold uppercase tracking-[0.16em] text-foreground transition hover:bg-muted disabled:opacity-50"
+        >
+          {busy ? "A validar" : mode === "signup" ? "Criar conta" : "Entrar"}
+        </button>
+      </form>
+      <button
+        type="button"
+        onClick={() => setMode((current) => (current === "login" ? "signup" : "login"))}
+        className="mt-3 text-xs font-semibold text-muted-foreground underline underline-offset-4"
+      >
+        {mode === "login" ? `Criar conta rápida para ${studioName}` : "Já tenho conta"}
+      </button>
+    </div>
+  );
+}
+
+function ClientMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-card px-4 py-3">
+      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+      <p className="mt-1 text-base font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function ClientAppointmentList({
+  title,
+  items,
+  empty,
+}: {
+  title: string;
+  items: PublicClientAreaPayload["appointments"];
+  empty: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-background/60 p-3">
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
+      <div className="mt-3 space-y-2">
+        {items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        ) : (
+          items.map((appointment) => (
+            <div key={appointment.id} className="rounded-2xl border border-border bg-card p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    {appointment.services[0]?.name ?? "Serviço"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatDateTimeShort(appointment.startsAt)} · {appointment.staffName}
+                  </p>
+                </div>
+                <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-semibold text-muted-foreground">
+                  {clientStatusLabel(appointment.status)}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>Pago: {formatMoney(appointment.paidAmount)}</span>
+                {appointment.pendingAmount > 0 && <span>Pendente: {formatMoney(appointment.pendingAmount)}</span>}
+                {appointment.token && (
+                  <a
+                    href={`/marcacao/${appointment.token}`}
+                    className="font-semibold text-foreground underline underline-offset-4"
+                  >
+                    Gerir
+                  </a>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PublicPwaCard({
+  studioName,
+  canPrompt,
+  notificationStatus,
+  onInstall,
+  onDismiss,
+  onEnableNotifications,
+}: {
+  studioName: string;
+  canPrompt: boolean;
+  notificationStatus: "unknown" | "granted" | "denied";
+  onInstall: () => void;
+  onDismiss: () => void;
+  onEnableNotifications: () => void;
+}) {
+  return (
+    <div className="rounded-3xl border border-border bg-card/85 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Bell className="size-4" />
+            Acesso rápido a {studioName}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Adicione a página ao ecrã inicial e ative lembretes quando fizer sentido para si.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Fechar aviso"
+          className="grid size-8 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onInstall}
+          className="rounded-full bg-foreground px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90"
+        >
+          {canPrompt ? "Adicionar app" : "Como adicionar"}
+        </button>
+        <button
+          type="button"
+          onClick={onEnableNotifications}
+          disabled={notificationStatus === "granted"}
+          className="rounded-full border border-border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-foreground transition hover:bg-muted disabled:opacity-50"
+        >
+          {notificationStatus === "granted" ? "Notificações ativas" : "Ativar lembretes"}
+        </button>
       </div>
     </div>
   );
