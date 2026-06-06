@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import { AlertTriangle, Clock, Info, RefreshCcw, ShieldCheck, Wallet } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +10,7 @@ import {
   type PolicyTextParts,
   type RefundPolicyValue,
 } from "@/lib/policy-text";
+import { updateStudioRefundRequest } from "@/lib/refund-operations.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/politicas")({
   head: () => ({ meta: [{ title: "Políticas e Cancelamentos" }] }),
@@ -42,6 +44,7 @@ type RefundRequest = {
 
 function PoliciesPage() {
   const { studio } = useCurrentStudio();
+  const updateRefund = useServerFn(updateStudioRefundRequest);
   const [data, setData] = useState<StudioPolicy | null>(null);
   const [refunds, setRefunds] = useState<RefundRequest[]>([]);
   const [noticeMode, setNoticeMode] = useState<"24" | "48" | "custom">("24");
@@ -106,13 +109,24 @@ function PoliciesPage() {
   }
 
   async function updateRefundStatus(id: string, status: RefundRequest["status"]) {
-    const { error } = await (supabase as any)
-      .from("refund_requests")
-      .update({ status, reviewed_at: new Date().toISOString() })
-      .eq("id", id);
-    if (error) return toast.error(error.message);
+    if (!studio || status === "refunded") return;
+    try {
+      await updateRefund({ data: { studioId: studio.id, requestId: id, status } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("refund_payment_not_live")) {
+        toast.error("Este reembolso não está ligado a um pagamento live confirmado.");
+        return;
+      }
+      if (message.includes("refund_already_processed")) {
+        toast.error("Este reembolso já foi processado.");
+        return;
+      }
+      toast.error("Não foi possível atualizar este pedido.");
+      return;
+    }
     setRefunds((current) => current.map((item) => (item.id === id ? { ...item, status } : item)));
-    toast.success("Pedido atualizado.");
+    toast.success(status === "approved" ? "Reembolso aprovado para processamento." : "Pedido atualizado.");
   }
 
   if (!data) return <p className="text-sm text-muted-foreground">A carregar políticas...</p>;
@@ -303,7 +317,7 @@ function PoliciesPage() {
             <h2 className="mt-1 text-lg font-medium">Análise manual</h2>
           </div>
           <p className="text-xs text-muted-foreground">
-            Estrutura preparada para futura integração de reembolsos automáticos.
+            Ao aprovar, o valor sai do saldo disponível e fica pendente para processamento da Bellza.
           </p>
         </div>
         <div className="mt-4 space-y-3">
@@ -367,14 +381,6 @@ function PoliciesPage() {
                       className="h-10 rounded-xl bg-red-500/10 text-xs font-bold text-red-500 ring-1 ring-red-500/20 disabled:opacity-40"
                     >
                       Recusar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateRefundStatus(request.id, "refunded")}
-                      disabled={request.status === "refunded"}
-                      className="h-10 rounded-xl bg-sky-500/10 text-xs font-bold text-sky-500 ring-1 ring-sky-500/20 disabled:opacity-40"
-                    >
-                      Reembolsado
                     </button>
                   </div>
                 </div>
