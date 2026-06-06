@@ -89,6 +89,7 @@ type PublicClientAreaPayload = {
     name: string;
     phone: string;
     email: string;
+    avatarUrl?: string | null;
     totalVisits: number;
     totalSpent: number;
   };
@@ -306,6 +307,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const loadPublicClientArea = useServerFn(getPublicClientArea);
   const heroTouchStartX = useRef<number | null>(null);
   const heroControlsTimer = useRef<number | null>(null);
+  const clientAreaRequestedFor = useRef<string | null>(null);
   const [clientArea, setClientArea] = useState<PublicClientAreaPayload | null>(null);
   const [clientAreaLoading, setClientAreaLoading] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -334,16 +336,38 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   useEffect(() => {
     if (!user?.id) {
       setClientArea(null);
+      clientAreaRequestedFor.current = null;
       return;
     }
     const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
     const inferredName = String(metadata.full_name ?? metadata.name ?? "").trim();
+    const inferredPhone = String(metadata.phone ?? metadata.phone_number ?? "").trim();
     setClient((current) => ({
       ...current,
       name: current.name || inferredName,
+      phone: current.phone || inferredPhone,
       email: current.email || user.email || "",
     }));
   }, [user?.email, user?.id, user?.user_metadata]);
+
+  useEffect(() => {
+    if (!user?.id || !studio.id || clientAreaRequestedFor.current === `${studio.id}:${user.id}`) return;
+    clientAreaRequestedFor.current = `${studio.id}:${user.id}`;
+    setClientAreaLoading(true);
+    loadPublicClientArea({ data: { studioId: studio.id } })
+      .then((payload) => {
+        const area = payload as PublicClientAreaPayload;
+        setClientArea(area);
+        setClient((current) => ({
+          ...current,
+          name: current.name || area.profile.name,
+          phone: current.phone || area.profile.phone,
+          email: current.email || area.profile.email || user.email || "",
+        }));
+      })
+      .catch(() => undefined)
+      .finally(() => setClientAreaLoading(false));
+  }, [loadPublicClientArea, studio.id, user?.email, user?.id]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -836,6 +860,8 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
         <div className="space-y-3 px-4 pt-4 md:px-0">
           <PublicClientAccountCard
             userEmail={user?.email ?? null}
+            userName={clientArea?.profile.name || getGoogleDisplayName(user) || client.name}
+            userAvatarUrl={clientArea?.profile.avatarUrl ?? getGoogleAvatarUrl(user)}
             authLoading={authLoading}
             clientArea={clientArea}
             loading={clientAreaLoading}
@@ -1003,6 +1029,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               savings={upsellsSavings}
               client={client}
               clientAccountEmail={clientArea?.profile.email ?? user?.email ?? null}
+              clientAccountName={clientArea?.profile.name || getGoogleDisplayName(user)}
               onClientChange={setClient}
               contactConsent={contactConsent}
               onContactConsentChange={setContactConsent}
@@ -1150,6 +1177,17 @@ function readNotificationPermission(): "unknown" | "granted" | "denied" {
     : Notification.permission === "denied"
       ? "denied"
       : "unknown";
+}
+
+function getGoogleDisplayName(user: unknown) {
+  const metadata = ((user as any)?.user_metadata ?? {}) as Record<string, unknown>;
+  return String(metadata.full_name ?? metadata.name ?? "").trim();
+}
+
+function getGoogleAvatarUrl(user: unknown) {
+  const metadata = ((user as any)?.user_metadata ?? {}) as Record<string, unknown>;
+  const value = metadata.avatar_url ?? metadata.picture;
+  return typeof value === "string" && /^https?:\/\//.test(value) ? value : null;
 }
 
 function clientStatusLabel(status: string) {
@@ -2634,6 +2672,7 @@ function ReviewStepPremium({
   savings,
   client,
   clientAccountEmail,
+  clientAccountName,
   onClientChange,
   contactConsent,
   onContactConsentChange,
@@ -2656,6 +2695,7 @@ function ReviewStepPremium({
   savings: number;
   client: ClientForm;
   clientAccountEmail?: string | null;
+  clientAccountName?: string | null;
   onClientChange: (c: ClientForm) => void;
   contactConsent: boolean;
   onContactConsentChange: (value: boolean) => void;
@@ -2675,6 +2715,12 @@ function ReviewStepPremium({
   const depositNow = requiresDeposit ? Math.round(total * depositRate) / 100 : 0;
   const remaining = Math.max(0, total - depositNow);
   const policySummary = `${policyParts.rescheduleBody} ${policyParts.refundBody}`;
+  const missingClientFields = [
+    client.name.trim().length < 2 ? "nome" : null,
+    client.phone.replace(/\D/g, "").length < 9 ? "telefone" : null,
+    client.email && !/\S+@\S+\.\S+/.test(client.email) ? "e-mail válido" : null,
+  ].filter(Boolean);
+  const clientDetailsComplete = clientAccountEmail && missingClientFields.length === 0;
 
   return (
     <section className="animate-slide-up space-y-5 pt-4">
@@ -2682,7 +2728,9 @@ function ReviewStepPremium({
         <SectionTitle>Os seus dados</SectionTitle>
         {clientAccountEmail && (
           <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs leading-relaxed text-emerald-800 dark:text-emerald-200">
-            Sessão iniciada com {clientAccountEmail}. Os dados podem ser editados antes de confirmar.
+            {clientDetailsComplete
+              ? `Dados preenchidos para ${clientAccountName || client.name || clientAccountEmail}.`
+              : `Sessão iniciada. Falta apenas ${missingClientFields.join(", ")} para confirmar.`}
           </div>
         )}
         <div className="space-y-2">
@@ -2889,6 +2937,8 @@ function PolicyInfoItem({
 
 function PublicClientAccountCard({
   userEmail,
+  userName,
+  userAvatarUrl,
   authLoading,
   clientArea,
   loading,
@@ -2897,6 +2947,8 @@ function PublicClientAccountCard({
   onReload,
 }: {
   userEmail: string | null;
+  userName?: string | null;
+  userAvatarUrl?: string | null;
   authLoading: boolean;
   clientArea: PublicClientAreaPayload | null;
   loading: boolean;
@@ -2905,8 +2957,16 @@ function PublicClientAccountCard({
   onReload: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const upcoming = clientArea?.appointments.filter((appointment) => appointment.isUpcoming).slice(0, 3) ?? [];
-  const history = clientArea?.appointments.filter((appointment) => !appointment.isUpcoming).slice(0, 3) ?? [];
+  const history = clientArea?.appointments.filter((appointment) => !appointment.isUpcoming).slice(0, 8) ?? [];
+  const displayName = userName || clientArea?.profile.name || userEmail || "Cliente";
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
 
   if (authLoading) {
     return (
@@ -2943,14 +3003,25 @@ function PublicClientAccountCard({
   }
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
-      <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <UserRound className="size-4" />
-            Área da cliente
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">{userEmail}</p>
+    <div className="overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
+      <div className="flex flex-col gap-4 bg-gradient-to-br from-emerald-500/10 via-card to-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-full bg-foreground text-sm font-black text-background ring-2 ring-emerald-500/20">
+            {userAvatarUrl ? (
+              <img src={userAvatarUrl} alt={displayName} className="size-full object-cover" />
+            ) : (
+              initials || <UserRound className="size-5" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-base font-extrabold tracking-tight text-foreground">{displayName}</p>
+              <span className="rounded-full bg-emerald-500 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.16em] text-white">
+                Conectado
+              </span>
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{userEmail}</p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -2985,9 +3056,32 @@ function PublicClientAccountCard({
         <ClientMetric label="Pendente" value={formatMoney(clientArea?.totals.pending ?? 0)} />
       </div>
 
-      <div className="grid gap-3 p-4 lg:grid-cols-2">
+      <div className="space-y-3 p-4">
         <ClientAppointmentList title="Próximos agendamentos" items={upcoming} empty="Sem marcações futuras." />
-        <ClientAppointmentList title="Histórico recente" items={history} empty="Sem histórico neste estúdio." />
+        <div className="rounded-2xl border border-border bg-background/60">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((value) => !value)}
+            className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left"
+          >
+            <span>
+              <span className="block text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                Histórico
+              </span>
+              <span className="mt-0.5 block text-sm font-semibold text-foreground">
+                {history.length > 0 ? `${history.length} marcações anteriores` : "Sem histórico neste estúdio"}
+              </span>
+            </span>
+            <span className="rounded-full border border-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+              {historyOpen ? "Ocultar" : "Ver"}
+            </span>
+          </button>
+          {historyOpen && (
+            <div className="border-t border-border p-3">
+              <ClientAppointmentList title="Serviços realizados" items={history} empty="Sem histórico neste estúdio." compact />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -3113,13 +3207,15 @@ function ClientAppointmentList({
   title,
   items,
   empty,
+  compact = false,
 }: {
   title: string;
   items: PublicClientAreaPayload["appointments"];
   empty: string;
+  compact?: boolean;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-background/60 p-3">
+    <div className={cn("rounded-2xl border border-border bg-background/60 p-3", compact && "border-0 bg-transparent p-0")}>
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
       <div className="mt-3 space-y-2">
         {items.length === 0 ? (
@@ -3140,13 +3236,20 @@ function ClientAppointmentList({
                   {clientStatusLabel(appointment.status)}
                 </span>
               </div>
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>Pago: {formatMoney(appointment.paidAmount)}</span>
-                {appointment.pendingAmount > 0 && <span>Pendente: {formatMoney(appointment.pendingAmount)}</span>}
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="rounded-full bg-muted px-2.5 py-1">Valor {formatMoney(appointment.totalPrice)}</span>
+                <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-emerald-700 dark:text-emerald-300">
+                  Sinal {formatMoney(appointment.paidAmount)}
+                </span>
+                {appointment.pendingAmount > 0 && (
+                  <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-amber-700 dark:text-amber-300">
+                    Pendente {formatMoney(appointment.pendingAmount)}
+                  </span>
+                )}
                 {appointment.token && (
                   <a
                     href={`/marcacao/${appointment.token}`}
-                    className="font-semibold text-foreground underline underline-offset-4"
+                    className="ml-auto font-semibold text-foreground underline underline-offset-4"
                   >
                     Gerir
                   </a>
@@ -3175,17 +3278,23 @@ function PublicPwaCard({
   onDismiss: () => void;
   onEnableNotifications: () => void;
 }) {
+  const installLabel =
+    typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches
+      ? "Adicionar à tela inicial"
+      : "Instalar aplicativo";
   return (
-    <div className="rounded-3xl border border-border bg-card/85 p-4 shadow-sm">
+    <div className="rounded-[1.75rem] border border-border bg-card/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Bell className="size-4" />
-            Acesso rápido a {studioName}
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Adicione a página ao ecrã inicial e ative lembretes quando fizer sentido para si.
-          </p>
+        <div className="flex min-w-0 gap-3">
+          <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-accent/12 text-accent">
+            <Download className="size-4" />
+          </div>
+          <div>
+            <p className="text-sm font-extrabold tracking-tight text-foreground">Acesso rápido a {studioName}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Abra reservas e lembretes sem procurar o link outra vez.
+            </p>
+          </div>
         </div>
         <button
           type="button"
@@ -3200,15 +3309,15 @@ function PublicPwaCard({
         <button
           type="button"
           onClick={onInstall}
-          className="rounded-full bg-foreground px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90"
+          className="rounded-full bg-foreground px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90"
         >
-          {canPrompt ? "Adicionar app" : "Como adicionar"}
+          {canPrompt ? installLabel : "Como instalar"}
         </button>
         <button
           type="button"
           onClick={onEnableNotifications}
           disabled={notificationStatus === "granted"}
-          className="rounded-full border border-border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-foreground transition hover:bg-muted disabled:opacity-50"
+          className="rounded-full border border-border px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-foreground transition hover:bg-muted disabled:opacity-50"
         >
           {notificationStatus === "granted" ? "Notificações ativas" : "Ativar lembretes"}
         </button>

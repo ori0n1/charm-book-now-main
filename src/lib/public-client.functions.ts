@@ -61,6 +61,7 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
       name: latestClient?.name ?? inferName((context as any).claims),
       phone: latestClient?.phone ?? "",
       email,
+      avatarUrl: inferAvatarUrl((context as any).claims),
       totalVisits: Number(latestClient?.total_visits ?? 0),
       totalSpent: Number(latestClient?.total_spent ?? 0),
     };
@@ -158,7 +159,7 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
 
 function emptyPayload(email: string | null) {
   return {
-    profile: { name: "", phone: "", email: email ?? "", totalVisits: 0, totalSpent: 0 },
+    profile: { name: "", phone: "", email: email ?? "", avatarUrl: null, totalVisits: 0, totalSpent: 0 },
     appointments: [],
     pendingPayments: [],
     totals: { paid: 0, deposits: 0, pending: 0 },
@@ -176,6 +177,12 @@ function normalizeAppointmentRow(row: any): AppointmentRow {
 function inferName(claims: Record<string, unknown>) {
   const metadata = (claims.user_metadata ?? claims.raw_user_meta_data ?? {}) as Record<string, unknown>;
   return String(metadata.full_name ?? metadata.name ?? "").trim();
+}
+
+function inferAvatarUrl(claims: Record<string, unknown>) {
+  const metadata = (claims.user_metadata ?? claims.raw_user_meta_data ?? {}) as Record<string, unknown>;
+  const value = metadata.avatar_url ?? metadata.picture;
+  return typeof value === "string" && /^https?:\/\//.test(value) ? value : null;
 }
 
 async function loadServicesByAppointment(sb: any, appointmentIds: string[]) {
