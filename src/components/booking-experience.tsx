@@ -25,7 +25,6 @@ import {
   Info,
   LogIn,
   MapPin,
-  Mail,
   QrCode,
   RefreshCcw,
   Search,
@@ -333,37 +332,18 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   }, [client]);
 
   useEffect(() => {
-    let active = true;
-    if (!user?.id || !studio.id) {
+    if (!user?.id) {
       setClientArea(null);
       return;
     }
-
-    setClientAreaLoading(true);
-    loadPublicClientArea({ data: { studioId: studio.id } })
-      .then((payload) => {
-        if (!active) return;
-        const normalized = payload as PublicClientAreaPayload;
-        setClientArea(normalized);
-        setClient((current) => ({
-          ...current,
-          name: normalized.profile.name || current.name,
-          phone: normalized.profile.phone || current.phone,
-          email: normalized.profile.email || current.email,
-        }));
-      })
-      .catch((error) => {
-        if (!active) return;
-        console.warn("public_client_area_failed", error);
-        setClientArea(null);
-      })
-      .finally(() => {
-        if (active) setClientAreaLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [loadPublicClientArea, studio.id, user?.id]);
+    const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+    const inferredName = String(metadata.full_name ?? metadata.name ?? "").trim();
+    setClient((current) => ({
+      ...current,
+      name: current.name || inferredName,
+      email: current.email || user.email || "",
+    }));
+  }, [user?.email, user?.id, user?.user_metadata]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -861,12 +841,11 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
             loading={clientAreaLoading}
             studioName={studio.name}
             onAutofill={() => {
-              if (!clientArea) return;
               setClient((current) => ({
                 ...current,
-                name: clientArea.profile.name || current.name,
-                phone: clientArea.profile.phone || current.phone,
-                email: clientArea.profile.email || current.email,
+                name: clientArea?.profile.name || current.name,
+                phone: clientArea?.profile.phone || current.phone,
+                email: clientArea?.profile.email || user?.email || current.email,
               }));
               toast.success("Dados preenchidos para esta marcação.");
             }}
@@ -2977,7 +2956,7 @@ function PublicClientAccountCard({
           <button
             type="button"
             onClick={onAutofill}
-            disabled={!clientArea?.profile.email}
+            disabled={!userEmail}
             className="rounded-full bg-foreground px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
           >
             Usar dados
