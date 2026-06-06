@@ -372,7 +372,18 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const resolveStaffId = (id: string) => STAFF_DB_ID[id] ?? id;
 
   async function submitBooking() {
-    if (!service || !date || !time || !professional || !clientValid) return;
+    if (!service || !date || !time || !professional) return;
+    if (!clientValid) {
+      if (client.name.trim().length < 2) toast.error("Confirme o seu nome para continuar.");
+      else if (client.phone.replace(/\D/g, "").length < 9)
+        toast.error("Indique um telemóvel válido para confirmar a reserva.");
+      else if (client.email && !/\S+@\S+\.\S+/.test(client.email))
+        toast.error("Confirme o e-mail ou deixe o campo vazio.");
+      else if (!contactConsent || !policyAccepted)
+        toast.error("Aceite os consentimentos obrigatórios para concluir a reserva.");
+      else toast.error("Confirme os dados da reserva antes de continuar.");
+      return;
+    }
 
     const staffDbId =
       selectedSlot?.staff_id ??
@@ -2709,6 +2720,9 @@ function ReviewStepPremium({
     client.email && !/\S+@\S+\.\S+/.test(client.email) ? "e-mail válido" : null,
   ].filter(Boolean);
   const clientDetailsComplete = clientAccountEmail && missingClientFields.length === 0;
+  const showNameField = !clientAccountEmail || client.name.trim().length < 2;
+  const showEmailField = !clientAccountEmail || !client.email || !/\S+@\S+\.\S+/.test(client.email);
+  const showPhoneField = !clientAccountEmail || client.phone.replace(/\D/g, "").length < 9;
 
   return (
     <section className="animate-slide-up space-y-5 pt-4">
@@ -2722,29 +2736,43 @@ function ReviewStepPremium({
           </div>
         )}
         <div className="space-y-2">
-          <FieldInput
-            label="Nome"
-            value={client.name}
-            onChange={(v) => set({ name: v })}
-            placeholder="Como prefere ser chamada?"
-            autoComplete="name"
-          />
-          <FieldInput
-            label="WhatsApp"
-            value={client.phone}
-            onChange={(v) => set({ phone: v })}
-            placeholder="+351 912 345 678"
-            type="tel"
-            autoComplete="tel"
-          />
-          <FieldInput
-            label="Email (opcional)"
-            value={client.email}
-            onChange={(v) => set({ email: v })}
-            placeholder="email@exemplo.com"
-            type="email"
-            autoComplete="email"
-          />
+          {!showNameField && !showEmailField && !showPhoneField && (
+            <div className="rounded-2xl border border-border bg-card px-4 py-3">
+              <p className="text-sm font-semibold text-foreground">{client.name}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {client.email} · {client.phone}
+              </p>
+            </div>
+          )}
+          {showNameField && (
+            <FieldInput
+              label="Nome"
+              value={client.name}
+              onChange={(v) => set({ name: v })}
+              placeholder="Como prefere ser chamada?"
+              autoComplete="name"
+            />
+          )}
+          {showPhoneField && (
+            <FieldInput
+              label="Telemóvel"
+              value={client.phone}
+              onChange={(v) => set({ phone: v })}
+              placeholder="+351 912 345 678"
+              type="tel"
+              autoComplete="tel"
+            />
+          )}
+          {showEmailField && (
+            <FieldInput
+              label="Email (opcional)"
+              value={client.email}
+              onChange={(v) => set({ email: v })}
+              placeholder="email@exemplo.com"
+              type="email"
+              autoComplete="email"
+            />
+          )}
           <label className="block">
             <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Observações (opcional)

@@ -33,24 +33,41 @@ export type BookingResult = {
 export async function createPublicBooking(input: CreateBookingInput): Promise<BookingResult> {
   const startsAtIso =
     input.startsAt instanceof Date ? input.startsAt.toISOString() : input.startsAt;
+  const clientName = input.clientName.trim();
+  const clientPhone = normalizeClientPhone(input.clientPhone);
+  const clientEmail = input.clientEmail?.trim().toLowerCase() || undefined;
   const { data, error } = await supabase.rpc("create_public_booking", {
     p_studio_slug: input.studioSlug,
     p_staff_id: input.staffDbId,
     p_starts_at: startsAtIso,
     p_service_ids: input.serviceDbIds,
-    p_client_name: input.clientName,
-    p_client_phone: input.clientPhone,
-    p_client_email: input.clientEmail ?? undefined,
+    p_client_name: clientName,
+    p_client_phone: clientPhone,
+    p_client_email: clientEmail,
     p_notes: input.notes ?? undefined,
   });
   if (error) {
+    console.error("[public-booking] create_public_booking failed", {
+      code: error.code,
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      studioSlug: input.studioSlug,
+      startsAt: startsAtIso,
+    });
     throw new Error(translateBookingError(error.message));
   }
   const result = data as unknown as BookingResult;
   if (input.policyAcceptance) {
-    await recordPolicyAcceptance(input.policyAcceptance, result);
+    await recordPolicyAcceptance(input.policyAcceptance, result).catch((error) => {
+      console.error("[public-booking] policy acceptance failed", error);
+    });
   }
   return result;
+}
+
+function normalizeClientPhone(value: string) {
+  return value.trim().replace(/\s+/g, " ");
 }
 
 async function recordPolicyAcceptance(
@@ -90,8 +107,12 @@ function translateBookingError(msg: string): string {
   if (msg.includes("invalid_phone")) return "Telemóvel inválido. Verifique o número.";
   if (msg.includes("invalid_name")) return "Nome inválido. Mínimo 2 letras.";
   if (msg.includes("studio_not_found")) return "Estúdio não encontrado.";
+  if (msg.includes("studio_not_available"))
+    return "Este estúdio não está disponível para novas reservas neste momento. Contacte o estúdio.";
   if (msg.includes("staff_not_found")) return "Profissional indisponível.";
   if (msg.includes("invalid_services")) return "Serviços inválidos. Recomece a reserva.";
   if (msg.includes("no_services")) return "Escolha pelo menos um serviço.";
+  if (msg.includes("payment_not_succeeded"))
+    return "O pagamento ainda não foi confirmado. Aguarde a confirmação ou tente novamente.";
   return "Não foi possível concluir a reserva. Tente novamente em instantes.";
 }
