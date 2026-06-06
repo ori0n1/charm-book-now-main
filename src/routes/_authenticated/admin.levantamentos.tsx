@@ -12,6 +12,13 @@ import {
   savePayoutSettings,
 } from "@/lib/withdrawals.functions";
 import { formatEUR } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export const Route = createFileRoute("/_authenticated/admin/levantamentos")({
   head: () => ({ meta: [{ title: "Levantamentos - Bellza" }] }),
@@ -337,29 +344,37 @@ function WithdrawalsPage() {
                           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                         />
                       </label>
-                      <select
+                      <Select
                         value={statusFilter}
-                        onChange={(event) =>
-                          setStatusFilter(event.target.value as "all" | WithdrawalSummary["requests"][number]["status"])
+                        onValueChange={(value) =>
+                          setStatusFilter(value as "all" | WithdrawalSummary["requests"][number]["status"])
                         }
-                        className="h-11 rounded-2xl border border-border bg-card px-3 text-xs font-semibold outline-none"
                       >
-                        <option value="all">Todos os status</option>
-                        <option value="in_review">Em análise</option>
-                        <option value="processing">Processando</option>
-                        <option value="completed">Concluído</option>
-                        <option value="canceled">Cancelado</option>
-                        <option value="failed">Falhou</option>
-                      </select>
-                      <select
+                        <SelectTrigger className="h-11 rounded-2xl border-border bg-card px-3 text-xs font-semibold shadow-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                          <SelectItem value="all" className="rounded-xl px-3 py-2.5 text-sm">Todos os status</SelectItem>
+                          <SelectItem value="in_review" className="rounded-xl px-3 py-2.5 text-sm">Em análise</SelectItem>
+                          <SelectItem value="processing" className="rounded-xl px-3 py-2.5 text-sm">Processando</SelectItem>
+                          <SelectItem value="completed" className="rounded-xl px-3 py-2.5 text-sm">Concluído</SelectItem>
+                          <SelectItem value="canceled" className="rounded-xl px-3 py-2.5 text-sm">Cancelado</SelectItem>
+                          <SelectItem value="failed" className="rounded-xl px-3 py-2.5 text-sm">Falhou</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select
                         value={methodFilter}
-                        onChange={(event) => setMethodFilter(event.target.value as "all" | "iban" | "mb_way")}
-                        className="h-11 rounded-2xl border border-border bg-card px-3 text-xs font-semibold outline-none"
+                        onValueChange={(value) => setMethodFilter(value as "all" | "iban" | "mb_way")}
                       >
-                        <option value="all">Todos os métodos</option>
-                        <option value="mb_way">MB WAY</option>
-                        <option value="iban">IBAN</option>
-                      </select>
+                        <SelectTrigger className="h-11 rounded-2xl border-border bg-card px-3 text-xs font-semibold shadow-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                          <SelectItem value="all" className="rounded-xl px-3 py-2.5 text-sm">Todos os métodos</SelectItem>
+                          <SelectItem value="mb_way" className="rounded-xl px-3 py-2.5 text-sm">MB WAY</SelectItem>
+                          <SelectItem value="iban" className="rounded-xl px-3 py-2.5 text-sm">IBAN</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-2">
                       {filteredHistory.length ? (

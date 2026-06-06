@@ -26,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
+import { PremiumTimeSelect } from "@/components/ui/premium-time-select";
 import {
   Accordion,
   AccordionContent,
@@ -888,18 +889,14 @@ function DateTimePicker({ value, onChange }: { value: string; onChange: (value: 
           if (date) onChange(`${date}T${time}`);
         }}
       />
-      <span className="block w-full min-w-0 max-w-full overflow-hidden">
-        <input
-          type="time"
-          value={time}
-          onChange={(event) => {
-            const date = selected ? localDateValue(selected) : localDateValue(new Date());
-            onChange(`${date}T${event.target.value}`);
-          }}
-          className="block h-14 w-full min-w-0 max-w-full appearance-none rounded-2xl border border-border bg-background/85 px-4 py-0 text-base leading-[3.5rem] shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15 md:h-12 md:px-3 md:text-sm md:leading-[3rem]"
-          style={{ minWidth: 0 }}
-        />
-      </span>
+      <PremiumTimeSelect
+        value={time}
+        onChange={(nextTime) => {
+          const date = selected ? localDateValue(selected) : localDateValue(new Date());
+          onChange(`${date}T${nextTime}`);
+        }}
+        className="h-14 px-4 text-base md:h-12 md:px-3 md:text-sm"
+      />
     </div>
   );
 }
