@@ -307,7 +307,6 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const loadPublicClientArea = useServerFn(getPublicClientArea);
   const heroTouchStartX = useRef<number | null>(null);
   const heroControlsTimer = useRef<number | null>(null);
-  const clientAreaRequestedFor = useRef<string | null>(null);
   const [clientArea, setClientArea] = useState<PublicClientAreaPayload | null>(null);
   const [clientAreaLoading, setClientAreaLoading] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -336,7 +335,6 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   useEffect(() => {
     if (!user?.id) {
       setClientArea(null);
-      clientAreaRequestedFor.current = null;
       return;
     }
     const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -349,25 +347,6 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       email: current.email || user.email || "",
     }));
   }, [user?.email, user?.id, user?.user_metadata]);
-
-  useEffect(() => {
-    if (!user?.id || !studio.id || clientAreaRequestedFor.current === `${studio.id}:${user.id}`) return;
-    clientAreaRequestedFor.current = `${studio.id}:${user.id}`;
-    setClientAreaLoading(true);
-    loadPublicClientArea({ data: { studioId: studio.id } })
-      .then((payload) => {
-        const area = payload as PublicClientAreaPayload;
-        setClientArea(area);
-        setClient((current) => ({
-          ...current,
-          name: current.name || area.profile.name,
-          phone: current.phone || area.profile.phone,
-          email: current.email || area.profile.email || user.email || "",
-        }));
-      })
-      .catch(() => undefined)
-      .finally(() => setClientAreaLoading(false));
-  }, [loadPublicClientArea, studio.id, user?.email, user?.id]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -879,7 +858,16 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               if (!user?.id) return;
               setClientAreaLoading(true);
               loadPublicClientArea({ data: { studioId: studio.id } })
-                .then((payload) => setClientArea(payload as PublicClientAreaPayload))
+                .then((payload) => {
+                  const area = payload as PublicClientAreaPayload;
+                  setClientArea(area);
+                  setClient((current) => ({
+                    ...current,
+                    name: current.name || area.profile.name,
+                    phone: current.phone || area.profile.phone,
+                    email: current.email || area.profile.email || user.email || "",
+                  }));
+                })
                 .catch(() => toast.error("Não foi possível atualizar a sua área."))
                 .finally(() => setClientAreaLoading(false));
             }}
