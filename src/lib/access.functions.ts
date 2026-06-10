@@ -1,9 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioPremiumAccess } from "@/lib/server-security";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 type AccessRole = "manager" | "staff" | "desk_staff";
 type InviteStatus =
@@ -15,14 +15,8 @@ type InviteStatus =
   | "cancelled"
   | "expired";
 
-let _admin: ReturnType<typeof createClient> | null = null;
 function admin(): any {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
+  return getAdminClient();
 }
 
 const OWNER_ROLES = ["saas_owner", "studio_owner", "manager"];
@@ -240,7 +234,7 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
     } else {
       const existing = await findUserByEmails(sb, emailCandidates);
       if (existing) {
-        userId = existing.id;
+        userId = existing.id as string;
         loginEmail = await updateInviteUserPassword(sb, userId, email, data.password);
       } else {
         const { data: created, error: createError } = await sb.auth.admin.createUser({
@@ -261,7 +255,7 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
       }
     }
 
-    if (!userId) throw new Error("Nao foi possivel ativar a conta.");
+    if (!userId) throw new Error("Não foi possível ativar a conta.");
     await sb
       .from("staff")
       .update({ user_id: userId, invite_status: "password_created", updated_at: new Date().toISOString() })

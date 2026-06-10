@@ -1,21 +1,31 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccessWithOptions, rateLimitOrThrow } from "@/lib/server-security";
-
-let _admin: ReturnType<typeof createClient> | null = null;
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 function admin(): SupabaseClient {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
+  return getAdminClient();
 }
 
 const StudioInput = z.object({ studioId: z.string().uuid() });
+
+const CancelWithdrawalInput = z.object({
+  studioId: z.string().uuid(),
+  requestId: z.string().uuid(),
+});
+
+const OperatorWithdrawalActionInput = z.object({
+  requestId: z.string().uuid(),
+  note: z.string().trim().max(500).optional().nullable(),
+  proofUrl: z.string().trim().url().max(500).optional().nullable(),
+});
+
+const OperatorFailWithdrawalInput = z.object({
+  requestId: z.string().uuid(),
+  reason: z.string().trim().min(4).max(500),
+});
 
 const PayoutSettingsInput = z.object({
   studioId: z.string().uuid(),
@@ -133,6 +143,205 @@ export const requestStudioWithdrawal = createServerFn({ method: "POST" })
     return { needsSetup: false, requestId: inserted.id as string, amountCents: availableCents, status };
   });
 
+export const cancelStudioWithdrawal = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => CancelWithdrawalInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = admin();
+    const userId = (context as any).userId;
+    await assertStudioAccessWithOptions(sb, userId, data.studioId, { requirePremium: true });
+
+    const { error } = await (sb as any)
+      .from("withdrawal_requests")
+      .update({
+        status: "canceled",
+        failure_reason: "Pedido cancelado pelo estúdio.",
+        status_updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.requestId)
+      .eq("studio_id", data.studioId)
+      .eq("status", "in_review");
+
+    if (error) throw error;
+    return { ok: true };
+  });
+
+export const getWithdrawalOperations = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const sb = admin();
+    await assertSaasOwner(sb, (context as any).userId);
+
+    const { data, error } = await (sb as any)
+      .from("withdrawal_requests")
+      .select(
+        "id,studio_id,amount_cents,currency,status,payout_method,payout_mode,fiscal_name,nif,iban_last4,mb_way_phone,requested_at,reviewed_at,processed_at,paid_at,updated_at,status_updated_at,proof_url,failure_reason,admin_notes,studios:studio_id(id,name,slug)",
+      )
+      .order("requested_at", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+
+    const rows = data ?? [];
+    const studioIds = [...new Set(rows.map((row: any) => row.studio_id).filter(Boolean))] as string[];
+    const totalsByStudio = new Map<
+      string,
+      { paidOnlineCents: number; reservedCents: number; rawReservedCents: number }
+    >();
+    await Promise.all(
+      studioIds.map(async (studioId) => {
+        totalsByStudio.set(studioId, await loadWithdrawalTotals(sb, studioId));
+      }),
+    );
+
+    return rows.map((row: any) => {
+      const totals = totalsByStudio.get(row.studio_id) ?? {
+        paidOnlineCents: 0,
+        reservedCents: 0,
+        rawReservedCents: 0,
+      };
+      const amountCents = Number(row.amount_cents || 0);
+      const rawReservedCents = totals.rawReservedCents ?? totals.reservedCents;
+      const otherReservedCents =
+        ["pending", "in_review", "processing", "completed", "paid"].includes(String(row.status))
+          ? Math.max(0, rawReservedCents - amountCents)
+          : rawReservedCents;
+      const liveAvailableForRequestCents = Math.max(0, totals.paidOnlineCents - otherReservedCents);
+      return {
+        id: row.id as string,
+        studioId: row.studio_id as string,
+        studioName: row.studios?.name ?? "Estúdio",
+        studioSlug: row.studios?.slug ?? null,
+        amountCents,
+        currency: (row.currency as string) ?? "eur",
+        status: normalizeWithdrawalStatus(row.status as string),
+        payoutMethod: row.payout_method === "mb_way" ? "mb_way" : "iban",
+        payoutMode: row.payout_mode === "stripe_automatic" ? "stripe_automatic" : "manual",
+        fiscalName: row.fiscal_name as string,
+        nif: row.nif as string,
+        ibanLast4: row.iban_last4 as string | null,
+        mbWayPhone: row.mb_way_phone as string | null,
+        requestedAt: row.requested_at as string,
+        reviewedAt: row.reviewed_at as string | null,
+        processedAt: row.processed_at as string | null,
+        paidAt: row.paid_at as string | null,
+        updatedAt: (row.status_updated_at || row.updated_at) as string | null,
+        proofUrl: row.proof_url as string | null,
+        failureReason: row.failure_reason as string | null,
+        adminNotes: row.admin_notes as string | null,
+        confirmedLiveCents: totals.paidOnlineCents,
+        reservedCents: rawReservedCents,
+        liveAvailableForRequestCents,
+        coveredByLiveBalance: amountCents <= liveAvailableForRequestCents,
+      };
+    });
+  });
+
+export const markWithdrawalProcessing = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => OperatorWithdrawalActionInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = admin();
+    await assertSaasOwner(sb, (context as any).userId);
+    const request = await loadWithdrawalRequestForOperator(sb, data.requestId);
+    await assertRequestCoveredByLiveBalance(sb, request);
+
+    const { error } = await (sb as any)
+      .from("withdrawal_requests")
+      .update({
+        status: "processing",
+        reviewed_at: request.reviewed_at ?? new Date().toISOString(),
+        processed_at: new Date().toISOString(),
+        status_updated_at: new Date().toISOString(),
+        admin_notes: data.note?.trim() || request.admin_notes || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.requestId)
+      .in("status", ["in_review", "pending"]);
+    if (error) throw error;
+
+    await insertWithdrawalNotification(
+      sb,
+      request.studio_id,
+      request.id,
+      Number(request.amount_cents || 0),
+      "processing",
+      "Levantamento em processamento",
+      "O pedido foi validado e está a ser processado.",
+    );
+    return { ok: true };
+  });
+
+export const markWithdrawalCompleted = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => OperatorWithdrawalActionInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = admin();
+    await assertSaasOwner(sb, (context as any).userId);
+    const request = await loadWithdrawalRequestForOperator(sb, data.requestId);
+    await assertRequestCoveredByLiveBalance(sb, request);
+
+    const { error } = await (sb as any)
+      .from("withdrawal_requests")
+      .update({
+        status: "completed",
+        reviewed_at: request.reviewed_at ?? new Date().toISOString(),
+        processed_at: request.processed_at ?? new Date().toISOString(),
+        paid_at: new Date().toISOString(),
+        proof_url: data.proofUrl?.trim() || request.proof_url || null,
+        admin_notes: data.note?.trim() || request.admin_notes || null,
+        status_updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.requestId)
+      .in("status", ["in_review", "pending", "processing"]);
+    if (error) throw error;
+
+    await insertWithdrawalNotification(
+      sb,
+      request.studio_id,
+      request.id,
+      Number(request.amount_cents || 0),
+      "completed",
+      "Levantamento pago",
+      `O levantamento de ${formatCents(Number(request.amount_cents || 0))} foi marcado como pago.`,
+    );
+    return { ok: true };
+  });
+
+export const rejectWithdrawalRequest = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => OperatorFailWithdrawalInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = admin();
+    await assertSaasOwner(sb, (context as any).userId);
+    const request = await loadWithdrawalRequestForOperator(sb, data.requestId);
+
+    const { error } = await (sb as any)
+      .from("withdrawal_requests")
+      .update({
+        status: "failed",
+        failure_reason: data.reason,
+        reviewed_at: request.reviewed_at ?? new Date().toISOString(),
+        status_updated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", data.requestId)
+      .in("status", ["in_review", "pending", "processing"]);
+    if (error) throw error;
+
+    await insertWithdrawalNotification(
+      sb,
+      request.studio_id,
+      request.id,
+      Number(request.amount_cents || 0),
+      "failed",
+      "Levantamento recusado",
+      data.reason,
+    );
+    return { ok: true };
+  });
+
 async function loadSettings(sb: SupabaseClient, studioId: string) {
   const { data } = await (sb as any)
     .from("studio_payout_settings")
@@ -156,6 +365,7 @@ async function loadWithdrawalTotals(sb: SupabaseClient, studioId: string) {
       .select("id,amount_cents,appointment_id")
       .eq("studio_id", studioId)
       .eq("status", "succeeded")
+      .like("stripe_checkout_session_id", "cs_live_%")
       .not("appointment_id", "is", null),
     (sb as any)
       .from("refund_requests")
@@ -199,7 +409,11 @@ async function loadWithdrawalTotals(sb: SupabaseClient, studioId: string) {
         : sum,
     0,
   );
-  return { paidOnlineCents, reservedCents };
+  return {
+    paidOnlineCents,
+    reservedCents: Math.min(reservedCents, paidOnlineCents),
+    rawReservedCents: reservedCents,
+  };
 }
 
 async function loadRecentRequests(sb: SupabaseClient, studioId: string) {
@@ -231,14 +445,60 @@ async function insertWithdrawalNotification(
   requestId: string,
   amountCents: number,
   status: WithdrawalStatus,
+  title = "Novo pedido de levantamento",
+  body = `Pedido de levantamento de ${formatCents(amountCents)} aguardando processamento.`,
 ) {
   await (sb as any).from("studio_notifications").insert({
     studio_id: studioId,
     kind: "withdrawal_requested",
-    title: "Novo pedido de levantamento",
-    body: `Pedido de levantamento de ${formatCents(amountCents)} aguardando processamento.`,
+    title,
+    body,
     payload: { withdrawal_request_id: requestId, amount_cents: amountCents, status },
   });
+}
+
+async function assertSaasOwner(sb: SupabaseClient, userId: string) {
+  const { data, error } = await (sb as any)
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("role", "saas_owner")
+    .limit(1)
+    .maybeSingle();
+  if (error || data?.role !== "saas_owner") {
+    throw new Response("forbidden", { status: 403 });
+  }
+}
+
+async function loadWithdrawalRequestForOperator(sb: SupabaseClient, requestId: string) {
+  const { data, error } = await (sb as any)
+    .from("withdrawal_requests")
+    .select("id,studio_id,amount_cents,status,reviewed_at,processed_at,proof_url,admin_notes")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (error || !data?.id) throw new Error("withdrawal_request_not_found");
+  return data as {
+    id: string;
+    studio_id: string;
+    amount_cents: number;
+    status: string;
+    reviewed_at: string | null;
+    processed_at: string | null;
+    proof_url: string | null;
+    admin_notes: string | null;
+  };
+}
+
+async function assertRequestCoveredByLiveBalance(
+  sb: SupabaseClient,
+  request: { id: string; studio_id: string; amount_cents: number },
+) {
+  const totals = await loadWithdrawalTotals(sb, request.studio_id);
+  const otherReservedCents = Math.max(0, totals.rawReservedCents - Number(request.amount_cents || 0));
+  const availableForRequestCents = Math.max(0, totals.paidOnlineCents - otherReservedCents);
+  if (Number(request.amount_cents || 0) > availableForRequestCents) {
+    throw new Error("withdrawal_not_covered_by_live_balance");
+  }
 }
 
 function normalizeIban(value?: string | null) {

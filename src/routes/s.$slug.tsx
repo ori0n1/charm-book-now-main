@@ -32,13 +32,11 @@ function PublicStudioPage() {
           .maybeSingle();
         if (!active) return;
         if (error) {
-          console.error(error);
           setStudioId(null);
           return;
         }
         setStudioId(data?.id ?? null);
-      } catch (error) {
-        console.error(error);
+      } catch {
         if (active) setStudioId(null);
       }
     })();

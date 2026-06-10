@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
@@ -21,6 +21,7 @@ import { LandingHeader } from "@/components/landing/landing-header";
 import { ProductPreview } from "@/components/landing/product-preview";
 import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND, LANDING_SEO } from "@/lib/app-brand";
+import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
 import {
   FEATURE_BLOCKS,
   LANDING_FAQS,
@@ -68,6 +69,26 @@ function LandingPage() {
   const [checkoutPlan, setCheckoutPlan] = useState<string | null>(null);
   const navigate = useNavigate();
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function redirectAuthenticatedVisitor() {
+      try {
+        const session = await settleSessionFromCurrentUrl("/");
+        if (cancelled || !session?.user?.id) return;
+        const landing = await resolveAuthLanding(session.user.id);
+        if (!cancelled) navigate({ to: landing as never, replace: true });
+      } catch {
+        // Keep the public landing usable if an old or partial OAuth URL cannot be settled.
+      }
+    }
+
+    void redirectAuthenticatedVisitor();
+    return () => {
+      cancelled = true;
+    };
+  }, [navigate]);
+
   async function startPlanCheckout(plan: "monthly" | "quarterly" | "yearly") {
     setCheckoutPlan(plan);
     try {
@@ -103,7 +124,7 @@ function LandingPage() {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Não foi possível abrir o checkout seguro da Stripe.",
+          : "Não foi possível abrir o checkout seguro.",
       );
       setCheckoutPlan(null);
     }
@@ -138,7 +159,7 @@ function LandingPage() {
   };
 
   return (
-    <div className="public-shell min-h-screen">
+    <div className="public-shell min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
@@ -147,15 +168,15 @@ function LandingPage() {
 
       <main>
         <section className="relative mx-auto grid max-w-7xl items-center gap-12 px-4 pb-16 pt-10 sm:px-6 sm:pb-20 sm:pt-16 lg:grid-cols-[1.02fr_0.98fr] lg:gap-14">
-          <div className="max-w-3xl text-center lg:text-left">
+          <div className="min-w-0 max-w-3xl text-center lg:text-left">
             <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/70 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur lg:mx-0">
               <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
               Bellza para estúdios e barbearias em Portugal
             </div>
-            <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.03] tracking-tight sm:text-5xl lg:text-[4.35rem]">
+            <h1 className="mx-auto mt-6 max-w-[20rem] text-3xl font-semibold leading-[1.08] tracking-tight sm:max-w-none sm:text-balance sm:text-5xl sm:leading-[1.03] lg:mx-0 lg:text-[4.35rem]">
               Gestão premium para transformar marcações em crescimento.
             </h1>
-            <p className="mx-auto mt-5 max-w-2xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg lg:mx-0">
+            <p className="mx-auto mt-5 max-w-[21rem] text-pretty text-base leading-relaxed text-muted-foreground sm:max-w-2xl sm:text-lg lg:mx-0">
               A {APP_BRAND.name} reúne agenda online, WhatsApp automático, pagamentos, equipa, clientes e
               finanças num SaaS moderno, rápido e preparado para a realidade legal europeia.
             </p>
@@ -168,8 +189,8 @@ function LandingPage() {
                 Ver painel Bellza
               </a>
             </div>
-            <ul className="mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs font-semibold text-muted-foreground lg:justify-start">
-              {["Sem fidelização", "Cancelamento simples", "Suporte premium", "Pronto para Stripe"].map((item) => (
+            <ul className="mt-7 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-[11px] font-semibold text-muted-foreground sm:gap-x-5 sm:text-xs lg:justify-start">
+              {["Sem fidelização", "Cancelamento simples", "Suporte premium", "Pagamentos online"].map((item) => (
                 <li key={item} className="flex items-center gap-1.5">
                   <Check className="size-3.5 text-accent" aria-hidden="true" />
                   {item}
@@ -271,7 +292,7 @@ function LandingPage() {
                     disabled={checkoutPlan === plan.id}
                     className={`mt-7 w-full disabled:opacity-60 ${plan.highlighted ? "public-btn-primary" : "public-btn-secondary bg-background text-foreground"}`}
                   >
-                    {checkoutPlan === plan.id ? "A abrir Stripe..." : "Começar grátis"}
+                    {checkoutPlan === plan.id ? "A abrir checkout..." : "Começar grátis"}
                   </button>
                 </article>
               ))}

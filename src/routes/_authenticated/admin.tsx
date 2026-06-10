@@ -30,6 +30,7 @@ import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { APP_BRAND } from "@/lib/app-brand";
 import { getSegmentConfig } from "@/lib/segments";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
+import { getSettledSession } from "@/lib/auth-landing";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: APP_BRAND.name }] }),
@@ -71,6 +72,14 @@ const NAV = [
     exact: false,
   },
   {
+    to: "/admin/central-levantamentos",
+    label: "Central",
+    mobileLabel: "Central",
+    icon: ShieldCheck,
+    exact: false,
+    saasOnly: true,
+  },
+  {
     to: "/admin/whatsapp",
     label: "WhatsApp",
     mobileLabel: "WhatsApp",
@@ -94,6 +103,17 @@ const NAV = [
   },
 ] as const;
 
+type BillingSummary = {
+  available?: boolean;
+  plan: string;
+  status: string;
+  nextBillingAt: string | null;
+  trialEndsAt?: string | null;
+  daysRemaining?: number | null;
+  cancelAtPeriodEnd?: boolean;
+  premiumActive: boolean;
+};
+
 function AdminLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -102,21 +122,29 @@ function AdminLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [sidebarStateReady, setSidebarStateReady] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
   const accessMode =
     studio?.role === "desk_staff" ? "desk" : studio?.role === "staff" ? "limited" : "full";
   const billingQuery = useQuery({
     queryKey: ["platform-subscription-summary", studio?.id],
-    enabled: !!studio,
+    enabled: sessionReady && !!studio,
     staleTime: 30 * 1000,
     retry: 1,
     queryFn: async () =>
-      (await loadBilling({ data: { studioId: studio!.id } })) as {
-        premiumActive: boolean;
-        status: string;
-      },
+      (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
-  const premiumLocked = Boolean(billingQuery.data && !billingQuery.data.premiumActive);
+  const premiumLocked = Boolean(billingQuery.data && billingQuery.data.status !== "trialing" && !billingQuery.data.premiumActive);
   const isPremiumPage = pathname.startsWith("/admin/premium");
+
+  useEffect(() => {
+    let cancelled = false;
+    void getSettledSession().then((session) => {
+      if (!cancelled) setSessionReady(Boolean(session?.access_token));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!loading && studios.length === 0) {
@@ -185,7 +213,7 @@ function AdminLayout() {
             </button>
             <button
               type="button"
-              onClick={logout}
+              onClick={() => navigate({ to: "/login" })}
               className="h-10 rounded-2xl bg-foreground text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90"
             >
               Entrar
@@ -250,7 +278,7 @@ function AdminLayout() {
         ? NAV.filter((item) =>
             ["/admin/agenda", "/admin/clientes", "/admin/balcao"].includes(item.to),
           )
-        : NAV;
+        : NAV.filter((item) => !("saasOnly" in item) || studio.role === "saas_owner");
   const roleNav = allowedNav;
 
   const primaryMobileNav = roleNav.filter((item) =>
@@ -392,6 +420,9 @@ function AdminLayout() {
         }`}
       >
         <div className="admin-content mx-auto max-w-6xl px-4 pb-28 pt-4 md:px-8 md:pb-10 md:pt-8">
+          {accessMode === "full" && billingQuery.data && !isPremiumPage && (
+            <PremiumPlanStatusCard billing={billingQuery.data} />
+          )}
           <Outlet />
         </div>
       </main>
@@ -460,6 +491,7 @@ function AdminLayout() {
                         {item.to === "/admin/politicas" && "Cancelamentos e reembolsos"}
                         {item.to === "/admin/premium" && "Plano, teste e renovação"}
                         {item.to === "/admin/levantamentos" && "Saldo, pedidos e comprovativos"}
+                        {item.to === "/admin/central-levantamentos" && "Aprovação segura de levantamentos"}
                       </span>
                     </span>
                     <span className="text-lg text-muted-foreground">›</span>
@@ -517,3 +549,130 @@ function AdminLayout() {
 function capitalize(value: string) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
+
+function PremiumPlanStatusCard({ billing }: { billing: BillingSummary }) {
+  const hasStripePlan = isStripePlan(billing.plan);
+  const active = billing.premiumActive;
+  const date = futureBillingDate(billing.nextBillingAt) ?? futureBillingDate(billing.trialEndsAt);
+  const remaining = getBillingDaysRemaining(billing);
+  const dateTitle =
+    billing.status === "trialing" && hasStripePlan
+      ? "Primeira cobrança"
+      : active
+        ? "Próxima renovação"
+        : "Regularização";
+  const title = hasStripePlan
+    ? `${formatBillingPlan(billing.plan)} ativo`
+    : active
+      ? "Teste gratuito ativo"
+      : "Plano pendente";
+  const subtitle = hasStripePlan
+    ? billing.status === "trialing"
+      ? "O plano premium já está configurado e a primeira cobrança fica agendada para o fim do período experimental."
+      : "O acesso premium está ativo e pronto a usar."
+    : "Escolha um plano quando quiser manter o acesso premium depois do teste.";
+
+  return (
+    <section className="mb-5 overflow-hidden rounded-[1.25rem] border border-emerald-700/20 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(255,255,255,0.025)_50%,rgba(14,165,233,0.07))] p-4 shadow-sm shadow-black/5 md:mb-7 md:rounded-[1.45rem] md:p-5">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white shadow-sm">
+              <BadgeCheck className="h-3.5 w-3.5" />
+              {active ? "Premium ativo" : "Ação necessária"}
+            </span>
+            {!active && (
+              <span className="rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                {getBillingStatusLabel(billing.status, hasStripePlan, active)}
+              </span>
+            )}
+          </div>
+          <h2 className="mt-3 text-xl font-light tracking-tight md:text-2xl">{title}</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
+            {subtitle}
+          </p>
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2 lg:ml-auto lg:w-full">
+          <BillingMiniStat label="Plano atual" value={formatBillingPlan(billing.plan)} />
+          <BillingMiniStat label={dateTitle} value={formatBillingDate(date)} />
+          {!hasStripePlan && (
+            <BillingMiniStat
+              label="Dias restantes"
+              value={remaining === null ? "A sincronizar" : `${remaining} dias`}
+            />
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BillingMiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl border border-border/70 bg-background/75 px-3 py-2.5 shadow-sm">
+      <p className="truncate text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-[13px] font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function isStripePlan(plan?: string | null) {
+  return plan === "monthly" || plan === "quarterly" || plan === "yearly";
+}
+
+function formatBillingPlan(plan?: string | null) {
+  const labels: Record<string, string> = {
+    trial: "Teste gratuito",
+    monthly: "Premium Mensal",
+    quarterly: "Premium Trimestral",
+    yearly: "Premium Anual",
+    pro: "Premium",
+  };
+  return labels[plan ?? ""] ?? "Não definido";
+}
+
+function getBillingStatusLabel(status?: string | null, hasStripePlan = false, active = false) {
+  if (active && hasStripePlan) return "Ativa";
+  if (status === "trialing" && hasStripePlan) return "Período experimental";
+  const labels: Record<string, string> = {
+    trialing: "Teste gratuito",
+    active: "Ativa",
+    past_due: "Pagamento pendente",
+    canceled: "Cancelada",
+    unpaid: "Por regularizar",
+    incomplete: "A confirmar",
+    incomplete_expired: "Expirada",
+    paused: "Pausada",
+  };
+  return labels[status ?? ""] ?? "A sincronizar";
+}
+
+function formatBillingDate(value?: string | null) {
+  if (!value) return "A sincronizar";
+  return new Date(value).toLocaleDateString("pt-PT", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function getBillingDaysRemaining(billing: BillingSummary) {
+  if (typeof billing.daysRemaining === "number") return billing.daysRemaining;
+  const target =
+    billing.status === "trialing" ? billing.trialEndsAt ?? billing.nextBillingAt : billing.nextBillingAt;
+  if (!target) return null;
+  return Math.max(0, Math.ceil((new Date(target).getTime() - Date.now()) / 86400000));
+}
+
+function futureBillingDate(value?: string | null) {
+  if (!value) return null;
+  return new Date(value).getTime() > Date.now() ? value : null;
+}
+
+
+
+
+

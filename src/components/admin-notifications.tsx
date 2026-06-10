@@ -1,13 +1,20 @@
 import { forwardRef, useEffect, useMemo, useState, type ButtonHTMLAttributes } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { Bell, BellRing, CalendarCheck, CreditCard, RefreshCcw, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
+import { reconcileStudioBookingPayments } from "@/lib/payments.functions";
 
 type StudioNotification = {
   id: string;
   studio_id: string;
-  kind: "new_appointment" | "payment_confirmed" | "refund_request";
+  kind:
+    | "new_appointment"
+    | "payment_confirmed"
+    | "payment_failed"
+    | "refund_request"
+    | "withdrawal_requested";
   title: string;
   body: string;
   payload: Record<string, unknown> | null;
@@ -26,6 +33,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   const [items, setItems] = useState<StudioNotification[]>([]);
   const [open, setOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const reconcilePayments = useServerFn(reconcileStudioBookingPayments);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
     "unsupported",
   );
@@ -59,11 +67,20 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         .limit(20);
 
       if (!cancelled && !error) {
-        setItems((data ?? []) as StudioNotification[]);
+        setItems(((data ?? []) as StudioNotification[]).map(normalizeNotification));
       }
     }
 
-    void loadNotifications();
+    async function syncAndLoadNotifications() {
+      try {
+        await reconcilePayments({ data: { studioId } });
+      } catch (error) {
+        console.warn("studio_payment_reconcile_skipped", error);
+      }
+      await loadNotifications();
+    }
+
+    void syncAndLoadNotifications();
 
     const channel = supabase
       .channel(`studio-notifications-${studioId}`)
@@ -76,7 +93,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
           filter: `studio_id=eq.${studioId}`,
         },
         (payload) => {
-          const next = payload.new as StudioNotification;
+          const next = normalizeNotification(payload.new as StudioNotification);
           setItems((current) =>
             [next, ...current.filter((item) => item.id !== next.id)].slice(0, 20),
           );
@@ -93,7 +110,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
           filter: `studio_id=eq.${studioId}`,
         },
         (payload) => {
-          const next = payload.new as StudioNotification;
+          const next = normalizeNotification(payload.new as StudioNotification);
           setItems((current) => current.map((item) => (item.id === next.id ? next : item)));
         },
       )
@@ -103,7 +120,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [studioId, studioName]);
+  }, [reconcilePayments, studioId, studioName]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -200,7 +217,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
               const Icon =
                 item.kind === "payment_confirmed"
                   ? CreditCard
-                  : item.kind === "refund_request"
+                  : item.kind === "payment_failed" ||
+                      item.kind === "refund_request" ||
+                      item.kind === "withdrawal_requested"
                     ? RefreshCcw
                     : CalendarCheck;
               return (
@@ -218,9 +237,11 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
                     className={`mt-0.5 grid size-9 shrink-0 place-items-center rounded-2xl ${
                       item.kind === "payment_confirmed"
                         ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                        : item.kind === "refund_request"
+                        : item.kind === "payment_failed" ||
+                            item.kind === "refund_request" ||
+                            item.kind === "withdrawal_requested"
                           ? "bg-amber-500/15 text-amber-600 dark:text-amber-300"
-                        : "bg-primary/10 text-primary"
+                          : "bg-primary/10 text-primary"
                     }`}
                   >
                     <Icon className="h-4 w-4" />
@@ -333,6 +354,45 @@ function showBrowserNotification(item: StudioNotification, studioName: string) {
     window.focus();
     notification.close();
   };
+}
+
+function normalizeNotification(item: StudioNotification): StudioNotification {
+  return {
+    ...item,
+    title: normalizeDisplayText(item.title),
+    body: normalizeDisplayText(item.body),
+  };
+}
+
+function normalizeDisplayText(value: string) {
+  const broken = (...codes: number[]) => String.fromCharCode(...codes);
+  const replacements: Array<[string, string]> = [
+    [broken(0x53, 0x65, 0x72, 0x76, 0x69, 0xc3, 0xa7, 0x6f), "Serviço"],
+    [broken(0x73, 0x65, 0x72, 0x76, 0x69, 0xc3, 0xa7, 0x6f), "serviço"],
+    [broken(0x6d, 0x61, 0x72, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xa3, 0x6f), "marcação"],
+    [broken(0x6d, 0x61, 0x72, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xb5, 0x65, 0x73), "marcações"],
+    [broken(0x4d, 0x61, 0x72, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xa3, 0x6f), "Marcação"],
+    [
+      broken(0x4e, 0x6f, 0x76, 0x61, 0x20, 0x6d, 0x61, 0x72, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xa3, 0x6f, 0x20, 0x72, 0x65, 0x63, 0x65, 0x62, 0x69, 0x64, 0x61),
+      "Nova marcação recebida",
+    ],
+    [broken(0x4e, 0x6f, 0x74, 0x69, 0x66, 0x69, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xb5, 0x65, 0x73), "Notificações"],
+    [broken(0x6e, 0x6f, 0x74, 0x69, 0x66, 0x69, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xb5, 0x65, 0x73), "notificações"],
+    [broken(0x64, 0x69, 0x73, 0x70, 0x6f, 0x6e, 0xc3, 0xad, 0x76, 0x65, 0x6c), "disponível"],
+    [broken(0x43, 0x6f, 0x6e, 0x63, 0x6c, 0x75, 0xc3, 0xad, 0x64, 0x6f), "Concluído"],
+    [broken(0x4e, 0xc3, 0xa3, 0x6f), "Não"],
+    [broken(0x6e, 0xc3, 0xa3, 0x6f), "não"],
+    [broken(0x76, 0xc3, 0xa1, 0x6c, 0x69, 0x64, 0x6f), "válido"],
+    [broken(0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0xc3, 0xaa, 0x6e, 0x63, 0x69, 0x61), "transferência"],
+    [broken(0x54, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72, 0xc3, 0xaa, 0x6e, 0x63, 0x69, 0x61), "Transferência"],
+    [broken(0xe2, 0x201a, 0xac), "€"],
+    [broken(0xc2, 0xb7), "·"],
+  ];
+
+  return replacements.reduce(
+    (current, [broken, clean]) => current.replaceAll(broken, clean),
+    value,
+  );
 }
 
 function formatNotificationTime(value: string) {

@@ -1,8 +1,17 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
   ArrowLeft,
+  Bell,
   CalendarDays,
   Car,
   Check,
@@ -14,6 +23,7 @@ import {
   Droplets,
   Download,
   Info,
+  LogIn,
   MapPin,
   QrCode,
   RefreshCcw,
@@ -41,10 +51,12 @@ import {
   type Upsell,
 } from "@/data/studio";
 import { useLiveStudio } from "@/hooks/use-live-studio";
+import { useAuth } from "@/hooks/use-auth";
 import { getSegmentConfig, type SegmentLabels } from "@/lib/segments";
 import heroImg from "@/assets/studio-hero.jpg";
 import { cn } from "@/lib/utils";
 import { createPublicBooking } from "@/lib/booking";
+import { getPublicClientArea } from "@/lib/public-client.functions";
 import { sendAppointmentConfirmationForAppointment } from "@/lib/whatsapp.functions";
 import { submitRefundRequest } from "@/lib/refunds";
 import {
@@ -67,11 +79,52 @@ type ConfirmedPaymentStatus = "paid_online" | "pay_in_studio" | "unknown";
 type ClientForm = { name: string; phone: string; email: string; notes: string };
 const STORAGE_KEY = "lumiere.booking.draft";
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice?: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
+type PublicClientAreaPayload = {
+  profile: {
+    name: string;
+    phone: string;
+    email: string;
+    avatarUrl?: string | null;
+    totalVisits: number;
+    totalSpent: number;
+  };
+  appointments: Array<{
+    id: string;
+    token: string | null;
+    startsAt: string;
+    endsAt: string | null;
+    status: string;
+    totalPrice: number;
+    paidAmount: number;
+    pendingAmount: number;
+    staffName: string;
+    services: Array<{ name: string; price: number; durationMin: number }>;
+    canOpen: boolean;
+    isUpcoming: boolean;
+  }>;
+  pendingPayments: Array<{
+    appointmentId: string | null;
+    bookingRequestId: string | null;
+    amount: number;
+    method: string;
+    status: string;
+  }>;
+  totals: {
+    paid: number;
+    deposits: number;
+    pending: number;
+  };
+};
+
 type PublicAmenities = {
   wifi: boolean;
   payments: {
     mb_way: boolean;
-    multibanco: boolean;
     card: boolean;
     cash: boolean;
     other: string;
@@ -96,8 +149,7 @@ const defaultAmenities: PublicAmenities = {
   wifi: true,
   payments: {
     mb_way: true,
-    multibanco: true,
-    card: false,
+    card: true,
     cash: true,
     other: "",
   },
@@ -214,6 +266,7 @@ function hexToRgb(hex: string) {
 }
 
 export function BookingExperience({ studioId }: { studioId?: string } = {}) {
+  const { user, loading: authLoading } = useAuth();
   const live = useLiveStudio(studioId ?? staticStudio.id);
   const studio = live.studio;
   const segment = getSegmentConfig((studio as { business_segment?: string }).business_segment);
@@ -251,8 +304,16 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const [heroIndex, setHeroIndex] = useState(0);
   const [showHeroControls, setShowHeroControls] = useState(false);
   const sendAppointmentConfirmation = useServerFn(sendAppointmentConfirmationForAppointment);
+  const loadPublicClientArea = useServerFn(getPublicClientArea);
   const heroTouchStartX = useRef<number | null>(null);
   const heroControlsTimer = useRef<number | null>(null);
+  const [clientArea, setClientArea] = useState<PublicClientAreaPayload | null>(null);
+  const [clientAreaLoading, setClientAreaLoading] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installDismissed, setInstallDismissed] = useState(false);
+  const [notificationsConsent, setNotificationsConsent] = useState<"unknown" | "granted" | "denied">(
+    "unknown",
+  );
 
   // Auto-save client form to sessionStorage
   useEffect(() => {
@@ -271,6 +332,32 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     }
   }, [client]);
 
+  useEffect(() => {
+    if (!user?.id) {
+      setClientArea(null);
+      return;
+    }
+    const metadata = (user.user_metadata ?? {}) as Record<string, unknown>;
+    const inferredName = String(metadata.full_name ?? metadata.name ?? "").trim();
+    const inferredPhone = String(metadata.phone ?? metadata.phone_number ?? "").trim();
+    setClient((current) => ({
+      ...current,
+      name: current.name || inferredName,
+      phone: current.phone || inferredPhone,
+      email: current.email || user.email || "",
+    }));
+  }, [user?.email, user?.id, user?.user_metadata]);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", handler);
+    setNotificationsConsent(readNotificationPermission());
+    return () => window.removeEventListener("beforeinstallprompt", handler);
+  }, []);
+
   const hasSensitiveNotes = client.notes.trim().length > 0;
   const clientValid =
     client.name.trim().length >= 2 &&
@@ -285,7 +372,18 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const resolveStaffId = (id: string) => STAFF_DB_ID[id] ?? id;
 
   async function submitBooking() {
-    if (!service || !date || !time || !professional || !clientValid) return;
+    if (!service || !date || !time || !professional) return;
+    if (!clientValid) {
+      if (client.name.trim().length < 2) toast.error("Confirme o seu nome para continuar.");
+      else if (client.phone.replace(/\D/g, "").length < 9)
+        toast.error("Indique um telemóvel válido para confirmar a reserva.");
+      else if (client.email && !/\S+@\S+\.\S+/.test(client.email))
+        toast.error("Confirme o e-mail ou deixe o campo vazio.");
+      else if (!contactConsent || !policyAccepted)
+        toast.error("Aceite os consentimentos obrigatórios para concluir a reserva.");
+      else toast.error("Confirme os dados da reserva antes de continuar.");
+      return;
+    }
 
     const staffDbId =
       selectedSlot?.staff_id ??
@@ -314,6 +412,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     }
 
     setSubmitting(true);
+    toast.message("A reservar horário...");
     try {
       const result = await createPublicBooking({
         studioSlug: studio.slug,
@@ -338,6 +437,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       }
       if (result.requires_payment) {
         if (result.booking_request_id) {
+          toast.message("Horário reservado temporariamente. Conclua o pagamento para confirmar.");
           setConfirmedTarget({ bookingRequestId: result.booking_request_id });
           setPendingPayment({ bookingRequestId: result.booking_request_id });
         } else if (result.appointment_id) {
@@ -510,7 +610,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           appointmentId={pendingPayment.appointmentId}
           bookingRequestId={pendingPayment.bookingRequestId}
           acceptedMethods={
-            (studio.accepted_payment_methods as string[] | undefined) ?? ["mb_way", "multibanco"]
+            (studio.accepted_payment_methods as string[] | undefined) ?? ["mb_way", "card"]
           }
           totalPrice={total}
           policySummary={buildPublicPolicyText(studio)}
@@ -569,6 +669,33 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const studioDescription = getMeaningfulText(studio.description);
   const studioTagline = getMeaningfulText(studio.tagline);
   const studioIntro = studioDescription || studioTagline;
+
+  async function handleInstallApp() {
+    if (!installPrompt) {
+      setInstallDismissed(true);
+      toast.message("Pode adicionar esta página ao ecrã inicial pelo menu do navegador.");
+      return;
+    }
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice?.catch(() => null);
+    if (choice?.outcome === "accepted") toast.success("Página adicionada ao ecrã inicial.");
+    setInstallPrompt(null);
+    setInstallDismissed(true);
+  }
+
+  async function handleNotificationConsent() {
+    if (!("Notification" in window)) {
+      toast.error("Este navegador não suporta notificações.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationsConsent(permission === "default" ? "unknown" : permission);
+    if (permission === "granted") {
+      toast.success("Notificações ativadas. Receberá lembretes quando estiverem configurados.");
+    } else {
+      toast.message("Pode ativar notificações mais tarde nas definições do navegador.");
+    }
+  }
 
   return (
     <div className="public-booking min-h-screen bg-background" style={brandStyle}>
@@ -720,6 +847,54 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           </div>
         </header>
 
+        <div className="space-y-3 px-4 pt-4 md:px-0">
+          <PublicClientAccountCard
+            userEmail={user?.email ?? null}
+            userName={clientArea?.profile.name || getGoogleDisplayName(user) || client.name}
+            userAvatarUrl={clientArea?.profile.avatarUrl ?? getGoogleAvatarUrl(user)}
+            authLoading={authLoading}
+            clientArea={clientArea}
+            loading={clientAreaLoading}
+            studioName={studio.name}
+            onAutofill={() => {
+              setClient((current) => ({
+                ...current,
+                name: clientArea?.profile.name || current.name,
+                phone: clientArea?.profile.phone || current.phone,
+                email: clientArea?.profile.email || user?.email || current.email,
+              }));
+              toast.success("Dados preenchidos para esta marcação.");
+            }}
+            onReload={() => {
+              if (!user?.id) return;
+              setClientAreaLoading(true);
+              loadPublicClientArea({ data: { studioId: studio.id } })
+                .then((payload) => {
+                  const area = payload as PublicClientAreaPayload;
+                  setClientArea(area);
+                  setClient((current) => ({
+                    ...current,
+                    name: current.name || area.profile.name,
+                    phone: current.phone || area.profile.phone,
+                    email: current.email || area.profile.email || user.email || "",
+                  }));
+                })
+                .catch(() => toast.error("Não foi possível atualizar a sua área."))
+                .finally(() => setClientAreaLoading(false));
+            }}
+          />
+          {!installDismissed && (
+            <PublicPwaCard
+              studioName={studio.name}
+              canPrompt={Boolean(installPrompt)}
+              notificationStatus={notificationsConsent}
+              onInstall={handleInstallApp}
+              onDismiss={() => setInstallDismissed(true)}
+              onEnableNotifications={handleNotificationConsent}
+            />
+          )}
+        </div>
+
         {/* Stepper */}
         {step > 0 && <Stepper current={step} professionalLabel={segment.labels.professional} />}
 
@@ -852,6 +1027,8 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               duration={totalDuration}
               savings={upsellsSavings}
               client={client}
+              clientAccountEmail={clientArea?.profile.email ?? user?.email ?? null}
+              clientAccountName={clientArea?.profile.name || getGoogleDisplayName(user)}
               onClientChange={setClient}
               contactConsent={contactConsent}
               onContactConsentChange={setContactConsent}
@@ -979,6 +1156,59 @@ function capitalizeLabel(value: string) {
 
 function formatMoney(value: number, decimals = 2) {
   return `${value.toFixed(decimals)}€`;
+}
+
+function rememberPublicReturn() {
+  try {
+    window.localStorage.setItem(
+      "bellza.public.returnTo",
+      `${window.location.pathname}${window.location.search}`,
+    );
+  } catch {
+    /* noop */
+  }
+}
+
+function readNotificationPermission(): "unknown" | "granted" | "denied" {
+  if (typeof window === "undefined" || !("Notification" in window)) return "unknown";
+  return Notification.permission === "granted"
+    ? "granted"
+    : Notification.permission === "denied"
+      ? "denied"
+      : "unknown";
+}
+
+function getGoogleDisplayName(user: unknown) {
+  const metadata = ((user as any)?.user_metadata ?? {}) as Record<string, unknown>;
+  return String(metadata.full_name ?? metadata.name ?? "").trim();
+}
+
+function getGoogleAvatarUrl(user: unknown) {
+  const metadata = ((user as any)?.user_metadata ?? {}) as Record<string, unknown>;
+  const value = metadata.avatar_url ?? metadata.picture;
+  return typeof value === "string" && /^https?:\/\//.test(value) ? value : null;
+}
+
+function clientStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    confirmed: "Confirmado",
+    pending_payment: "A aguardar sinal",
+    completed: "Concluído",
+    cancelled: "Cancelado",
+    no_show: "Não compareceu",
+  };
+  return labels[status] ?? capitalizeLabel(status.replace(/_/g, " "));
+}
+
+function formatDateTimeShort(value: string) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("pt-PT", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 /* ---------- Stepper ---------- */
@@ -1165,7 +1395,7 @@ function ProfessionalsPublicTab({
               <div className="min-w-0 flex-1">
                 <h3 className="truncate text-base font-extrabold">{professional.name}</h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  {professional.role || `${capitalizeLabel(labels.professional)} do negocio`}
+                  {professional.role || `${capitalizeLabel(labels.professional)} do negócio`}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
                   <span className="inline-flex items-center gap-1 rounded-full bg-accent/12 px-2.5 py-1 font-bold text-accent">
@@ -1246,8 +1476,7 @@ function buildAmenityItems(amenities: PublicAmenities) {
   }
   const payments = [
     amenities.payments.mb_way && "MB Way",
-    amenities.payments.multibanco && "Multibanco",
-    amenities.payments.card && "cartão",
+    amenities.payments.card && "Apple Pay, Google Pay e cartão",
     amenities.payments.cash && "dinheiro",
     amenities.payments.other.trim(),
   ].filter(Boolean);
@@ -1306,7 +1535,6 @@ function normalizePublicAmenities(value: unknown): PublicAmenities {
     wifi: typeof input.wifi === "boolean" ? input.wifi : defaultAmenities.wifi,
     payments: {
       mb_way: boolOr(payments.mb_way, defaultAmenities.payments.mb_way),
-      multibanco: boolOr(payments.multibanco, defaultAmenities.payments.multibanco),
       card: boolOr(payments.card, defaultAmenities.payments.card),
       cash: boolOr(payments.cash, defaultAmenities.payments.cash),
       other: typeof payments.other === "string" ? payments.other : "",
@@ -1725,6 +1953,13 @@ function DateTimeStep({
   const [slots, setSlots] = useState<import("@/lib/availability").AvailableSlot[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    if (!date) return;
+    const interval = window.setInterval(() => setRefreshTick((value) => value + 1), 8000);
+    return () => window.clearInterval(interval);
+  }, [date]);
 
   // Fetch slots whenever date/staff/duration changes
   useEffect(() => {
@@ -1771,7 +2006,7 @@ function DateTimeStep({
     return () => {
       active = false;
     };
-  }, [studioSlug, staffId, eligibleStaffIds, date, durationMin, minBookingNoticeMin]);
+  }, [studioSlug, staffId, eligibleStaffIds, date, durationMin, minBookingNoticeMin, refreshTick]);
 
   const grouped = useMemo(() => {
     if (slots.length === 0) return { morning: [], afternoon: [], evening: [] };
@@ -2260,6 +2495,7 @@ function ReviewStep({
   duration,
   savings,
   client,
+  clientAccountEmail,
   onClientChange,
   contactConsent,
   onContactConsentChange,
@@ -2281,6 +2517,7 @@ function ReviewStep({
   duration: number;
   savings: number;
   client: ClientForm;
+  clientAccountEmail?: string | null;
   onClientChange: (c: ClientForm) => void;
   contactConsent: boolean;
   onContactConsentChange: (value: boolean) => void;
@@ -2299,11 +2536,17 @@ function ReviewStep({
   const depositRate = Number(depositPercent ?? 0);
   const depositNow = requiresDeposit ? Math.round(total * depositRate) / 100 : 0;
   const remaining = Math.max(0, total - depositNow);
+  const policySummary = `${policyParts.rescheduleBody} ${policyParts.refundBody}`;
   return (
     <section className="animate-slide-up space-y-5 pt-4">
       {/* Identification card */}
       <div className="space-y-3">
         <SectionTitle>Os seus dados</SectionTitle>
+        {clientAccountEmail && (
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs leading-relaxed text-emerald-800 dark:text-emerald-200">
+            Sessão iniciada com {clientAccountEmail}. Os dados podem ser editados antes de confirmar.
+          </div>
+        )}
         <div className="space-y-2">
           <FieldInput
             label="Nome"
@@ -2427,6 +2670,8 @@ function ReviewStepPremium({
   duration,
   savings,
   client,
+  clientAccountEmail,
+  clientAccountName,
   onClientChange,
   contactConsent,
   onContactConsentChange,
@@ -2448,6 +2693,8 @@ function ReviewStepPremium({
   duration: number;
   savings: number;
   client: ClientForm;
+  clientAccountEmail?: string | null;
+  clientAccountName?: string | null;
   onClientChange: (c: ClientForm) => void;
   contactConsent: boolean;
   onContactConsentChange: (value: boolean) => void;
@@ -2466,35 +2713,66 @@ function ReviewStepPremium({
   const depositRate = Number(depositPercent ?? 0);
   const depositNow = requiresDeposit ? Math.round(total * depositRate) / 100 : 0;
   const remaining = Math.max(0, total - depositNow);
+  const policySummary = `${policyParts.rescheduleBody} ${policyParts.refundBody}`;
+  const missingClientFields = [
+    client.name.trim().length < 2 ? "nome" : null,
+    client.phone.replace(/\D/g, "").length < 9 ? "telefone" : null,
+    client.email && !/\S+@\S+\.\S+/.test(client.email) ? "e-mail válido" : null,
+  ].filter(Boolean);
+  const clientDetailsComplete = clientAccountEmail && missingClientFields.length === 0;
+  const showNameField = !clientAccountEmail || client.name.trim().length < 2;
+  const showEmailField = !clientAccountEmail || !client.email || !/\S+@\S+\.\S+/.test(client.email);
+  const showPhoneField = !clientAccountEmail || client.phone.replace(/\D/g, "").length < 9;
 
   return (
     <section className="animate-slide-up space-y-5 pt-4">
       <div className="space-y-3">
         <SectionTitle>Os seus dados</SectionTitle>
+        {clientAccountEmail && (
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs leading-relaxed text-emerald-800 dark:text-emerald-200">
+            {clientDetailsComplete
+              ? `Dados preenchidos para ${clientAccountName || client.name || clientAccountEmail}.`
+              : `Sessão iniciada. Falta apenas ${missingClientFields.join(", ")} para confirmar.`}
+          </div>
+        )}
         <div className="space-y-2">
-          <FieldInput
-            label="Nome"
-            value={client.name}
-            onChange={(v) => set({ name: v })}
-            placeholder="Como prefere ser chamada?"
-            autoComplete="name"
-          />
-          <FieldInput
-            label="WhatsApp"
-            value={client.phone}
-            onChange={(v) => set({ phone: v })}
-            placeholder="+351 912 345 678"
-            type="tel"
-            autoComplete="tel"
-          />
-          <FieldInput
-            label="Email (opcional)"
-            value={client.email}
-            onChange={(v) => set({ email: v })}
-            placeholder="email@exemplo.com"
-            type="email"
-            autoComplete="email"
-          />
+          {!showNameField && !showEmailField && !showPhoneField && (
+            <div className="rounded-2xl border border-border bg-card px-4 py-3">
+              <p className="text-sm font-semibold text-foreground">{client.name}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {client.email} · {client.phone}
+              </p>
+            </div>
+          )}
+          {showNameField && (
+            <FieldInput
+              label="Nome"
+              value={client.name}
+              onChange={(v) => set({ name: v })}
+              placeholder="Como prefere ser chamada?"
+              autoComplete="name"
+            />
+          )}
+          {showPhoneField && (
+            <FieldInput
+              label="Telemóvel"
+              value={client.phone}
+              onChange={(v) => set({ phone: v })}
+              placeholder="+351 912 345 678"
+              type="tel"
+              autoComplete="tel"
+            />
+          )}
+          {showEmailField && (
+            <FieldInput
+              label="Email (opcional)"
+              value={client.email}
+              onChange={(v) => set({ email: v })}
+              placeholder="email@exemplo.com"
+              type="email"
+              autoComplete="email"
+            />
+          )}
           <label className="block">
             <span className="font-mono text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               Observações (opcional)
@@ -2668,6 +2946,397 @@ function PolicyInfoItem({
         </p>
         <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+function PublicClientAccountCard({
+  userEmail,
+  userName,
+  userAvatarUrl,
+  authLoading,
+  clientArea,
+  loading,
+  studioName,
+  onAutofill,
+  onReload,
+}: {
+  userEmail: string | null;
+  userName?: string | null;
+  userAvatarUrl?: string | null;
+  authLoading: boolean;
+  clientArea: PublicClientAreaPayload | null;
+  loading: boolean;
+  studioName: string;
+  onAutofill: () => void;
+  onReload: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const upcoming = clientArea?.appointments.filter((appointment) => appointment.isUpcoming).slice(0, 3) ?? [];
+  const history = clientArea?.appointments.filter((appointment) => !appointment.isUpcoming).slice(0, 8) ?? [];
+  const displayName = userName || clientArea?.profile.name || userEmail || "Cliente";
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
+
+  if (authLoading) {
+    return (
+      <div className="rounded-3xl border border-border bg-card/80 px-4 py-3 text-sm text-muted-foreground shadow-sm">
+        A preparar acesso rápido...
+      </div>
+    );
+  }
+
+  if (!userEmail) {
+    return (
+      <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left transition hover:bg-muted/40"
+        >
+          <span>
+            <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <LogIn className="size-4" />
+              Entrar para marcar mais rápido
+            </span>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              Entre uma vez e evite preencher os dados nas próximas reservas.
+            </span>
+          </span>
+          <span className="rounded-full bg-foreground px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-background">
+            Opcional
+          </span>
+        </button>
+        {open && <PublicClientAuthForm studioName={studioName} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-[1.75rem] border border-border bg-card shadow-[0_18px_55px_rgba(15,23,42,0.08)]">
+      <div className="flex flex-col gap-4 bg-gradient-to-br from-emerald-500/10 via-card to-card px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-full bg-foreground text-sm font-black text-background ring-2 ring-emerald-500/20">
+            {userAvatarUrl ? (
+              <img src={userAvatarUrl} alt={displayName} className="size-full object-cover" />
+            ) : (
+              initials || <UserRound className="size-5" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-base font-extrabold tracking-tight text-foreground">{displayName}</p>
+              <span className="rounded-full bg-emerald-500 px-2.5 py-1 text-[9px] font-black uppercase tracking-[0.16em] text-white">
+                Conectado
+              </span>
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{userEmail}</p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onAutofill}
+            disabled={!userEmail}
+            className="rounded-full bg-foreground px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            Usar dados
+          </button>
+          <button
+            type="button"
+            onClick={onReload}
+            disabled={loading}
+            className="rounded-full border border-border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-foreground transition hover:bg-muted disabled:opacity-50"
+          >
+            {loading ? "A atualizar" : "Atualizar"}
+          </button>
+          <button
+            type="button"
+            onClick={() => supabase.auth.signOut()}
+            className="rounded-full border border-border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-px bg-border/60 sm:grid-cols-3">
+        <ClientMetric label="Valores pagos" value={formatMoney(clientArea?.totals.paid ?? 0)} />
+        <ClientMetric label="Sinais pagos" value={formatMoney(clientArea?.totals.deposits ?? 0)} />
+        <ClientMetric label="Pendente" value={formatMoney(clientArea?.totals.pending ?? 0)} />
+      </div>
+
+      <div className="space-y-3 p-4">
+        <ClientAppointmentList title="Próximos agendamentos" items={upcoming} empty="Sem marcações futuras." />
+        <div className="rounded-2xl border border-border bg-background/60">
+          <button
+            type="button"
+            onClick={() => setHistoryOpen((value) => !value)}
+            className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left"
+          >
+            <span>
+              <span className="block text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                Histórico
+              </span>
+              <span className="mt-0.5 block text-sm font-semibold text-foreground">
+                {history.length > 0 ? `${history.length} marcações anteriores` : "Sem histórico neste estúdio"}
+              </span>
+            </span>
+            <span className="rounded-full border border-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+              {historyOpen ? "Ocultar" : "Ver"}
+            </span>
+          </button>
+          {historyOpen && (
+            <div className="border-t border-border p-3">
+              <ClientAppointmentList title="Serviços realizados" items={history} empty="Sem histórico neste estúdio." compact />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PublicClientAuthForm({ studioName }: { studioName: string }) {
+  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function signInWithGoogle() {
+    rememberPublicReturn();
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+    if (error) toast.error("Não foi possível iniciar sessão com Google.");
+  }
+
+  async function submitEmail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!email.trim() || password.length < 6) {
+      toast.error("Indique um e-mail válido e uma senha com pelo menos 6 caracteres.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (mode === "signup") {
+        rememberPublicReturn();
+        const { error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            data: { full_name: name.trim() || undefined },
+          },
+        });
+        if (error) throw error;
+        toast.success("Conta criada. Confirme o e-mail se for solicitado.");
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+        if (error) throw error;
+        toast.success("Sessão iniciada.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível iniciar sessão.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border px-4 pb-4 pt-3">
+      <button
+        type="button"
+        onClick={signInWithGoogle}
+        className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-foreground text-sm font-bold text-background transition hover:opacity-90"
+      >
+        <LogIn className="size-4" />
+        Entrar com Google
+      </button>
+
+      <form onSubmit={submitEmail} className="mt-3 space-y-2">
+        {mode === "signup" && (
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Nome"
+            autoComplete="name"
+            className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:ring-2 focus:ring-foreground/15"
+          />
+        )}
+        <input
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="E-mail"
+          type="email"
+          autoComplete="email"
+          className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:ring-2 focus:ring-foreground/15"
+        />
+        <input
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="Senha"
+          type="password"
+          autoComplete={mode === "signup" ? "new-password" : "current-password"}
+          className="h-12 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:ring-2 focus:ring-foreground/15"
+        />
+        <button
+          type="submit"
+          disabled={busy}
+          className="h-12 w-full rounded-2xl border border-border bg-card text-xs font-bold uppercase tracking-[0.16em] text-foreground transition hover:bg-muted disabled:opacity-50"
+        >
+          {busy ? "A validar" : mode === "signup" ? "Criar conta" : "Entrar"}
+        </button>
+      </form>
+      <button
+        type="button"
+        onClick={() => setMode((current) => (current === "login" ? "signup" : "login"))}
+        className="mt-3 text-xs font-semibold text-muted-foreground underline underline-offset-4"
+      >
+        {mode === "login" ? `Criar conta rápida para ${studioName}` : "Já tenho conta"}
+      </button>
+    </div>
+  );
+}
+
+function ClientMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-card px-4 py-3">
+      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
+      <p className="mt-1 text-base font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function ClientAppointmentList({
+  title,
+  items,
+  empty,
+  compact = false,
+}: {
+  title: string;
+  items: PublicClientAreaPayload["appointments"];
+  empty: string;
+  compact?: boolean;
+}) {
+  return (
+    <div className={cn("rounded-2xl border border-border bg-background/60 p-3", compact && "border-0 bg-transparent p-0")}>
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
+      <div className="mt-3 space-y-2">
+        {items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{empty}</p>
+        ) : (
+          items.map((appointment) => (
+            <div key={appointment.id} className="rounded-2xl border border-border bg-card p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">
+                    {appointment.services[0]?.name ?? "Serviço"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {formatDateTimeShort(appointment.startsAt)} · {appointment.staffName}
+                  </p>
+                </div>
+                <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-semibold text-muted-foreground">
+                  {clientStatusLabel(appointment.status)}
+                </span>
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="rounded-full bg-muted px-2.5 py-1">Valor {formatMoney(appointment.totalPrice)}</span>
+                <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-emerald-700 dark:text-emerald-300">
+                  Sinal {formatMoney(appointment.paidAmount)}
+                </span>
+                {appointment.pendingAmount > 0 && (
+                  <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-amber-700 dark:text-amber-300">
+                    Pendente {formatMoney(appointment.pendingAmount)}
+                  </span>
+                )}
+                {appointment.token && (
+                  <a
+                    href={`/marcacao/${appointment.token}`}
+                    className="ml-auto font-semibold text-foreground underline underline-offset-4"
+                  >
+                    Gerir
+                  </a>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PublicPwaCard({
+  studioName,
+  canPrompt,
+  notificationStatus,
+  onInstall,
+  onDismiss,
+  onEnableNotifications,
+}: {
+  studioName: string;
+  canPrompt: boolean;
+  notificationStatus: "unknown" | "granted" | "denied";
+  onInstall: () => void;
+  onDismiss: () => void;
+  onEnableNotifications: () => void;
+}) {
+  const installLabel =
+    typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches
+      ? "Adicionar à tela inicial"
+      : "Instalar aplicativo";
+  return (
+    <div className="rounded-[1.75rem] border border-border bg-card/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.07)]">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 gap-3">
+          <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-accent/12 text-accent">
+            <Download className="size-4" />
+          </div>
+          <div>
+            <p className="text-sm font-extrabold tracking-tight text-foreground">Acesso rápido a {studioName}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Abra reservas e lembretes sem procurar o link outra vez.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Fechar aviso"
+          className="grid size-8 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition hover:bg-muted hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onInstall}
+          className="rounded-full bg-foreground px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90"
+        >
+          {canPrompt ? installLabel : "Como instalar"}
+        </button>
+        <button
+          type="button"
+          onClick={onEnableNotifications}
+          disabled={notificationStatus === "granted"}
+          className="rounded-full border border-border px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.14em] text-foreground transition hover:bg-muted disabled:opacity-50"
+        >
+          {notificationStatus === "granted" ? "Notificações ativas" : "Ativar lembretes"}
+        </button>
       </div>
     </div>
   );

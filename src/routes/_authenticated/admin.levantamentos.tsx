@@ -1,16 +1,24 @@
-import { createFileRoute } from "@tanstack/react-router";
+﻿import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { ArrowRight, Download, HandCoins, Pencil, Wallet } from "lucide-react";
+import { ArrowRight, ChevronDown, Download, HandCoins, Pencil, Search, Wallet } from "lucide-react";
 import { useState, type InputHTMLAttributes } from "react";
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import {
+  cancelStudioWithdrawal,
   getWithdrawalSummary,
   requestStudioWithdrawal,
   savePayoutSettings,
 } from "@/lib/withdrawals.functions";
 import { formatEUR } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export const Route = createFileRoute("/_authenticated/admin/levantamentos")({
   head: () => ({ meta: [{ title: "Levantamentos - Bellza" }] }),
@@ -49,9 +57,17 @@ function WithdrawalsPage() {
   const queryClient = useQueryClient();
   const loadWithdrawal = useServerFn(getWithdrawalSummary);
   const requestWithdrawal = useServerFn(requestStudioWithdrawal);
+  const cancelWithdrawal = useServerFn(cancelStudioWithdrawal);
   const saveWithdrawalSettings = useServerFn(savePayoutSettings);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [financialDetailsOpen, setFinancialDetailsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"all" | WithdrawalSummary["requests"][number]["status"]>("all");
+  const [methodFilter, setMethodFilter] = useState<"all" | "iban" | "mb_way">("all");
+  const [search, setSearch] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const withdrawal = useQuery({
     queryKey: ["withdrawals-page-summary", studio?.id],
@@ -73,6 +89,25 @@ function WithdrawalsPage() {
   const reserved = (data?.reservedCents ?? 0) / 100;
   const paidOnline = (data?.paidOnlineCents ?? 0) / 100;
   const latest = data?.requests?.[0] ?? null;
+  const requests = data?.requests ?? [];
+  const visibleRequests = requests
+    .filter((request, index) => request.status === "in_review" || request.status === "processing" || index < 3)
+    .slice(0, 5);
+  const filteredHistory = requests.filter((request) => {
+    const query = search.trim().toLowerCase();
+    const matchesStatus = statusFilter === "all" || request.status === statusFilter;
+    const matchesMethod = methodFilter === "all" || request.payoutMethod === methodFilter;
+    const haystack = [
+      formatCents(request.amountCents, request.currency),
+      formatWithdrawalStatus(request.status),
+      formatPayoutMethod(request.payoutMethod),
+      formatDate(request.requestedAt),
+      request.requestedAt,
+    ]
+      .join(" ")
+      .toLowerCase();
+    return matchesStatus && matchesMethod && (!query || haystack.includes(query));
+  });
 
   async function requestWithdraw() {
     if (!studio) return;
@@ -99,6 +134,20 @@ function WithdrawalsPage() {
       toast.error("Não foi possível criar o pedido de levantamento.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function cancelRequest(requestId: string) {
+    if (!studio) return;
+    setCancellingId(requestId);
+    try {
+      await cancelWithdrawal({ data: { studioId: studio.id, requestId } });
+      await queryClient.invalidateQueries({ queryKey: ["withdrawals-page-summary", studio.id] });
+      toast.success("Pedido cancelado. O saldo foi libertado.");
+    } catch {
+      toast.error("Não foi possível cancelar este pedido.");
+    } finally {
+      setCancellingId(null);
     }
   }
 
@@ -171,14 +220,21 @@ function WithdrawalsPage() {
           />
         </section>
 
-        <section className="grid gap-5 lg:grid-cols-[0.75fr_1.25fr]">
-          <article className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
+        {reserved > 0 && available <= 0 && (
+          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-100">
+            O saldo recebido está reservado em pedidos de levantamento em análise. Cancele um pedido
+            pendente se quiser libertar esse valor para um novo levantamento.
+          </div>
+        )}
+
+        <section className="grid gap-4 lg:grid-cols-[0.72fr_1.28fr]">
+          <article className="rounded-[1.25rem] border border-border bg-card p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Dados financeiros
                 </p>
-                <h2 className="mt-2 text-lg font-semibold">Recebimento</h2>
+                <h2 className="mt-1 text-lg font-semibold">Recebimento</h2>
               </div>
               <button
                 type="button"
@@ -191,18 +247,32 @@ function WithdrawalsPage() {
             </div>
 
             {data?.settings ? (
-              <div className="mt-4 space-y-2 text-sm">
-                <InfoLine label="Método" value={formatPayoutMethod(data.settings.payoutMethod)} />
-                <InfoLine label="Nome fiscal" value={data.settings.fiscalName} />
-                <InfoLine label="NIF" value={data.settings.nif} />
-                <InfoLine
-                  label={data.settings.payoutMethod === "iban" ? "IBAN" : "MB WAY"}
-                  value={
-                    data.settings.payoutMethod === "iban"
-                      ? data.settings.iban ?? "-"
-                      : data.settings.mbWayPhone ?? "-"
-                  }
-                />
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                  <InfoLine label="Método" value={formatPayoutMethod(data.settings.payoutMethod)} />
+                  <InfoLine label="Nome fiscal" value={data.settings.fiscalName} />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFinancialDetailsOpen((open) => !open)}
+                  className="flex h-10 w-full items-center justify-between rounded-2xl border border-border bg-background/65 px-3 text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                >
+                  Detalhes financeiros
+                  <ChevronDown className={`h-4 w-4 transition ${financialDetailsOpen ? "rotate-180" : ""}`} />
+                </button>
+                {financialDetailsOpen && (
+                  <div className="grid gap-2 rounded-2xl border border-border/70 bg-background/45 p-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                    <InfoLine label="NIF" value={data.settings.nif} />
+                    <InfoLine
+                      label={data.settings.payoutMethod === "iban" ? "IBAN" : "MB WAY"}
+                      value={
+                        data.settings.payoutMethod === "iban"
+                          ? data.settings.iban ?? "-"
+                          : data.settings.mbWayPhone ?? "-"
+                      }
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="mt-4 rounded-2xl border border-dashed border-border bg-background/55 p-4">
@@ -220,13 +290,13 @@ function WithdrawalsPage() {
             )}
           </article>
 
-          <article className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
+          <article className="rounded-[1.25rem] border border-border bg-card p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                   Histórico
                 </p>
-                <h2 className="mt-2 text-lg font-semibold">Pedidos de levantamento</h2>
+                <h2 className="mt-1 text-lg font-semibold">Pedidos de levantamento</h2>
               </div>
               <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
                 {data?.requests?.length ?? 0} pedidos
@@ -234,45 +304,16 @@ function WithdrawalsPage() {
             </div>
 
             <div className="mt-4 space-y-3">
-              {data?.requests?.length ? (
-                data.requests.map((request) => (
-                  <article
+              {visibleRequests.length ? (
+                visibleRequests.map((request) => (
+                  <WithdrawalRequestCard
                     key={request.id}
-                    className="rounded-2xl border border-border/70 bg-background/60 p-3.5"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold">
-                            {formatCents(request.amountCents, request.currency)}
-                          </p>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusClass(request.status)}`}>
-                            {formatWithdrawalStatus(request.status)}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {formatDate(request.requestedAt)} · {formatPayoutMethod(request.payoutMethod)}
-                        </p>
-                      </div>
-                      {request.status === "completed" && request.proofUrl && (
-                        <a
-                          href={request.proofUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background"
-                        >
-                          <Download className="h-3.5 w-3.5" />
-                          Descarregar comprovativo
-                        </a>
-                      )}
-                    </div>
-                    <WithdrawalTimeline request={request} />
-                    {request.failureReason && (
-                      <p className="mt-3 text-xs leading-relaxed text-red-600 dark:text-red-400">
-                        {request.failureReason}
-                      </p>
-                    )}
-                  </article>
+                    request={request}
+                    expanded={expandedRequestId === request.id}
+                    cancelling={cancellingId === request.id}
+                    onToggle={() => setExpandedRequestId((id) => (id === request.id ? null : request.id))}
+                    onCancel={() => cancelRequest(request.id)}
+                  />
                 ))
               ) : (
                 <p className="rounded-2xl border border-dashed border-border bg-background/55 px-4 py-8 text-center text-sm text-muted-foreground">
@@ -280,6 +321,87 @@ function WithdrawalsPage() {
                 </p>
               )}
             </div>
+
+            {requests.length > visibleRequests.length && (
+              <div className="mt-4 rounded-2xl border border-border/70 bg-background/45">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen((open) => !open)}
+                  className="flex h-12 w-full items-center justify-between px-4 text-left text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:text-foreground"
+                >
+                  Ver histórico completo
+                  <ChevronDown className={`h-4 w-4 transition ${historyOpen ? "rotate-180" : ""}`} />
+                </button>
+                {historyOpen && (
+                  <div className="space-y-3 border-t border-border/70 p-3">
+                    <div className="grid gap-2 md:grid-cols-[1fr_auto_auto]">
+                      <label className="flex h-11 items-center gap-2 rounded-2xl border border-border bg-card px-3">
+                        <Search className="h-4 w-4 text-muted-foreground" />
+                        <input
+                          value={search}
+                          onChange={(event) => setSearch(event.target.value)}
+                          placeholder="Pesquisar por valor, data ou status"
+                          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                        />
+                      </label>
+                      <Select
+                        value={statusFilter}
+                        onValueChange={(value) =>
+                          setStatusFilter(value as "all" | WithdrawalSummary["requests"][number]["status"])
+                        }
+                      >
+                        <SelectTrigger className="h-11 rounded-2xl border-border bg-card px-3 text-xs font-semibold shadow-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                          <SelectItem value="all" className="rounded-xl px-3 py-2.5 text-sm">Todos os status</SelectItem>
+                          <SelectItem value="in_review" className="rounded-xl px-3 py-2.5 text-sm">Em análise</SelectItem>
+                          <SelectItem value="processing" className="rounded-xl px-3 py-2.5 text-sm">Processando</SelectItem>
+                          <SelectItem value="completed" className="rounded-xl px-3 py-2.5 text-sm">Concluído</SelectItem>
+                          <SelectItem value="canceled" className="rounded-xl px-3 py-2.5 text-sm">Cancelado</SelectItem>
+                          <SelectItem value="failed" className="rounded-xl px-3 py-2.5 text-sm">Falhou</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={methodFilter}
+                        onValueChange={(value) => setMethodFilter(value as "all" | "iban" | "mb_way")}
+                      >
+                        <SelectTrigger className="h-11 rounded-2xl border-border bg-card px-3 text-xs font-semibold shadow-sm">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                          <SelectItem value="all" className="rounded-xl px-3 py-2.5 text-sm">Todos os métodos</SelectItem>
+                          <SelectItem value="mb_way" className="rounded-xl px-3 py-2.5 text-sm">MB WAY</SelectItem>
+                          <SelectItem value="iban" className="rounded-xl px-3 py-2.5 text-sm">IBAN</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      {filteredHistory.length ? (
+                        filteredHistory.map((request) => (
+                          <WithdrawalRequestCard
+                            key={`history-${request.id}`}
+                            request={request}
+                            expanded={expandedRequestId === `history-${request.id}`}
+                            cancelling={cancellingId === request.id}
+                            onToggle={() =>
+                              setExpandedRequestId((id) =>
+                                id === `history-${request.id}` ? null : `history-${request.id}`,
+                              )
+                            }
+                            onCancel={() => cancelRequest(request.id)}
+                          />
+                        ))
+                      ) : (
+                        <p className="rounded-2xl border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+                          Nenhum pedido encontrado.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </article>
         </section>
       </div>
@@ -309,10 +431,87 @@ function MetricCard({ label, value, icon }: { label: string; value: string; icon
 
 function InfoLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl bg-background/60 px-3 py-2.5">
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-2xl bg-background/60 px-3 py-2.5">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="min-w-0 truncate text-right text-xs font-semibold">{value}</span>
     </div>
+  );
+}
+
+function WithdrawalRequestCard({
+  request,
+  expanded,
+  cancelling,
+  onToggle,
+  onCancel,
+}: {
+  request: WithdrawalSummary["requests"][number];
+  expanded: boolean;
+  cancelling: boolean;
+  onToggle: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <article className="rounded-2xl border border-border/70 bg-background/60 p-3 transition hover:border-emerald-700/20">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="grid w-full gap-3 text-left sm:grid-cols-[1fr_auto] sm:items-center"
+      >
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-mono text-base font-semibold">
+              {formatCents(request.amountCents, request.currency)}
+            </p>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusClass(request.status)}`}>
+              {formatWithdrawalStatus(request.status)}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {formatDate(request.requestedAt)} · {formatPayoutMethod(request.payoutMethod)}
+          </p>
+        </div>
+        <div className="flex items-center justify-between gap-2 sm:justify-end">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {expanded ? "Ocultar" : "Detalhes"}
+          </span>
+          <ChevronDown className={`h-4 w-4 text-muted-foreground transition ${expanded ? "rotate-180" : ""}`} />
+        </div>
+      </button>
+      {expanded && (
+        <div className="mt-3 border-t border-border/60 pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {request.status === "in_review" && (
+              <button
+                type="button"
+                onClick={onCancel}
+                disabled={cancelling}
+                className="inline-flex h-10 items-center justify-center rounded-2xl border border-border px-4 text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {cancelling ? "A cancelar..." : "Cancelar pedido"}
+              </button>
+            )}
+            {request.status === "completed" && request.proofUrl && (
+              <a
+                href={request.proofUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Descarregar comprovativo
+              </a>
+            )}
+          </div>
+          <WithdrawalTimeline request={request} />
+          {request.failureReason && (
+            <p className="mt-3 text-xs leading-relaxed text-red-600 dark:text-red-400">
+              {request.failureReason}
+            </p>
+          )}
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -550,3 +749,5 @@ function stepIndex(status: WithdrawalSummary["requests"][number]["status"]) {
   if (status === "completed") return 2;
   return 0;
 }
+
+

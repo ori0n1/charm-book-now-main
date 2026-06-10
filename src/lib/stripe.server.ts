@@ -24,6 +24,14 @@ export async function verifyWebhook(
 ): Promise<{ id?: string; type: string; livemode?: boolean; data: { object: unknown } }> {
   const signature = req.headers.get("stripe-signature");
   const body = await req.text();
+  return verifyWebhookBody(body, signature, env);
+}
+
+export async function verifyWebhookBody(
+  body: string,
+  signature: string | null,
+  env: StripeEnv,
+): Promise<{ id?: string; type: string; livemode?: boolean; data: { object: unknown } }> {
   const secret =
     env === "sandbox"
       ? process.env.PAYMENTS_SANDBOX_WEBHOOK_SECRET ?? getEnv("STRIPE_SANDBOX_WEBHOOK_SECRET")

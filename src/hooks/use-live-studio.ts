@@ -22,9 +22,12 @@ type LiveStudio = typeof staticStudio & {
   hero_image_url?: string | null;
   hero_gallery_urls?: Json | null;
   whatsapp?: string | null;
+  phone?: string | null;
+  instagram?: string | null;
   description?: string | null;
   updated_at?: string | null;
   payment_policy?: "pay_in_studio" | "pre_payment" | null;
+  deposit_percent?: number | null;
   accepted_payment_methods?: string[] | null;
   min_booking_notice_min?: number | null;
   public_amenities?: Json | null;
@@ -230,6 +233,16 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studioId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "booking_payment_requests",
+          filter: `studio_id=eq.${studioId}`,
+        },
         () => load(),
       )
       .on(

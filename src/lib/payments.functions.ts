@@ -1,33 +1,63 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { createClient } from "@supabase/supabase-js";
 import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
 import { getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
-let _admin: ReturnType<typeof createClient> | null = null;
+const PAYMENT_METHOD_MESSAGES: Record<string, string> = {
+  mb_way_unavailable:
+    "MB WAY não está disponível nesta configuração. Escolha outro método ou contacte o estúdio.",
+  card_unavailable:
+    "Cartão, Apple Pay e Google Pay não estão disponíveis nesta configuração. Escolha outro método ou contacte o estúdio.",
+  mb_way_phone_invalid:
+    "MB WAY exige um telemóvel português válido. Verifique o número e recomece a reserva.",
+  payment_method_unavailable:
+    "Este método de pagamento não está disponível de momento. Escolha outro método.",
+};
+
 function admin(): any {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
+  return getAdminClient();
 }
 
 function stripeEnv(): StripeEnv {
   return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
 }
 
+function appBaseUrl() {
+  const configured = (
+    process.env.APP_URL ??
+    process.env.VITE_APP_URL ??
+    process.env.PUBLIC_APP_URL ??
+    ""
+  ).replace(/\/$/, "");
+  if (configured) return configured;
+
+  const request = getRequest();
+  const origin = request?.headers.get("origin");
+  if (origin) return origin.replace(/\/$/, "");
+  const host = request?.headers.get("host");
+  if (host) {
+    const proto = request?.headers.get("x-forwarded-proto") || "https";
+    return `${proto}://${host}`.replace(/\/$/, "");
+  }
+  return "http://127.0.0.1:5173";
+}
+
 const CreateIntentInput = z
   .object({
     appointmentId: z.string().uuid().optional(),
     bookingRequestId: z.string().uuid().optional(),
-    method: z.enum(["mb_way", "multibanco"]),
+    method: z.enum(["mb_way", "card"]),
   })
   .refine((v) => v.appointmentId || v.bookingRequestId, {
     message: "booking_request_required",
   });
+
+const ReconcileStudioInput = z.object({
+  studioId: z.string().uuid(),
+});
 
 async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIntentId: string) {
   const stripe = createStripeClient(stripeEnv());
@@ -75,10 +105,139 @@ async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIn
   return data as string;
 }
 
+async function expireStaleReservations(sb: any) {
+  try {
+    const { error } = await sb.rpc("expire_pending_appointments");
+    if (error) console.error("expire_pending_appointments_failed", error);
+  } catch (error) {
+    console.error("expire_pending_appointments_failed", error);
+  }
+}
+
+async function failBookingRequest(
+  sb: any,
+  bookingRequestId: string | null,
+  reason: string,
+  stripePaymentIntentId?: string | null,
+) {
+  if (bookingRequestId) {
+    await sb
+      .from("booking_payment_requests")
+      .update({
+        status: "failed",
+        failure_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", bookingRequestId)
+      .in("status", ["awaiting_payment", "processing"]);
+  }
+  if (stripePaymentIntentId) {
+    await sb
+      .from("payment_intents")
+      .update({
+        status: "failed",
+        failure_reason: reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_payment_intent_id", stripePaymentIntentId);
+  }
+}
+
+function extractCheckoutSessionId(value: string | null | undefined) {
+  if (!value) return null;
+  return value.match(/cs_(?:test|live)_[A-Za-z0-9]+/)?.[0] ?? null;
+}
+
+async function selectPaymentIntentById(sb: any, id: string) {
+  const { data } = await sb
+    .from("payment_intents")
+    .select(
+      "id, status, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  return data;
+}
+
+async function reconcileCheckoutSessionPayment(sb: any, row: any) {
+  if (!row || row.status === "succeeded") return row;
+
+  const checkoutSessionId =
+    row.stripe_checkout_session_id ?? extractCheckoutSessionId(row.hosted_voucher_url);
+  if (!checkoutSessionId) return row;
+
+  const stripe = createStripeClient(stripeEnv());
+  const session = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
+    expand: ["payment_intent"],
+  });
+  const paymentIntent =
+    typeof session.payment_intent === "object" && session.payment_intent
+      ? session.payment_intent
+      : null;
+  const stripePaymentIntentId =
+    typeof session.payment_intent === "string" ? session.payment_intent : paymentIntent?.id ?? null;
+
+  if (!stripePaymentIntentId && session.payment_status !== "paid") {
+    return row;
+  }
+
+  const freshStatus = paymentIntent
+    ? normalizeStripeStatus(paymentIntent.status)
+    : session.payment_status === "paid"
+      ? "succeeded"
+      : session.status === "expired"
+        ? "expired"
+        : row.status;
+  const patch: Record<string, unknown> = {
+    stripe_checkout_session_id: checkoutSessionId,
+    stripe_payment_intent_id: stripePaymentIntentId ?? row.stripe_payment_intent_id,
+    client_secret: paymentIntent?.client_secret ?? row.client_secret ?? null,
+    status: freshStatus,
+    failure_reason:
+      freshStatus === "failed"
+        ? paymentIntent?.last_payment_error?.message ?? "payment_failed"
+        : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  await sb.from("payment_intents").update(patch).eq("id", row.id);
+
+  if (freshStatus === "succeeded" && stripePaymentIntentId) {
+    if (row.booking_request_id) {
+      try {
+        await confirmBookingRequest(sb, row.booking_request_id, stripePaymentIntentId);
+      } catch (error) {
+        console.error("checkout_session_booking_confirm_failed", {
+          bookingRequestId: row.booking_request_id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    } else if (row.appointment_id) {
+      await sb
+        .from("appointments")
+        .update({ status: "confirmed", updated_at: new Date().toISOString() })
+        .eq("id", row.appointment_id)
+        .eq("status", "pending_payment");
+    }
+  }
+
+  if (freshStatus === "failed" || freshStatus === "canceled" || freshStatus === "expired") {
+    await failBookingRequest(
+      sb,
+      row.booking_request_id ?? null,
+      freshStatus === "expired" ? "payment_expired" : "payment_failed",
+      stripePaymentIntentId,
+    );
+  }
+
+  return (await selectPaymentIntentById(sb, row.id)) ?? { ...row, ...patch };
+}
+
 export const createBookingPaymentIntent = createServerFn({ method: "POST" })
   .inputValidator((input) => CreateIntentInput.parse(input))
   .handler(async ({ data }) => {
     const sb = admin();
+    await expireStaleReservations(sb);
 
     const bookingRequestId = data.bookingRequestId ?? null;
     const appointmentId = data.appointmentId ?? null;
@@ -91,7 +250,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const existingQuery = sb
       .from("payment_intents")
       .select(
-        "id, stripe_payment_intent_id, client_secret, amount_cents, currency, method, status, multibanco_entity, multibanco_reference, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
+        "id, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, amount_cents, currency, method, status, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -100,15 +259,23 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
       ? await existingQuery
           .eq("booking_request_id", bookingRequestId)
           .in("status", ["requires_action", "processing", "succeeded"])
+          .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
           .maybeSingle()
       : await existingQuery
           .eq("appointment_id", appointmentId)
           .in("status", ["requires_action", "processing", "succeeded"])
+          .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
           .maybeSingle();
 
     if (existing) {
+      const reconciledExisting = await reconcileCheckoutSessionPayment(sb, existing);
       const source = await loadPaymentSource(sb, bookingRequestId, appointmentId);
-      return formatIntentResponse(existing, source.totalCents, source.depositPercent);
+      return {
+        ...formatIntentResponse(reconciledExisting, source.totalCents, source.depositPercent),
+        mb_way_phone:
+          reconciledExisting.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : null,
+        checkout_url: reconciledExisting.hosted_voucher_url,
+      };
     }
 
     const source = await loadPaymentSource(sb, bookingRequestId, appointmentId);
@@ -119,97 +286,113 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const amountCents = source.amountCents;
     if (amountCents < 50) throw new Error("amount_too_low");
 
+    const paymentMethodType = data.method === "mb_way" ? "mb_way" : "card";
+    const billingPhone =
+      data.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : source.clientPhone;
+    if (data.method === "mb_way" && !billingPhone) {
+      throw new Error(PAYMENT_METHOD_MESSAGES.mb_way_phone_invalid);
+    }
+
     const stripe = createStripeClient(stripeEnv());
-    const paymentMethodType = data.method === "mb_way" ? "mb_way" : "multibanco";
-    const billingEmail = resolveBillingEmail(source.clientEmail);
-    const intent = await stripe.paymentIntents.create({
-      amount: amountCents,
-      currency: source.currency,
+    const checkoutExpiresAt = Math.floor(Date.now() / 1000) + 30 * 60;
+    const paymentMetadata = {
+      ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
+      ...(appointmentId ? { appointment_id: appointmentId } : {}),
+      studio_id: source.studioId,
+      client_phone: billingPhone || source.clientPhone,
+      payment_kind: "booking_deposit",
+      method: data.method,
+    };
+    const checkoutSessionPayload = {
+      mode: "payment" as const,
       payment_method_types: [paymentMethodType],
-      description: `Reserva ${source.studioName} — ${new Date(source.startsAt).toLocaleString("pt-PT")}`,
-      receipt_email: source.clientEmail || undefined,
+      customer_email: source.clientEmail || undefined,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: source.currency,
+            unit_amount: amountCents,
+            product_data: {
+              name: `Sinal de reserva - ${source.studioName}`,
+              description: new Date(source.startsAt).toLocaleString("pt-PT"),
+            },
+          },
+        },
+      ],
       metadata: {
         ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
         ...(appointmentId ? { appointment_id: appointmentId } : {}),
         studio_id: source.studioId,
-        client_phone: source.clientPhone,
+        payment_kind: "booking_deposit",
+        method: data.method,
       },
-    });
-
-    const confirmed = await stripe.paymentIntents.confirm(intent.id, {
-      payment_method_data: {
-        type: paymentMethodType as "mb_way" | "multibanco",
-        billing_details: {
-          name: source.clientName || "Cliente",
-          email: billingEmail,
-          phone: source.clientPhone || undefined,
-        },
+      payment_intent_data: {
+        metadata: paymentMetadata,
       },
-      expand: ["latest_charge"],
-    });
+      success_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=success`,
+      cancel_url: `${appBaseUrl()}/s/${source.studioSlug}?payment=cancelled`,
+      expires_at: checkoutExpiresAt,
+      expand: ["payment_intent"],
+    } satisfies Parameters<typeof stripe.checkout.sessions.create>[0];
+    let checkoutSession;
+    try {
+      checkoutSession = await stripe.checkout.sessions.create(checkoutSessionPayload);
+    } catch (error) {
+      const reason = stripePaymentFailureReason(error, data.method);
+      console.error("stripe_booking_checkout_failed", {
+        method: data.method,
+        reason,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      throw new Error(
+        PAYMENT_METHOD_MESSAGES[reason] ?? PAYMENT_METHOD_MESSAGES.payment_method_unavailable,
+      );
+    }
+    const checkoutPaymentIntent =
+      typeof checkoutSession.payment_intent === "object" ? checkoutSession.payment_intent : null;
+    const expiresAt = checkoutSession.expires_at
+      ? new Date(checkoutSession.expires_at * 1000).toISOString()
+      : new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const paymentUrl = checkoutSession.url ?? null;
 
-    const nextAction = (confirmed as any).next_action;
-    const latestCharge =
-      typeof confirmed.latest_charge === "object" ? (confirmed.latest_charge as any) : null;
-    const chargeDetails = latestCharge?.payment_method_details ?? null;
-    const multibancoDetails =
-      nextAction?.multibanco_display_details ?? chargeDetails?.multibanco ?? null;
-    const mb = nextAction?.multibanco_display_details ?? null;
-    const expiresAt = mb?.expires_at
-      ? new Date(mb.expires_at * 1000).toISOString()
-      : data.method === "multibanco"
-        ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
-        : new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-    const status = normalizeStripeStatus(confirmed.status);
-
-    const { data: row, error: insErr } = await sb
+    const { data: checkoutRow, error: checkoutInsertError } = await sb
       .from("payment_intents")
       .insert({
         studio_id: source.studioId,
         appointment_id: appointmentId,
         booking_request_id: bookingRequestId,
-        stripe_payment_intent_id: confirmed.id,
-        client_secret: confirmed.client_secret ?? null,
+        stripe_checkout_session_id: checkoutSession.id,
+        stripe_payment_intent_id: checkoutPaymentIntent?.id ?? null,
+        client_secret: checkoutPaymentIntent?.client_secret ?? null,
         amount_cents: amountCents,
         currency: source.currency,
         method: data.method,
-        status,
-        multibanco_entity: multibancoDetails?.entity ?? null,
-        multibanco_reference: multibancoDetails?.reference ?? null,
-        hosted_voucher_url: multibancoDetails?.hosted_voucher_url ?? null,
+        status: normalizeStripeStatus(checkoutPaymentIntent?.status ?? "requires_action"),
+        hosted_voucher_url: paymentUrl,
         expires_at: expiresAt,
       })
       .select()
       .single();
 
-    if (insErr) throw new Error(insErr.message);
+    if (checkoutInsertError) throw new Error(checkoutInsertError.message);
 
-    if (status === "succeeded" && bookingRequestId) {
-      const confirmedAppointmentId = await confirmBookingRequest(
-        sb,
-        bookingRequestId,
-        confirmed.id,
-      );
-      await sendAppointmentConfirmationMessage(sb, {
-        stripePaymentIntentId: confirmed.id,
-      }).catch((sendError) => {
-        console.error("twilio whatsapp confirmation failed", sendError);
-      });
-      return {
-        ...formatIntentResponse(row, totalCents, source.depositPercent),
-        appointment_id: confirmedAppointmentId,
-      };
-    }
-
-    if (bookingRequestId && (status === "requires_action" || status === "processing")) {
+    if (bookingRequestId) {
       await sb
         .from("booking_payment_requests")
-        .update({ status: "processing" })
-        .eq("id", bookingRequestId);
+        .update({
+          status: "processing",
+          expires_at: expiresAt,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", bookingRequestId)
+        .in("status", ["awaiting_payment", "processing"]);
     }
 
-    return formatIntentResponse(row, totalCents, source.depositPercent);
+    return {
+      ...formatIntentResponse(checkoutRow, totalCents, source.depositPercent),
+      checkout_url: paymentUrl,
+    };
   });
 
 export const getPaymentStatus = createServerFn({ method: "POST" })
@@ -224,6 +407,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const sb = admin();
+    await expireStaleReservations(sb);
     await rateLimitOrThrow({
       key: `payment-status:${data.bookingRequestId ?? data.appointmentId}:${getRequestFingerprint()}`,
       limit: 80,
@@ -232,7 +416,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
     const query = sb
       .from("payment_intents")
       .select(
-        "status, stripe_payment_intent_id, multibanco_entity, multibanco_reference, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -241,16 +425,62 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
       ? await query.eq("booking_request_id", data.bookingRequestId).maybeSingle()
       : await query.eq("appointment_id", data.appointmentId).maybeSingle();
 
+    let currentPi = pi;
+    if (
+      currentPi &&
+      ["requires_action", "processing"].includes(currentPi.status as string) &&
+      !currentPi.stripe_payment_intent_id
+    ) {
+      currentPi = await reconcileCheckoutSessionPayment(sb, currentPi);
+    }
+
+    if (
+      currentPi?.stripe_payment_intent_id &&
+      ["requires_action", "processing"].includes(currentPi.status as string)
+    ) {
+      const stripe = createStripeClient(stripeEnv());
+      const fresh = await stripe.paymentIntents.retrieve(
+        currentPi.stripe_payment_intent_id as string,
+      );
+      const freshStatus = normalizeStripeStatus(fresh.status);
+      const expiresAt = currentPi.expires_at;
+
+      await sb
+        .from("payment_intents")
+        .update({
+          status: freshStatus,
+          expires_at: expiresAt,
+          failure_reason: freshStatus === "failed" ? fresh.last_payment_error?.message ?? "payment_failed" : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("stripe_payment_intent_id", currentPi.stripe_payment_intent_id);
+
+      currentPi = {
+        ...currentPi,
+        status: freshStatus,
+        expires_at: expiresAt,
+      };
+
+      if (freshStatus === "failed" || freshStatus === "canceled") {
+        await failBookingRequest(
+          sb,
+          data.bookingRequestId ?? null,
+          fresh.last_payment_error?.message ?? "payment_failed",
+          currentPi.stripe_payment_intent_id as string,
+        );
+      }
+    }
+
     const statusInfo = await loadReservationStatus(sb, data.bookingRequestId, data.appointmentId);
 
-    if (pi?.stripe_payment_intent_id && pi.status === "succeeded") {
+    if (currentPi?.stripe_payment_intent_id && currentPi.status === "succeeded") {
       if (data.bookingRequestId && statusInfo.reservationStatus !== "confirmed") {
         let appointmentId: string;
         try {
           appointmentId = await confirmBookingRequest(
             sb,
             data.bookingRequestId,
-            pi.stripe_payment_intent_id as string,
+            currentPi.stripe_payment_intent_id as string,
           );
         } catch (error) {
           await sb
@@ -265,11 +495,11 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
             appointmentStatus: null,
             reservationStatus: "failed",
             appointmentId: null,
-            payment: { ...pi, status: "failed" },
+            payment: { ...currentPi, status: "failed" },
           };
         }
         await sendAppointmentConfirmationMessage(sb, {
-          stripePaymentIntentId: pi.stripe_payment_intent_id as string,
+          stripePaymentIntentId: currentPi.stripe_payment_intent_id as string,
         }).catch((sendError) => {
           console.error("twilio whatsapp confirmation failed", sendError);
         });
@@ -277,7 +507,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
           appointmentStatus: "confirmed",
           reservationStatus: "confirmed",
           appointmentId,
-          payment: { ...pi, appointment_id: appointmentId },
+          payment: { ...currentPi, appointment_id: appointmentId },
         };
       }
       if (data.appointmentId && statusInfo.appointmentStatus !== "confirmed") {
@@ -287,7 +517,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
           .eq("id", data.appointmentId)
           .eq("status", "pending_payment");
         await sendAppointmentConfirmationMessage(sb, {
-          stripePaymentIntentId: pi.stripe_payment_intent_id as string,
+          stripePaymentIntentId: currentPi.stripe_payment_intent_id as string,
         }).catch((sendError) => {
           console.error("twilio whatsapp confirmation failed", sendError);
         });
@@ -295,81 +525,51 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
           appointmentStatus: "confirmed",
           reservationStatus: "confirmed",
           appointmentId: data.appointmentId,
-          payment: pi,
+          payment: currentPi,
         };
       }
     }
 
-    if (
-      pi?.stripe_payment_intent_id &&
-      (pi.status === "requires_action" || pi.status === "processing")
-    ) {
+    return { ...statusInfo, payment: currentPi ?? null };
+  });
+
+export const reconcileStudioBookingPayments = createServerFn({ method: "POST" })
+  .inputValidator((input) => ReconcileStudioInput.parse(input))
+  .handler(async ({ data }) => {
+    const sb = admin();
+    await rateLimitOrThrow({
+      key: `payment-reconcile:${data.studioId}:${getRequestFingerprint()}`,
+      limit: 20,
+      windowMs: 10 * 60 * 1000,
+    });
+
+    const { data: rows, error } = await sb
+      .from("payment_intents")
+      .select(
+        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+      )
+      .eq("studio_id", data.studioId)
+      .in("status", ["requires_action", "processing"])
+      .order("created_at", { ascending: false })
+      .limit(12);
+
+    if (error) throw new Error(error.message);
+
+    let updated = 0;
+    for (const row of rows ?? []) {
       try {
-        const stripe = createStripeClient(stripeEnv());
-        const fresh = await stripe.paymentIntents.retrieve(pi.stripe_payment_intent_id as string);
-        const nextStatus = normalizeStripeStatus(fresh.status);
-        if (nextStatus !== pi.status) {
-          await sb
-            .from("payment_intents")
-            .update({ status: nextStatus, updated_at: new Date().toISOString() })
-            .eq("stripe_payment_intent_id", fresh.id);
-        }
-        if (fresh.status === "succeeded") {
-          if (data.bookingRequestId) {
-            const appointmentId = await confirmBookingRequest(sb, data.bookingRequestId, fresh.id);
-            await sendAppointmentConfirmationMessage(sb, {
-              stripePaymentIntentId: fresh.id,
-            }).catch((sendError) => {
-              console.error("twilio whatsapp confirmation failed", sendError);
-            });
-            return {
-              appointmentStatus: "confirmed",
-              reservationStatus: "confirmed",
-              appointmentId,
-              payment: { ...pi, status: "succeeded", appointment_id: appointmentId },
-            };
-          }
-          if (data.appointmentId) {
-            await sb
-              .from("appointments")
-              .update({ status: "confirmed", updated_at: new Date().toISOString() })
-              .eq("id", data.appointmentId)
-              .eq("status", "pending_payment");
-            await sendAppointmentConfirmationMessage(sb, {
-              stripePaymentIntentId: fresh.id,
-            }).catch((sendError) => {
-              console.error("twilio whatsapp confirmation failed", sendError);
-            });
-            return {
-              appointmentStatus: "confirmed",
-              reservationStatus: "confirmed",
-              appointmentId: data.appointmentId,
-              payment: { ...pi, status: "succeeded" },
-            };
-          }
-        }
-        if (fresh.status === "canceled" || fresh.status === "requires_payment_method") {
-          if (data.bookingRequestId) {
-            await sb
-              .from("booking_payment_requests")
-              .update({ status: "failed", failure_reason: "payment_failed" })
-              .eq("id", data.bookingRequestId);
-          }
-          await sb
-            .from("payment_intents")
-            .update({
-              status: fresh.status === "canceled" ? "canceled" : "failed",
-              failure_reason: "payment_failed",
-              updated_at: new Date().toISOString(),
-            })
-            .eq("stripe_payment_intent_id", fresh.id);
-        }
-      } catch (e) {
-        console.error("stripe retrieve failed", e);
+        const before = row.status;
+        const next = await reconcileCheckoutSessionPayment(sb, row);
+        if (next?.status !== before || next?.appointment_id !== row.appointment_id) updated += 1;
+      } catch (error) {
+        console.error("studio_payment_reconcile_failed", {
+          paymentIntentId: row.id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
-    return { ...statusInfo, payment: pi ?? null };
+    return { checked: rows?.length ?? 0, updated };
   });
 
 async function loadPaymentSource(
@@ -430,7 +630,7 @@ async function loadPaymentSource(
 async function loadStudio(sb: any, studioId: string) {
   const { data: studio } = await sb
     .from("studios")
-    .select("name, accepted_payment_methods, currency, deposit_percent")
+    .select("name, slug, accepted_payment_methods, currency, deposit_percent")
     .eq("id", studioId)
     .maybeSingle();
   if (!studio) throw new Error("studio_not_found");
@@ -455,14 +655,14 @@ function buildPaymentSource(input: {
   return {
     studioId: input.studioId,
     studioName: input.studio.name as string,
+    studioSlug: input.studio.slug as string,
     startsAt: input.startsAt,
     clientName: input.clientName,
     clientEmail: input.clientEmail,
     clientPhone: input.clientPhone,
-    acceptedMethods: (input.studio.accepted_payment_methods as string[] | null) ?? [
-      "mb_way",
-      "multibanco",
-    ],
+    acceptedMethods: normalizeAcceptedPaymentMethods(
+      input.studio.accepted_payment_methods as string[] | null,
+    ),
     currency: ((input.studio.currency as string) || "eur").toLowerCase(),
     depositPercent,
     totalCents,
@@ -470,10 +670,13 @@ function buildPaymentSource(input: {
   };
 }
 
-function resolveBillingEmail(email?: string | null) {
-  const trimmed = email?.trim();
-  if (trimmed && /\S+@\S+\.\S+/.test(trimmed)) return trimmed;
-  return "reservas@charmbooknow.test";
+function normalizePortugueseMobile(phone?: string | null) {
+  const raw = phone?.trim() ?? "";
+  const digits = raw.replace(/\D/g, "");
+  if (/^9\d{8}$/.test(digits)) return `+351${digits}`;
+  if (/^3519\d{8}$/.test(digits)) return `+${digits}`;
+  if (/^003519\d{8}$/.test(digits)) return `+${digits.slice(2)}`;
+  return null;
 }
 
 async function loadReservationStatus(sb: any, bookingRequestId?: string, appointmentId?: string) {
@@ -509,6 +712,36 @@ function normalizeStripeStatus(status: string) {
   return "requires_action";
 }
 
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method): method is "mb_way" | "card" => method === "mb_way" || method === "card",
+  );
+  return normalized.length > 0 ? normalized : ["mb_way", "card"];
+}
+
+function stripePaymentFailureReason(error: unknown, method: "mb_way" | "card") {
+  const err = error as {
+    code?: string;
+    param?: string;
+    message?: string;
+    raw?: { code?: string; param?: string; message?: string };
+  };
+  const message = `${err.message ?? ""} ${err.raw?.message ?? ""}`.toLowerCase();
+  const param = err.param ?? err.raw?.param ?? "";
+  if (
+    param.includes("payment_method_types") ||
+    message.includes("payment method type") ||
+    message.includes("activated in your dashboard")
+  ) {
+    return method === "card" ? "card_unavailable" : "mb_way_unavailable";
+  }
+  if (method === "mb_way" && (message.includes("phone") || message.includes("telem"))) {
+    return "mb_way_phone_invalid";
+  }
+  if (err.code === "payment_intent_payment_attempt_expired") return "payment_expired";
+  return "payment_method_unavailable";
+}
+
 function formatIntentResponse(row: any, totalCents: number, depositPercent: number) {
   return {
     payment_intent_id: row.id,
@@ -518,8 +751,6 @@ function formatIntentResponse(row: any, totalCents: number, depositPercent: numb
     booking_request_id: row.booking_request_id ?? null,
     method: row.method,
     status: row.status,
-    multibanco_entity: row.multibanco_entity ?? null,
-    multibanco_reference: row.multibanco_reference ?? null,
     hosted_voucher_url: row.hosted_voucher_url ?? null,
     amount_cents: row.amount_cents,
     total_cents: totalCents,

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -15,6 +15,7 @@ import {
   createPlatformBillingPortalSession,
   createPlatformCheckoutSession,
   getPlatformSubscriptionSummary,
+  syncPlatformCheckoutReturn,
 } from "@/lib/subscriptions.functions";
 import { computeAttendanceRevenue, computeFinancialSplit, formatEUR } from "@/lib/utils";
 import {
@@ -25,6 +26,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
+import { PremiumTimeSelect } from "@/components/ui/premium-time-select";
 import {
   Accordion,
   AccordionContent,
@@ -103,8 +105,7 @@ type ManualEntry = {
 const PAYMENT_METHODS = [
   { value: "cash", label: "Dinheiro" },
   { value: "mb_way", label: "MB Way" },
-  { value: "multibanco", label: "Multibanco" },
-  { value: "card", label: "Cartão" },
+  { value: "card", label: "Apple Pay, Google Pay ou cartão" },
   { value: "bank_transfer", label: "Transferência" },
   { value: "other", label: "Outro" },
 ];
@@ -145,6 +146,8 @@ function PaymentsPage() {
   const loadBilling = useServerFn(getPlatformSubscriptionSummary);
   const startCheckout = useServerFn(createPlatformCheckoutSession);
   const openPortal = useServerFn(createPlatformBillingPortalSession);
+  const syncCheckoutReturn = useServerFn(syncPlatformCheckoutReturn);
+  const navigate = useNavigate();
   const [studio, setStudio] = useState<StudioRow | null>(null);
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
@@ -154,6 +157,7 @@ function PaymentsPage() {
   const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [saving, setSaving] = useState(false);
   const [billingLoading, setBillingLoading] = useState(false);
+  const [checkoutReturnSynced, setCheckoutReturnSynced] = useState(false);
   const [manualFilters, setManualFilters] = useState({
     staffId: "all",
     paymentMethod: "all",
@@ -176,6 +180,31 @@ function PaymentsPage() {
       setStaffOptions(result.staffOptions);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!studio?.id || checkoutReturnSynced) return;
+    const params = new URLSearchParams(window.location.search);
+    const billingResult = params.get("billing");
+    const sessionId = params.get("session_id");
+    if (billingResult !== "success" || !sessionId) return;
+
+    setCheckoutReturnSynced(true);
+    setBillingLoading(true);
+    (async () => {
+      try {
+        await syncCheckoutReturn({ data: { studioId: studio.id, sessionId } });
+        await refreshBilling(studio.id);
+        toast.success("Assinatura sincronizada com sucesso.");
+      } catch (error) {
+        console.error("checkout_return_sync_failed", error);
+        toast.info("Pagamento recebido. A assinatura pode demorar alguns instantes a sincronizar.");
+        await refreshBilling(studio.id);
+      } finally {
+        setBillingLoading(false);
+        navigate({ to: "/admin", replace: true });
+      }
+    })();
+  }, [checkoutReturnSynced, navigate, studio?.id, syncCheckoutReturn]);
 
   async function refreshBilling(studioId: string) {
     setBillingLoading(true);
@@ -362,6 +391,19 @@ function PaymentsPage() {
     .filter((member) => member.total > 0);
   return (
     <div className="space-y-4">
+      {checkoutReturnSynced && billingLoading && (
+        <section className="rounded-3xl border border-emerald-700/25 bg-emerald-950/5 p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <RefreshCw className="mt-0.5 h-4 w-4 animate-spin text-emerald-700 dark:text-emerald-400" />
+            <div>
+              <p className="text-sm font-semibold">A confirmar assinatura</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Estamos a validar o pagamento e a ativar o plano premium no painel.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
       <header className="overflow-hidden rounded-3xl border border-emerald-700/20 bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_42%,rgba(16,185,129,0.06))] p-4 shadow-sm md:p-5">
         <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
           <div>
@@ -589,7 +631,7 @@ function normalizeStudio(row: unknown): StudioRow | null {
   return {
     id: studio.id,
     payment_policy: studio.payment_policy ?? "pay_in_studio",
-    accepted_payment_methods: studio.accepted_payment_methods ?? ["mb_way", "multibanco"],
+    accepted_payment_methods: normalizeAcceptedPaymentMethods(studio.accepted_payment_methods),
     deposit_percent: studio.deposit_percent ?? 25,
     commission_percent: studio.commission_percent ?? 50,
   };
@@ -682,6 +724,13 @@ function localDateValue(date: Date) {
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method) => method === "mb_way" || method === "card" || method === "cash",
+  );
+  return normalized.length ? normalized : ["mb_way", "card"];
 }
 
 function paymentMethodLabel(value: string) {
@@ -840,18 +889,14 @@ function DateTimePicker({ value, onChange }: { value: string; onChange: (value: 
           if (date) onChange(`${date}T${time}`);
         }}
       />
-      <span className="block w-full min-w-0 max-w-full overflow-hidden">
-        <input
-          type="time"
-          value={time}
-          onChange={(event) => {
-            const date = selected ? localDateValue(selected) : localDateValue(new Date());
-            onChange(`${date}T${event.target.value}`);
-          }}
-          className="block h-14 w-full min-w-0 max-w-full appearance-none rounded-2xl border border-border bg-background/85 px-4 py-0 text-base leading-[3.5rem] shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15 md:h-12 md:px-3 md:text-sm md:leading-[3rem]"
-          style={{ minWidth: 0 }}
-        />
-      </span>
+      <PremiumTimeSelect
+        value={time}
+        onChange={(nextTime) => {
+          const date = selected ? localDateValue(selected) : localDateValue(new Date());
+          onChange(`${date}T${nextTime}`);
+        }}
+        className="h-14 px-4 text-base md:h-12 md:px-3 md:text-sm"
+      />
     </div>
   );
 }
@@ -1058,7 +1103,11 @@ function BillingSection({
   onRefresh: () => void;
 }) {
   const active = billing?.premiumActive ?? true;
-  const hasSubscription = Boolean(billing && billing.status !== "trialing");
+  const hasSubscription = Boolean(
+    billing &&
+      (billing.status !== "trialing" ||
+        ["monthly", "quarterly", "yearly"].includes(billing.plan ?? "")),
+  );
   return (
     <div className="space-y-5">
       <div className="grid gap-4 xl:grid-cols-[1fr_22rem] xl:items-start">
@@ -1070,7 +1119,7 @@ function BillingSection({
           <h2 className="mt-2 text-base font-medium">Plano, cobrança e acesso premium</h2>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             Gira a assinatura mensal recorrente do estúdio, atualize o método de pagamento e
-            consulte faturas emitidas pela Stripe.
+            consulte faturas emitidas para a sua assinatura.
           </p>
 
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
@@ -1140,7 +1189,7 @@ function BillingSection({
               className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center"
             >
               <div>
-                <p className="font-medium">{invoice.number ?? "Fatura Stripe"}</p>
+                <p className="font-medium">{invoice.number ?? "Fatura"}</p>
                 <p className="text-xs text-muted-foreground">
                   {formatDate(invoice.createdAt)} · {formatSubscriptionStatus(invoice.status)}
                 </p>

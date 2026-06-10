@@ -215,10 +215,17 @@ function normalizeStudio(row: unknown): StudioRow | null {
   return {
     id: studio.id,
     payment_policy: studio.payment_policy ?? "pay_in_studio",
-    accepted_payment_methods: studio.accepted_payment_methods ?? ["mb_way", "multibanco"],
+    accepted_payment_methods: normalizeAcceptedPaymentMethods(studio.accepted_payment_methods),
     deposit_percent: studio.deposit_percent ?? 25,
     commission_percent: studio.commission_percent ?? 50,
   };
+}
+
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method) => method === "mb_way" || method === "card" || method === "cash",
+  );
+  return normalized.length ? normalized : ["mb_way", "card"];
 }
 
 function PercentSlider(props: {

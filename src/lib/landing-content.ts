@@ -37,7 +37,7 @@ export const PLAN_FEATURES = [
   "14 dias grátis com acesso completo",
   "Agenda, clientes e equipa sem taxas por profissional",
   "Página pública de marcações com a marca do estúdio",
-  "Pagamentos online e sinais através de Stripe",
+  "Pagamentos online e sinais integrados",
   "WhatsApp automático para confirmações e lembretes",
   "Gestão financeira, comissões e visão do balcão",
   "PWA para usar no telemóvel, tablet e computador",
@@ -56,9 +56,9 @@ export const LANDING_FAQS = [
       "Não. A Bellza foi desenhada para ser simples de começar e simples de cancelar. Pode gerir a subscrição sem contratos longos.",
   },
   {
-    question: "A Bellza está preparada para pagamentos Stripe?",
+    question: "A Bellza está preparada para pagamentos online?",
     answer:
-      "Sim. A plataforma suporta sinais e pagamentos online através de Stripe, com políticas claras de cancelamento e reembolso apresentadas no fluxo de reserva.",
+      "Sim. A plataforma suporta sinais e pagamentos online, com políticas claras de cancelamento e reembolso apresentadas no fluxo de reserva.",
   },
   {
     question: "Funciona para barbearias e equipas com vários profissionais?",
@@ -74,7 +74,7 @@ export const LANDING_FAQS = [
 
 export const TRUST_PILLARS = [
   { value: "14 dias", label: "Teste gratuito" },
-  { value: "Stripe", label: "Pagamentos online" },
+  { value: "Online", label: "Pagamentos online" },
   { value: "RGPD", label: "Pronto para Portugal e UE" },
   { value: "PWA", label: "Telemóvel, tablet e desktop" },
 ] as const;
@@ -96,7 +96,7 @@ export const FEATURE_BLOCKS = [
     title: "Pagamentos online",
     description:
       "Cobrança de sinais, regras de cancelamento e comunicação transparente antes da confirmação.",
-    points: ["Stripe", "Sinais por serviço", "Políticas visíveis no checkout"],
+    points: ["Pagamentos online", "Sinais por serviço", "Políticas visíveis no checkout"],
   },
   {
     title: "Gestão financeira",

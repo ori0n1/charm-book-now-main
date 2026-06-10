@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { supabase } from "@/integrations/supabase/client";
+import { getSettledSession } from "@/lib/auth-landing";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: async () => {
@@ -8,11 +8,8 @@ export const Route = createFileRoute("/_authenticated")({
     // bounce every refresh to /login.
     if (typeof window === "undefined") return;
 
-    // getSession() is a synchronous read from local storage (no network).
-    // getUser() would do a network round-trip to Supabase auth every nav,
-    // which was making the panel feel "eternally loading".
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) {
+    const session = await getSettledSession();
+    if (!session) {
       throw redirect({ to: "/login" });
     }
   },

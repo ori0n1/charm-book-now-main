@@ -73,7 +73,7 @@ function TeamInvitePage() {
       toast.success("Conta ativada. Bem-vinda ao painel.");
       navigate({ to: result.landing as "/admin" });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Nao foi possivel ativar a conta.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível ativar a conta.");
     } finally {
       setSaving(false);
     }

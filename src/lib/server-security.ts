@@ -1,5 +1,5 @@
 import { getRequest } from "@tanstack/react-start/server";
-import { createClient } from "@supabase/supabase-js";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 type SupabaseLike = {
   from: (table: string) => any;
@@ -21,7 +21,6 @@ type Bucket = {
 };
 
 const buckets = new Map<string, Bucket>();
-let rateLimitAdmin: ReturnType<typeof createClient> | null = null;
 
 function forbidden(message = "forbidden"): never {
   throw new Response(message, { status: 403 });
@@ -165,16 +164,8 @@ export async function rateLimitOrThrow({ key, limit, windowMs }: RateLimitOption
 }
 
 async function consumeDurableRateLimit({ key, limit, windowMs }: RateLimitOptions) {
-  const url = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) return null;
-
   try {
-    if (!rateLimitAdmin) {
-      rateLimitAdmin = createClient(url, serviceKey, { auth: { persistSession: false } });
-    }
-
-    const { data, error } = await (rateLimitAdmin as any)
+    const { data, error } = await (getAdminClient() as any)
       .rpc("consume_rate_limit", {
         p_key: key,
         p_limit: limit,

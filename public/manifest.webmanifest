@@ -1,8 +1,8 @@
 {
-  "name": "Bellza — Painel do Estúdio",
+  "name": "Bellza - Reservas e Painel",
   "short_name": "Bellza",
-  "description": "Agenda online, pagamentos, clientes e gestão para estúdios de beleza e barbearias.",
-  "start_url": "/admin",
+  "description": "Reserve serviços, acompanhe marcações e gira o estúdio com a Bellza.",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#111318",

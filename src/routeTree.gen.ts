@@ -25,6 +25,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as SSlugRouteImport } from './routes/s.$slug'
 import { Route as MarcacaoTokenRouteImport } from './routes/marcacao.$token'
 import { Route as ConviteEquipaTokenRouteImport } from './routes/convite-equipa.$token'
+import { Route as AuthDebugRouteImport } from './routes/auth.debug'
+import { Route as AuthCallbackRouteImport } from './routes/auth.callback'
 import { Route as ApiCreateCheckoutSessionRouteImport } from './routes/api/create-checkout-session'
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
@@ -41,6 +43,7 @@ import { Route as AuthenticatedAdminHorariosRouteImport } from './routes/_authen
 import { Route as AuthenticatedAdminEquipaRouteImport } from './routes/_authenticated/admin.equipa'
 import { Route as AuthenticatedAdminComissoesRouteImport } from './routes/_authenticated/admin.comissoes'
 import { Route as AuthenticatedAdminClientesRouteImport } from './routes/_authenticated/admin.clientes'
+import { Route as AuthenticatedAdminCentralLevantamentosRouteImport } from './routes/_authenticated/admin.central-levantamentos'
 import { Route as AuthenticatedAdminBalcaoRouteImport } from './routes/_authenticated/admin.balcao'
 import { Route as AuthenticatedAdminAgendaRouteImport } from './routes/_authenticated/admin.agenda'
 import { Route as ApiPublicPaymentsWebhookRouteImport } from './routes/api/public/payments/webhook'
@@ -122,6 +125,16 @@ const MarcacaoTokenRoute = MarcacaoTokenRouteImport.update({
 const ConviteEquipaTokenRoute = ConviteEquipaTokenRouteImport.update({
   id: '/convite-equipa/$token',
   path: '/convite-equipa/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthDebugRoute = AuthDebugRouteImport.update({
+  id: '/auth/debug',
+  path: '/auth/debug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCreateCheckoutSessionRoute =
@@ -215,6 +228,12 @@ const AuthenticatedAdminClientesRoute =
     path: '/clientes',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminCentralLevantamentosRoute =
+  AuthenticatedAdminCentralLevantamentosRouteImport.update({
+    id: '/central-levantamentos',
+    path: '/central-levantamentos',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminBalcaoRoute =
   AuthenticatedAdminBalcaoRouteImport.update({
     id: '/balcao',
@@ -250,11 +269,14 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
+  '/auth/callback': typeof AuthCallbackRoute
+  '/auth/debug': typeof AuthDebugRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
   '/admin/agenda': typeof AuthenticatedAdminAgendaRoute
   '/admin/balcao': typeof AuthenticatedAdminBalcaoRoute
+  '/admin/central-levantamentos': typeof AuthenticatedAdminCentralLevantamentosRoute
   '/admin/clientes': typeof AuthenticatedAdminClientesRoute
   '/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/admin/equipa': typeof AuthenticatedAdminEquipaRoute
@@ -285,11 +307,14 @@ export interface FileRoutesByTo {
   '/termos': typeof TermosRoute
   '/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
+  '/auth/callback': typeof AuthCallbackRoute
+  '/auth/debug': typeof AuthDebugRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
   '/admin/agenda': typeof AuthenticatedAdminAgendaRoute
   '/admin/balcao': typeof AuthenticatedAdminBalcaoRoute
+  '/admin/central-levantamentos': typeof AuthenticatedAdminCentralLevantamentosRoute
   '/admin/clientes': typeof AuthenticatedAdminClientesRoute
   '/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/admin/equipa': typeof AuthenticatedAdminEquipaRoute
@@ -323,11 +348,14 @@ export interface FileRoutesById {
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/_authenticated/onboarding': typeof AuthenticatedOnboardingRoute
   '/api/create-checkout-session': typeof ApiCreateCheckoutSessionRoute
+  '/auth/callback': typeof AuthCallbackRoute
+  '/auth/debug': typeof AuthDebugRoute
   '/convite-equipa/$token': typeof ConviteEquipaTokenRoute
   '/marcacao/$token': typeof MarcacaoTokenRoute
   '/s/$slug': typeof SSlugRoute
   '/_authenticated/admin/agenda': typeof AuthenticatedAdminAgendaRoute
   '/_authenticated/admin/balcao': typeof AuthenticatedAdminBalcaoRoute
+  '/_authenticated/admin/central-levantamentos': typeof AuthenticatedAdminCentralLevantamentosRoute
   '/_authenticated/admin/clientes': typeof AuthenticatedAdminClientesRoute
   '/_authenticated/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/_authenticated/admin/equipa': typeof AuthenticatedAdminEquipaRoute
@@ -361,11 +389,14 @@ export interface FileRouteTypes {
     | '/admin'
     | '/onboarding'
     | '/api/create-checkout-session'
+    | '/auth/callback'
+    | '/auth/debug'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
     | '/admin/agenda'
     | '/admin/balcao'
+    | '/admin/central-levantamentos'
     | '/admin/clientes'
     | '/admin/comissoes'
     | '/admin/equipa'
@@ -396,11 +427,14 @@ export interface FileRouteTypes {
     | '/termos'
     | '/onboarding'
     | '/api/create-checkout-session'
+    | '/auth/callback'
+    | '/auth/debug'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
     | '/admin/agenda'
     | '/admin/balcao'
+    | '/admin/central-levantamentos'
     | '/admin/clientes'
     | '/admin/comissoes'
     | '/admin/equipa'
@@ -433,11 +467,14 @@ export interface FileRouteTypes {
     | '/_authenticated/admin'
     | '/_authenticated/onboarding'
     | '/api/create-checkout-session'
+    | '/auth/callback'
+    | '/auth/debug'
     | '/convite-equipa/$token'
     | '/marcacao/$token'
     | '/s/$slug'
     | '/_authenticated/admin/agenda'
     | '/_authenticated/admin/balcao'
+    | '/_authenticated/admin/central-levantamentos'
     | '/_authenticated/admin/clientes'
     | '/_authenticated/admin/comissoes'
     | '/_authenticated/admin/equipa'
@@ -469,6 +506,8 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TermosRoute: typeof TermosRoute
   ApiCreateCheckoutSessionRoute: typeof ApiCreateCheckoutSessionRoute
+  AuthCallbackRoute: typeof AuthCallbackRoute
+  AuthDebugRoute: typeof AuthDebugRoute
   ConviteEquipaTokenRoute: typeof ConviteEquipaTokenRoute
   MarcacaoTokenRoute: typeof MarcacaoTokenRoute
   SSlugRoute: typeof SSlugRoute
@@ -589,6 +628,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConviteEquipaTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/debug': {
+      id: '/auth/debug'
+      path: '/auth/debug'
+      fullPath: '/auth/debug'
+      preLoaderRoute: typeof AuthDebugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/create-checkout-session': {
       id: '/api/create-checkout-session'
       path: '/api/create-checkout-session'
@@ -701,6 +754,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminClientesRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/central-levantamentos': {
+      id: '/_authenticated/admin/central-levantamentos'
+      path: '/central-levantamentos'
+      fullPath: '/admin/central-levantamentos'
+      preLoaderRoute: typeof AuthenticatedAdminCentralLevantamentosRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/balcao': {
       id: '/_authenticated/admin/balcao'
       path: '/balcao'
@@ -728,6 +788,7 @@ declare module '@tanstack/react-router' {
 interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminAgendaRoute: typeof AuthenticatedAdminAgendaRoute
   AuthenticatedAdminBalcaoRoute: typeof AuthenticatedAdminBalcaoRoute
+  AuthenticatedAdminCentralLevantamentosRoute: typeof AuthenticatedAdminCentralLevantamentosRoute
   AuthenticatedAdminClientesRoute: typeof AuthenticatedAdminClientesRoute
   AuthenticatedAdminComissoesRoute: typeof AuthenticatedAdminComissoesRoute
   AuthenticatedAdminEquipaRoute: typeof AuthenticatedAdminEquipaRoute
@@ -746,6 +807,8 @@ interface AuthenticatedAdminRouteChildren {
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminAgendaRoute: AuthenticatedAdminAgendaRoute,
   AuthenticatedAdminBalcaoRoute: AuthenticatedAdminBalcaoRoute,
+  AuthenticatedAdminCentralLevantamentosRoute:
+    AuthenticatedAdminCentralLevantamentosRoute,
   AuthenticatedAdminClientesRoute: AuthenticatedAdminClientesRoute,
   AuthenticatedAdminComissoesRoute: AuthenticatedAdminComissoesRoute,
   AuthenticatedAdminEquipaRoute: AuthenticatedAdminEquipaRoute,
@@ -793,6 +856,8 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TermosRoute: TermosRoute,
   ApiCreateCheckoutSessionRoute: ApiCreateCheckoutSessionRoute,
+  AuthCallbackRoute: AuthCallbackRoute,
+  AuthDebugRoute: AuthDebugRoute,
   ConviteEquipaTokenRoute: ConviteEquipaTokenRoute,
   MarcacaoTokenRoute: MarcacaoTokenRoute,
   SSlugRoute: SSlugRoute,

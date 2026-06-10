@@ -601,7 +601,12 @@ function MobileOverview({
     predicted: number;
   };
   paidByAppointment: Map<string, number>;
-  studio: FinancialRuleSource & { deposit_percent: number; payment_policy: string };
+  studio: FinancialRuleSource & {
+    name: string;
+    slug: string;
+    deposit_percent: number;
+    payment_policy: string;
+  };
   billing: BillingSummary | null;
   checkoutPlan: PlanId | null;
   onChoosePremiumPlan: () => void;
@@ -716,9 +721,13 @@ function TrialPremiumBanner({
   checkoutPlan: PlanId | null;
   onChoosePremiumPlan: () => void;
 }) {
-  if (!billing || billing.status !== "trialing" || !billing.premiumActive) return null;
+  if (!billing || billing.status !== "trialing") return null;
+  const hasStripeSubscription = ["monthly", "quarterly", "yearly"].includes(billing.plan ?? "");
+  if (hasStripeSubscription) return null;
   const remaining = getRemainingDays(billing);
   const urgent = remaining !== null && remaining <= 3;
+  const planLabel = formatPlan(billing.plan);
+  const dateLabel = formatDate(billing.nextBillingAt ?? billing.trialEndsAt);
   const progress = remaining === null ? 35 : Math.min(100, Math.max(6, ((14 - remaining) / 14) * 100));
 
   return (
@@ -740,16 +749,20 @@ function TrialPremiumBanner({
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-xl font-light tracking-tight md:text-2xl">
-                {remaining === 1
-                  ? "Resta 1 dia do teste gratuito"
-                  : `Restam ${remaining ?? "--"} dias do teste gratuito`}
+                {hasStripeSubscription
+                  ? `${planLabel} ativo em período experimental`
+                  : remaining === 1
+                    ? "Resta 1 dia do teste gratuito"
+                    : `Restam ${remaining ?? "--"} dias do teste gratuito`}
               </h2>
               <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-                Pode escolher um plano antecipadamente sem cancelar o teste atual.
+                {hasStripeSubscription
+                  ? `O cartão foi validado e a primeira cobrança está agendada para ${dateLabel}.`
+                  : "Pode escolher um plano antecipadamente sem cancelar o teste atual."}
               </p>
             </div>
             <span className="w-fit rounded-full bg-background/80 px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm">
-              {formatDate(billing.trialEndsAt ?? billing.nextBillingAt)}
+              {dateLabel}
             </span>
           </div>
           <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-background/75 ring-1 ring-border/60">
@@ -763,15 +776,25 @@ function TrialPremiumBanner({
         </div>
 
         <div className="grid gap-2 sm:grid-cols-2 lg:w-72 lg:grid-cols-1">
-          <button
-            type="button"
-            onClick={onChoosePremiumPlan}
-            disabled={checkoutPlan !== null}
-            className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:opacity-60"
-          >
-            {checkoutPlan ? "A abrir pagamento..." : "Ativar Premium"}
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
+          {hasStripeSubscription ? (
+            <Link
+              to="/admin/pagamentos"
+              className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90"
+            >
+              Gerir assinatura
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={onChoosePremiumPlan}
+              disabled={checkoutPlan !== null}
+              className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:opacity-60"
+            >
+              {checkoutPlan ? "A abrir pagamento..." : "Ativar Premium"}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          )}
           <Link
             to="/admin/premium"
             className="flex h-11 items-center justify-center rounded-2xl border border-border bg-background/70 px-4 text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
@@ -792,6 +815,8 @@ function SubscriptionSnapshotCard({
   compact?: boolean;
 }) {
   const remaining = billing ? getRemainingDays(billing) : null;
+  const hasStripeSubscription = ["monthly", "quarterly", "yearly"].includes(billing?.plan ?? "");
+  const dateLabel = formatDate(billing?.nextBillingAt ?? billing?.trialEndsAt);
   return (
     <section
       className={`rounded-[1.35rem] border border-border bg-card shadow-sm ${
@@ -817,9 +842,12 @@ function SubscriptionSnapshotCard({
       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <SnapshotItem label="Plano atual" value={formatPlan(billing?.plan)} />
         <SnapshotItem label="Estado" value={formatSubscriptionStatus(billing?.status)} />
-        <SnapshotItem label="Próxima cobrança" value={formatDate(billing?.nextBillingAt)} />
         <SnapshotItem
-          label="Dias restantes"
+          label={hasStripeSubscription ? "Primeira cobrança" : "Próxima cobrança"}
+          value={dateLabel}
+        />
+        <SnapshotItem
+          label={hasStripeSubscription ? "Dias até cobrança" : "Dias restantes"}
           value={remaining === null ? "Não disponível" : `${remaining} dias`}
         />
       </div>
@@ -1419,6 +1447,7 @@ function buildStaffMetrics(
         received: 0,
         pending: 0,
         commission: 0,
+        predicted: 0,
       },
     ]),
   );
@@ -1437,6 +1466,7 @@ function buildStaffMetrics(
       received: 0,
       pending: 0,
       commission: 0,
+      predicted: 0,
     };
     if (new Date(row.appointment.starts_at).getTime() >= now) current.appointmentsFuture += 1;
     else current.appointmentsDone += 1;
@@ -1841,3 +1871,6 @@ function MoneyValue({ value, className = "" }: { value: string; className?: stri
     </p>
   );
 }
+
+
+

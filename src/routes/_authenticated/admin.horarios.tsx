@@ -13,6 +13,7 @@ import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { getSegmentConfig } from "@/lib/segments";
 import { supabase } from "@/integrations/supabase/client";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
+import { PremiumTimeSelect } from "@/components/ui/premium-time-select";
 import {
   Select,
   SelectContent,
@@ -393,12 +394,7 @@ function TimeInput({
       <span className="mb-1 block text-[10px] uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
-      <input
-        type="time"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="box-border h-10 w-full min-w-0 max-w-full appearance-none rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
-      />
+      <PremiumTimeSelect value={value} onChange={onChange} className="h-10 rounded-xl" />
     </label>
   );
 }
@@ -476,14 +472,12 @@ function DateTimeField({
           className="h-11 bg-background"
           allowClear={false}
         />
-        <input
-          type="time"
+        <PremiumTimeSelect
           value={time}
-          onChange={(event) => {
+          onChange={(nextTime) => {
             const base = date ?? new Date();
-            onChange(mergeDateAndTime(base, event.target.value));
+            onChange(mergeDateAndTime(base, nextTime));
           }}
-          className="box-border h-11 w-full min-w-0 max-w-full appearance-none rounded-2xl border border-border bg-background px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
         />
       </div>
     </Field>

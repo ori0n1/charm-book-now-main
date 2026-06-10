@@ -1,6 +1,22 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { AlertTriangle, Clock, Info, RefreshCcw, ShieldCheck, Wallet } from "lucide-react";
+import { useServerFn } from "@tanstack/react-start";
+import { useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  BarChart3,
+  CalendarClock,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  Eye,
+  Info,
+  RefreshCcw,
+  Search,
+  ShieldCheck,
+  Wallet,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
@@ -9,6 +25,7 @@ import {
   type PolicyTextParts,
   type RefundPolicyValue,
 } from "@/lib/policy-text";
+import { updateStudioRefundRequest } from "@/lib/refund-operations.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/politicas")({
   head: () => ({ meta: [{ title: "Políticas e Cancelamentos" }] }),
@@ -24,6 +41,7 @@ type StudioPolicy = {
   cancellation_policy_text: string | null;
   legal_policy_version: string;
 };
+
 type RefundRequest = {
   id: string;
   created_at: string;
@@ -32,7 +50,13 @@ type RefundRequest = {
   client_name: string | null;
   client_phone: string | null;
   client_email: string | null;
-  payment_intents?: { amount_cents: number | null; status: string | null } | null;
+  reviewed_at: string | null;
+  decision_note: string | null;
+  payment_intents?: {
+    amount_cents: number | null;
+    status: string | null;
+    stripe_checkout_session_id?: string | null;
+  } | null;
   appointments?: {
     starts_at: string | null;
     total_price: number | null;
@@ -40,47 +64,72 @@ type RefundRequest = {
   } | null;
 };
 
+type RefundTab = "all" | "pending" | "approved" | "rejected";
+
 function PoliciesPage() {
   const { studio } = useCurrentStudio();
+  const updateRefund = useServerFn(updateStudioRefundRequest);
   const [data, setData] = useState<StudioPolicy | null>(null);
   const [refunds, setRefunds] = useState<RefundRequest[]>([]);
   const [noticeMode, setNoticeMode] = useState<"24" | "48" | "custom">("24");
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<RefundTab>("pending");
+  const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
     if (!studio) return;
-    supabase
-      .from("studios")
-      .select(
-        "id,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version",
-      )
-      .eq("id", studio.id)
-      .maybeSingle()
-      .then(({ data: row, error }) => {
+    let cancelled = false;
+
+    async function init() {
+      setLoading(true);
+      const { data: row, error } = await supabase
+        .from("studios")
+        .select(
+          "id,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version",
+        )
+        .eq("id", studio.id)
+        .maybeSingle();
+
+      if (!cancelled) {
         if (error || !row) {
           toast.error("Não foi possível carregar as políticas.");
-          return;
+        } else {
+          const normalized = normalizePolicy(row);
+          setData(normalized);
+          setNoticeMode(
+            normalized.cancellation_min_notice_hours === 24
+              ? "24"
+              : normalized.cancellation_min_notice_hours === 48
+                ? "48"
+                : "custom",
+          );
         }
-        const normalized = normalizePolicy(row);
-        setData(normalized);
-        setNoticeMode(
-          normalized.cancellation_min_notice_hours === 24
-            ? "24"
-            : normalized.cancellation_min_notice_hours === 48
-              ? "48"
-          : "custom",
-        );
-      });
-    loadRefunds(studio.id);
+
+        await loadRefunds(studio.id);
+      }
+      setLoading(false);
+    }
+
+    init();
+
+    return () => {
+      cancelled = true;
+    };
   }, [studio]);
 
   async function loadRefunds(studioId: string) {
     const { data: rows, error } = await (supabase as any)
       .from("refund_requests")
-      .select("id,created_at,status,reason,client_name,client_phone,client_email,payment_intents(amount_cents,status),appointments(starts_at,total_price,appointment_services(services(name)))")
+      .select(
+        "id,created_at,status,reason,client_name,client_phone,client_email,decision_note,reviewed_at,payment_intents(amount_cents,status,stripe_checkout_session_id),appointments(starts_at,total_price,appointment_services(services(name)))",
+      )
       .eq("studio_id", studioId)
       .order("created_at", { ascending: false })
-      .limit(20);
+      .limit(50);
+
     if (error) return;
     setRefunds((rows ?? []) as RefundRequest[]);
   }
@@ -99,364 +148,682 @@ function PoliciesPage() {
         legal_policy_version: version,
       })
       .eq("id", data.id);
+
     setSaving(false);
     if (error) return toast.error(error.message);
+
     setData({ ...data, legal_policy_version: version });
     toast.success("Políticas atualizadas.");
   }
 
-  async function updateRefundStatus(id: string, status: RefundRequest["status"]) {
-    const { error } = await (supabase as any)
-      .from("refund_requests")
-      .update({ status, reviewed_at: new Date().toISOString() })
-      .eq("id", id);
-    if (error) return toast.error(error.message);
-    setRefunds((current) => current.map((item) => (item.id === id ? { ...item, status } : item)));
-    toast.success("Pedido atualizado.");
+  async function updateRefundStatus(id: string, status: RefundRequest["status"], note?: string) {
+    if (!studio || status === "refunded") return;
+    try {
+      await updateRefund({
+        data: {
+          studioId: studio.id,
+          requestId: id,
+          status,
+          note: note?.trim() || undefined,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("refund_payment_not_live")) {
+        toast.error("Este reembolso não está ligado a um pagamento live confirmado.");
+        return;
+      }
+      if (message.includes("refund_already_processed")) {
+        toast.error("Este reembolso já foi processado.");
+        return;
+      }
+      toast.error("Não foi possível atualizar este pedido.");
+      return;
+    }
+
+    setRefunds((current) =>
+      current.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              status,
+              reviewed_at: new Date().toISOString(),
+              decision_note: note || item.decision_note,
+            }
+          : item,
+      ),
+    );
+
+    toast.success(
+      status === "approved"
+        ? "Reembolso aprovado para processamento."
+        : "Pedido atualizado.",
+    );
   }
 
-  if (!data) return <p className="text-sm text-muted-foreground">A carregar políticas...</p>;
+  const filteredRefunds = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return refunds.filter((request) => {
+      if (tab !== "all" && request.status !== tab) return false;
+
+      if (dateFrom) {
+        const from = new Date(dateFrom);
+        const created = new Date(request.created_at);
+        if (created < from) return false;
+      }
+
+      if (dateTo) {
+        const to = new Date(dateTo);
+        to.setHours(23, 59, 59, 999);
+        const created = new Date(request.created_at);
+        if (created > to) return false;
+      }
+
+      if (!query) return true;
+
+      const text = [
+        request.client_name,
+        request.client_email,
+        request.client_phone,
+        request.reason,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return text.includes(query);
+    });
+  }, [refunds, tab, search, dateFrom, dateTo]);
+
+  const summary = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    let pending = 0;
+    let approvedThisMonth = 0;
+    let rejectedThisMonth = 0;
+    let refundedValue = 0;
+    let approvedTotal = 0;
+
+    for (const request of refunds) {
+      const created = new Date(request.created_at);
+      if (request.status === "pending" || request.status === "in_review") {
+        pending += 1;
+      }
+      if (["approved", "refunded"].includes(request.status)) {
+        const cents = Number(request.payment_intents?.amount_cents ?? 0);
+        approvedTotal += 1;
+        if (request.status === "approved") {
+          if (created >= new Date(monthStart)) approvedThisMonth += 1;
+        }
+        if (request.status === "refunded") {
+          refundedValue += cents;
+          if (created >= new Date(monthStart)) rejectedThisMonth += 0;
+        }
+      }
+      if (request.status === "rejected") {
+        const createdRejected = new Date(request.created_at);
+        if (createdRejected >= new Date(monthStart)) rejectedThisMonth += 1;
+      }
+    }
+
+    const approvalRate = approvedTotal ? Math.round((refundedValue ? approvedTotal : 0) / approvedTotal) : 0;
+    const rateForShow = approvedTotal
+      ? Math.round((approvedTotal / (approvedTotal + Math.max(rejectedThisMonth, 0))) * 100)
+      : 0;
+
+    return {
+      pending,
+      approvedThisMonth,
+      rejectedThisMonth,
+      refundedValue,
+      rateForShow,
+    } as const;
+  }, [refunds]);
+
+  if (loading || !data) {
+    return (
+      <div className="mx-auto max-w-6xl space-y-4">
+        <div className="h-24 animate-pulse rounded-2xl bg-muted/60" />
+        <div className="h-24 animate-pulse rounded-2xl bg-muted/60" />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <header className="rounded-3xl border border-border bg-card p-5 shadow-sm">
-        <div className="flex items-start gap-3">
-          <span className="grid size-10 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-500">
-            <ShieldCheck className="h-5 w-5" />
-          </span>
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">
-              Políticas e cancelamentos
-            </p>
-            <h1 className="mt-1 text-2xl font-light tracking-tight">Regras do estúdio</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              Configure dois conceitos separados: o <span className="font-medium text-foreground">prazo</span>{" "}
-              para o cliente cancelar ou reagendar o horário, e a{" "}
-              <span className="font-medium text-foreground">política de reembolso</span> aplicada ao sinal
-              já pago. Cancelar dentro do prazo não devolve, por si só, o valor do sinal.
-            </p>
+    <div className="mx-auto max-w-7xl space-y-5">
+      <header className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-500">
+              <ShieldCheck className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                Central de Políticas e Conformidade
+              </p>
+              <h1 className="mt-1 text-xl font-light tracking-tight">Estúdio</h1>
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                Gestão de políticas, prazos e reembolsos com rápida localização,
+                filtros e controlo total.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-xl border border-border bg-muted/60 px-1.5 py-1 text-xs text-muted-foreground">
+            <CalendarClock className="mr-1.5 h-3.5 w-3.5" />
+            <span className="rounded-lg bg-background px-2 py-1.5 font-medium text-foreground shadow-sm">
+              Versão <span className="font-semibold">{data.legal_policy_version}</span>
+            </span>
           </div>
         </div>
       </header>
 
-      <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="space-y-4 rounded-3xl border border-border bg-card p-5">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Prazo mínimo de cancelamento
-            </p>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {[
-                ["24", "24 horas"],
-                ["48", "48 horas"],
-                ["custom", "Personalizado"],
-              ].map(([value, label]) => (
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricTile
+          label="Pendentes"
+          value={summary.pending}
+          icon={<Eye className="h-4 w-4" />}
+          accent="pending"
+        />
+        <MetricTile
+          label="Aprovados este mês"
+          value={summary.approvedThisMonth}
+          icon={<CheckCircle2 className="h-4 w-4" />}
+          accent="approved"
+        />
+        <MetricTile
+          label="Recusados este mês"
+          value={summary.rejectedThisMonth}
+          icon={<XCircle className="h-4 w-4" />}
+          accent="rejected"
+        />
+        <MetricTile
+          label="Total reembolsado"
+          value={new Intl.NumberFormat("pt-PT", {
+            style: "currency",
+            currency: "EUR",
+          }).format(summary.refundedValue / 100)}
+          icon={<Wallet className="h-4 w-4" />}
+          accent="value"
+        />
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-border bg-card p-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="grid size-8 place-items-center rounded-lg bg-sky-500/10 text-sky-500">
+                  <RefreshCcw className="h-4 w-4" />
+                </span>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                    Pedidos de reembolso
+                  </p>
+                  <h2 className="text-base font-medium leading-tight">
+                    Fila operacional
+                  </h2>
+                </div>
+              </div>
+              <span className="rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                {filteredRefunds.length} de {refunds.length}
+              </span>
+            </div>
+
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="relative sm:w-64">
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Cliente, email, telefone ou motivo..."
+                  className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-xs outline-none transition focus:border-foreground/40"
+                />
+                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              </label>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Clock className="h-3.5 w-3.5" />
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(event) => setDateFrom(event.target.value)}
+                  className="h-9 rounded-lg border border-border bg-background px-2 text-xs outline-none transition focus:border-foreground/40"
+                />
+                <span className="text-[10px] font-semibold uppercase tracking-widest">até</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(event) => setDateTo(event.target.value)}
+                  className="h-9 rounded-lg border border-border bg-background px-2 text-xs outline-none transition focus:border-foreground/40"
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              {(["all", "pending", "approved", "rejected"] as RefundTab[]).map((item) => (
                 <button
-                  key={value}
+                  key={item}
                   type="button"
-                  onClick={() => {
-                    setNoticeMode(value as typeof noticeMode);
-                    if (value === "24" || value === "48") {
-                      setData({ ...data, cancellation_min_notice_hours: Number(value) });
-                    }
-                  }}
-                  className={`h-11 rounded-2xl border text-sm font-medium transition ${
-                    noticeMode === value
-                      ? "border-foreground bg-foreground text-background"
-                      : "border-border hover:bg-muted"
+                  onClick={() => setTab(item)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                    tab === item
+                      ? item === "pending"
+                        ? "border-foreground bg-foreground text-background"
+                        : item === "approved"
+                          ? "border-emerald-500/70 bg-emerald-500/12 text-emerald-600"
+                          : item === "rejected"
+                            ? "border-red-500/70 bg-red-500/12 text-red-600"
+                            : "border-foreground/70 bg-muted text-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  {label}
+                  {item === "all" ? "Todos" : item === "pending" ? "Pendentes" : item === "approved" ? "Aprovados" : "Recusados"}
                 </button>
               ))}
             </div>
-            {noticeMode === "custom" && (
-              <label className="mt-3 block">
-                <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  Horas antes da marcação
-                </span>
-                <input
-                  type="number"
-                  min={1}
-                  value={data.cancellation_min_notice_hours}
-                  onChange={(event) =>
-                    setData({
-                      ...data,
-                      cancellation_min_notice_hours: Math.max(1, Number(event.target.value || 1)),
-                    })
-                  }
-                  className="mt-1 h-11 w-full rounded-2xl border border-border bg-background px-4 text-sm outline-none focus:border-foreground/40"
-                />
-              </label>
-            )}
-          </div>
 
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Política de reembolso do sinal
-            </p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              Define o que acontece com o sinal pago. É independente do prazo: o cliente
-              pode cancelar dentro do prazo sem que isso signifique direito automático a reembolso.
-            </p>
-            <div className="mt-3 grid gap-2 sm:grid-cols-3">
-              {(["refund_allowed", "reschedule_only", "non_refundable"] as const).map((value) => {
-                const meta = getPolicyParts(value, data.cancellation_min_notice_hours);
-                return (
-                  <PolicyOption
-                    key={value}
-                    active={data.cancellation_after_deadline_policy === value}
-                    title={meta.optionTitle}
-                    subtitle={meta.optionSubtitle}
-                    tone={value === "non_refundable" ? "warning" : "default"}
-                    onClick={() =>
-                      setData({ ...data, cancellation_after_deadline_policy: value })
-                    }
+            <div className="mt-3 space-y-2">
+              {filteredRefunds.length === 0 ? (
+                <EmptyState />
+              ) : (
+                filteredRefunds.map((request) => (
+                  <RefundCard
+                    key={request.id}
+                    request={request}
+                    onUpdate={(status, note) => updateRefundStatus(request.id, status, note)}
                   />
-                );
-              })}
+                ))
+              )}
             </div>
           </div>
-
-          <label className="flex items-center justify-between gap-4 rounded-2xl border border-border bg-background px-4 py-3">
-            <span>
-              <span className="block text-sm font-semibold">
-                Mostrar formulário de pedido de reembolso ao cliente
-              </span>
-              <span className="block text-xs leading-relaxed text-muted-foreground">
-                Mesmo com sinal não reembolsável, o cliente pode apresentar um pedido excepcional.
-                A análise e a decisão final continuam sempre do estúdio.
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={data.refund_requests_enabled}
-              onChange={(event) =>
-                setData({ ...data, refund_requests_enabled: event.target.checked })
-              }
-              className="size-5 accent-foreground"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Nota adicional opcional
-            </span>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Aparece em destaque junto à política, antes do pagamento.
-            </p>
-            <textarea
-              value={data.cancellation_policy_text ?? ""}
-              onChange={(event) =>
-                setData({ ...data, cancellation_policy_text: event.target.value })
-              }
-              rows={5}
-              placeholder="Ex.: Para tatuagens grandes, o sinal cobre o tempo de desenho já realizado. Mesmo cancelando, o desenho fica pago."
-              className="mt-2 w-full resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-foreground/40"
-            />
-          </label>
-
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving}
-            className="h-12 w-full rounded-2xl bg-foreground text-xs font-bold uppercase tracking-[0.16em] text-background transition hover:opacity-90 disabled:opacity-60"
-          >
-            {saving ? "A guardar" : "Guardar políticas"}
-          </button>
         </div>
 
-        <aside className="rounded-3xl border border-border bg-card p-5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Pré-visualização para o cliente
-            </p>
-            {(() => {
-              const parts = getPolicyParts(
+        <aside className="space-y-4">
+          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+                Pré-visualização para o cliente
+              </p>
+              {(() => {
+                const parts = getPolicyParts(
+                  data.cancellation_after_deadline_policy,
+                  data.cancellation_min_notice_hours,
+                );
+                if (!parts.badge) return null;
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${microBadgeTone(
+                      parts.refundTone,
+                    )}`}
+                  >
+                    {parts.refundTone === "warning" ? (
+                      <AlertTriangle className="h-3 w-3" />
+                    ) : parts.refundTone === "muted" ? (
+                      <RefreshCcw className="h-3 w-3" />
+                    ) : (
+                      <Info className="h-3 w-3" />
+                    )}
+                    {parts.badge}
+                  </span>
+                );
+              })()}
+            </div>
+
+            <PolicyPreview
+              parts={getPolicyParts(
                 data.cancellation_after_deadline_policy,
                 data.cancellation_min_notice_hours,
-              );
-              if (!parts.badge) return null;
-              return <PolicyBadge tone={parts.refundTone} label={parts.badge} />;
-            })()}
-          </div>
-          <PolicyPreview
-            parts={getPolicyParts(
-              data.cancellation_after_deadline_policy,
-              data.cancellation_min_notice_hours,
-            )}
-            customText={data.cancellation_policy_text?.trim() || null}
-          />
-          <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-            Versão atual: <span className="font-medium text-foreground">{data.legal_policy_version}</span>.
-            Esta versão fica registada quando o cliente aceita as políticas.
-          </p>
-        </aside>
-      </section>
+              )}
+              customText={data.cancellation_policy_text?.trim() || null}
+            />
 
-      <section className="rounded-3xl border border-border bg-card p-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Pedidos de reembolso
-            </p>
-            <h2 className="mt-1 text-lg font-medium">Análise manual</h2>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Estrutura preparada para futura integração com Stripe Refunds.
-          </p>
-        </div>
-        <div className="mt-4 space-y-3">
-          {refunds.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border bg-background p-5 text-sm text-muted-foreground">
-              Ainda não existem pedidos de reembolso.
+            <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              <span>
+                Versão aplicada <span className="font-semibold text-foreground">{data.legal_policy_version}</span>
+              </span>
+              <span className="flex h-2 w-2 items-center justify-center">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="absolute h-1.5 w-1.5 animate-ping rounded-full bg-emerald-500/80" />
+              </span>
             </div>
-          ) : (
-            refunds.map((request) => (
-              <div
-                key={request.id}
-                className="rounded-2xl border border-border bg-background p-4"
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-semibold">{request.client_name || "Cliente"}</p>
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${refundStatusClass(request.status)}`}>
-                        {refundStatusLabel(request.status)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {[request.client_phone, request.client_email].filter(Boolean).join(" · ")}
-                    </p>
-                    <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-                      <span className="rounded-xl bg-muted/50 px-3 py-2">
-                        Serviço: <strong className="text-foreground">{refundServiceLabel(request)}</strong>
-                      </span>
-                      <span className="rounded-xl bg-muted/50 px-3 py-2">
-                        Valor: <strong className="text-foreground">{formatRefundAmount(request)}</strong>
-                      </span>
-                      <span className="rounded-xl bg-muted/50 px-3 py-2">
-                        Data: <strong className="text-foreground">{formatRefundDate(request)}</strong>
-                      </span>
-                    </div>
-                    <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                      {request.reason}
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 sm:w-52">
-                    <button
-                      type="button"
-                      onClick={() => updateRefundStatus(request.id, "in_review")}
-                      disabled={request.status === "in_review"}
-                      className="h-10 rounded-xl bg-muted text-xs font-bold text-muted-foreground ring-1 ring-border disabled:opacity-40"
-                    >
-                      Analisar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateRefundStatus(request.id, "approved")}
-                      disabled={request.status === "approved"}
-                      className="h-10 rounded-xl bg-emerald-500/10 text-xs font-bold text-emerald-500 ring-1 ring-emerald-500/20 disabled:opacity-40"
-                    >
-                      Aprovar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateRefundStatus(request.id, "rejected")}
-                      disabled={request.status === "rejected"}
-                      className="h-10 rounded-xl bg-red-500/10 text-xs font-bold text-red-500 ring-1 ring-red-500/20 disabled:opacity-40"
-                    >
-                      Recusar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateRefundStatus(request.id, "refunded")}
-                      disabled={request.status === "refunded"}
-                      className="h-10 rounded-xl bg-sky-500/10 text-xs font-bold text-sky-500 ring-1 ring-sky-500/20 disabled:opacity-40"
-                    >
-                      Reembolsado
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+          </div>
+
+          <PolicyConfigurator
+            data={data}
+            noticeMode={noticeMode}
+            saving={saving}
+            onChange={(patch) => setData((current) => (current ? { ...current, ...patch } : current))}
+            onNoticeModeChange={(mode) => setNoticeMode(mode)}
+            onSave={save}
+          />
+        </aside>
       </section>
     </div>
   );
 }
 
-function PolicyOption({
-  active,
-  title,
-  subtitle,
-  tone = "default",
-  onClick,
+function MetricTile({
+  label,
+  value,
+  icon,
+  accent,
 }: {
-  active: boolean;
-  title: string;
-  subtitle?: string;
-  tone?: "default" | "warning";
-  onClick: () => void;
+  label: string;
+  value: string | number;
+  icon: React.ReactNode;
+  accent: "pending" | "approved" | "rejected" | "value";
 }) {
-  const activeWarning = active && tone === "warning";
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex min-h-[5.25rem] flex-col justify-between rounded-2xl border px-3.5 py-3 text-left transition ${
-        active
-          ? activeWarning
-            ? "border-amber-500/60 bg-amber-500/15 text-foreground"
-            : "border-foreground bg-foreground text-background"
-          : "border-border hover:bg-muted"
-      }`}
-    >
-      <span className="text-sm font-semibold leading-tight">{title}</span>
-      {subtitle && (
-        <span
-          className={`mt-1 text-[11px] leading-snug ${
-            active
-              ? activeWarning
-                ? "text-amber-700 dark:text-amber-300"
-                : "text-background/75"
-              : "text-muted-foreground"
-          }`}
-        >
-          {subtitle}
-        </span>
-      )}
-    </button>
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm">
+      <div className="space-y-0.5">
+        <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+          {label}
+        </p>
+        <p className="text-base font-medium tabular-nums text-foreground">
+          {value}
+        </p>
+      </div>
+      <span
+        className={`grid size-9 shrink-0 place-items-center rounded-xl ${
+          accent === "pending"
+            ? "bg-amber-500/12 text-amber-600"
+            : accent === "approved"
+              ? "bg-emerald-500/12 text-emerald-600"
+              : accent === "rejected"
+                ? "bg-red-500/12 text-red-600"
+                : "bg-sky-500/12 text-sky-600"
+        }`}
+      >
+        {icon}
+      </span>
+    </div>
   );
 }
 
-function PolicyBadge({
-  tone,
-  label,
+function PolicyConfigurator({
+  data,
+  noticeMode,
+  saving,
+  onChange,
+  onNoticeModeChange,
+  onSave,
 }: {
-  tone: PolicyTextParts["refundTone"];
-  label: string;
+  data: StudioPolicy;
+  noticeMode: "24" | "48" | "custom";
+  saving: boolean;
+  onChange: (patch: Partial<StudioPolicy>) => void;
+  onNoticeModeChange: (mode: "24" | "48" | "custom") => void;
+  onSave: () => Promise<void>;
 }) {
-  const palette =
-    tone === "warning"
-      ? "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-300"
-      : tone === "muted"
-        ? "border-border bg-muted/60 text-foreground/80"
-        : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9.5px] font-bold uppercase tracking-[0.16em] ${palette}`}
-    >
-      {tone === "warning" ? (
-        <AlertTriangle className="h-3 w-3" />
-      ) : tone === "muted" ? (
-        <RefreshCcw className="h-3 w-3" />
-      ) : (
-        <Info className="h-3 w-3" />
-      )}
-      {label}
-    </span>
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="grid size-8 place-items-center rounded-lg bg-violet-500/10 text-violet-500">
+            <BarChart3 className="h-4 w-4" />
+          </span>
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+              Configuração
+            </p>
+            <h3 className="text-sm font-medium">Políticas ativas</h3>
+          </div>
+        </div>
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] ${
+            data.cancellation_after_deadline_policy === "non_refundable"
+              ? "border-amber-500/40 bg-amber-500/12 text-amber-600"
+              : "border-border bg-muted/60 text-foreground"
+          }`}
+        >
+          {data.cancellation_after_deadline_policy === "refund_allowed"
+            ? "Com reembolso"
+            : data.cancellation_after_deadline_policy === "reschedule_only"
+              ? "Só remarcação"
+              : "Não reembolsável"}
+        </span>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Prazo mínimo de cancelamento
+          </p>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {[
+              ["24", "24 horas"],
+              ["48", "48 horas"],
+              ["custom", "Personalizado"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  onNoticeModeChange(value as typeof noticeMode);
+                  if (value === "24" || value === "48") {
+                    onChange({ cancellation_min_notice_hours: Number(value) });
+                  }
+                }}
+                className={`h-9 rounded-xl border text-xs font-medium transition ${
+                  noticeMode === value
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border hover:bg-muted"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {noticeMode === "custom" && (
+            <label className="mt-2 block">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Horas antes da marcação
+              </span>
+              <input
+                type="number"
+                min={1}
+                value={data.cancellation_min_notice_hours}
+                onChange={(event) =>
+                  onChange({
+                    cancellation_min_notice_hours: Math.max(1, Number(event.target.value || 1)),
+                  })
+                }
+                className="mt-1 h-9 w-full rounded-xl border border-border bg-background px-3 text-xs outline-none transition focus:border-foreground/40"
+              />
+            </label>
+          )}
+        </div>
+
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Política de reembolso do sinal
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            O que acontece com o sinal pago se o cliente cancelar dentro do prazo.
+          </p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-3">
+            {([
+              ["refund_allowed", "Reembolso possível", "O estúdio analisa"],
+              ["reschedule_only", "Só remarcação", "Sem devolução em dinheiro"],
+              ["non_refundable", "Não reembolsável", "Sinal nunca devolvido"],
+            ] as const).map((option) => {
+              const meta = getPolicyParts(option[0], data.cancellation_min_notice_hours);
+              const isActive = data.cancellation_after_deadline_policy === option[0];
+              const isWarning = option[0] === "non_refundable";
+              return (
+                <button
+                  key={option[0]}
+                  type="button"
+                  onClick={() => onChange({ cancellation_after_deadline_policy: option[0] })}
+                  className={`flex min-h-[4.5rem] flex-col justify-between rounded-xl border px-3 py-2.5 text-left transition ${
+                    isActive
+                      ? isWarning
+                        ? "border-amber-500/60 bg-amber-500/15 text-foreground"
+                        : "border-foreground bg-foreground text-background"
+                      : "border-border hover:bg-muted"
+                  }`}
+                >
+                  <span className="text-[11px] font-semibold leading-snug">{meta.optionTitle}</span>
+                  <span
+                    className={`mt-1 text-[10px] leading-snug ${
+                      isActive
+                        ? isWarning
+                          ? "text-amber-700 dark:text-amber-300"
+                          : "text-background/75"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {meta.optionSubtitle}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Nota adicional para o cliente
+          </p>
+          <textarea
+            value={data.cancellation_policy_text ?? ""}
+            onChange={(event) =>
+              onChange({ cancellation_policy_text: event.target.value })
+            }
+            rows={3}
+            placeholder="Ex: Para tatuagens grandes o sinal cobre o tempo de desenho já realizado."
+            className="mt-1.5 w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-xs outline-none transition focus:border-foreground/40"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={saving}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-foreground text-xs font-bold uppercase tracking-[0.16em] text-background transition hover:opacity-90 disabled:opacity-60"
+        >
+          {saving ? "A guardar..." : "Guardar políticas"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function RefundCard({
+  request,
+  onUpdate,
+}: {
+  request: RefundRequest;
+  onUpdate: (status: RefundRequest["status"], note?: string) => void;
+}) {
+  const [note, setNote] = useState("");
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="grid gap-3 rounded-2xl border border-border bg-background p-4 transition hover:shadow-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+      <div className="min-w-0 space-y-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="truncate text-sm font-semibold text-foreground">
+            {request.client_name || "Cliente"}
+          </p>
+          <span
+            className={`inline-flex items-center rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${refundStatusClass(request.status)}`}
+          >
+            {refundStatusLabel(request.status)}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <ExternalLink className="h-3 w-3" />
+            {refundServiceLabel(request)}
+          </span>
+          <span className="inline-flex items-center gap-1.5 font-semibold tabular-nums text-foreground">
+            <Wallet className="h-3 w-3" />
+            {formatRefundAmount(request)}
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <CalendarClock className="h-3 w-3" />
+            {formatRefundDate(request)}
+          </span>
+        </div>
+
+        <div className="rounded-xl border border-border bg-muted/50 px-3 py-2">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {request.reason}
+          </p>
+        </div>
+
+        {open && (
+          <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
+            <label className="block">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Nota interna
+              </span>
+              <textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                rows={2}
+                className="mt-1 w-full resize-none rounded-lg border border-border bg-background px-2.5 py-2 text-xs outline-none transition focus:border-foreground/40"
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => onUpdate("approved", note)}
+                disabled={request.status === "approved"}
+                className="inline-flex h-9 items-center rounded-lg border border-emerald-500/70 bg-emerald-500/10 px-3 text-[11px] font-bold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-40"
+              >
+                Aprovar
+              </button>
+              <button
+                type="button"
+                onClick={() => onUpdate("rejected", note)}
+                disabled={request.status === "rejected"}
+                className="inline-flex h-9 items-center rounded-lg border border-red-500/70 bg-red-500/10 px-3 text-[11px] font-bold text-red-600 transition hover:bg-red-500/20 disabled:opacity-40"
+              >
+                Recusar
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2 sm:flex-col sm:items-end">
+        <button
+          type="button"
+          onClick={() => setOpen((current) => !current)}
+          className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-[11px] font-bold transition ${
+            open
+              ? "border-foreground bg-foreground text-background"
+              : "border-border text-muted-foreground hover:bg-muted"
+          }`}
+          title={open ? "Fechar ações" : "Ações"}
+        >
+          {open ? <ArrowDownRight className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-4 py-10 text-center text-xs text-muted-foreground">
+      <RefreshCcw className="mx-auto mb-3 h-5 w-5 text-muted-foreground/70" />
+      <p className="font-medium text-foreground/70">Sem pedidos para esta vista</p>
+      <p className="mt-1">
+        Utilize filtros e pesquisa para localizar um pedido rapidamente.
+      </p>
+    </div>
   );
 }
 
@@ -468,18 +835,20 @@ function PolicyPreview({
   customText: string | null;
 }) {
   return (
-    <div className="mt-4 space-y-3">
-      <div className="rounded-2xl border border-border bg-background p-4">
+    <div className="mt-3 space-y-2.5">
+      <div className="rounded-xl border border-border bg-background p-3">
         <div className="flex items-center gap-2">
           <Clock className="h-3.5 w-3.5 text-muted-foreground" />
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {parts.rescheduleLabel}
           </p>
         </div>
-        <p className="mt-2 text-sm leading-relaxed text-foreground/90">{parts.rescheduleBody}</p>
+        <p className="mt-1.5 text-xs leading-relaxed text-foreground/85">
+          {parts.rescheduleBody}
+        </p>
       </div>
       <div
-        className={`rounded-2xl border p-4 ${
+        className={`rounded-xl border p-3 ${
           parts.refundTone === "warning"
             ? "border-amber-500/35 bg-amber-500/8"
             : "border-border bg-background"
@@ -503,35 +872,22 @@ function PolicyPreview({
             {parts.refundLabel}
           </p>
         </div>
-        <p className="mt-2 text-sm leading-relaxed text-foreground/90">{parts.refundBody}</p>
+        <p className="mt-1.5 text-xs leading-relaxed text-foreground/85">
+          {parts.refundBody}
+        </p>
       </div>
       {customText && (
-        <div className="rounded-2xl border border-border bg-muted/40 p-4">
+        <div className="rounded-xl border border-border bg-muted/40 p-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Nota adicional do estúdio
+            Nota adicional
           </p>
-          <p className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-foreground/90">
+          <p className="mt-1.5 whitespace-pre-line text-xs leading-relaxed text-foreground/85">
             {customText}
           </p>
         </div>
       )}
     </div>
   );
-}
-
-function normalizePolicy(row: Partial<StudioPolicy> & { id: string }): StudioPolicy {
-  return {
-    id: row.id,
-    cancellation_min_notice_hours: Number(row.cancellation_min_notice_hours ?? 24),
-    cancellation_after_deadline_policy:
-      row.cancellation_after_deadline_policy === "refund_allowed" ||
-      row.cancellation_after_deadline_policy === "reschedule_only"
-        ? row.cancellation_after_deadline_policy
-        : "non_refundable",
-    refund_requests_enabled: row.refund_requests_enabled ?? true,
-    cancellation_policy_text: row.cancellation_policy_text ?? null,
-    legal_policy_version: row.legal_policy_version ?? "2026-05-28",
-  };
 }
 
 function refundStatusLabel(status: RefundRequest["status"]) {
@@ -543,11 +899,11 @@ function refundStatusLabel(status: RefundRequest["status"]) {
 }
 
 function refundStatusClass(status: RefundRequest["status"]) {
-  if (status === "in_review") return "bg-sky-500/10 text-sky-500";
-  if (status === "approved") return "bg-emerald-500/10 text-emerald-500";
-  if (status === "rejected") return "bg-red-500/10 text-red-500";
-  if (status === "refunded") return "bg-violet-500/10 text-violet-500";
-  return "bg-amber-500/10 text-amber-500";
+  if (status === "in_review") return "bg-sky-500/10 text-sky-600";
+  if (status === "approved") return "bg-emerald-500/10 text-emerald-600";
+  if (status === "rejected") return "bg-red-500/10 text-red-600";
+  if (status === "refunded") return "bg-violet-500/10 text-violet-600";
+  return "bg-amber-500/10 text-amber-600";
 }
 
 function refundServiceLabel(request: RefundRequest) {
@@ -560,7 +916,9 @@ function refundServiceLabel(request: RefundRequest) {
 function formatRefundAmount(request: RefundRequest) {
   const cents = request.payment_intents?.amount_cents;
   const amount = typeof cents === "number" ? cents / 100 : Number(request.appointments?.total_price ?? 0);
-  return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(amount || 0);
+  return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
+    amount || 0,
+  );
 }
 
 function formatRefundDate(request: RefundRequest) {
@@ -571,4 +929,30 @@ function formatRefundDate(request: RefundRequest) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function microBadgeTone(tone: PolicyTextParts["refundTone"]) {
+  if (tone === "warning") return "border-amber-500/40 bg-amber-500/12 text-amber-600";
+  if (tone === "muted") return "border-border bg-muted/60 text-foreground/80";
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-600";
+}
+
+function normalizePolicy(
+  row: Omit<Partial<StudioPolicy>, "cancellation_after_deadline_policy"> & {
+    id: string;
+    cancellation_after_deadline_policy?: string | null;
+  },
+): StudioPolicy {
+  return {
+    id: row.id,
+    cancellation_min_notice_hours: Number(row.cancellation_min_notice_hours ?? 24),
+    cancellation_after_deadline_policy:
+      row.cancellation_after_deadline_policy === "refund_allowed" ||
+      row.cancellation_after_deadline_policy === "reschedule_only"
+        ? row.cancellation_after_deadline_policy
+        : "non_refundable",
+    refund_requests_enabled: row.refund_requests_enabled ?? true,
+    cancellation_policy_text: row.cancellation_policy_text ?? null,
+    legal_policy_version: row.legal_policy_version ?? "2026-05-28",
+  };
 }

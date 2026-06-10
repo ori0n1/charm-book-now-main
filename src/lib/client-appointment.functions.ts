@@ -1,15 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
-let _admin: ReturnType<typeof createClient> | null = null;
 function admin(): any {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
+  return getAdminClient();
 }
 
 export const getClientAppointment = createServerFn({ method: "POST" })
@@ -78,7 +72,7 @@ export const requestClientRefund = createServerFn({ method: "POST" })
       })
       .select("id")
       .maybeSingle();
-    if (error) throw new Error("Nao foi possivel enviar o pedido de reembolso.");
+    if (error) throw new Error("Não foi possível enviar o pedido de reembolso.");
     return { ok: true, refundId: refund?.id ?? null };
   });
 

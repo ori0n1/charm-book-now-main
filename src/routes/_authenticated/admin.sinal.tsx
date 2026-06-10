@@ -50,7 +50,7 @@ function SinalPage() {
     toast.success("Guardado.");
   }
 
-  function toggleMethod(m: "mb_way" | "multibanco") {
+  function toggleMethod(m: "mb_way" | "card") {
     if (!studio) return;
     const set = new Set(studio.accepted_payment_methods);
     if (set.has(m)) set.delete(m);
@@ -124,9 +124,9 @@ function SinalPage() {
                 />
                 <div className="grid gap-2 sm:grid-cols-2">
                   <CheckRow
-                    checked={studio.accepted_payment_methods.includes("multibanco")}
-                    label="Multibanco"
-                    onChange={() => toggleMethod("multibanco")}
+                    checked={studio.accepted_payment_methods.includes("card")}
+                    label="Apple Pay, Google Pay e cartão"
+                    onChange={() => toggleMethod("card")}
                     disabled={saving}
                   />
                   <CheckRow
@@ -161,10 +161,17 @@ function normalizeStudio(row: unknown): StudioRow | null {
   return {
     id: studio.id,
     payment_policy: studio.payment_policy ?? "pay_in_studio",
-    accepted_payment_methods: studio.accepted_payment_methods ?? ["mb_way", "multibanco"],
+    accepted_payment_methods: normalizeAcceptedPaymentMethods(studio.accepted_payment_methods),
     deposit_percent: studio.deposit_percent ?? 25,
     commission_percent: studio.commission_percent ?? 50,
   };
+}
+
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method) => method === "mb_way" || method === "card",
+  );
+  return normalized.length ? normalized : ["mb_way", "card"];
 }
 
 function PercentSlider(props: {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
 
 type GoogleAuthButtonProps = {
@@ -14,11 +14,13 @@ export function GoogleAuthButton({ mode, className }: GoogleAuthButtonProps) {
   async function continueWithGoogle() {
     if (loading) return;
     setLoading(true);
+    const redirectTo = `${window.location.origin}/auth/callback`;
+    recordAuthDebugEvent({ kind: "google_oauth_start", url: redirectTo });
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/onboarding`,
+        redirectTo,
         queryParams: {
           access_type: "offline",
           prompt: "select_account",
@@ -27,6 +29,7 @@ export function GoogleAuthButton({ mode, className }: GoogleAuthButtonProps) {
     });
 
     if (error) {
+      recordAuthDebugEvent({ kind: "google_oauth_error", message: error.message });
       setLoading(false);
       toast.error(error.message || "Não foi possível continuar com Google.");
     }

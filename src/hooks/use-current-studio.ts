@@ -36,8 +36,8 @@ async function fetchStudios(): Promise<CurrentStudio[]> {
 }
 
 function normalizeStudios(data: unknown): CurrentStudio[] {
-  return (data ?? [])
-    .map((r) => {
+  return (Array.isArray(data) ? data : [])
+    .map((r: unknown) => {
       const row = r as { role?: AppRole | null; studios: Partial<CurrentStudio> | null };
       const studio = row.studios;
       if (!studio?.id || !studio.name || !studio.slug) return null;
@@ -55,7 +55,7 @@ function normalizeStudios(data: unknown): CurrentStudio[] {
         min_booking_notice_min: studio.min_booking_notice_min ?? 30,
       };
     })
-    .filter((s): s is CurrentStudio => !!s)
+    .filter((s: CurrentStudio | null): s is CurrentStudio => !!s)
     .sort((a, b) => roleRank(a.role) - roleRank(b.role));
 }
 

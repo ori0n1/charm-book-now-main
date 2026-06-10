@@ -48,3 +48,19 @@ export function getPlanByPriceId(env: StripeEnv, priceId: string | null | undefi
 export function getSubscriptionPriceId(subscription: Stripe.Subscription) {
   return subscription.items.data[0]?.price.id ?? null;
 }
+
+export function inferPlanIdFromSubscription(subscription: Stripe.Subscription): SubscriptionPlanId | null {
+  const recurring = subscription.items.data[0]?.price.recurring;
+  if (!recurring) return null;
+
+  const intervalCount = recurring.interval_count ?? 1;
+  if (recurring.interval === "year" && intervalCount === 1) return "yearly";
+  if (recurring.interval === "month" && intervalCount === 3) return "quarterly";
+  if (recurring.interval === "month" && intervalCount === 1) return "monthly";
+  return null;
+}
+
+export function getPlanIdFromSubscription(env: StripeEnv, subscription: Stripe.Subscription) {
+  const mappedPlan = getPlanByPriceId(env, getSubscriptionPriceId(subscription));
+  return mappedPlan?.id ?? inferPlanIdFromSubscription(subscription);
+}

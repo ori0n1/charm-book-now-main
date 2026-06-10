@@ -1,30 +1,36 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 import { getSubscriptionPlans, isSubscriptionPlanId } from "@/lib/subscription-plans.server";
-
-let _admin: SupabaseClient | null = null;
-
-function admin() {
-  if (!_admin) {
-    _admin = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: { persistSession: false },
-    });
-  }
-  return _admin;
-}
+import { getAdminClient } from "@/lib/supabase-admin.server";
+import {
+  loadPrimaryStudio,
+  assertNoDuplicateActiveSubscription,
+  ensureCustomer,
+  trialEndUnix,
+  reserveCheckoutSession,
+} from "@/lib/subscription-helpers";
 
 function stripeEnv(): StripeEnv {
   return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
 }
 
-function appBaseUrl() {
-  return (
+function appBaseUrl(request: Request) {
+  const configured = (
     process.env.APP_URL ??
     process.env.VITE_APP_URL ??
     process.env.PUBLIC_APP_URL ??
-    "http://127.0.0.1:5173"
+    ""
   ).replace(/\/$/, "");
+  if (configured) return configured;
+
+  const origin = request.headers.get("origin");
+  if (origin) return origin.replace(/\/$/, "");
+  const host = request.headers.get("host");
+  if (host) {
+    const proto = request.headers.get("x-forwarded-proto") || "https";
+    return `${proto}://${host}`.replace(/\/$/, "");
+  }
+  return "http://127.0.0.1:5173";
 }
 
 async function getUserFromRequest(request: Request) {
@@ -32,68 +38,10 @@ async function getUserFromRequest(request: Request) {
   const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) throw new Error("unauthorized");
 
-  const { data, error } = await admin().auth.getUser(token);
+  const db = getAdminClient();
+  const { data, error } = await db.auth.getUser(token);
   if (error || !data.user) throw new Error("unauthorized");
   return data.user;
-}
-
-async function loadPrimaryStudio(userId: string) {
-  const db = admin() as any;
-  const { data } = await db
-    .from("user_roles")
-    .select("studio_id,studios(id,name,email,stripe_customer_id,subscription_status,trial_ends_at)")
-    .eq("user_id", userId)
-    .limit(1)
-    .maybeSingle();
-
-  return (data?.studios ?? null) as
-    | {
-        id: string;
-        name: string | null;
-        email: string | null;
-        stripe_customer_id: string | null;
-        subscription_status: string | null;
-        trial_ends_at: string | null;
-      }
-    | null;
-}
-
-async function assertNoDuplicateActiveSubscription(studioId: string) {
-  const db = admin() as any;
-  const { data, error } = await db
-    .from("subscriptions")
-    .select("id,status")
-    .eq("studio_id", studioId)
-    .in("status", ["active", "trialing", "incomplete"])
-    .maybeSingle();
-  if (!error && data?.id) throw new Error("subscription_already_exists");
-}
-
-async function ensureCustomer(input: {
-  userId: string;
-  email: string | null;
-  studio: NonNullable<Awaited<ReturnType<typeof loadPrimaryStudio>>>;
-}) {
-  if (input.studio?.stripe_customer_id) return input.studio.stripe_customer_id;
-
-  const stripe = createStripeClient(stripeEnv());
-  const customer = await stripe.customers.create({
-    email: input.email ?? input.studio?.email ?? undefined,
-    name: input.studio?.name ?? undefined,
-    metadata: {
-      user_id: input.userId,
-      studio_id: input.studio?.id ?? "",
-    },
-  });
-
-  if (input.studio?.id) {
-    await admin()
-      .from("studios")
-      .update({ stripe_customer_id: customer.id })
-      .eq("id", input.studio.id);
-  }
-
-  return customer.id;
 }
 
 export const Route = createFileRoute("/api/create-checkout-session")({
@@ -109,19 +57,31 @@ export const Route = createFileRoute("/api/create-checkout-session")({
           }
 
           const plan = getSubscriptionPlans(stripeEnv())[planId];
-          const studio = await loadPrimaryStudio(user.id);
+          const sb = getAdminClient();
+          const studio = await loadPrimaryStudio(sb, user.id);
           if (!studio?.id) {
             return Response.json({ error: "studio_required" }, { status: 409 });
           }
-          await assertNoDuplicateActiveSubscription(studio.id);
-
-          const customerId = await ensureCustomer({
-            userId: user.id,
-            email: user.email ?? null,
-            studio,
-          });
+          await assertNoDuplicateActiveSubscription(sb, studio.id);
 
           const stripe = createStripeClient(stripeEnv());
+          const customerId = await ensureCustomer(sb, stripe, studio);
+
+          // Reserve checkout session to prevent race condition
+          // This record will be updated by webhook when Stripe confirms
+          await reserveCheckoutSession(sb, {
+            userId: user.id,
+            studioId: studio.id,
+            planId: planId,
+            priceId: plan.priceId,
+            customerId,
+          });
+
+          const trialEnd = trialEndUnix(
+            studio.trial_ends_at,
+            studio.subscription_status,
+            studio.trial_used_at,
+          );
           const session = await stripe.checkout.sessions.create({
             mode: "subscription",
             customer: customerId,
@@ -138,12 +98,10 @@ export const Route = createFileRoute("/api/create-checkout-session")({
                 studio_id: studio.id,
                 plan: plan.id,
               },
-              ...(trialEndUnix(studio.trial_ends_at, studio.subscription_status)
-                ? { trial_end: trialEndUnix(studio.trial_ends_at, studio.subscription_status) }
-                : {}),
+              ...(trialEnd ? { trial_end: trialEnd } : {}),
             },
-            success_url: `${appBaseUrl()}/admin/pagamentos?billing=success`,
-            cancel_url: `${appBaseUrl()}/?billing=cancelled`,
+            success_url: `${appBaseUrl(request)}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${appBaseUrl(request)}/admin/pagamentos?billing=cancelled`,
           });
 
           return Response.json({ url: session.url });
@@ -163,10 +121,3 @@ export const Route = createFileRoute("/api/create-checkout-session")({
     },
   },
 });
-
-function trialEndUnix(trialEndsAt?: string | null, status?: string | null) {
-  if (status && status !== "trialing") return null;
-  if (!trialEndsAt) return null;
-  const timestamp = Math.floor(new Date(trialEndsAt).getTime() / 1000);
-  return timestamp > Math.floor(Date.now() / 1000) ? timestamp : null;
-}
