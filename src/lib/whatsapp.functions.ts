@@ -6,6 +6,7 @@ import {
   assertStudioAccessWithOptions,
   rateLimitOrThrow,
 } from "@/lib/server-security";
+import { getPublicReservationCode } from "@/lib/reservation-code";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { formatStudioDate, formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
 
@@ -26,8 +27,6 @@ const SENDDM_BOOKING_CONFIRMATION_PARAMETERS = [
   "orderId",
 ] as const;
 const EMAIL_PROVIDER = "resend_email";
-const EMAIL_SUBJECT_PREFIX = "Bellza";
-
 type WhatsAppSendInput = {
   to: string;
   body: string;
@@ -454,6 +453,7 @@ class SendDmService implements WhatsAppProvider {
         messageKind: input.messageKind ?? "confirmation",
         appointmentId: input.appointmentId ?? undefined,
         orderId: input.orderId,
+        reservationCode: getPublicReservationCode(input.orderId),
         reservationUrl: input.reservationUrl,
       },
     };
@@ -987,23 +987,26 @@ async function isEmailNotificationsEnabled() {
 }
 
 function buildEmailSubject(ctx: ConfirmationContext) {
+  const sender = ctx.studioName || "O seu estúdio";
   if (ctx.messageKind === "reschedule") {
-    return `${EMAIL_SUBJECT_PREFIX}: reserva remarcada para ${formatEmailDateTime(ctx.startsAt, ctx.studioTimezone)}`;
+    return `${sender}: reserva remarcada para ${formatEmailDateTime(ctx.startsAt, ctx.studioTimezone)}`;
   }
   if (ctx.messageKind === "cancellation") {
-    return `${EMAIL_SUBJECT_PREFIX}: reserva cancelada`;
+    return `${sender}: reserva cancelada`;
   }
-  return `${EMAIL_SUBJECT_PREFIX}: reserva confirmada para ${formatEmailDateTime(ctx.startsAt, ctx.studioTimezone)}`;
+  return `${sender}: reserva confirmada para ${formatEmailDateTime(ctx.startsAt, ctx.studioTimezone)}`;
 }
 
 function buildBookingConfirmationEmail(ctx: ConfirmationContext, renderedMessage: string) {
   const variables = buildTemplateVariables(ctx);
-  const studioName = escapeHtml(ctx.studioName || "Bellza");
+  const rawStudioName = ctx.studioName || "O seu estúdio";
+  const studioName = escapeHtml(rawStudioName);
   const clientName = escapeHtml(ctx.clientName || "Cliente");
-  const serviceName = escapeHtml(ctx.serviceName || "Servico");
+  const serviceName = escapeHtml(ctx.serviceName || "Serviço");
   const staffName = escapeHtml(ctx.staffName || "Profissional");
   const date = escapeHtml(variables.data);
   const time = escapeHtml(variables.hora);
+  const reservationCode = escapeHtml(getPublicReservationCode(publicOrderIdFromUrl(ctx.bookingUrl) || ctx.appointmentId));
   const actionBaseUrl = ctx.bookingUrl || getPublicOrigin();
   const bookingUrl = escapeHtml(actionBaseUrl);
   const rescheduleUrl = escapeHtml(`${actionBaseUrl}?acao=remarcar`);
@@ -1015,19 +1018,20 @@ function buildBookingConfirmationEmail(ctx: ConfirmationContext, renderedMessage
       : ctx.messageKind === "cancellation"
         ? "Reserva cancelada"
         : "Reserva confirmada";
-  const preheader = escapeHtml(`${heading} para ${variables.data} as ${variables.hora}.`);
+  const preheader = escapeHtml(`${heading} para ${variables.data} às ${variables.hora}.`);
   const text = [
-    `Ola, ${ctx.clientName || "Cliente"}.`,
+    `Olá, ${ctx.clientName || "Cliente"}.`,
     "",
-    "A sua reserva foi confirmada.",
+    `A sua reserva no ${rawStudioName} foi confirmada.`,
+    `Código da reserva: ${getPublicReservationCode(publicOrderIdFromUrl(ctx.bookingUrl) || ctx.appointmentId)}`,
     `Data: ${variables.data}`,
     `Hora: ${variables.hora}`,
-    `Servico: ${ctx.serviceName}`,
+    `Serviço: ${ctx.serviceName}`,
     `Profissional: ${ctx.staffName}`,
     "",
     ctx.bookingUrl ? `Ver reserva: ${ctx.bookingUrl}` : "",
     "",
-    "Obrigado, Bellza.",
+    `Obrigado, ${rawStudioName}.`,
   ].filter(Boolean).join("\n");
 
   const html = `<!doctype html>
@@ -1045,7 +1049,7 @@ function buildBookingConfirmationEmail(ctx: ConfirmationContext, renderedMessage
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#fff;border:1px solid #e8dfd6;border-radius:20px;overflow:hidden;box-shadow:0 18px 60px rgba(56,39,24,.10);">
             <tr>
               <td style="padding:28px 28px 18px;background:#171412;color:#fff;">
-                <div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#d9b98f;font-weight:700;">Bellza</div>
+                <div style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#d9b98f;font-weight:700;">${studioName}</div>
                 <h1 style="margin:10px 0 0;font-size:26px;line-height:1.2;font-weight:800;">${escapeHtml(heading)}</h1>
                 <p style="margin:10px 0 0;color:#e8dfd6;font-size:15px;line-height:1.55;">${studioName} confirmou a sua marcação.</p>
               </td>
@@ -1054,9 +1058,10 @@ function buildBookingConfirmationEmail(ctx: ConfirmationContext, renderedMessage
               <td style="padding:28px;">
                 <p style="margin:0 0 18px;font-size:16px;line-height:1.6;">Olá, <strong>${clientName}</strong>.</p>
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0 10px;">
+                  ${emailDetailRow("Reserva", reservationCode)}
                   ${emailDetailRow("Data", date)}
                   ${emailDetailRow("Hora", time)}
-                  ${emailDetailRow("Servico", serviceName)}
+                  ${emailDetailRow("Serviço", serviceName)}
                   ${emailDetailRow("Profissional", staffName)}
                 </table>
                 <div style="margin:24px 0 0;padding:16px 18px;border-radius:16px;background:#fbf8f4;border:1px solid #eee4d9;">
@@ -1076,7 +1081,7 @@ function buildBookingConfirmationEmail(ctx: ConfirmationContext, renderedMessage
             </tr>
             <tr>
               <td style="padding:18px 28px 26px;color:#7a6d60;font-size:12px;line-height:1.5;background:#fbf8f4;">
-                Este e-mail foi enviado automaticamente pela Bellza como confirmação da sua marcação.
+                Mensagem automática enviada pelo estúdio sobre a sua reserva.
               </td>
             </tr>
           </table>

@@ -48,6 +48,7 @@ import { useCurrentStudio } from "@/hooks/use-current-studio";
 import {
   sortAppointmentsChronologically as sortAppointmentsChronologicallyShared,
 } from "@/lib/appointment-ordering";
+import { getPublicReservationCode } from "@/lib/reservation-code";
 import {
   computeAttendanceRevenue,
   computeFinancialSplit,
@@ -70,6 +71,7 @@ export const Route = createFileRoute("/_authenticated/admin/agenda")({
 
 type Appt = {
   id: string;
+  public_token?: string | null;
   starts_at: string;
   ends_at: string;
   status: string;
@@ -1427,6 +1429,11 @@ function AppointmentCard({
               {a.staff.name}
             </p>
           )}
+          {a.public_token && canViewSensitiveDetails && (
+            <p className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+              Reserva #{getPublicReservationCode(a.public_token)}
+            </p>
+          )}
         </div>
 
         <div className="col-start-4 row-start-1 flex shrink-0 items-center justify-end gap-0.5 md:col-start-6 md:row-start-1 md:justify-end">
@@ -2196,19 +2203,19 @@ function sortAppointmentsChronologically(items: Appt[]) {
 async function fetchAgendaAppointments(studioId: string, staffId?: string | null) {
   // Try with avatar_url (present if clients table has that column)
   const withAvatar = await supabase.from("appointments")
-    .select("id,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,avatar_url,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))")
+    .select("id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,avatar_url,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))")
     .eq("studio_id", studioId).match(staffId ? { staff_id: staffId } : {}).order("starts_at", { ascending: true }).limit(1000);
   if (!withAvatar.error) return withAvatar;
 
   // Fallback: full schema without avatar_url
   const full = await supabase.from("appointments")
-    .select("id,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))")
+    .select("id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))")
     .eq("studio_id", studioId).match(staffId ? { staff_id: staffId } : {}).order("starts_at", { ascending: true }).limit(1000);
   if (!full.error) return full;
 
   // Legacy fallback
   return supabase.from("appointments")
-    .select("id,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name),appointment_services(price,services(name))")
+    .select("id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name),appointment_services(price,services(name))")
     .eq("studio_id", studioId).match(staffId ? { staff_id: staffId } : {}).order("starts_at", { ascending: true }).limit(1000);
 }
 

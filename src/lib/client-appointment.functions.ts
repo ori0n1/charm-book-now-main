@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getBookingManageability } from "@/lib/booking-manageability";
 import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
+import { getPublicReservationCode } from "@/lib/reservation-code";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { formatStudioDateTime } from "@/lib/studio-time";
 import { sendAppointmentLifecycleMessage } from "@/lib/whatsapp.functions";
@@ -187,7 +188,7 @@ async function loadAppointmentByToken(sb: any, token: string) {
   const { data, error } = await sb
     .from("appointments")
     .select(
-      "id,public_token,studio_id,staff_id,starts_at,ends_at,created_at,status,total_price,cancellation_reason,clients(name,phone,email),staff(id,name),studios(id,name,slug,timezone,whatsapp,phone,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,payment_policy,deposit_percent,studio_policy_settings)",
+      "id,public_token,studio_id,staff_id,starts_at,ends_at,created_at,status,total_price,cancellation_reason,clients(name,phone,email),staff(id,name),studios(id,name,slug,logo_url,timezone,whatsapp,phone,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,payment_policy,deposit_percent,studio_policy_settings)",
     )
     .eq("public_token", token)
     .maybeSingle();
@@ -220,14 +221,16 @@ async function buildAppointmentPayload(sb: any, appt: any) {
   return {
     id: appt.id,
     token: appt.public_token,
+    reservationCode: getPublicReservationCode(appt.public_token ?? appt.id),
     status: appt.status,
     startsAt: appt.starts_at,
     endsAt: appt.ends_at,
     totalPrice: Number(appt.total_price || 0),
     clientName: appt.clients?.name ?? "Cliente",
     clientPhone: appt.clients?.phone ?? "",
-    studioName: appt.studios?.name ?? "Estudio",
+    studioName: appt.studios?.name ?? "Estúdio",
     studioSlug: appt.studios?.slug ?? "",
+    studioLogoUrl: appt.studios?.logo_url ?? null,
     studioTimezone: appt.studios?.timezone ?? "Europe/Lisbon",
     studioPhone: appt.studios?.whatsapp ?? appt.studios?.phone ?? "",
     staffName: appt.staff?.name ?? "Profissional",

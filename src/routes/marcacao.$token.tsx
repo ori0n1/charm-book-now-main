@@ -11,10 +11,10 @@ import {
   requestClientRefund,
   rescheduleClientAppointment,
 } from "@/lib/client-appointment.functions";
-import { formatStudioDate, formatStudioDateTime, formatStudioTimeRange } from "@/lib/studio-time";
+import { formatStudioDate, formatStudioTimeRange } from "@/lib/studio-time";
 
 export const Route = createFileRoute("/marcacao/$token")({
-  head: () => ({ meta: [{ title: "Detalhes da marcação" }] }),
+  head: () => ({ meta: [{ title: "Gerir reserva" }] }),
   validateSearch: (search: Record<string, unknown>) => ({
     acao: typeof search.acao === "string" ? search.acao : undefined,
   }),
@@ -26,9 +26,11 @@ type AppointmentView = {
   startsAt: string;
   endsAt: string;
   totalPrice: number;
+  reservationCode: string;
   clientName: string;
   studioName: string;
   studioSlug: string;
+  studioLogoUrl: string | null;
   studioTimezone: string;
   studioPhone: string;
   staffName: string;
@@ -204,15 +206,35 @@ function ClientAppointmentPage() {
   }
 
   const waPhone = normalizePhone(appointment.studioPhone);
+  const studioDisplayName = appointment.studioName?.trim();
+  const contactIntro = studioDisplayName
+    ? `Tenho uma reserva no ${studioDisplayName} e gostaria de obter algumas informações sobre o meu agendamento.`
+    : "Gostaria de obter algumas informações sobre o meu agendamento.";
   const waText = encodeURIComponent(
     [
-      "Olá! Tenho uma reserva na Bellza e gostaria de obter mais informações sobre o meu agendamento.",
+      "Olá!",
       "",
-      `Nome: ${appointment.clientName}`,
-      `Serviço: ${serviceLabel}`,
-      `Profissional: ${appointment.staffName}`,
-      `Data e hora: ${formatDateTime(appointment.startsAt, appointment.studioTimezone)}`,
-      `Código da reserva: ${token}`,
+      contactIntro,
+      "",
+      "Nome:",
+      appointment.clientName,
+      "",
+      "Serviço:",
+      serviceLabel,
+      "",
+      "Profissional:",
+      appointment.staffName,
+      "",
+      "Data:",
+      formatDate(appointment.startsAt, appointment.studioTimezone),
+      "",
+      "Hora:",
+      formatTimeRange(appointment.startsAt, appointment.endsAt, appointment.studioTimezone),
+      "",
+      "Código da reserva:",
+      appointment.reservationCode,
+      "",
+      "Obrigado!",
     ].join("\n"),
   );
   const manageabilityMessage =
@@ -232,12 +254,16 @@ function ClientAppointmentPage() {
     <main className="min-h-screen bg-background px-4 py-5 sm:px-6 sm:py-10">
       <div className="mx-auto w-full max-w-xl">
         <section className="rounded-3xl border border-border bg-card p-5 shadow-2xl shadow-black/5 sm:p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
-                {appointment.studioName}
-              </p>
-              <h1 className="mt-2 text-2xl font-light tracking-tight">A sua marcação</h1>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <StudioLogo src={appointment.studioLogoUrl} name={appointment.studioName} />
+              <div className="min-w-0">
+                <p className="truncate text-lg font-semibold tracking-tight">{appointment.studioName}</p>
+                <p className="mt-1 font-mono text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Reserva #{appointment.reservationCode}
+                </p>
+                <h1 className="sr-only">Gerir reserva</h1>
+              </div>
             </div>
             <StatusBadge status={appointment.status} />
           </div>
@@ -403,6 +429,19 @@ function ClientAppointmentPage() {
   );
 }
 
+function StudioLogo({ src, name }: { src: string | null; name: string }) {
+  const initial = (name || "E").trim().charAt(0).toUpperCase();
+  return (
+    <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-2xl border border-border bg-background text-sm font-semibold shadow-sm">
+      {src ? (
+        <img src={src} alt={`Logótipo de ${name}`} className="h-full w-full object-cover" loading="lazy" />
+      ) : (
+        <span>{initial}</span>
+      )}
+    </div>
+  );
+}
+
 function InfoRow({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-border bg-background/70 px-3 py-3">
@@ -416,16 +455,32 @@ function InfoRow({ icon, label, value }: { icon: ReactNode; label: string; value
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const label = status === "cancelled" ? "Cancelada" : status === "completed" ? "Realizada" : "Confirmada";
-  return <span className="rounded-full bg-muted px-3 py-1 text-[11px] font-semibold">{label}</span>;
+  const normalized = String(status || "").toLowerCase();
+  const label =
+    normalized === "cancelled"
+      ? "Cancelada"
+      : normalized === "completed"
+        ? "Concluída"
+        : normalized.includes("pending")
+          ? "Pendente"
+          : "Confirmada";
+  const tone =
+    normalized === "cancelled"
+      ? "bg-red-500/10 text-red-700 dark:text-red-300"
+      : normalized.includes("pending")
+        ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+        : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  const symbol = normalized === "cancelled" ? "×" : normalized.includes("pending") ? "•" : "✓";
+  return (
+    <span className={`inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-[11px] font-semibold ${tone}`}>
+      <span aria-hidden="true">{symbol}</span>
+      {label}
+    </span>
+  );
 }
 
 function formatDate(value: string, timeZone?: string | null) {
   return formatStudioDate(value, timeZone, { weekday: "long" });
-}
-
-function formatDateTime(value: string, timeZone?: string | null) {
-  return formatStudioDateTime(value, timeZone);
 }
 
 function formatTimeRange(start: string, end: string, timeZone?: string | null) {
