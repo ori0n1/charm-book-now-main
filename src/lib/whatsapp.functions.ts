@@ -165,6 +165,7 @@ export const testWhatsAppMessage = createServerFn({ method: "POST" })
     if (!to) throw new Error("Telefone invalido para WhatsApp.");
 
     const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const bookingUrl = await loadLatestAppointmentPublicUrlForStudio(sb, data.studioId);
     const ctx: ConfirmationContext = {
       studioId: studio.id,
       studioName: studio.name ?? "Estúdio",
@@ -182,7 +183,7 @@ export const testWhatsAppMessage = createServerFn({ method: "POST" })
       currency: "eur",
       template: studio.whatsapp_default_message ?? DEFAULT_TEMPLATE,
       autoEnabled: true,
-      bookingUrl: `${getPublicOrigin()}/r/teste`,
+      bookingUrl,
     };
     const templateVariables = buildTemplateVariables(ctx);
     const result = await getWhatsAppProvider().sendText({
@@ -283,9 +284,17 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
     });
     return null;
   });
-  if (existing?.status === "sent" || existing?.status === "pending") {
+  if (existing?.status === "sent" || (existing?.status === "pending" && !isStalePendingWhatsAppLog(existing))) {
     await emailPromise;
     return existing;
+  }
+  if (existing?.status === "pending") {
+    console.warn("[whatsapp] retrying stale pending confirmation", {
+      idempotency_key: idempotencyKey,
+      studio_id: ctx.studioId,
+      appointment_id: ctx.appointmentId,
+      created_at: existing.created_at,
+    });
   }
 
   const recipient = normalizeWhatsAppPhone(ctx.clientPhone);
@@ -1502,6 +1511,21 @@ async function ensureAppointmentPublicUrl(sb: any, appointmentId: string) {
   return `${getPublicOrigin()}/r/${token}`;
 }
 
+async function loadLatestAppointmentPublicUrlForStudio(sb: any, studioId: string) {
+  const { data, error } = await sb
+    .from("appointments")
+    .select("id")
+    .eq("studio_id", studioId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.id) {
+    throw new Error("Crie uma marcação antes de enviar o teste, para que o botão use um link real da reserva.");
+  }
+  return ensureAppointmentPublicUrl(sb, data.id);
+}
+
 function getPublicOrigin() {
   return "https://bellza.pt";
 }
@@ -1566,6 +1590,16 @@ async function findExistingConfirmationLog(sb: any, ctx: ConfirmationContext) {
   }
 
   return null;
+}
+
+function isStalePendingWhatsAppLog(log: any) {
+  if (log?.status !== "pending") return false;
+  if (log?.provider_message_id) return false;
+  const payload = log?.payload;
+  if (payload?.response || payload?.request) return false;
+  const createdAt = Date.parse(String(log?.created_at ?? ""));
+  if (!Number.isFinite(createdAt)) return true;
+  return Date.now() - createdAt > 2 * 60 * 1000;
 }
 
 async function findExistingEmailLog(sb: any, idempotencyKey: string) {
