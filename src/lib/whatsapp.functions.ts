@@ -442,7 +442,7 @@ class SendDmService implements WhatsAppProvider {
       channel: ["whatsapp"],
       ...(senderId ? { from: senderId } : {}),
       template: {
-        id: modelId,
+        name: internalTemplate,
         parameters: templateParameters,
       },
       metadata: {
