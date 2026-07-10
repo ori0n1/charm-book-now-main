@@ -263,8 +263,6 @@ function RecebimentoPage() {
   const recentPayments = financial?.recentPayments ?? [];
   const hasMoreRecentPayments = recentPayments.length > 4;
   const visibleRecentPayments = showAllRecentPayments ? recentPayments : recentPayments.slice(0, 4);
-  const effectiveFeeLabel = getEffectiveStripeFeeLabel(financial);
-
   return (
     <div className="space-y-3 pb-6 xl:mx-auto xl:max-w-[88rem]">
       <section className="rounded-[1.25rem] border border-border bg-card p-4 shadow-sm md:p-5">
@@ -329,7 +327,7 @@ function RecebimentoPage() {
 
       {!loading && !error && (
         <>
-          <section className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
+          <section className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
             <MetricCard
               icon={Wallet}
               label="Saldo disponível"
@@ -344,24 +342,7 @@ function RecebimentoPage() {
               detail="Antes das taxas."
               tone="amber"
             />
-            <MetricCard
-              icon={BadgeCheck}
-              label="Tarifa aplicada"
-              value={financial?.stripeFeePricingLabel ?? "Por transação"}
-              detail={
-                financial?.stripeFeePricingLabel
-                  ? "Derivada de transações completas."
-                  : "A Stripe confirma a taxa em cada cobrança."
-              }
-              tone="blue"
-            />
-            <MetricCard
-              icon={BadgeCheck}
-              label="Taxa efetiva"
-              value={formatPercent(financial?.effectiveStripeFeeRate)}
-              detail={effectiveFeeLabel}
-              tone="amber"
-            />
+            <StripeFeesMetric financial={financial} />
             <MetricCard
               icon={CreditCard}
               label="Líquido recebido"
@@ -581,6 +562,41 @@ function MetricCard({
   );
 }
 
+function StripeFeesMetric({ financial }: { financial?: ConnectFinancialSummary }) {
+  const schedule = financial?.stripeFeeSchedule;
+  const sourceLabel = schedule?.source === "configured" ? "Configuração Bellza" : "Stripe Portugal";
+  return (
+    <article className="min-w-0 rounded-[1.1rem] border border-border bg-card p-3 shadow-sm md:p-3.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[9px] font-black uppercase tracking-[0.12em] text-muted-foreground sm:text-[10px]">
+            Taxas Stripe
+          </p>
+          <div className="mt-1.5 space-y-1">
+            <FeeLine label="MB WAY" value={schedule?.mbWay ?? "Consultar painel Stripe"} />
+            <FeeLine label="Cartão" value={schedule?.card ?? "Consultar painel Stripe"} />
+          </div>
+        </div>
+        <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+          <BadgeCheck className="h-3.5 w-3.5" />
+        </span>
+      </div>
+      <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground sm:text-xs">
+        {sourceLabel}. {schedule?.note ?? "Confirme condições personalizadas no painel Stripe."}
+      </p>
+    </article>
+  );
+}
+
+function FeeLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-2 whitespace-nowrap text-xs sm:text-sm">
+      <span className="shrink-0 font-bold text-muted-foreground">{label}</span>
+      <span className="min-w-0 text-right font-extrabold text-foreground">{value}</span>
+    </div>
+  );
+}
+
 function StripeTransferCard({ financial }: { financial?: ConnectFinancialSummary }) {
   const payout = financial?.payout;
   const lastPayout = payout?.lastPayoutAt ? formatDate(payout.lastPayoutAt) : null;
@@ -635,7 +651,6 @@ function PaymentRow({
   const gross = getPaymentGrossCents(payment);
   const stripeFee = getPaymentStripeFeeCents(payment);
   const net = getPaymentNetCents(payment);
-  const transactionEffectiveRate = stripeFee != null && gross > 0 ? formatPercent((stripeFee / gross) * 100) : null;
   const transactionId =
     payment.stripeBalanceTransactionId ?? payment.stripeChargeId ?? payment.stripePaymentIntentId;
 
@@ -679,7 +694,6 @@ function PaymentRow({
         <PaymentAmountBox
           label="Taxa Stripe"
           value={stripeFee == null ? "Por confirmar" : formatMoneyCents(stripeFee, payment.currency)}
-          detail={transactionEffectiveRate}
           tone="fee"
         />
         <PaymentAmountBox
@@ -766,13 +780,6 @@ function getPaymentNetCents(payment: ConnectFinancialSummary["recentPayments"][n
   return null;
 }
 
-function getEffectiveStripeFeeLabel(financial?: ConnectFinancialSummary) {
-  if (!financial?.effectiveStripeFeeGrossCents || financial.effectiveStripeFeeRate == null) {
-    return "Calculada apenas com transações completas.";
-  }
-  return `${formatMoneyCents(financial.effectiveStripeFeeCents, financial.currency)} em taxas confirmadas.`;
-}
-
 function buildPayoutAvailabilityText(payout?: ConnectFinancialSummary["payout"]) {
   if (payout?.nextPayoutAt) {
     return "Repasse já criado pela Stripe com data prevista de chegada.";
@@ -844,15 +851,6 @@ function formatMoneyCents(cents: number, currency = "eur") {
     style: "currency",
     currency: (currency || "eur").toUpperCase(),
   }).format(Number(cents || 0) / 100);
-}
-
-function formatPercent(value?: number | null) {
-  if (value == null || !Number.isFinite(value)) return "Sem dados";
-  return new Intl.NumberFormat("pt-PT", {
-    style: "percent",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value / 100);
 }
 
 function formatDate(value: string) {

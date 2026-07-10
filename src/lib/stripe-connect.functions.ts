@@ -53,8 +53,12 @@ export type ConnectFinancialSummary = {
   grossReceivedCents: number;
   stripeFeesCents: number;
   netReceivedCents: number;
-  stripeFeePricingLabel: string | null;
-  effectiveStripeFeeRate: number | null;
+  stripeFeeSchedule: {
+    mbWay: string;
+    card: string;
+    note: string;
+    source: "configured" | "stripe_standard_pt";
+  };
   effectiveStripeFeeGrossCents: number;
   effectiveStripeFeeCents: number;
   pendingFinancialDetailsCount: number;
@@ -334,9 +338,7 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
     (sum, row) => sum + Number(row.stripe_fee_cents ?? 0),
     0,
   );
-  const effectiveStripeFeeRate =
-    effectiveStripeFeeGrossCents > 0 ? (effectiveStripeFeeCents / effectiveStripeFeeGrossCents) * 100 : null;
-  const stripeFeePricingLabel = deriveStripeFeePricingLabel(confirmedFinancialRows);
+  const stripeFeeSchedule = getStripeFeeSchedule();
 
   return {
     availableCents,
@@ -350,8 +352,7 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
       (sum, row) => sum + Number(row.net_amount_cents ?? 0),
       0,
     ),
-    stripeFeePricingLabel,
-    effectiveStripeFeeRate,
+    stripeFeeSchedule,
     effectiveStripeFeeGrossCents,
     effectiveStripeFeeCents,
     pendingFinancialDetailsCount: scopedReceived.filter((row) => row.financial_details_status !== "confirmed").length,
@@ -398,57 +399,24 @@ function formatPayoutSchedule(schedule: any) {
   return delay ?? null;
 }
 
-function deriveStripeFeePricingLabel(
-  rows: Array<{
-    gross_amount_cents?: number | null;
-    stripe_fee_cents?: number | null;
-    method?: string | null;
-  }>,
-) {
-  const complete = rows
-    .map((row) => ({
-      gross: Number(row.gross_amount_cents ?? 0),
-      fee: Number(row.stripe_fee_cents ?? 0),
-      method: String(row.method ?? ""),
-    }))
-    .filter((row) => row.gross > 0 && row.fee > 0);
-  if (complete.length < 2) return null;
-
-  const methods = new Set(complete.map((row) => row.method));
-  if (methods.size > 1) return null;
-
-  for (let i = 0; i < complete.length; i += 1) {
-    for (let j = i + 1; j < complete.length; j += 1) {
-      const a = complete[i];
-      const b = complete[j];
-      const grossDelta = b.gross - a.gross;
-      if (!grossDelta) continue;
-      const rate = (b.fee - a.fee) / grossDelta;
-      const fixed = a.fee - a.gross * rate;
-      if (rate < 0 || fixed < 0) continue;
-      const predictedOk = complete.every((row) => Math.abs(row.fee - (row.gross * rate + fixed)) <= 2);
-      if (predictedOk) {
-        return `${formatPercentNumber(rate * 100)} + ${formatCentsNumber(Math.round(fixed))} por transação`;
-      }
-    }
+function getStripeFeeSchedule(): ConnectFinancialSummary["stripeFeeSchedule"] {
+  const configuredMbWay = process.env.STRIPE_MB_WAY_FEE_LABEL?.trim();
+  const configuredCard = process.env.STRIPE_CARD_FEE_LABEL?.trim();
+  if (configuredMbWay || configuredCard) {
+    return {
+      mbWay: configuredMbWay || "Consultar painel Stripe",
+      card: configuredCard || "Consultar painel Stripe",
+      note: "Tarifa configurada para a Bellza. Confirme condições personalizadas no painel Stripe.",
+      source: "configured",
+    };
   }
-  return null;
-}
 
-function formatPercentNumber(value: number) {
-  return (
-    new Intl.NumberFormat("pt-PT", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 2,
-    }).format(value) + "%"
-  );
-}
-
-function formatCentsNumber(cents: number) {
-  return new Intl.NumberFormat("pt-PT", {
-    style: "currency",
-    currency: "EUR",
-  }).format(Number(cents || 0) / 100);
+  return {
+    mbWay: "1,5% + 0,25 €",
+    card: "EEE standard: 1,5% + 0,25 €",
+    note: "Preço standard Stripe Portugal. Cartões premium, UK ou internacionais podem ter tarifas diferentes.",
+    source: "stripe_standard_pt",
+  };
 }
 
 // ── Server functions ──────────────────────────────────────────────────────────
