@@ -571,23 +571,16 @@ function StripeFeesMetric({ financial }: { financial?: ConnectFinancialSummary }
           <p className="text-[9px] font-black uppercase tracking-[0.12em] text-muted-foreground sm:text-[10px]">
             Taxas Stripe
           </p>
-          <div className="mt-2 space-y-1.5">
-            <FeeLine label="MB WAY" value={schedule?.mbWay ?? "Consultar painel Stripe"} />
-            <FeeLine label="Cartão" value={schedule?.card ?? "Consultar painel Stripe"} />
-          </div>
+          <p className="mt-1.5 whitespace-nowrap text-lg font-extrabold tracking-tight text-foreground sm:text-xl">
+            {schedule?.label ?? "Consultar painel Stripe"}
+          </p>
+          <p className="mt-1 text-[11px] font-medium leading-tight text-muted-foreground sm:text-xs">
+            Aplicada aos pagamentos online.
+          </p>
         </div>
         <BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
       </div>
     </article>
-  );
-}
-
-function FeeLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex min-w-0 items-baseline justify-between gap-2 text-xs sm:text-sm">
-      <span className="shrink-0 font-bold text-muted-foreground">{label}</span>
-      <span className="min-w-0 text-right font-extrabold leading-tight text-foreground">{value}</span>
-    </div>
   );
 }
 

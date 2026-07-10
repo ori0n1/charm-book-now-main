@@ -54,8 +54,7 @@ export type ConnectFinancialSummary = {
   stripeFeesCents: number;
   netReceivedCents: number;
   stripeFeeSchedule: {
-    mbWay: string;
-    card: string;
+    label: string;
     source: "configured" | "stripe_standard_pt";
   };
   effectiveStripeFeeGrossCents: number;
@@ -401,17 +400,21 @@ function formatPayoutSchedule(schedule: any) {
 function getStripeFeeSchedule(): ConnectFinancialSummary["stripeFeeSchedule"] {
   const configuredMbWay = process.env.STRIPE_MB_WAY_FEE_LABEL?.trim();
   const configuredCard = process.env.STRIPE_CARD_FEE_LABEL?.trim();
+  if (configuredMbWay && configuredMbWay === configuredCard) {
+    return {
+      label: configuredMbWay,
+      source: "configured",
+    };
+  }
   if (configuredMbWay || configuredCard) {
     return {
-      mbWay: configuredMbWay || "Consultar painel Stripe",
-      card: configuredCard || "Consultar painel Stripe",
+      label: configuredMbWay || configuredCard || "Consultar painel Stripe",
       source: "configured",
     };
   }
 
   return {
-    mbWay: "1,5% + 0,25 €",
-    card: "1,5% + taxa fixa",
+    label: "1,5% + 0,25 €",
     source: "stripe_standard_pt",
   };
 }
