@@ -102,14 +102,19 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
     .select("recipient,status,payload")
     .eq("channel", "push_studio")
     .gte("created_at", cutoff)
+    .order("created_at", { ascending: false })
     .limit(1000);
   if (logsError) throw new Error(logsError.message);
 
   const dispatchedKeys = new Set<string>();
   for (const log of ((existingLogs ?? []) as NotificationLogRow[])) {
-    if (log.status !== "sent") continue;
     const notificationId = readPayloadString(log.payload, "studio_notification_id");
     if (!notificationId || !notificationIds.has(notificationId)) continue;
+    if (log.status === "skipped" && log.recipient.startsWith("studio:")) {
+      dispatchedKeys.add(studioPushNoTargetKey(notificationId, log.recipient.replace(/^studio:/, "")));
+      continue;
+    }
+    if (log.status !== "sent") continue;
     const endpoint = readPayloadString(log.payload, "endpoint");
     if (endpoint) dispatchedKeys.add(studioPushDeliveryKey(notificationId, endpoint));
   }
@@ -127,7 +132,7 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
     const targets = await loadStudioPushTargets(sb, notification, dispatchedKeys);
 
     if (targets.length === 0) {
-      const key = `${notification.id}:studio:${notification.studio_id}`;
+      const key = studioPushNoTargetKey(notification.id, notification.studio_id);
       if (!dispatchedKeys.has(key)) {
         await insertNotificationLog(sb, {
           studioId: notification.studio_id,
@@ -301,6 +306,10 @@ async function loadStudioPushTargets(
 
 function studioPushDeliveryKey(notificationId: string, endpoint: string) {
   return `${notificationId}:endpoint:${endpoint}`;
+}
+
+function studioPushNoTargetKey(notificationId: string, studioId: string) {
+  return `${notificationId}:studio:${studioId}`;
 }
 
 function subscriptionTargetRank(subscription: PushSubscriptionRow, studioId: string) {

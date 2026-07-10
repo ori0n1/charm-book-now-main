@@ -275,21 +275,6 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studioId}` },
-        () => load(),
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "booking_payment_requests",
-          filter: `studio_id=eq.${studioId}`,
-        },
-        () => load(),
-      )
-      .on(
-        "postgres_changes",
         {
           event: "*",
           schema: "public",

@@ -122,17 +122,17 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     }
 
     async function syncAndLoadNotifications() {
-      try {
-        await reconcilePayments({ data: { studioId } });
-      } catch (error) {
-        console.warn("studio_payment_reconcile_skipped", error);
-      }
-      try {
-        await syncPushNotifications({ data: { studioId } });
-      } catch (error) {
-        console.warn("studio_push_sync_skipped", error);
-      }
       await loadNotifications();
+      void Promise.allSettled([
+        reconcilePayments({ data: { studioId } }).catch((error) => {
+          console.warn("studio_payment_reconcile_skipped", error);
+        }),
+        syncPushNotifications({ data: { studioId } }).catch((error) => {
+          console.warn("studio_push_sync_skipped", error);
+        }),
+      ]).then(() => {
+        if (!cancelled) void loadNotifications();
+      });
     }
 
     void syncAndLoadNotifications();

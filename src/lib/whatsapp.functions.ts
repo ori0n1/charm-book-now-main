@@ -533,6 +533,10 @@ class SendDmService implements WhatsAppProvider {
       const messageId = readProviderMessageId(responsePayload);
       const finalPayload = messageId ? await refreshSendDmMessageStatus(baseUrl, apiKey, messageId, responsePayload) : responsePayload;
       const finalStatus = readProviderStatus(finalPayload);
+      const finalChannel = readProviderChannel(finalPayload);
+      const channelMismatch = finalChannel && finalChannel !== "whatsapp"
+        ? `senddm_channel_mismatch: expected_whatsapp_received_${finalChannel}`
+        : null;
       const unresolvedButtonVariable = readUnresolvedSendDmButtonVariable(finalPayload);
       const contactDiagnostics = isFailedSendDmStatus(finalStatus)
         ? await loadSendDmContactDiagnostics(baseUrl, apiKey, finalPayload)
@@ -546,7 +550,9 @@ class SendDmService implements WhatsAppProvider {
         order_id: input.orderId,
         message_id: messageId,
         delivery_status: finalStatus,
+        delivery_channel: finalChannel,
         error:
+          channelMismatch ||
           readSendDmWhatsAppChannelError(contactDiagnostics) ||
           readProviderError(finalPayload) ||
           unresolvedButtonVariable ||
@@ -570,6 +576,17 @@ class SendDmService implements WhatsAppProvider {
           retryable: false,
         });
       }
+      if (channelMismatch) {
+        throw new WhatsAppDeliveryError({
+          message: channelMismatch,
+          messageId,
+          payload: {
+            request: requestLogPayload,
+            response: finalPayload,
+          },
+          retryable: false,
+        });
+      }
       if (unresolvedButtonVariable) {
         console.warn("[whatsapp] senddm_button_parameter_unresolved", {
           template_name: internalTemplate,
@@ -579,6 +596,7 @@ class SendDmService implements WhatsAppProvider {
           order_id: input.orderId,
           message_id: messageId,
           delivery_status: finalStatus,
+          delivery_channel: finalChannel,
           reason: unresolvedButtonVariable,
         });
       }
@@ -896,6 +914,11 @@ function readProviderMessageId(payload: any) {
 
 function readProviderStatus(payload: any) {
   return payload?.status ?? payload?.message_status ?? payload?.data?.status ?? null;
+}
+
+function readProviderChannel(payload: any) {
+  const channel = payload?.channel ?? payload?.data?.channel ?? null;
+  return typeof channel === "string" ? channel.trim().toLowerCase() : null;
 }
 
 function isFailedSendDmStatus(status: unknown) {
