@@ -534,6 +534,9 @@ class SendDmService implements WhatsAppProvider {
       const finalPayload = messageId ? await refreshSendDmMessageStatus(baseUrl, apiKey, messageId, responsePayload) : responsePayload;
       const finalStatus = readProviderStatus(finalPayload);
       const unresolvedButtonVariable = readUnresolvedSendDmButtonVariable(finalPayload);
+      const contactDiagnostics = isFailedSendDmStatus(finalStatus)
+        ? await loadSendDmContactDiagnostics(baseUrl, apiKey, finalPayload)
+        : null;
       console.info("[whatsapp] senddm_final_status", {
         template_name: internalTemplate,
         approved_template: templateName,
@@ -543,32 +546,40 @@ class SendDmService implements WhatsAppProvider {
         order_id: input.orderId,
         message_id: messageId,
         delivery_status: finalStatus,
-        error: readProviderError(finalPayload) || unresolvedButtonVariable || null,
+        error:
+          readSendDmWhatsAppChannelError(contactDiagnostics) ||
+          readProviderError(finalPayload) ||
+          unresolvedButtonVariable ||
+          null,
+        contact: contactDiagnostics,
         payload: {
           request: requestLogPayload,
           response: finalPayload,
         },
       });
-      if (unresolvedButtonVariable) {
+      if (isFailedSendDmStatus(finalStatus)) {
+        const channelError = readSendDmWhatsAppChannelError(contactDiagnostics);
         throw new WhatsAppDeliveryError({
-          message: `senddm_button_parameter_unresolved: ${unresolvedButtonVariable}`,
+          message: channelError || `senddm_delivery_failed: ${readProviderError(finalPayload) || "provider_failed"}`,
           messageId,
           payload: {
             request: requestLogPayload,
             response: finalPayload,
+            contact: contactDiagnostics,
           },
           retryable: false,
         });
       }
-      if (isFailedSendDmStatus(finalStatus)) {
-        throw new WhatsAppDeliveryError({
-          message: `senddm_delivery_failed: ${readProviderError(finalPayload) || "provider_failed"}`,
-          messageId,
-          payload: {
-            request: requestLogPayload,
-            response: finalPayload,
-          },
-          retryable: false,
+      if (unresolvedButtonVariable) {
+        console.warn("[whatsapp] senddm_button_parameter_unresolved", {
+          template_name: internalTemplate,
+          approved_template: templateName,
+          recipient: maskPhoneForLog(input.to),
+          appointment_id: input.appointmentId ?? null,
+          order_id: input.orderId,
+          message_id: messageId,
+          delivery_status: finalStatus,
+          reason: unresolvedButtonVariable,
         });
       }
 
@@ -854,6 +865,24 @@ async function refreshSendDmMessageStatus(baseUrl: string, apiKey: string, messa
   return lastPayload;
 }
 
+async function loadSendDmContactDiagnostics(baseUrl: string, apiKey: string, payload: any) {
+  const contactId = payload?.data?.contact_id;
+  if (!contactId) return null;
+  try {
+    const response = await fetch(`${baseUrl}/v3/contacts/${encodeURIComponent(String(contactId))}`, {
+      headers: {
+        "x-api-key": apiKey,
+        Accept: "application/json",
+      },
+    });
+    if (!response.ok) return { contact_id: String(contactId), lookup_status: response.status };
+    const contact = await response.json().catch(() => null);
+    return sanitizeSendDmContactPayload(contact);
+  } catch {
+    return { contact_id: String(contactId), lookup_status: "failed" };
+  }
+}
+
 function readProviderMessageId(payload: any) {
   return (
     payload?.id ??
@@ -871,6 +900,17 @@ function readProviderStatus(payload: any) {
 
 function isFailedSendDmStatus(status: unknown) {
   return ["FAILED", "UNDELIVERED", "CANCELLED", "CANCELED"].includes(String(status || "").toUpperCase());
+}
+
+function readSendDmWhatsAppChannelError(contactDiagnostics: any) {
+  const channels = String(contactDiagnostics?.available_channels || "")
+    .split(",")
+    .map((channel) => channel.trim().toLowerCase())
+    .filter(Boolean);
+  if (channels.length > 0 && !channels.includes("whatsapp")) {
+    return "senddm_whatsapp_channel_unavailable: contact_available_channels_excludes_whatsapp";
+  }
+  return "";
 }
 
 function readUnresolvedSendDmButtonVariable(payload: any) {
@@ -1051,6 +1091,20 @@ function sanitizeSendDmRequestPayload(payload: any) {
     copy.metadata.orderId = maskToken(String(copy.metadata.orderId));
   }
   return copy;
+}
+
+function sanitizeSendDmContactPayload(payload: any) {
+  const contact = payload?.data ?? payload;
+  if (!contact) return null;
+  return {
+    contact_id: contact.id ?? null,
+    phone: contact.format_e164 ? maskPhone(String(contact.format_e164)) : null,
+    region_code: contact.region_code ?? null,
+    available_channels: contact.available_channels ?? null,
+    default_channel: contact.default_channel ?? null,
+    opt_out: Boolean(contact.opt_out),
+    updated_at: contact.updated_at ?? null,
+  };
 }
 
 function sanitizeEmailRequestPayload(payload: any) {
