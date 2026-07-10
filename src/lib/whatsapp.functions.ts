@@ -547,7 +547,7 @@ class SendDmService implements WhatsAppProvider {
         ? `senddm_channel_mismatch: expected_whatsapp_received_${finalChannel}`
         : null;
       const unresolvedButtonVariable = readUnresolvedSendDmButtonVariable(finalPayload);
-      const contactDiagnostics = isFailedSendDmStatus(finalStatus)
+      const contactDiagnostics = isFailedSendDmStatus(finalStatus) || channelMismatch
         ? await loadSendDmContactDiagnostics(baseUrl, apiKey, finalPayload)
         : null;
       console.info("[whatsapp] senddm_final_status", {
@@ -586,12 +586,14 @@ class SendDmService implements WhatsAppProvider {
         });
       }
       if (channelMismatch) {
+        const channelError = readSendDmWhatsAppChannelError(contactDiagnostics);
         throw new WhatsAppDeliveryError({
-          message: channelMismatch,
+          message: channelError || channelMismatch,
           messageId,
           payload: {
             request: requestLogPayload,
             response: finalPayload,
+            contact: contactDiagnostics,
           },
           retryable: false,
         });
