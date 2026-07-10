@@ -329,7 +329,7 @@ function RecebimentoPage() {
 
       {!loading && !error && (
         <>
-          <section className="grid grid-cols-2 gap-2.5 lg:grid-cols-4">
+          <section className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
             <MetricCard
               icon={Wallet}
               label="Saldo disponível"
@@ -346,10 +346,21 @@ function RecebimentoPage() {
             />
             <MetricCard
               icon={BadgeCheck}
-              label="Taxa média Stripe"
+              label="Tarifa aplicada"
+              value={financial?.stripeFeePricingLabel ?? "Por transação"}
+              detail={
+                financial?.stripeFeePricingLabel
+                  ? "Derivada de transações completas."
+                  : "A Stripe confirma a taxa em cada cobrança."
+              }
+              tone="blue"
+            />
+            <MetricCard
+              icon={BadgeCheck}
+              label="Taxa efetiva"
               value={formatPercent(financial?.effectiveStripeFeeRate)}
               detail={effectiveFeeLabel}
-              tone="blue"
+              tone="amber"
             />
             <MetricCard
               icon={CreditCard}
@@ -358,7 +369,7 @@ function RecebimentoPage() {
               detail={
                 financial?.pendingFinancialDetailsCount
                   ? `${financial.pendingFinancialDetailsCount} registo${financial.pendingFinancialDetailsCount === 1 ? "" : "s"} em atualização.`
-                  : "Bruto menos taxas da Stripe."
+                  : "Bruto menos taxas confirmadas."
               }
               tone="neutral"
             />
@@ -574,12 +585,13 @@ function StripeTransferCard({ financial }: { financial?: ConnectFinancialSummary
   const payout = financial?.payout;
   const lastPayout = payout?.lastPayoutAt ? formatDate(payout.lastPayoutAt) : null;
   const nextPayout = payout?.nextPayoutAt ? formatDate(payout.nextPayoutAt) : null;
+  const nextAvailable = payout?.nextAvailableAt ? formatDate(payout.nextAvailableAt) : null;
   const schedule = payout?.scheduleLabel ?? "Calendário não informado pela Stripe";
-  const availabilityText = buildPayoutAvailabilityText(payout?.scheduleLabel);
+  const availabilityText = buildPayoutAvailabilityText(payout);
   const nextPayoutAmount =
     payout?.nextPayoutAmountCents != null
       ? formatMoneyCents(payout.nextPayoutAmountCents, financial?.currency)
-      : "Sem valor previsto";
+      : "Aguardando criação pela Stripe";
   return (
     <article className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
       <div className="flex items-start gap-3">
@@ -592,9 +604,11 @@ function StripeTransferCard({ financial }: { financial?: ConnectFinancialSummary
         </div>
       </div>
       <div className="mt-4 grid gap-2">
-        <MiniFact label="Data prevista" value={nextPayout ?? "A Stripe não informou uma data"} />
+        <MiniFact label="Data prevista" value={nextPayout ?? "A Stripe ainda não criou o próximo repasse"} />
         <MiniFact label="Valor previsto" value={nextPayoutAmount} />
+        <MiniFact label="Saldo disponível em" value={nextAvailable ?? "Sem saldo pendente"} />
         <MiniFact label="Calendário" value={schedule} />
+        {payout?.nextPayoutStatus && <MiniFact label="Estado" value={formatPayoutStatus(payout.nextPayoutStatus)} />}
         <MiniFact label="Último pagamento" value={lastPayout ?? "Ainda sem registo"} />
         {payout?.lastPayoutAmountCents != null && (
           <MiniFact label="Último valor" value={formatMoneyCents(payout.lastPayoutAmountCents, financial?.currency)} />
@@ -621,6 +635,7 @@ function PaymentRow({
   const gross = getPaymentGrossCents(payment);
   const stripeFee = getPaymentStripeFeeCents(payment);
   const net = getPaymentNetCents(payment);
+  const transactionEffectiveRate = stripeFee != null && gross > 0 ? formatPercent((stripeFee / gross) * 100) : null;
   const transactionId =
     payment.stripeBalanceTransactionId ?? payment.stripeChargeId ?? payment.stripePaymentIntentId;
 
@@ -663,12 +678,13 @@ function PaymentRow({
         <PaymentAmountBox label="Bruto" value={formatMoneyCents(gross, payment.currency)} />
         <PaymentAmountBox
           label="Taxa Stripe"
-          value={stripeFee == null ? "A atualizar" : formatMoneyCents(stripeFee, payment.currency)}
+          value={stripeFee == null ? "Por confirmar" : formatMoneyCents(stripeFee, payment.currency)}
+          detail={transactionEffectiveRate}
           tone="fee"
         />
         <PaymentAmountBox
           label="Líquido"
-          value={net == null ? "A atualizar" : formatMoneyCents(net, payment.currency)}
+          value={net == null ? "Por confirmar" : formatMoneyCents(net, payment.currency)}
           tone="success"
         />
       </div>
@@ -752,21 +768,32 @@ function getPaymentNetCents(payment: ConnectFinancialSummary["recentPayments"][n
 
 function getEffectiveStripeFeeLabel(financial?: ConnectFinancialSummary) {
   if (!financial?.effectiveStripeFeeGrossCents || financial.effectiveStripeFeeRate == null) {
-    return "A atualizar com dados reais da Stripe.";
+    return "Calculada apenas com transações completas.";
   }
-  return `${formatMoneyCents(financial.effectiveStripeFeeCents, financial.currency)} descontados nas transações confirmadas.`;
+  return `${formatMoneyCents(financial.effectiveStripeFeeCents, financial.currency)} em taxas confirmadas.`;
 }
 
-function buildPayoutAvailabilityText(scheduleLabel?: string | null) {
-  const label = String(scheduleLabel ?? "").toLowerCase();
-  const delayMatch = label.match(/(\d+)\s+dias?/);
-  if (delayMatch) {
-    return `Os pagamentos ficam disponíveis cerca de ${delayMatch[1]} dias após a cobrança. Depois, a Stripe repassa conforme o calendário da conta.`;
+function buildPayoutAvailabilityText(payout?: ConnectFinancialSummary["payout"]) {
+  if (payout?.nextPayoutAt) {
+    return "Repasse já criado pela Stripe com data prevista de chegada.";
   }
+  if (payout?.nextAvailableAt) {
+    return "Saldo pendente identificado. A Stripe ainda não criou o próximo repasse.";
+  }
+  const label = String(payout?.scheduleLabel ?? "").toLowerCase();
   if (label.includes("manual")) {
     return "Os pagamentos ficam na Stripe até serem transferidos manualmente no painel Stripe.";
   }
-  return "A Stripe informa a disponibilidade e realiza os repasses conforme o calendário da conta conectada.";
+  return "A Stripe cria os repasses conforme o calendário real da conta conectada.";
+}
+
+function formatPayoutStatus(status?: string | null) {
+  if (status === "in_transit") return "Em trânsito";
+  if (status === "pending") return "Previsto";
+  if (status === "paid") return "Pago";
+  if (status === "failed") return "Falhou";
+  if (status === "canceled") return "Cancelado";
+  return "Informado pela Stripe";
 }
 
 function EmptyState() {
@@ -820,7 +847,7 @@ function formatMoneyCents(cents: number, currency = "eur") {
 }
 
 function formatPercent(value?: number | null) {
-  if (value == null || !Number.isFinite(value)) return "A atualizar";
+  if (value == null || !Number.isFinite(value)) return "Sem dados";
   return new Intl.NumberFormat("pt-PT", {
     style: "percent",
     minimumFractionDigits: 2,

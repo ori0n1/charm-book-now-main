@@ -53,6 +53,7 @@ export type ConnectFinancialSummary = {
   grossReceivedCents: number;
   stripeFeesCents: number;
   netReceivedCents: number;
+  stripeFeePricingLabel: string | null;
   effectiveStripeFeeRate: number | null;
   effectiveStripeFeeGrossCents: number;
   effectiveStripeFeeCents: number;
@@ -78,9 +79,12 @@ export type ConnectFinancialSummary = {
   }>;
   payout: {
     scheduleLabel: string | null;
+    nextAvailableAt: string | null;
     nextPayoutAt: string | null;
+    nextPayoutStatus: string | null;
     nextPayoutAmountCents: number | null;
     lastPayoutAt: string | null;
+    lastPayoutStatus: string | null;
     lastPayoutAmountCents: number | null;
   };
 };
@@ -254,10 +258,17 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
   let availableCents = received.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0);
   let pendingCents = pending.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0);
   let scheduleLabel: string | null = null;
+  let nextAvailableAt: string | null = null;
   let nextPayoutAt: string | null = null;
+  let nextPayoutStatus: string | null = null;
   let nextPayoutAmountCents: number | null = null;
   let lastPayoutAt: string | null = null;
+  let lastPayoutStatus: string | null = null;
   let lastPayoutAmountCents: number | null = null;
+  const scopedRows = accountId
+    ? rows.filter((row) => row.stripe_connect_account_id === accountId)
+    : rows.filter((row) => !row.stripe_connect_account_id);
+  const scopedReceived = scopedRows.filter((row) => RECEIVED_PAYMENT_STATUSES.includes(String(row.status ?? "")));
 
   if (accountId) {
     await refreshMissingConnectedFinancialDetails(rows, accountId).catch((err) => {
@@ -272,10 +283,11 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
   if (accountId) {
     try {
       const stripe = createStripeClient(connectStripeEnv());
-      const [balance, account, payouts] = await Promise.all([
+      const [balance, account, payouts, balanceTransactions] = await Promise.all([
         stripe.balance.retrieve({}, { stripeAccount: accountId }),
         stripe.accounts.retrieve(accountId),
-        stripe.payouts.list({ limit: 1 }, { stripeAccount: accountId }),
+        stripe.payouts.list({ limit: 10 }, { stripeAccount: accountId }),
+        stripe.balanceTransactions.list({ limit: 100 }, { stripeAccount: accountId }),
       ]);
       const availableForCurrency = balance.available.find((item) => item.currency === currency) ?? balance.available[0];
       const pendingForCurrency = balance.pending.find((item) => item.currency === currency) ?? balance.pending[0];
@@ -284,12 +296,23 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
 
       const payoutsSchedule = (account as any).settings?.payouts?.schedule;
       scheduleLabel = formatPayoutSchedule(payoutsSchedule);
-      nextPayoutAt = estimateNextPayoutDate(payoutsSchedule);
-      nextPayoutAmountCents = availableCents > 0 ? availableCents : pendingCents > 0 ? pendingCents : 0;
-      const nextPayout = payouts.data[0];
+      const pendingAvailability = balanceTransactions.data
+        .filter((item) => item.currency === currency && item.status === "pending" && Number(item.net || 0) > 0 && item.available_on)
+        .map((item) => Number(item.available_on))
+        .filter((value) => Number.isFinite(value) && value > 0)
+        .sort((a, b) => a - b);
+      nextAvailableAt = pendingAvailability[0] ? new Date(pendingAvailability[0] * 1000).toISOString() : null;
+      const nextPayout = payouts.data.find((item) => ["pending", "in_transit"].includes(String(item.status)));
       if (nextPayout) {
-        lastPayoutAt = nextPayout.arrival_date ? new Date(nextPayout.arrival_date * 1000).toISOString() : null;
-        lastPayoutAmountCents = Number(nextPayout.amount || 0);
+        nextPayoutAt = nextPayout.arrival_date ? new Date(nextPayout.arrival_date * 1000).toISOString() : null;
+        nextPayoutStatus = String(nextPayout.status ?? "");
+        nextPayoutAmountCents = Number(nextPayout.amount || 0);
+      }
+      const lastPayout = payouts.data.find((item) => item.status === "paid") ?? payouts.data[0];
+      if (lastPayout) {
+        lastPayoutAt = lastPayout.arrival_date ? new Date(lastPayout.arrival_date * 1000).toISOString() : null;
+        lastPayoutStatus = String(lastPayout.status ?? "");
+        lastPayoutAmountCents = Number(lastPayout.amount || 0);
       }
     } catch (err) {
       console.warn("[stripe-connect] optional balance summary failed", {
@@ -300,7 +323,7 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
     }
   }
 
-  const confirmedFinancialRows = received.filter(
+  const confirmedFinancialRows = scopedReceived.filter(
     (row) => Number(row.gross_amount_cents ?? 0) > 0 && row.stripe_fee_cents != null,
   );
   const effectiveStripeFeeGrossCents = confirmedFinancialRows.reduce(
@@ -313,27 +336,29 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
   );
   const effectiveStripeFeeRate =
     effectiveStripeFeeGrossCents > 0 ? (effectiveStripeFeeCents / effectiveStripeFeeGrossCents) * 100 : null;
+  const stripeFeePricingLabel = deriveStripeFeePricingLabel(confirmedFinancialRows);
 
   return {
     availableCents,
     pendingCents,
-    grossReceivedCents: received.reduce(
-      (sum, row) => sum + Number(row.gross_amount_cents ?? row.amount_cents ?? 0),
+    grossReceivedCents: confirmedFinancialRows.reduce(
+      (sum, row) => sum + Number(row.gross_amount_cents ?? 0),
       0,
     ),
-    stripeFeesCents: received.reduce((sum, row) => sum + Number(row.stripe_fee_cents ?? 0), 0),
-    netReceivedCents: received.reduce(
-      (sum, row) => sum + Number(row.net_amount_cents ?? row.amount_cents ?? 0),
+    stripeFeesCents: confirmedFinancialRows.reduce((sum, row) => sum + Number(row.stripe_fee_cents ?? 0), 0),
+    netReceivedCents: confirmedFinancialRows.reduce(
+      (sum, row) => sum + Number(row.net_amount_cents ?? 0),
       0,
     ),
+    stripeFeePricingLabel,
     effectiveStripeFeeRate,
     effectiveStripeFeeGrossCents,
     effectiveStripeFeeCents,
-    pendingFinancialDetailsCount: received.filter((row) => row.financial_details_status !== "confirmed").length,
-    totalReceivedCents: received.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0),
-    paymentCount: received.length,
+    pendingFinancialDetailsCount: scopedReceived.filter((row) => row.financial_details_status !== "confirmed").length,
+    totalReceivedCents: confirmedFinancialRows.reduce((sum, row) => sum + Number(row.gross_amount_cents ?? 0), 0),
+    paymentCount: scopedReceived.length,
     currency,
-    recentPayments: received.slice(0, 5).map((row) => ({
+    recentPayments: scopedReceived.slice(0, 5).map((row) => ({
       id: row.id,
       amountCents: Number(row.amount_cents || 0),
       grossAmountCents: row.gross_amount_cents ?? null,
@@ -351,9 +376,12 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
     })),
     payout: {
       scheduleLabel,
+      nextAvailableAt,
       nextPayoutAt,
+      nextPayoutStatus,
       nextPayoutAmountCents,
       lastPayoutAt,
+      lastPayoutStatus,
       lastPayoutAmountCents,
     },
   };
@@ -361,58 +389,66 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
 
 function formatPayoutSchedule(schedule: any) {
   if (!schedule) return null;
-  const delay = schedule.delay_days ? `${schedule.delay_days} dias` : null;
+  const delay = schedule.delay_days ? `saldo disponível em ${schedule.delay_days} dias` : null;
   const interval = String(schedule.interval ?? "");
-  if (interval === "daily") return delay ? `Disponibilização diária após ${delay}` : "Disponibilização diária";
-  if (interval === "weekly") return "Disponibilização semanal pela Stripe";
-  if (interval === "monthly") return "Disponibilização mensal pela Stripe";
-  if (interval === "manual") return "Transferências geridas no painel Stripe";
-  return delay ? `Disponível após ${delay}` : null;
+  if (interval === "daily") return delay ? `Diário, ${delay}` : "Diário";
+  if (interval === "weekly") return delay ? `Semanal, ${delay}` : "Semanal";
+  if (interval === "monthly") return delay ? `Mensal, ${delay}` : "Mensal";
+  if (interval === "manual") return "Transferências manuais no painel Stripe";
+  return delay ?? null;
 }
 
-function estimateNextPayoutDate(schedule: any): string | null {
-  if (!schedule) return null;
-  const interval = String(schedule.interval ?? "");
-  if (!interval || interval === "manual") return null;
+function deriveStripeFeePricingLabel(
+  rows: Array<{
+    gross_amount_cents?: number | null;
+    stripe_fee_cents?: number | null;
+    method?: string | null;
+  }>,
+) {
+  const complete = rows
+    .map((row) => ({
+      gross: Number(row.gross_amount_cents ?? 0),
+      fee: Number(row.stripe_fee_cents ?? 0),
+      method: String(row.method ?? ""),
+    }))
+    .filter((row) => row.gross > 0 && row.fee > 0);
+  if (complete.length < 2) return null;
 
-  const now = new Date();
-  const next = new Date(now);
-  next.setUTCHours(12, 0, 0, 0);
+  const methods = new Set(complete.map((row) => row.method));
+  if (methods.size > 1) return null;
 
-  if (interval === "daily") {
-    next.setUTCDate(next.getUTCDate() + 1);
-    while (next.getUTCDay() === 0 || next.getUTCDay() === 6) {
-      next.setUTCDate(next.getUTCDate() + 1);
+  for (let i = 0; i < complete.length; i += 1) {
+    for (let j = i + 1; j < complete.length; j += 1) {
+      const a = complete[i];
+      const b = complete[j];
+      const grossDelta = b.gross - a.gross;
+      if (!grossDelta) continue;
+      const rate = (b.fee - a.fee) / grossDelta;
+      const fixed = a.fee - a.gross * rate;
+      if (rate < 0 || fixed < 0) continue;
+      const predictedOk = complete.every((row) => Math.abs(row.fee - (row.gross * rate + fixed)) <= 2);
+      if (predictedOk) {
+        return `${formatPercentNumber(rate * 100)} + ${formatCentsNumber(Math.round(fixed))} por transação`;
+      }
     }
-    return next.toISOString();
   }
-
-  if (interval === "weekly") {
-    const weeklyAnchor = Number(schedule.weekly_anchor ?? 1);
-    const stripeDayToJsDay: Record<number, number> = {
-      1: 1,
-      2: 2,
-      3: 3,
-      4: 4,
-      5: 5,
-      6: 6,
-      7: 0,
-    };
-    const targetDay = stripeDayToJsDay[weeklyAnchor] ?? 1;
-    let daysAhead = (targetDay - next.getUTCDay() + 7) % 7;
-    if (daysAhead === 0) daysAhead = 7;
-    next.setUTCDate(next.getUTCDate() + daysAhead);
-    return next.toISOString();
-  }
-
-  if (interval === "monthly") {
-    const monthlyAnchor = Math.min(28, Math.max(1, Number(schedule.monthly_anchor ?? 1)));
-    next.setUTCDate(monthlyAnchor);
-    if (next <= now) next.setUTCMonth(next.getUTCMonth() + 1);
-    return next.toISOString();
-  }
-
   return null;
+}
+
+function formatPercentNumber(value: number) {
+  return (
+    new Intl.NumberFormat("pt-PT", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 2,
+    }).format(value) + "%"
+  );
+}
+
+function formatCentsNumber(cents: number) {
+  return new Intl.NumberFormat("pt-PT", {
+    style: "currency",
+    currency: "EUR",
+  }).format(Number(cents || 0) / 100);
 }
 
 // ── Server functions ──────────────────────────────────────────────────────────
