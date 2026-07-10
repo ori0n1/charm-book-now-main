@@ -104,14 +104,27 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       .order("updated_at", { ascending: false })
       .limit(20);
     if (byUserError) throw new Error(byUserError.message);
-    const existing = chooseCanonicalPublicClient(byUserRows ?? [], {
-      sessionEmail: email,
-      phone: storedPhone,
-    }) ?? (await findAttachableLegacyClient(sb, {
-      studioId: data.studioId,
-      sessionEmail: email,
-      phone: storedPhone,
-    }));
+    const phoneOwner = phone
+      ? await findPublicClientByPhoneForSession(sb, {
+          studioId: data.studioId,
+          sessionEmail: email,
+          userId,
+          phone,
+        })
+      : null;
+    const existing =
+      chooseCanonicalPublicClient(
+        [...(byUserRows ?? []), ...(phoneOwner ? [phoneOwner] : [])],
+        {
+          sessionEmail: email,
+          phone: storedPhone,
+        },
+      ) ??
+      (await findAttachableLegacyClient(sb, {
+        studioId: data.studioId,
+        sessionEmail: email,
+        phone: storedPhone,
+      }));
 
     const now = new Date().toISOString();
     const policyVersion = String(data.policyVersion ?? "").trim() || null;
@@ -489,6 +502,37 @@ async function findAttachableLegacyClient(
       return !clientEmail || clientEmail === input.sessionEmail;
     }) ?? null
   );
+}
+
+async function findPublicClientByPhoneForSession(
+  sb: any,
+  input: { studioId: string; sessionEmail: string; userId: string; phone: string },
+) {
+  const phone = publicPhone(input.phone);
+  if (!phone) return null;
+
+  const { data, error } = await sb
+    .from("clients")
+    .select(PUBLIC_CLIENT_SELECT)
+    .eq("studio_id", input.studioId)
+    .eq("phone", phone)
+    .order("updated_at", { ascending: false })
+    .limit(5);
+  if (error) throw new Error(error.message);
+
+  const attachable =
+    (data ?? []).find((client: any) => {
+      const authUserId = String(client?.auth_user_id ?? "").trim();
+      const clientEmail = normalizePublicClientEmail(client?.email);
+      if (authUserId && authUserId !== input.userId) return false;
+      if (authUserId === input.userId) return true;
+      if (clientEmail && clientEmail !== input.sessionEmail) return false;
+      return true;
+    }) ?? null;
+  if (!attachable && (data ?? []).length > 0) {
+    throw new Error("public_client_phone_already_in_use");
+  }
+  return attachable;
 }
 
 async function attachLegacyClientsByVerifiedEmail(

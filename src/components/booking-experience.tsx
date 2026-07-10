@@ -1824,7 +1824,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                 await syncPublicClientProfile({ phone: nextPhone, showToast: true });
               } catch (error) {
                 console.error("[public-client] phone save failed", error);
-                toast.error("Não foi possível guardar o WhatsApp. Tente novamente.");
+                toast.error(error instanceof Error ? error.message : "Não foi possível guardar o WhatsApp. Tente novamente.");
                 throw error;
               } finally {
                 setClientProfileSaving(false);
@@ -2370,6 +2370,9 @@ function explainPublicProfileError(error: unknown) {
   }
   if (/email/i.test(text)) {
     return "Não foi possível confirmar o e-mail da sua conta.";
+  }
+  if (/phone_already_in_use|duplicate key|clients_studio_id_phone_key/i.test(text)) {
+    return "Este WhatsApp já está associado a outro perfil neste estúdio.";
   }
   if (/permission|rls|row-level|policy/i.test(text)) {
     return "Não foi possível confirmar o seu perfil neste estúdio. Tente entrar novamente.";
