@@ -53,6 +53,9 @@ export type ConnectFinancialSummary = {
   grossReceivedCents: number;
   stripeFeesCents: number;
   netReceivedCents: number;
+  effectiveStripeFeeRate: number | null;
+  effectiveStripeFeeGrossCents: number;
+  effectiveStripeFeeCents: number;
   pendingFinancialDetailsCount: number;
   totalReceivedCents: number;
   paymentCount: number;
@@ -76,6 +79,7 @@ export type ConnectFinancialSummary = {
   payout: {
     scheduleLabel: string | null;
     nextPayoutAt: string | null;
+    nextPayoutAmountCents: number | null;
     lastPayoutAt: string | null;
     lastPayoutAmountCents: number | null;
   };
@@ -154,10 +158,74 @@ async function patchStudioConnect(
 const RECEIVED_PAYMENT_STATUSES = ["succeeded", "paid", "completed"];
 const PENDING_PAYMENT_STATUSES = ["processing", "requires_action", "pending"];
 
+async function refreshMissingConnectedFinancialDetails(
+  rows: Array<{
+    id: string;
+    status: string | null;
+    stripe_payment_intent_id?: string | null;
+    stripe_connect_account_id?: string | null;
+    financial_details_status?: string | null;
+    stripe_fee_cents?: number | null;
+    gross_amount_cents?: number | null;
+    net_amount_cents?: number | null;
+    stripe_charge_id?: string | null;
+    stripe_balance_transaction_id?: string | null;
+    available_on?: string | null;
+  }>,
+  accountId: string,
+) {
+  const candidates = rows
+    .filter(
+      (row) =>
+        RECEIVED_PAYMENT_STATUSES.includes(String(row.status ?? "")) &&
+        row.stripe_connect_account_id === accountId &&
+        row.stripe_payment_intent_id &&
+        row.financial_details_status !== "confirmed",
+    )
+    .slice(0, 8);
+  if (!candidates.length) return;
+
+  const stripe = createStripeClient(connectStripeEnv());
+  for (const row of candidates) {
+    const pi = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id as string, {}, { stripeAccount: accountId });
+    const latestCharge = (pi as any).latest_charge;
+    const chargeId = typeof latestCharge === "string" ? latestCharge : latestCharge?.id;
+    if (!chargeId) continue;
+
+    const charge = await stripe.charges.retrieve(
+      chargeId,
+      { expand: ["balance_transaction"] },
+      { stripeAccount: accountId },
+    );
+    const balanceTransaction =
+      typeof charge.balance_transaction === "object" && charge.balance_transaction
+        ? charge.balance_transaction
+        : null;
+    if (!balanceTransaction) continue;
+
+    const patch = {
+      stripe_charge_id: charge.id,
+      stripe_balance_transaction_id: balanceTransaction.id,
+      gross_amount_cents: Number(balanceTransaction.amount || charge.amount || pi.amount_received || pi.amount || 0),
+      stripe_fee_cents: Number(balanceTransaction.fee || 0),
+      net_amount_cents: Number(balanceTransaction.net || 0),
+      available_on: balanceTransaction.available_on
+        ? new Date(balanceTransaction.available_on * 1000).toISOString()
+        : null,
+      financial_details_status: "confirmed",
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error } = await sb().from("payment_intents").update(patch).eq("id", row.id);
+    if (error) throw new Error(error.message);
+    Object.assign(row, patch);
+  }
+}
+
 async function loadConnectFinancialSummary(studioId: string, accountId?: string | null): Promise<ConnectFinancialSummary> {
   const { data: payments, error } = await sb()
     .from("payment_intents")
-    .select("id,amount_cents,currency,method,status,created_at,stripe_payment_intent_id,stripe_charge_id,stripe_balance_transaction_id,gross_amount_cents,stripe_fee_cents,net_amount_cents,available_on,financial_details_status")
+    .select("id,amount_cents,currency,method,status,created_at,stripe_payment_intent_id,stripe_connect_account_id,stripe_charge_id,stripe_balance_transaction_id,gross_amount_cents,stripe_fee_cents,net_amount_cents,available_on,financial_details_status")
     .eq("studio_id", studioId)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -170,6 +238,7 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
     method: string | null;
     status: string | null;
     stripe_payment_intent_id?: string | null;
+    stripe_connect_account_id?: string | null;
     stripe_charge_id?: string | null;
     stripe_balance_transaction_id?: string | null;
     gross_amount_cents?: number | null;
@@ -185,9 +254,20 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
   let availableCents = received.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0);
   let pendingCents = pending.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0);
   let scheduleLabel: string | null = null;
-  const nextPayoutAt: string | null = null;
+  let nextPayoutAt: string | null = null;
+  let nextPayoutAmountCents: number | null = null;
   let lastPayoutAt: string | null = null;
   let lastPayoutAmountCents: number | null = null;
+
+  if (accountId) {
+    await refreshMissingConnectedFinancialDetails(rows, accountId).catch((err) => {
+      console.warn("[stripe-connect] financial details refresh skipped", {
+        studioId,
+        accountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
 
   if (accountId) {
     try {
@@ -204,6 +284,8 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
 
       const payoutsSchedule = (account as any).settings?.payouts?.schedule;
       scheduleLabel = formatPayoutSchedule(payoutsSchedule);
+      nextPayoutAt = estimateNextPayoutDate(payoutsSchedule);
+      nextPayoutAmountCents = availableCents > 0 ? availableCents : pendingCents > 0 ? pendingCents : 0;
       const nextPayout = payouts.data[0];
       if (nextPayout) {
         lastPayoutAt = nextPayout.arrival_date ? new Date(nextPayout.arrival_date * 1000).toISOString() : null;
@@ -218,6 +300,20 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
     }
   }
 
+  const confirmedFinancialRows = received.filter(
+    (row) => Number(row.gross_amount_cents ?? 0) > 0 && row.stripe_fee_cents != null,
+  );
+  const effectiveStripeFeeGrossCents = confirmedFinancialRows.reduce(
+    (sum, row) => sum + Number(row.gross_amount_cents ?? 0),
+    0,
+  );
+  const effectiveStripeFeeCents = confirmedFinancialRows.reduce(
+    (sum, row) => sum + Number(row.stripe_fee_cents ?? 0),
+    0,
+  );
+  const effectiveStripeFeeRate =
+    effectiveStripeFeeGrossCents > 0 ? (effectiveStripeFeeCents / effectiveStripeFeeGrossCents) * 100 : null;
+
   return {
     availableCents,
     pendingCents,
@@ -230,6 +326,9 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
       (sum, row) => sum + Number(row.net_amount_cents ?? row.amount_cents ?? 0),
       0,
     ),
+    effectiveStripeFeeRate,
+    effectiveStripeFeeGrossCents,
+    effectiveStripeFeeCents,
     pendingFinancialDetailsCount: received.filter((row) => row.financial_details_status !== "confirmed").length,
     totalReceivedCents: received.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0),
     paymentCount: received.length,
@@ -253,6 +352,7 @@ async function loadConnectFinancialSummary(studioId: string, accountId?: string 
     payout: {
       scheduleLabel,
       nextPayoutAt,
+      nextPayoutAmountCents,
       lastPayoutAt,
       lastPayoutAmountCents,
     },
@@ -268,6 +368,51 @@ function formatPayoutSchedule(schedule: any) {
   if (interval === "monthly") return "Disponibilização mensal pela Stripe";
   if (interval === "manual") return "Transferências geridas no painel Stripe";
   return delay ? `Disponível após ${delay}` : null;
+}
+
+function estimateNextPayoutDate(schedule: any): string | null {
+  if (!schedule) return null;
+  const interval = String(schedule.interval ?? "");
+  if (!interval || interval === "manual") return null;
+
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(12, 0, 0, 0);
+
+  if (interval === "daily") {
+    next.setUTCDate(next.getUTCDate() + 1);
+    while (next.getUTCDay() === 0 || next.getUTCDay() === 6) {
+      next.setUTCDate(next.getUTCDate() + 1);
+    }
+    return next.toISOString();
+  }
+
+  if (interval === "weekly") {
+    const weeklyAnchor = Number(schedule.weekly_anchor ?? 1);
+    const stripeDayToJsDay: Record<number, number> = {
+      1: 1,
+      2: 2,
+      3: 3,
+      4: 4,
+      5: 5,
+      6: 6,
+      7: 0,
+    };
+    const targetDay = stripeDayToJsDay[weeklyAnchor] ?? 1;
+    let daysAhead = (targetDay - next.getUTCDay() + 7) % 7;
+    if (daysAhead === 0) daysAhead = 7;
+    next.setUTCDate(next.getUTCDate() + daysAhead);
+    return next.toISOString();
+  }
+
+  if (interval === "monthly") {
+    const monthlyAnchor = Math.min(28, Math.max(1, Number(schedule.monthly_anchor ?? 1)));
+    next.setUTCDate(monthlyAnchor);
+    if (next <= now) next.setUTCMonth(next.getUTCMonth() + 1);
+    return next.toISOString();
+  }
+
+  return null;
 }
 
 // ── Server functions ──────────────────────────────────────────────────────────

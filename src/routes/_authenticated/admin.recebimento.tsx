@@ -263,10 +263,7 @@ function RecebimentoPage() {
   const recentPayments = financial?.recentPayments ?? [];
   const hasMoreRecentPayments = recentPayments.length > 4;
   const visibleRecentPayments = showAllRecentPayments ? recentPayments : recentPayments.slice(0, 4);
-  const effectiveFeeLabel = getEffectiveStripeFeeLabel(
-    financial?.grossReceivedCents ?? 0,
-    financial?.stripeFeesCents ?? 0,
-  );
+  const effectiveFeeLabel = getEffectiveStripeFeeLabel(financial);
 
   return (
     <div className="space-y-3 pb-6 xl:mx-auto xl:max-w-[88rem]">
@@ -349,9 +346,9 @@ function RecebimentoPage() {
             />
             <MetricCard
               icon={BadgeCheck}
-              label="Taxas Stripe"
-              value={formatMoneyCents(financial?.stripeFeesCents ?? 0, financial?.currency)}
-              detail={effectiveFeeLabel ?? "Valor descontado."}
+              label="Taxa média Stripe"
+              value={formatPercent(financial?.effectiveStripeFeeRate)}
+              detail={effectiveFeeLabel}
               tone="blue"
             />
             <MetricCard
@@ -579,6 +576,10 @@ function StripeTransferCard({ financial }: { financial?: ConnectFinancialSummary
   const nextPayout = payout?.nextPayoutAt ? formatDate(payout.nextPayoutAt) : null;
   const schedule = payout?.scheduleLabel ?? "Calendário não informado pela Stripe";
   const availabilityText = buildPayoutAvailabilityText(payout?.scheduleLabel);
+  const nextPayoutAmount =
+    payout?.nextPayoutAmountCents != null
+      ? formatMoneyCents(payout.nextPayoutAmountCents, financial?.currency)
+      : "Sem valor previsto";
   return (
     <article className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
       <div className="flex items-start gap-3">
@@ -586,16 +587,17 @@ function StripeTransferCard({ financial }: { financial?: ConnectFinancialSummary
           <ShieldCheck className="h-5 w-5" />
         </span>
         <div className="min-w-0">
-          <h2 className="text-sm font-extrabold text-foreground">Repasses pela Stripe</h2>
+          <h2 className="text-sm font-extrabold text-foreground">Próximo pagamento</h2>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{availabilityText}</p>
         </div>
       </div>
       <div className="mt-4 grid gap-2">
-        <MiniFact label="Frequência" value={schedule} />
-        <MiniFact label="Próximo repasse" value={nextPayout ?? "A Stripe não informou uma data prevista"} />
-        <MiniFact label="Último repasse" value={lastPayout ?? "Ainda sem repasse registado"} />
+        <MiniFact label="Data prevista" value={nextPayout ?? "A Stripe não informou uma data"} />
+        <MiniFact label="Valor previsto" value={nextPayoutAmount} />
+        <MiniFact label="Calendário" value={schedule} />
+        <MiniFact label="Último pagamento" value={lastPayout ?? "Ainda sem registo"} />
         {payout?.lastPayoutAmountCents != null && (
-          <MiniFact label="Valor" value={formatMoneyCents(payout.lastPayoutAmountCents, financial?.currency)} />
+          <MiniFact label="Último valor" value={formatMoneyCents(payout.lastPayoutAmountCents, financial?.currency)} />
         )}
       </div>
     </article>
@@ -661,12 +663,12 @@ function PaymentRow({
         <PaymentAmountBox label="Bruto" value={formatMoneyCents(gross, payment.currency)} />
         <PaymentAmountBox
           label="Taxa Stripe"
-          value={formatMoneyCents(stripeFee, payment.currency)}
+          value={stripeFee == null ? "A atualizar" : formatMoneyCents(stripeFee, payment.currency)}
           tone="fee"
         />
         <PaymentAmountBox
           label="Líquido"
-          value={formatMoneyCents(net, payment.currency)}
+          value={net == null ? "A atualizar" : formatMoneyCents(net, payment.currency)}
           tone="success"
         />
       </div>
@@ -738,20 +740,21 @@ function getPaymentGrossCents(payment: ConnectFinancialSummary["recentPayments"]
 function getPaymentStripeFeeCents(payment: ConnectFinancialSummary["recentPayments"][number]) {
   if (payment.stripeFeeCents != null) return Number(payment.stripeFeeCents);
   if (payment.netAmountCents != null) return Math.max(0, getPaymentGrossCents(payment) - Number(payment.netAmountCents));
-  return estimateStripeFeeCents(getPaymentGrossCents(payment));
+  return null;
 }
 
 function getPaymentNetCents(payment: ConnectFinancialSummary["recentPayments"][number]) {
   if (payment.netAmountCents != null) return Number(payment.netAmountCents);
   const fee = getPaymentStripeFeeCents(payment);
   if (fee != null) return Math.max(0, getPaymentGrossCents(payment) - fee);
-  return getPaymentGrossCents(payment);
+  return null;
 }
 
-function getEffectiveStripeFeeLabel(grossCents: number, feeCents: number) {
-  if (!grossCents || !feeCents) return "Taxa média indisponível.";
-  const percent = (feeCents / grossCents) * 100;
-  return `Taxa média efetiva ${percent.toFixed(2).replace(".", ",")}%.`;
+function getEffectiveStripeFeeLabel(financial?: ConnectFinancialSummary) {
+  if (!financial?.effectiveStripeFeeGrossCents || financial.effectiveStripeFeeRate == null) {
+    return "A atualizar com dados reais da Stripe.";
+  }
+  return `${formatMoneyCents(financial.effectiveStripeFeeCents, financial.currency)} descontados nas transações confirmadas.`;
 }
 
 function buildPayoutAvailabilityText(scheduleLabel?: string | null) {
@@ -765,12 +768,6 @@ function buildPayoutAvailabilityText(scheduleLabel?: string | null) {
   }
   return "A Stripe informa a disponibilidade e realiza os repasses conforme o calendário da conta conectada.";
 }
-
-function estimateStripeFeeCents(grossCents: number) {
-  return Math.max(0, Math.round(Number(grossCents || 0) * 0.065));
-}
-
-
 
 function EmptyState() {
   return (
@@ -820,6 +817,15 @@ function formatMoneyCents(cents: number, currency = "eur") {
     style: "currency",
     currency: (currency || "eur").toUpperCase(),
   }).format(Number(cents || 0) / 100);
+}
+
+function formatPercent(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "A atualizar";
+  return new Intl.NumberFormat("pt-PT", {
+    style: "percent",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value / 100);
 }
 
 function formatDate(value: string) {
