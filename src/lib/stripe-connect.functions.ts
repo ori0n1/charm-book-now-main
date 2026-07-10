@@ -56,7 +56,6 @@ export type ConnectFinancialSummary = {
   stripeFeeSchedule: {
     mbWay: string;
     card: string;
-    otherTariffs: string[];
     source: "configured" | "stripe_standard_pt";
   };
   effectiveStripeFeeGrossCents: number;
@@ -406,15 +405,13 @@ function getStripeFeeSchedule(): ConnectFinancialSummary["stripeFeeSchedule"] {
     return {
       mbWay: configuredMbWay || "Consultar painel Stripe",
       card: configuredCard || "Consultar painel Stripe",
-      otherTariffs: ["Confirme condições personalizadas no painel Stripe."],
       source: "configured",
     };
   }
 
   return {
     mbWay: "1,5% + 0,25 €",
-    card: "1,5% + taxa fixa aplicável",
-    otherTariffs: ["Cartões premium EEE: 1,9% + 0,25 €", "Cartões UK: 2,5% + 0,25 €", "Cartões internacionais: 3,25% + 0,25 €"],
+    card: "1,5% + taxa fixa",
     source: "stripe_standard_pt",
   };
 }
