@@ -1,18 +1,56 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { APP_BRAND, CANONICAL_ORIGIN } from "@/lib/app-brand";
 
 const BookingExperience = lazy(() =>
   import("@/components/booking-experience").then((mod) => ({ default: mod.BookingExperience })),
 );
 
+function studioNameFromSlug(slug: string) {
+  return slug
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export const Route = createFileRoute("/s/$slug")({
-  head: ({ params }) => ({
-    meta: [
-      { title: `Agendar — ${params.slug}` },
-      { name: "description", content: "Reserve o seu horário em poucos toques." },
-    ],
-  }),
+  head: ({ params }) => {
+    const studioLabel = studioNameFromSlug(params.slug);
+    const canonical = `${CANONICAL_ORIGIN}/s/${params.slug}`;
+    const title = `${studioLabel || "Estúdio"} | Marcação online na ${APP_BRAND.name}`;
+    const description =
+      `Marque online em ${studioLabel || "um estúdio Bellza"}: escolha serviço, profissional e horário disponível com a experiência premium da ${APP_BRAND.name}.`;
+
+    return {
+      meta: [
+        { title },
+        { name: "description", content: description },
+        { name: "robots", content: "index,follow,max-image-preview:large" },
+        { property: "og:title", content: title },
+        { property: "og:description", content: description },
+        { property: "og:type", content: "website" },
+        { property: "og:site_name", content: APP_BRAND.name },
+        { property: "og:url", content: canonical },
+        { property: "og:image", content: `${CANONICAL_ORIGIN}/bellza-logo.png` },
+        { name: "twitter:card", content: "summary_large_image" },
+        { name: "twitter:title", content: title },
+        { name: "twitter:description", content: description },
+        { name: "twitter:image", content: `${CANONICAL_ORIGIN}/bellza-logo.png` },
+        // PWA meta for iOS add-to-home-screen
+        { name: "apple-mobile-web-app-capable", content: "yes" },
+        { name: "mobile-web-app-capable", content: "yes" },
+        { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
+      ],
+      links: [
+        { rel: "canonical", href: canonical },
+        // Studio-specific PWA manifest: ensures Chrome/Safari capture the studio's
+        // name, icon and start_url BEFORE the beforeinstallprompt event fires.
+        { rel: "manifest", href: `/api/public/studio-manifest/${params.slug}` },
+      ],
+    };
+  },
   component: PublicStudioPage,
 });
 
@@ -48,7 +86,7 @@ function PublicStudioPage() {
   if (studioId === undefined) {
     return (
       <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">
-        A carregar estúdio…
+        A carregar estúdio...
       </div>
     );
   }
@@ -76,7 +114,7 @@ function PublicStudioPage() {
 function LoadingStudio() {
   return (
     <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">
-      A carregar estúdio…
+      A carregar estúdio...
     </div>
   );
 }

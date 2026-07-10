@@ -32,7 +32,16 @@ export type PolicyTextParts = {
   optionSubtitle: string;
 };
 
-export function getPolicyParts(policy: RefundPolicyValue, hours: number): PolicyTextParts {
+/**
+ * Returns policy text parts.
+ * When depositPercent >= 100 (full payment), replaces "sinal" with "pagamento" throughout.
+ */
+export function getPolicyParts(
+  policy: RefundPolicyValue,
+  hours: number,
+  depositPercent?: number | null,
+): PolicyTextParts {
+  const isFullPay = Number(depositPercent ?? 100) >= 100;
   const rescheduleBody = `Pode cancelar ou remarcar até ${hours} horas antes. Depois disso, fale diretamente com o estúdio para ver alternativas.`;
 
   if (policy === "refund_allowed") {
@@ -41,9 +50,10 @@ export function getPolicyParts(policy: RefundPolicyValue, hours: number): Policy
       hours,
       rescheduleLabel: "Cancelamento",
       rescheduleBody,
-      refundLabel: "Regra do sinal",
-      refundBody:
-        "Dentro do prazo, pode pedir a devolução do sinal. O estúdio confirma o reembolso depois de analisar o pedido.",
+      refundLabel: isFullPay ? "Regra do pagamento" : "Regra do sinal",
+      refundBody: isFullPay
+        ? "Dentro do prazo, pode pedir a devolução do pagamento integral. O estúdio confirma o reembolso depois de analisar o pedido."
+        : "Dentro do prazo, pode pedir a devolução do sinal. O estúdio confirma o reembolso depois de analisar o pedido.",
       refundTone: "info",
       nonRefundable: false,
       badge: null,
@@ -58,45 +68,54 @@ export function getPolicyParts(policy: RefundPolicyValue, hours: number): Policy
       hours,
       rescheduleLabel: "Cancelamento",
       rescheduleBody,
-      refundLabel: "Regra do sinal",
-      refundBody:
-        "O sinal não é devolvido em dinheiro. Se cancelar dentro do prazo, pode ser usado numa nova marcação no mesmo estúdio.",
+      refundLabel: isFullPay ? "Regra do pagamento" : "Regra do sinal",
+      refundBody: isFullPay
+        ? "O pagamento não é devolvido em dinheiro. Se cancelar dentro do prazo, o valor pode ser usado numa nova marcação no mesmo estúdio."
+        : "O sinal não é devolvido em dinheiro. Se cancelar dentro do prazo, pode ser usado numa nova marcação no mesmo estúdio.",
       refundTone: "muted",
       nonRefundable: false,
-      badge: "Sinal válido para remarcar",
+      badge: isFullPay ? "Pagamento válido para remarcar" : "Sinal válido para remarcar",
       optionTitle: "Só remarcação",
       optionSubtitle: "Sem devolução em dinheiro",
     };
   }
 
+  // non_refundable (default)
   return {
     policy,
     hours,
     rescheduleLabel: "Cancelamento",
     rescheduleBody,
-    refundLabel: "Regra do sinal",
-    refundBody:
-      "O sinal não é reembolsável. Ao cancelar, o horário fica livre, mas o valor pago não é devolvido.",
+    refundLabel: isFullPay ? "Regra do pagamento" : "Regra do sinal",
+    refundBody: isFullPay
+      ? "O pagamento integral não é reembolsável. Ao cancelar, o horário fica livre, mas o valor pago não é devolvido."
+      : "O sinal não é reembolsável. Ao cancelar, o horário fica livre, mas o valor pago não é devolvido.",
     refundTone: "warning",
     nonRefundable: true,
-    badge: "Sinal não reembolsável",
+    badge: isFullPay ? "Pagamento não reembolsável" : "Sinal não reembolsável",
     optionTitle: "Não reembolsável",
-    optionSubtitle: "Sinal nunca devolvido em dinheiro",
+    optionSubtitle: isFullPay ? "Pagamento não devolvido" : "Sinal nunca devolvido em dinheiro",
   };
 }
 
 export function buildPolicyPlainText(
   policy: RefundPolicyValue,
   hours: number,
-  options?: { withDepositIntro?: boolean },
+  options?: { withDepositIntro?: boolean; depositPercent?: number | null },
 ): string {
-  const parts = getPolicyParts(policy, hours);
+  const parts = getPolicyParts(policy, hours, options?.depositPercent);
+  const isFullPay = Number(options?.depositPercent ?? 100) >= 100;
   const intro = options?.withDepositIntro
-    ? "O sinal reserva o horário e é descontado no valor final do serviço. "
+    ? isFullPay
+      ? "O pagamento integral garante o horário — o serviço fica totalmente pago online. "
+      : "O sinal reserva o horário e é descontado no valor final do serviço. "
     : "";
   return `${intro}${parts.rescheduleBody} ${parts.refundBody}`;
 }
 
-export function getPolicyPartsFromSource(source: PolicySource | null | undefined): PolicyTextParts {
-  return getPolicyParts(readRefundPolicy(source), readCancellationNoticeHours(source));
+export function getPolicyPartsFromSource(
+  source: PolicySource | null | undefined,
+  depositPercent?: number | null,
+): PolicyTextParts {
+  return getPolicyParts(readRefundPolicy(source), readCancellationNoticeHours(source), depositPercent);
 }

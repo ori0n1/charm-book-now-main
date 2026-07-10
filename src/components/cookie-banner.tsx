@@ -48,8 +48,8 @@ export function CookieBanner() {
   };
 
   return (
-    <div className="fixed inset-x-3 bottom-3 z-50 mx-auto max-w-xl md:inset-x-auto md:left-1/2 md:-translate-x-1/2">
-      <div className="relative rounded-2xl border border-border bg-card/95 p-4 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-card/80">
+    <div className="fixed inset-x-3 bottom-3 z-50 w-auto max-w-none md:inset-x-auto md:left-1/2 md:w-[calc(100vw-1.5rem)] md:max-w-xl md:-translate-x-1/2">
+      <div className="relative overflow-hidden rounded-2xl border border-border bg-card/95 p-4 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-card/80">
         <button
           onClick={() => setVisible(false)}
           aria-label="Fechar"
@@ -83,7 +83,7 @@ export function CookieBanner() {
           </div>
         )}
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="mt-3 grid gap-3 sm:flex sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
             <Link to="/privacidade" className="underline underline-offset-2 hover:text-foreground">
               Privacidade
@@ -92,22 +92,22 @@ export function CookieBanner() {
               Cookies
             </Link>
           </div>
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
             <button
               onClick={() => save({ analytics: false, marketing: false })}
-              className="rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-wider text-foreground transition active:scale-95"
+              className="min-w-0 rounded-full border border-border px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wide text-foreground transition active:scale-95 sm:px-4 sm:text-xs sm:tracking-wider"
             >
               Rejeitar
             </button>
             <button
               onClick={() => (managing ? save({ analytics, marketing }) : setManaging(true))}
-              className="rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-wider text-foreground transition active:scale-95"
+              className="min-w-0 rounded-full border border-border px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wide text-foreground transition active:scale-95 sm:px-4 sm:text-xs sm:tracking-wider"
             >
               {managing ? "Guardar" : "Gerir"}
             </button>
             <button
               onClick={() => save({ analytics: true, marketing: true })}
-              className="rounded-full bg-foreground px-5 py-2 text-xs font-semibold uppercase tracking-wider text-background transition active:scale-95"
+              className="col-span-2 min-w-0 rounded-full bg-foreground px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wide text-background transition active:scale-95 sm:col-span-1 sm:px-5 sm:text-xs sm:tracking-wider"
             >
               Aceitar
             </button>
@@ -147,4 +147,3 @@ function CookieOption({
     </label>
   );
 }
-

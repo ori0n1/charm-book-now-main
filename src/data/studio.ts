@@ -21,6 +21,14 @@ export type Service = {
   recommended?: boolean;
   media: ServiceMedia[];
 };
+export type StaffStatus = "online" | "available" | "busy" | "absent";
+
+export function normalizeStaffStatus(status?: StaffStatus | string | null): Exclude<StaffStatus, "available"> {
+  if (status === "busy") return "busy";
+  if (status === "absent") return "absent";
+  return "online";
+}
+
 export type Professional = {
   id: string;
   name: string;
@@ -29,6 +37,8 @@ export type Professional = {
   reviewsCount?: number;
   photo: string;
   serviceIds: string[];
+  /** Manual status set in the admin panel. Absent staff are filtered out of the public page. */
+  currentStatus?: StaffStatus;
 };
 export type Upsell = {
   id: string;
@@ -38,6 +48,10 @@ export type Upsell = {
   originalPrice: number;
   price: number; // discounted
   photo: string;
+  discountType?: "price" | "percent" | "fixed";
+  discountValue?: number | null;
+  displayMode?: "percent" | "amount" | "both";
+  upsellDurationMin?: number | null;
 };
 
 export const studio = {
@@ -273,15 +287,37 @@ export const professionals: Professional[] = [
   },
 ];
 
-export function getNextDates(count = 14): Date[] {
+export function getNextDates(count = 14, timeZone = "Europe/Lisbon"): Date[] {
   const out: Date[] = [];
-  const today = new Date();
+  const today = getDatePartsInTimeZone(new Date(), timeZone);
   for (let i = 0; i < count; i++) {
-    const d = new Date(today);
-    d.setDate(today.getDate() + i);
+    const d = new Date(today.year, today.month - 1, today.day + i, 12, 0, 0, 0);
     out.push(d);
   }
   return out;
+}
+
+function getDatePartsInTimeZone(date: Date, timeZone: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const read = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+    const year = read("year");
+    const month = read("month");
+    const day = read("day");
+    if (year && month && day) return { year, month, day };
+  } catch {
+    /* fall back to local date below */
+  }
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+  };
 }
 
 export const TIME_SLOTS = [

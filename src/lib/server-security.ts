@@ -1,5 +1,6 @@
 import { getRequest } from "@tanstack/react-start/server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { getStudioSubscriptionAccess } from "@/lib/subscription-access";
 
 type SupabaseLike = {
   from: (table: string) => any;
@@ -12,6 +13,7 @@ type RateLimitOptions = {
 };
 
 type StudioAccessOptions = {
+  allowExpiredTrial?: boolean;
   requirePremium?: boolean;
 };
 
@@ -26,14 +28,18 @@ function forbidden(message = "forbidden"): never {
   throw new Response(message, { status: 403 });
 }
 
-export async function assertStudioAccess(sb: SupabaseLike, userId: string, studioId: string) {
-  await assertStudioAccessWithOptions(sb, userId, studioId, {});
+export async function assertStudioAccess(
+  sb: SupabaseLike,
+  userId: string,
+  studioId: string,
+  options: StudioAccessOptions = {},
+) {
+  await assertStudioAccessWithOptions(sb, userId, studioId, options);
 }
 
 export async function assertStudioPremiumAccess(sb: SupabaseLike, studioId: string) {
   if (!studioId) forbidden("premium_required");
 
-  const now = Date.now();
   const { data: studio, error: studioError } = await sb
     .from("studios")
     .select("subscription_status, subscription_current_period_end, trial_ends_at, premium_access_until, is_active")
@@ -41,23 +47,7 @@ export async function assertStudioPremiumAccess(sb: SupabaseLike, studioId: stri
     .maybeSingle();
 
   if (studioError || !studio?.is_active) forbidden("premium_required");
-
-  const subscriptionStatus = String(studio.subscription_status || "");
-  const subscriptionCurrentPeriodEnd = studio.subscription_current_period_end
-    ? new Date(studio.subscription_current_period_end).getTime()
-    : 0;
-  const trialEndsAt = studio.trial_ends_at ? new Date(studio.trial_ends_at).getTime() : 0;
-  const premiumAccessUntil = studio.premium_access_until
-    ? new Date(studio.premium_access_until).getTime()
-    : 0;
-
-  if (
-    (subscriptionStatus === "active" && (subscriptionCurrentPeriodEnd > now || premiumAccessUntil > now)) ||
-    (subscriptionStatus === "trialing" && trialEndsAt > now) ||
-    premiumAccessUntil > now
-  ) {
-    return;
-  }
+  if (getStudioSubscriptionAccess(studio).premiumActive) return;
 
   const { data: subscription, error: subscriptionError } = await sb
     .from("subscriptions")
@@ -77,7 +67,7 @@ export async function assertStudioPremiumAccess(sb: SupabaseLike, studioId: stri
   if (
     subscription &&
     ["active", "trialing"].includes(String(subscription.status)) &&
-    currentPeriodEnd > now
+    currentPeriodEnd > Date.now()
   ) {
     return;
   }
@@ -102,7 +92,7 @@ export async function assertStudioAccessWithOptions(
     .maybeSingle();
 
   if (error || !data?.studio_id) forbidden();
-  if (options.requirePremium) await assertStudioPremiumAccess(sb, studioId);
+  if (!options.allowExpiredTrial) await assertStudioPremiumAccess(sb, studioId);
 }
 
 export async function assertAppointmentAccess(

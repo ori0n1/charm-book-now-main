@@ -1,10 +1,12 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
-import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
 import { getSettledSession, resolveAuthLanding } from "@/lib/auth-landing";
 import { SEGMENT_OPTIONS, type BusinessSegment } from "@/lib/segments";
+import { claimReferral } from "@/lib/referrals.functions";
+import { createStudioWithTrialGuard } from "@/lib/onboarding.functions";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/onboarding")({
@@ -15,8 +17,11 @@ export const Route = createFileRoute("/_authenticated/onboarding")({
 function OnboardingPage() {
   const navigate = useNavigate();
   useAuthRedirectError();
+  const claimRef = useServerFn(claimReferral);
+  const createStudio = useServerFn(createStudioWithTrialGuard);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
+  const [phone, setPhone] = useState("");
   const [segment, setSegment] = useState<BusinessSegment>("beauty");
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
@@ -62,16 +67,50 @@ function OnboardingPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.rpc("create_studio_with_owner", {
-      p_name: name.trim(),
-      p_slug: slug.trim().toLowerCase(),
-      p_business_segment: segment,
-    });
-    setLoading(false);
-    if (error) {
-      toast.error(error.message.includes("duplicate") ? "Esse link já existe." : error.message);
+    let newStudioId: string | null = null;
+
+    try {
+      const result = await createStudio({
+        data: {
+          name: name.trim(),
+          slug: slug.trim().toLowerCase(),
+          businessSegment: segment,
+          phone: phone.trim() || null,
+          deviceFingerprint: getTrialDeviceFingerprint(),
+        },
+      });
+      newStudioId = result.studioId;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível criar o negócio.";
+      toast.error(message);
+      setLoading(false);
       return;
     }
+
+    setLoading(false);
+
+    if (newStudioId) {
+      try {
+        const storedRef = (() => {
+          try {
+            return localStorage.getItem("bellza_ref_code") ?? undefined;
+          } catch {
+            return undefined;
+          }
+        })();
+        await claimRef({ data: { studioId: newStudioId, refCode: storedRef } });
+        if (storedRef) {
+          try {
+            localStorage.removeItem("bellza_ref_code");
+          } catch {
+            // Ignore local cleanup errors.
+          }
+        }
+      } catch {
+        // Referral claim is best-effort and must not block onboarding.
+      }
+    }
+
     toast.success("Negócio criado!");
     navigate({ to: "/admin" });
   }
@@ -162,6 +201,19 @@ function OnboardingPage() {
             </div>
           </div>
 
+          <div>
+            <label className="text-xs uppercase tracking-wide text-muted-foreground">
+              Telemóvel do estúdio (opcional)
+            </label>
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              inputMode="tel"
+              className="mt-1 w-full rounded-md border border-border bg-background px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-foreground"
+              placeholder="912 345 678"
+            />
+          </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -182,4 +234,25 @@ function slugify(s: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
+}
+
+function getTrialDeviceFingerprint() {
+  if (typeof window === "undefined") return null;
+  try {
+    const key = "bellza_trial_device";
+    const existing = window.localStorage.getItem(key);
+    if (existing) return existing;
+    const value = [
+      navigator.userAgent,
+      navigator.language,
+      screen.width,
+      screen.height,
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      Math.random().toString(36).slice(2),
+    ].join("|");
+    window.localStorage.setItem(key, value);
+    return value;
+  } catch {
+    return null;
+  }
 }

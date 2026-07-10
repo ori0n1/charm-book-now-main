@@ -1,19 +1,29 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { createPortal } from "react-dom";
 import { useEffect, useState } from "react";
 import {
+  CalendarCheck,
+  CalendarDays,
   CalendarOff,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Plus,
   ShieldCheck,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { getSegmentConfig } from "@/lib/segments";
 import { supabase } from "@/integrations/supabase/client";
+import { normalizeStaffStatus } from "@/data/studio";
+import { updateStaffPresenceStatus } from "@/lib/staff-presence.functions";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import { PremiumTimeSelect } from "@/components/ui/premium-time-select";
+import { ExpandableList } from "@/components/ui/expandable-list";
 import {
   Select,
   SelectContent,
@@ -26,48 +36,109 @@ export const Route = createFileRoute("/_authenticated/admin/horarios")({
   component: HoursPage,
 });
 
-const WEEKDAYS = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-type Staff = { id: string; name: string };
-type Slot = { id: string; staff_id: string; weekday: number; start_time: string; end_time: string };
-type TimeOff = {
-  id: string;
-  staff_id: string;
-  starts_at: string;
-  ends_at: string;
-  reason: string | null;
-};
+const WEEKDAYS       = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+const WEEKDAYS_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const MONTHS_PT      = [
+  "Janeiro","Fevereiro","Março","Abril","Maio","Junho",
+  "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro",
+];
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Tab        = "agenda" | "bloqueios" | "regras";
+type StaffStatus = "online" | "busy" | "absent";
+type RawStaffStatus = StaffStatus | "available";
+type Staff       = { id: string; name: string; current_status: StaffStatus };
+type Slot        = { id: string; staff_id: string; weekday: number; start_time: string; end_time: string };
+type TimeOff     = { id: string; staff_id: string; starts_at: string; ends_at: string; reason: string | null };
+
+const LEGACY_STATUS_OPTIONS = [
+  {
+    value: "online",
+    label: "Agenda disponível",
+    desc: "Aceitando agendamentos e horários disponíveis.",
+    detail: "Este modo indica que a agenda está disponível. Os clientes poderão consultar horários livres e receber notificações se seguirem o estúdio.",
+    dot: "bg-emerald-500",
+    text: "text-emerald-600 dark:text-emerald-400",
+  },
+  {
+    value: "busy",
+    label: "Agenda disponivel",
+    desc: "Em atendimento no momento.",
+    detail: "Você está em atendimento. Apenas horários futuros continuarão disponíveis.",
+    dot: "bg-zinc-950 dark:bg-zinc-200",
+    text: "text-zinc-700 dark:text-zinc-300",
+  },
+  {
+    value: "absent",
+    label: "Folga/Férias",
+    desc: "Agenda suspensa temporariamente.",
+    detail: "Profissional em folga ou férias. Enquanto este estado estiver ativo, a agenda cadastrada fica suspensa e nenhuma nova marcação ou encaixe pode ser realizado.",
+    dot: "bg-zinc-300 dark:bg-zinc-600",
+    text: "text-amber-700 dark:text-amber-300",
+  },
+];
+
+const STATUS_OPTIONS: { value: Exclude<StaffStatus, "busy">; label: string; desc: string; icon: "available" | "away"; tone: "emerald" | "amber"; detail?: string; dot?: string; text?: string }[] = [
+  {
+    value: "online",
+    label: "Agenda disponível",
+    desc: "Ativa",
+    icon: "available",
+    tone: "emerald",
+  },
+  {
+    value: "absent",
+    label: "Folga/Férias",
+    desc: "Pausada",
+    icon: "away",
+    tone: "amber",
+  },
+];
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 function HoursPage() {
-  const { studio } = useCurrentStudio();
-  const labels = getSegmentConfig(studio?.business_segment).labels;
-  const [staff, setStaff] = useState<Staff[]>([]);
-  const [slots, setSlots] = useState<Slot[]>([]);
-  const [timeOff, setTimeOff] = useState<TimeOff[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [staffId, setStaffId] = useState<string>("");
+  const { studio }  = useCurrentStudio();
+  const labels      = getSegmentConfig(studio?.business_segment).labels;
+
+  const [staff,      setStaff]      = useState<Staff[]>([]);
+  const [slots,      setSlots]      = useState<Slot[]>([]);
+  const [timeOff,    setTimeOff]    = useState<TimeOff[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [staffId,    setStaffId]    = useState("");
   const [minBookingNoticeMin, setMinBookingNoticeMin] = useState(30);
+
+  // UI state
+  const [activeTab,      setActiveTab]      = useState<Tab>("agenda");
+  const [expandedDays,   setExpandedDays]   = useState<Set<number>>(new Set());
+  const [blockModalOpen, setBlockModalOpen] = useState(false);
+
+  // Reset expanded days when staff changes
+  useEffect(() => { setExpandedDays(new Set()); }, [staffId]);
+
+  // ── Data loading ─────────────────────────────────────────────────────────
 
   async function load() {
     if (!studio) return;
+    const ownStaffId = studio.role === "staff" ? studio.staff_id : null;
     const [{ data: st }, { data: av }, { data: to }] = await Promise.all([
-      supabase
-        .from("staff")
-        .select("id,name")
-        .eq("studio_id", studio.id)
-        .eq("is_active", true)
-        .order("name"),
-      supabase.from("staff_availability").select("*").eq("studio_id", studio.id),
-      supabase
-        .from("staff_time_off")
-        .select("*")
-        .eq("studio_id", studio.id)
-        .order("starts_at", { ascending: false }),
+      supabase.from("staff").select("id,name,current_status").eq("studio_id", studio.id).eq("is_active", true).match(ownStaffId ? { id: ownStaffId } : {}).order("name"),
+      supabase.from("staff_availability").select("*").eq("studio_id", studio.id).match(ownStaffId ? { staff_id: ownStaffId } : {}),
+      supabase.from("staff_time_off").select("*").eq("studio_id", studio.id).match(ownStaffId ? { staff_id: ownStaffId } : {}).order("starts_at", { ascending: false }),
     ]);
-    setStaff((st ?? []) as Staff[]);
+    setStaff(
+      (st ?? []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        current_status: normalizeStaffStatus((s.current_status ?? "online") as RawStaffStatus),
+      })),
+    );
     setSlots((av ?? []) as Slot[]);
     setTimeOff((to ?? []) as TimeOff[]);
-    if (st && st.length && !staffId) setStaffId(st[0].id);
+    if (st && st.length && (!staffId || ownStaffId)) setStaffId(st[0].id);
     setLoading(false);
   }
 
@@ -76,14 +147,13 @@ function HoursPage() {
     void load();
   }, [studio]);
 
+  // ── Mutations ────────────────────────────────────────────────────────────
+
   async function saveMinBookingNotice(value: number) {
     if (!studio) return;
     const normalized = Math.max(0, Math.min(10080, value));
     setMinBookingNoticeMin(normalized);
-    const { error } = await supabase
-      .from("studios")
-      .update({ min_booking_notice_min: normalized })
-      .eq("id", studio.id);
+    const { error } = await supabase.from("studios").update({ min_booking_notice_min: normalized }).eq("id", studio.id);
     if (error) return toast.error(error.message);
     toast.success("Antecedência mínima guardada");
   }
@@ -91,13 +161,10 @@ function HoursPage() {
   async function addSlot(weekday: number) {
     if (!studio || !staffId) return;
     const { error } = await supabase.from("staff_availability").insert({
-      studio_id: studio.id,
-      staff_id: staffId,
-      weekday,
-      start_time: "09:00",
-      end_time: "18:00",
+      studio_id: studio.id, staff_id: staffId, weekday, start_time: "09:00", end_time: "18:00",
     });
     if (error) return toast.error(error.message);
+    setExpandedDays(prev => new Set([...prev, weekday]));
     void load();
   }
 
@@ -117,11 +184,7 @@ function HoursPage() {
   async function addTimeOff(starts: string, ends: string, reason: string) {
     if (!studio || !staffId) return;
     const { error } = await supabase.from("staff_time_off").insert({
-      studio_id: studio.id,
-      staff_id: staffId,
-      starts_at: starts,
-      ends_at: ends,
-      reason: reason || null,
+      studio_id: studio.id, staff_id: staffId, starts_at: starts, ends_at: ends, reason: reason || null,
     });
     if (error) return toast.error(error.message);
     toast.success("Bloqueio adicionado");
@@ -134,14 +197,47 @@ function HoursPage() {
     void load();
   }
 
-  if (loading) return <p className="text-sm text-muted-foreground">A carregar horários...</p>;
+  async function saveStatus(newStatus: StaffStatus) {
+    if (!staffId) return;
+    // Optimistic update
+    setStaff((prev) =>
+      prev.map((s) => (s.id === staffId ? { ...s, current_status: newStatus } : s)),
+    );
+    try {
+      const result = await updateStaffPresenceStatus({ data: { staffId, status: newStatus } });
+      if (newStatus === "online") {
+        if (result.notification?.sent) {
+          toast.success("Agenda disponível. Seguidores com notificações ativas foram avisados.");
+        } else if (result.notification?.skipped === "cooldown") {
+          toast.success("Agenda disponível. Notificação recente evitada para não incomodar clientes.");
+        } else {
+          toast.success("Agenda disponível.");
+        }
+      } else {
+        toast.success("Status atualizado.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível atualizar o status.");
+      void load(); // revert on failure
+    }
+  }
+
+  // ── Loading + empty states ───────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="space-y-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-16 animate-pulse rounded-2xl bg-muted" />
+        ))}
+      </div>
+    );
+  }
 
   if (staff.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-border bg-card px-4 py-12 text-center shadow-sm">
-        <p className="text-sm font-medium">
-          Ainda não existem {labels.professionalPlural} ativos.
-        </p>
+        <p className="text-sm font-medium">Ainda não existem {labels.professionalPlural} ativos.</p>
         <p className="mt-1 text-sm text-muted-foreground">
           Adicione {labels.professionalPlural} antes de configurar horários.
         </p>
@@ -149,319 +245,851 @@ function HoursPage() {
     );
   }
 
-  const selectedStaff = staff.find((s) => s.id === staffId);
-  const slotsByDay = (weekday: number) =>
-    slots.filter((s) => s.staff_id === staffId && s.weekday === weekday);
-  const staffTimeOff = timeOff.filter((t) => t.staff_id === staffId);
+  // ── Derived ──────────────────────────────────────────────────────────────
+
+  const selectedStaff  = staff.find((s) => s.id === staffId);
+  const visibleTabs = (studio!.role === "staff" ? ["agenda", "bloqueios"] : ["agenda", "bloqueios", "regras"]) as Tab[];
+  const selectedStatus = selectedStaff?.current_status ?? "online";
+  const visibleStatus = selectedStatus === "absent" ? "absent" : "online";
+  const isStaffOnDayOff = selectedStatus === "absent";
+  const selectedStatusCopy = STATUS_OPTIONS.find((opt) => opt.value === visibleStatus) ?? STATUS_OPTIONS[0]!;
+  const slotsByDay     = (weekday: number) => slots.filter((s) => s.staff_id === staffId && s.weekday === weekday);
+  const staffTimeOff   = timeOff.filter((t) => t.staff_id === staffId);
+
+  const activeDays = WEEKDAYS.filter((_, i) => slotsByDay(i).length > 0).length;
+  const totalMinutes = slots
+    .filter((s) => s.staff_id === staffId)
+    .reduce((sum, s) => {
+      const [sh = 0, sm = 0] = s.start_time.split(":").map(Number);
+      const [eh = 0, em = 0] = s.end_time.split(":").map(Number);
+      return sum + Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
+    }, 0);
+  const hoursLabel     = totalMinutes === 0 ? "0h" : `${(totalMinutes / 60).toFixed(1).replace(".0", "")}h`;
+  const upcomingBlocks = staffTimeOff.filter((t) => new Date(t.ends_at) >= new Date()).length;
+
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="max-w-full space-y-6 overflow-x-hidden">
-      <header className="rounded-2xl border border-border bg-card p-5 shadow-sm md:p-6">
-        <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">
-          Horários e bloqueios
-        </p>
-        <h1 className="mt-2 text-3xl font-light tracking-tight">Disponibilidade</h1>
-        <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-          Defina a agenda semanal de cada {labels.professional} e bloqueie períodos de folga, férias ou
-          indisponibilidade.
-        </p>
-      </header>
+    <div className="mx-auto w-full max-w-[1180px] space-y-4 pb-6 lg:space-y-5">
 
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
-          <div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <UserRound className="h-4 w-4" />
-              <p className="text-[10px] uppercase tracking-[0.2em]">
-                {labels.professional}
-              </p>
-            </div>
-            <label className="mt-2 block text-sm font-medium" htmlFor="staff-hours">
-              Escolha quem pretende configurar
-            </label>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Os horários abaixo serão aplicados apenas ao perfil selecionado.
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <header className="flex flex-col gap-3 overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
+        <div className="grid gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:items-center lg:px-6">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+              Disponibilidade
+            </p>
+            <h1 className="mt-0.5 truncate text-xl font-semibold tracking-tight lg:text-2xl">
+              Horários e Bloqueios
+            </h1>
+            <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
+              Configure a agenda semanal, bloqueios e disponibilidade do profissional.
             </p>
           </div>
-          <Select value={staffId} onValueChange={setStaffId}>
-            <SelectTrigger
-              id="staff-hours"
-              className="h-12 w-full rounded-2xl border-border bg-background/80 px-4 pr-3 text-sm shadow-sm transition focus:ring-2 focus:ring-ring/20 md:w-72 [&>svg]:ml-3 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:opacity-60"
-            >
-              <SelectValue placeholder={`Selecionar ${labels.professional}`} />
-            </SelectTrigger>
-            <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
-              {staff.map((s) => (
-                <SelectItem
-                  key={s.id}
-                  value={s.id}
-                  className="rounded-xl px-3 py-2.5 text-sm focus:bg-muted"
-                >
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </section>
 
-      <section className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
-          <div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <ShieldCheck className="h-4 w-4" />
-              <p className="text-[10px] uppercase tracking-[0.2em]">Regras de marcação</p>
-            </div>
-            <h3 className="mt-1 text-base font-medium">Antecedência mínima</h3>
-            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-              Bloqueia marcações em cima da hora e mostra apenas horários com tempo real para
-              preparação de {labels.professional}.
+          {/* Staff selector — only if multiple */}
+          <div className="rounded-2xl border border-border/70 bg-background/55 p-2.5">
+            <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Profissional
             </p>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
-            <Select
-              value={isPresetNotice(minBookingNoticeMin) ? String(minBookingNoticeMin) : "custom"}
-              onValueChange={(value) => {
-                if (value === "custom") return;
-                void saveMinBookingNotice(Number(value));
-              }}
-            >
-              <SelectTrigger className="h-12 rounded-2xl border-border bg-background/80 px-4 pr-3 text-sm shadow-sm transition focus:ring-2 focus:ring-ring/20 [&>svg]:ml-3 [&>svg]:h-4 [&>svg]:w-4 [&>svg]:opacity-60">
-                <SelectValue />
+          {staff.length > 1 ? (
+            <Select value={staffId} onValueChange={setStaffId}>
+              <SelectTrigger className="h-10 w-full rounded-xl border-border/80 bg-card px-3 text-sm shadow-none focus:ring-2 focus:ring-foreground/10">
+                <SelectValue placeholder={`Selecionar ${labels.professional}`} />
               </SelectTrigger>
               <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
-                <SelectItem value="30" className="rounded-xl px-3 py-2.5">
-                  30 minutos
-                </SelectItem>
-                <SelectItem value="60" className="rounded-xl px-3 py-2.5">
-                  1 hora
-                </SelectItem>
-                <SelectItem value="120" className="rounded-xl px-3 py-2.5">
-                  2 horas
-                </SelectItem>
-                <SelectItem value="custom" className="rounded-xl px-3 py-2.5">
-                  Personalizado
-                </SelectItem>
+                {staff.map((s) => (
+                  <SelectItem key={s.id} value={s.id} className="rounded-xl px-3 py-2 text-sm">
+                    {s.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
-            <label className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">
-              <input
-                type="number"
-                min={0}
-                max={10080}
-                step={5}
-                value={minBookingNoticeMin}
-                onChange={(event) => setMinBookingNoticeMin(Number(event.target.value))}
-                onBlur={(event) => void saveMinBookingNotice(Number(event.target.value))}
-                className="h-7 w-20 bg-transparent text-sm outline-none"
-              />
-              <span className="text-xs text-muted-foreground">min</span>
-            </label>
-          </div>
-        </div>
-      </section>
-
-      <section className="max-w-full overflow-hidden rounded-2xl border border-border bg-card p-4 shadow-sm md:p-5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Clock className="h-4 w-4" />
-              <p className="text-[10px] uppercase tracking-[0.2em]">Agenda semanal</p>
-            </div>
-            <h3 className="mt-1 text-base font-medium">Semana de {selectedStaff?.name}</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Adicione um ou mais turnos por dia. Dias sem turnos aparecem como fechados.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-3">
-          {WEEKDAYS.map((label, weekday) => {
-            const daySlots = slotsByDay(weekday);
-            return (
-              <div
-                key={weekday}
-                className="max-w-full overflow-hidden rounded-[1.25rem] border border-border bg-background/65 p-3 md:rounded-2xl md:p-4"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium">{label}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {daySlots.length === 0
-                        ? "Sem atendimento configurado."
-                        : `${daySlots.length} turno${daySlots.length > 1 ? "s" : ""} ativo${daySlots.length > 1 ? "s" : ""}.`}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => addSlot(weekday)}
-                    className="flex shrink-0 items-center gap-1 rounded-xl border border-border px-3 py-2 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Adicionar
-                  </button>
-                </div>
-
-                {daySlots.length > 0 && (
-                  <div className="mt-4 grid min-w-0 gap-2">
-                    {daySlots.map((s) => (
-                      <div
-                        key={s.id}
-                        className="grid min-w-0 max-w-full gap-2 overflow-hidden rounded-[1.15rem] bg-muted/30 p-2.5 text-sm sm:grid-cols-[1fr_auto_1fr_2.5rem] sm:items-end md:rounded-2xl md:p-3"
-                      >
-                        <TimeInput
-                          label="Início"
-                          value={s.start_time.slice(0, 5)}
-                          onChange={(value) => updateSlot(s.id, "start_time", value)}
-                        />
-                        <span className="hidden text-muted-foreground sm:block">até</span>
-                        <TimeInput
-                          label="Fim"
-                          value={s.end_time.slice(0, 5)}
-                          onChange={(value) => updateSlot(s.id, "end_time", value)}
-                        />
-                        <button
-                          onClick={() => removeSlot(s.id)}
-                          className="flex h-10 w-full items-center justify-center self-end rounded-xl border border-border text-muted-foreground transition hover:bg-background hover:text-foreground sm:w-10"
-                          aria-label="Remover turno"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="max-w-full overflow-hidden rounded-2xl border border-border bg-card p-4 shadow-sm md:p-5">
-        <div>
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <CalendarOff className="h-4 w-4" />
-            <p className="text-[10px] uppercase tracking-[0.2em]">Indisponibilidades</p>
-          </div>
-          <h3 className="mt-1 text-base font-medium">Bloqueios e folgas</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Use esta área para férias, pausas, formações ou qualquer período sem atendimento.
-          </p>
-        </div>
-        <div className="mt-4">
-          <TimeOffForm onAdd={addTimeOff} />
-        </div>
-        <div className="mt-4 space-y-2">
-          {staffTimeOff.length === 0 ? (
-            <p className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-              Sem bloqueios para {selectedStaff?.name}.
-            </p>
           ) : (
-            staffTimeOff.map((t) => (
-              <div
-                key={t.id}
-                className="flex max-w-full items-center gap-3 overflow-hidden rounded-2xl border border-border bg-background/65 p-3 text-sm"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="leading-relaxed">
-                    {new Date(t.starts_at).toLocaleString("pt-PT")} até{" "}
-                    {new Date(t.ends_at).toLocaleString("pt-PT")}
-                  </p>
-                  {t.reason && <p className="mt-1 text-xs text-muted-foreground">{t.reason}</p>}
-                </div>
-                <button onClick={() => removeTimeOff(t.id)} aria-label="Remover bloqueio">
-                  <Trash2 className="h-4 w-4 text-muted-foreground" />
-                </button>
-              </div>
-            ))
+            <div className="inline-flex h-10 w-full items-center gap-2 rounded-xl border border-border/80 bg-card px-3 text-sm font-medium text-foreground">
+              <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{selectedStaff?.name}</span>
+            </div>
           )}
+          </div>
         </div>
-      </section>
+
+        {/* ── Status selector ────────────────────────────────────────────── */}
+        {selectedStaff && (
+          <div className="border-t border-border/60 bg-muted/10 px-4 py-3 sm:px-5 lg:px-6">
+            {/* Header row — wraps on very narrow screens */}
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Estado da agenda
+              </p>
+              <span className="rounded-full bg-background/75 px-2.5 py-1 text-[10px] font-semibold text-muted-foreground ring-1 ring-border/60">
+                {selectedStatusCopy.label}
+              </span>
+            </div>
+            {/* 1 col on 320–429 px, 2 cols on 430–639 px, 4 cols on 640 px+ */}
+            <div className="grid auto-rows-fr grid-cols-2 gap-2 rounded-[1.35rem] border border-border/70 bg-background/70 p-1.5 sm:gap-2.5 sm:p-2">
+              {STATUS_OPTIONS.map((opt) => {
+                const isCurrent = visibleStatus === opt.value;
+                const Icon = opt.icon === "available" ? CalendarCheck : CalendarOff;
+                const iconClass =
+                  opt.tone === "emerald"
+                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => void saveStatus(opt.value)}
+                    className={[
+                      "flex min-h-[5.35rem] flex-col justify-between rounded-2xl border p-2.5 text-left transition-all duration-200 active:scale-[0.98] sm:min-h-[5.75rem] sm:p-3",
+                      isCurrent
+                        ? "border-foreground/15 bg-foreground text-background shadow-sm ring-1 ring-foreground/10"
+                        : "border-transparent bg-card/60 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                    ].join(" ")}
+                  >
+                    {/* Dot — vertically centered with the label */}
+                    <span className="flex items-start justify-between gap-2">
+                      <span className={`grid size-8 shrink-0 place-items-center rounded-xl ${isCurrent ? "bg-background/15 text-background" : iconClass}`}>
+                        <Icon className="h-4 w-4" />
+                      </span>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold leading-none ${isCurrent ? "bg-background/15 text-background/80" : "bg-background/75 text-muted-foreground ring-1 ring-border/55"}`}>
+                        {opt.desc}
+                      </span>
+                    </span>
+                    <span className="min-w-0 pt-2">
+                      <span className="block text-[13px] font-semibold leading-tight sm:text-sm">
+                        {opt.label}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* ── Summary bar ────────────────────────────────────────────────── */}
+      {isStaffOnDayOff && (
+        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 shadow-sm dark:text-amber-200 lg:px-5">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <p className="font-semibold">Em folga</p>
+            <p className="text-xs leading-relaxed text-amber-800/80 dark:text-amber-100/80">
+              Os horários configurados ficam suspensos e não serão exibidos para novas marcações.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 lg:gap-3">
+        <SummaryChip
+          icon={<CalendarDays className="h-4 w-4" />}
+          label="Dias ativos"
+          value={`${activeDays}/7`}
+          color={activeDays > 0 ? "emerald" : "muted"}
+        />
+        <SummaryChip
+          icon={<Clock className="h-4 w-4" />}
+          label="Horas/semana"
+          value={hoursLabel}
+          color="blue"
+        />
+        <SummaryChip
+          icon={<CalendarOff className="h-4 w-4" />}
+          label="Bloqueios"
+          value={String(upcomingBlocks)}
+          color={upcomingBlocks > 0 ? "amber" : "muted"}
+        />
+      </div>
+
+      {/* ── Tab bar ────────────────────────────────────────────────────── */}
+      <div className="rounded-[1.35rem] border border-border/80 bg-card/95 p-2 shadow-sm lg:mx-auto lg:w-full lg:max-w-3xl lg:p-2.5">
+        <div className="grid grid-cols-3 gap-1.5 lg:gap-2">
+          {visibleTabs.map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveTab(tab)}
+              className={`h-10 rounded-2xl text-xs font-semibold transition-all duration-200 lg:h-12 lg:text-sm ${
+                activeTab === tab
+                  ? "bg-foreground text-background shadow-sm ring-1 ring-foreground/10"
+                  : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+              }`}
+            >
+              {tab === "agenda" ? "Agenda" : tab === "bloqueios" ? "Bloqueios" : "Regras"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ══ TAB: Agenda ═══════════════════════════════════════════════════ */}
+      {activeTab === "agenda" && (
+        <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
+          <div className="flex items-center justify-between border-b border-border/70 bg-muted/20 px-4 py-3 lg:px-5">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Semana de
+              </p>
+              <p className="text-sm font-semibold">{selectedStaff?.name}</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {activeDays} {activeDays === 1 ? "dia ativo" : "dias ativos"}
+            </p>
+          </div>
+
+          <div className="divide-y divide-border/50 md:hidden">
+            {WEEKDAYS.map((label, weekday) => (
+              <DayRow
+                key={weekday}
+                weekday={weekday}
+                label={label}
+                labelShort={WEEKDAYS_SHORT[weekday]!}
+                slots={slotsByDay(weekday)}
+                isDayOff={isStaffOnDayOff}
+                isExpanded={expandedDays.has(weekday)}
+                onToggle={() =>
+                  setExpandedDays((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(weekday)) next.delete(weekday);
+                    else next.add(weekday);
+                    return next;
+                  })
+                }
+                onAddSlot={() => addSlot(weekday)}
+                onUpdateSlot={updateSlot}
+                onRemoveSlot={removeSlot}
+              />
+            ))}
+          </div>
+          <div className="hidden grid-cols-7 gap-2.5 p-3 md:grid lg:gap-3 lg:p-4">
+            {WEEKDAYS.map((label, weekday) => (
+              <DayColumn
+                key={weekday}
+                weekday={weekday}
+                label={label}
+                labelShort={WEEKDAYS_SHORT[weekday]!}
+                slots={slotsByDay(weekday)}
+                isDayOff={isStaffOnDayOff}
+                onAddSlot={() => addSlot(weekday)}
+                onUpdateSlot={updateSlot}
+                onRemoveSlot={removeSlot}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══ TAB: Bloqueios ════════════════════════════════════════════════ */}
+      {activeTab === "bloqueios" && (
+        <div className="space-y-3">
+          {/* Section header + CTA */}
+          <div className="grid gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center lg:px-5">
+            <div>
+              <p className="text-sm font-semibold">Bloqueios e folgas</p>
+              <p className="text-xs text-muted-foreground">
+                {selectedStaff?.name} · {upcomingBlocks} activo{upcomingBlocks !== 1 ? "s" : ""}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setBlockModalOpen(true)}
+              className="bellza-panel-action bellza-panel-action-primary"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Novo bloqueio</span>
+            </button>
+          </div>
+
+          {/* Mini calendar */}
+          <BlockCalendar timeOff={staffTimeOff} />
+
+          {/* Block list */}
+          <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
+            <div className="border-b border-border/70 bg-muted/20 px-4 py-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Todos os bloqueios
+              </p>
+            </div>
+
+            {staffTimeOff.length === 0 ? (
+              <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
+                <div className="mb-3 grid size-10 place-items-center rounded-2xl bg-muted">
+                  <CalendarOff className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium">Sem bloqueios</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Não há indisponibilidades para {selectedStaff?.name}.
+                </p>
+              </div>
+            ) : (
+              <ExpandableList
+                items={staffTimeOff}
+                initialCount={5}
+                className="divide-y divide-border/50"
+                getKey={(t) => t.id}
+                moreLabel={(hidden) => `Ver mais ${hidden} bloqueio${hidden !== 1 ? "s" : ""}`}
+                renderItem={(t) => {
+                  const isPast = new Date(t.ends_at) < new Date();
+                  return (
+                    <div
+                      className={`flex items-center gap-3 px-4 py-3 transition-colors ${isPast ? "opacity-50" : "hover:bg-muted/20"}`}
+                    >
+                      <div
+                        className={`shrink-0 grid size-8 place-items-center rounded-xl ${
+                          isPast ? "bg-muted" : "bg-amber-500/10"
+                        }`}
+                      >
+                        <CalendarOff
+                          className={`h-3.5 w-3.5 ${
+                            isPast ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400"
+                          }`}
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium leading-tight">
+                          {fmtDateTime(t.starts_at)} → {fmtDateTime(t.ends_at)}
+                        </p>
+                        {t.reason && (
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.reason}</p>
+                        )}
+                        {isPast && (
+                          <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/60">
+                            Passado
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeTimeOff(t.id)}
+                        aria-label="Remover bloqueio"
+                        className="grid size-8 shrink-0 place-items-center rounded-xl border border-border text-muted-foreground transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  );
+                }}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ══ TAB: Regras ═══════════════════════════════════════════════════ */}
+      {activeTab === "regras" && (
+        <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
+          <div className="flex items-center gap-3 border-b border-border/70 bg-muted/20 px-4 py-3">
+            <div className="grid size-8 place-items-center rounded-xl bg-muted">
+              <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold">Antecedência mínima</p>
+              <p className="text-xs text-muted-foreground">
+                Tempo mínimo antes de aceitar novas marcações
+              </p>
+            </div>
+          </div>
+
+          <div className="px-4 py-4 space-y-3">
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+              <Select
+                value={isPresetNotice(minBookingNoticeMin) ? String(minBookingNoticeMin) : "custom"}
+                onValueChange={(value) => {
+                  if (value !== "custom") void saveMinBookingNotice(Number(value));
+                }}
+              >
+                <SelectTrigger className="h-10 rounded-xl border-border bg-background/70 px-3 text-sm shadow-none focus:ring-2 focus:ring-foreground/10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                  <SelectItem value="30"    className="rounded-xl px-3 py-2">30 minutos</SelectItem>
+                  <SelectItem value="60"    className="rounded-xl px-3 py-2">1 hora</SelectItem>
+                  <SelectItem value="120"   className="rounded-xl px-3 py-2">2 horas</SelectItem>
+                  <SelectItem value="custom" className="rounded-xl px-3 py-2">Personalizado</SelectItem>
+                </SelectContent>
+              </Select>
+
+              <label className="inline-flex items-center gap-2 rounded-xl border border-border bg-background/70 px-3 py-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={10080}
+                  step={5}
+                  value={minBookingNoticeMin}
+                  onChange={(e) => setMinBookingNoticeMin(Number(e.target.value))}
+                  onBlur={(e)   => void saveMinBookingNotice(Number(e.target.value))}
+                  className="h-7 w-16 bg-transparent text-sm tabular-nums outline-none"
+                />
+                <span className="text-xs text-muted-foreground">min</span>
+              </label>
+            </div>
+
+            <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+              Actualmente:{" "}
+              <span className="font-semibold text-foreground">{formatNotice(minBookingNoticeMin)}</span>{" "}
+              de antecedência obrigatória para novas marcações online.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Block Modal ───────────────────────────────────────────────── */}
+      {blockModalOpen && (
+        <BlockModal
+          staffName={selectedStaff?.name ?? ""}
+          onClose={() => setBlockModalOpen(false)}
+          onAdd={async (starts, ends, reason) => {
+            await addTimeOff(starts, ends, reason);
+            setBlockModalOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function TimeInput({
-  label,
-  value,
-  onChange,
+// ─── Summary Chip ─────────────────────────────────────────────────────────────
+
+function SummaryChip({
+  icon, label, value, color,
 }: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
+  icon: React.ReactNode; label: string; value: string;
+  color: "emerald" | "blue" | "amber" | "muted";
 }) {
+  const iconCls: Record<string, string> = {
+    emerald: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    blue:    "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+    amber:   "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    muted:   "bg-muted text-muted-foreground",
+  };
   return (
-    <label className="block min-w-0 max-w-full overflow-hidden">
-      <span className="mb-1 block text-[10px] uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      <PremiumTimeSelect value={value} onChange={onChange} className="h-10 rounded-xl" />
-    </label>
+    <div className="flex min-h-[4.5rem] items-center gap-3 rounded-2xl border border-border/80 bg-card/95 px-3 py-2.5 text-left shadow-sm lg:min-h-0 lg:px-4">
+      <span className={`grid size-8 shrink-0 place-items-center rounded-xl ${iconCls[color]}`}>{icon}</span>
+      <div className="min-w-0">
+        <p className="text-base font-semibold tabular-nums leading-none">{value}</p>
+        <p className="mt-1 truncate text-[10px] font-medium leading-tight text-muted-foreground">{label}</p>
+      </div>
+    </div>
   );
 }
 
-function isPresetNotice(value: number) {
-  return value === 30 || value === 60 || value === 120;
-}
+// ─── Day Row ──────────────────────────────────────────────────────────────────
 
-function TimeOffForm({ onAdd }: { onAdd: (s: string, e: string, r: string) => void }) {
-  const [starts, setStarts] = useState("");
-  const [ends, setEnds] = useState("");
-  const [reason, setReason] = useState("");
+function DayColumn({
+  weekday, label, labelShort, slots, isDayOff, onAddSlot, onUpdateSlot, onRemoveSlot,
+}: {
+  weekday: number; label: string; labelShort: string; slots: Slot[];
+  isDayOff: boolean;
+  onAddSlot:   () => void;
+  onUpdateSlot: (id: string, field: "start_time" | "end_time", value: string) => void;
+  onRemoveSlot: (id: string) => void;
+}) {
+  const hasSlots = slots.length > 0;
+  const isToday = new Date().getDay() === weekday;
 
   return (
-    <div className="grid min-w-0 max-w-full gap-3 overflow-hidden rounded-[1.35rem] border border-dashed border-border bg-background/60 p-3 md:grid-cols-[1.15fr_1.15fr_1fr_auto] md:items-end md:rounded-3xl md:p-4">
-      <DateTimeField label="Início" value={starts} onChange={setStarts} />
-      <DateTimeField label="Fim" value={ends} onChange={setEnds} />
-      <Field label="Motivo">
-        <input
-          placeholder="Opcional"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          className="box-border h-11 w-full min-w-0 max-w-full appearance-none rounded-2xl border border-border bg-background px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
-        />
-      </Field>
+    <div className={`flex min-h-[13rem] flex-col rounded-2xl border px-2.5 py-2.5 transition-colors ${
+      isDayOff
+        ? "border-amber-500/25 bg-amber-500/[0.07] ring-1 ring-amber-500/10"
+        : isToday
+          ? "border-foreground/30 bg-foreground/[0.03] ring-1 ring-foreground/10"
+          : hasSlots
+            ? "border-border/80 bg-background/60"
+            : "border-dashed border-border/60 bg-muted/20"
+    }`}>
+      <div className="mb-2.5 flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{labelShort}</p>
+          <p className="truncate text-sm font-semibold">{isToday ? "Hoje" : label}</p>
+        </div>
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+          isDayOff
+            ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+            : hasSlots
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+              : "bg-muted text-muted-foreground"
+        }`}>
+          {isDayOff ? "Folga" : slots.length}
+        </span>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-2">
+        {slots.length === 0 ? (
+          <div className="grid flex-1 place-items-center rounded-xl bg-background/45 px-2 text-center text-xs text-muted-foreground">
+            {isDayOff ? "Folga ativa" : "Sem atendimento"}
+          </div>
+        ) : (
+          slots.map((slot) => (
+            <div key={slot.id} className="rounded-xl border border-border/70 bg-card/90 p-2 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+              <div className="grid gap-1.5">
+                <TimeInput
+                  label="Início"
+                  value={slot.start_time.slice(0, 5)}
+                  onChange={(value) => onUpdateSlot(slot.id, "start_time", value)}
+                />
+                <TimeInput
+                  label="Fim"
+                  value={slot.end_time.slice(0, 5)}
+                  onChange={(value) => onUpdateSlot(slot.id, "end_time", value)}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => onRemoveSlot(slot.id)}
+                className="mt-2 flex h-7 w-full items-center justify-center gap-1.5 rounded-lg border border-border/70 text-[11px] font-semibold text-muted-foreground transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-600"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Remover
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+
       <button
-        onClick={() => {
-          if (!starts || !ends) return;
-          onAdd(new Date(starts).toISOString(), new Date(ends).toISOString(), reason);
-          setStarts("");
-          setEnds("");
-          setReason("");
-        }}
-        className="h-11 w-full min-w-0 rounded-2xl bg-foreground px-4 text-xs font-medium uppercase tracking-wide text-background transition hover:opacity-90 md:w-auto"
+        type="button"
+        onClick={onAddSlot}
+        className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/80 px-2 text-xs font-semibold text-muted-foreground transition hover:border-foreground/20 hover:bg-background hover:text-foreground"
       >
+        <Plus className="h-3.5 w-3.5" />
         Adicionar
       </button>
     </div>
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function DayRow({
+  weekday, label, labelShort, slots, isDayOff, isExpanded,
+  onToggle, onAddSlot, onUpdateSlot, onRemoveSlot,
+}: {
+  weekday: number; label: string; labelShort: string; slots: Slot[];
+  isDayOff: boolean;
+  isExpanded: boolean;
+  onToggle:    () => void;
+  onAddSlot:   () => void;
+  onUpdateSlot: (id: string, field: "start_time" | "end_time", value: string) => void;
+  onRemoveSlot: (id: string) => void;
+}) {
+  const hasSlots = slots.length > 0;
+  const summary  = hasSlots
+    ? slots.map((s) => `${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}`).join(", ")
+    : null;
+
   return (
-    <div className="block min-w-0 max-w-full overflow-hidden">
-      <span className="mb-1 block text-[10px] uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      {children}
+    <div>
+      {/* Collapsed row header — always visible */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={(e) => e.key === "Enter" && onToggle()}
+        className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/25 ${
+          isDayOff ? "bg-amber-500/[0.06]" : hasSlots ? "" : "opacity-55"
+        }`}
+      >
+        {/* Day badge */}
+        <div
+          className={`grid h-9 w-11 shrink-0 place-items-center rounded-xl text-center text-[11px] font-semibold leading-none ${
+            isDayOff
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              : hasSlots
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {labelShort}
+        </div>
+
+        {/* Info */}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold leading-tight">{label}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {isDayOff ? "Em folga · horários suspensos" : summary ?? "Sem atendimento"}
+          </p>
+        </div>
+
+        {/* Slot count */}
+        {(hasSlots || isDayOff) && (
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+            isDayOff
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+          }`}>
+            {isDayOff ? "Folga" : `${slots.length} ${slots.length === 1 ? "turno" : "turnos"}`}
+          </span>
+        )}
+
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-250 ${
+            isExpanded ? "rotate-180" : ""
+          }`}
+        />
+      </div>
+
+      {/* Expandable body — CSS-grid smooth animation */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: isExpanded ? "1fr" : "0fr",
+          transition: "grid-template-rows 250ms cubic-bezier(0.4,0,0.2,1)",
+        }}
+      >
+        <div className="overflow-hidden">
+          <div className="space-y-2 border-t border-border/40 bg-muted/20 px-4 py-3">
+            <ExpandableList
+              items={slots}
+              initialCount={4}
+              className="space-y-2"
+              getKey={(slot) => slot.id}
+              moreLabel={(hidden) => `Ver mais ${hidden} turno${hidden !== 1 ? "s" : ""}`}
+              renderItem={(s) => (
+              <div className="flex items-end gap-2">
+                <TimeInput
+                  label="Início"
+                  value={s.start_time.slice(0, 5)}
+                  onChange={(v) => onUpdateSlot(s.id, "start_time", v)}
+                />
+                <span className="mb-2.5 shrink-0 text-xs text-muted-foreground">→</span>
+                <TimeInput
+                  label="Fim"
+                  value={s.end_time.slice(0, 5)}
+                  onChange={(v) => onUpdateSlot(s.id, "end_time", v)}
+                />
+                <button
+                  type="button"
+                  onClick={() => onRemoveSlot(s.id)}
+                  aria-label="Remover turno"
+                  className="mb-0 grid size-10 shrink-0 place-items-center rounded-xl border border-border text-muted-foreground transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-600"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              )}
+            />
+
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onAddSlot(); }}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:border-border hover:bg-background hover:text-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar turno
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function DateTimeField({
-  label,
-  value,
-  onChange,
+// ─── Block Modal ──────────────────────────────────────────────────────────────
+
+function BlockModal({
+  staffName, onClose, onAdd,
 }: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
+  staffName: string;
+  onClose: () => void;
+  onAdd:   (starts: string, ends: string, reason: string) => Promise<void>;
 }) {
-  const date = value ? new Date(value) : undefined;
+  const [starts, setStarts] = useState("");
+  const [ends,   setEnds]   = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!starts || !ends) { toast.error("Preencha as datas de início e fim."); return; }
+    if (new Date(ends) <= new Date(starts)) { toast.error("A data de fim deve ser posterior ao início."); return; }
+    setSaving(true);
+    try { await onAdd(new Date(starts).toISOString(), new Date(ends).toISOString(), reason); }
+    finally { setSaving(false); }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm md:items-center">
+      <div className="relative w-full max-w-lg overflow-hidden rounded-t-[1.5rem] border border-border bg-card shadow-2xl md:rounded-2xl animate-in fade-in slide-in-from-bottom-4 duration-200 max-h-[92vh] flex flex-col">
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-5 py-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Novo bloqueio
+            </p>
+            <p className="text-sm font-semibold">{staffName}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-9 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <DateTimeField label="Início do bloqueio" value={starts} onChange={setStarts} />
+          <DateTimeField label="Fim do bloqueio"    value={ends}   onChange={setEnds}   />
+          <Field label="Motivo (opcional)">
+            <input
+              placeholder="Férias, formação, feriado..."
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="h-10 w-full rounded-xl border border-border bg-background/70 px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8"
+            />
+          </Field>
+        </div>
+
+        {/* Footer */}
+        <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-border p-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 rounded-xl border border-border text-sm font-semibold text-muted-foreground transition hover:bg-muted"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !starts || !ends}
+            className="flex h-11 items-center justify-center gap-2 rounded-xl bg-foreground text-sm font-semibold text-background transition hover:opacity-90 disabled:opacity-50"
+          >
+            {saving ? (
+              <><span className="h-4 w-4 animate-spin rounded-full border-2 border-background/30 border-t-background" />A guardar...</>
+            ) : (
+              "Adicionar bloqueio"
+            )}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ─── Block Calendar ───────────────────────────────────────────────────────────
+
+function BlockCalendar({ timeOff }: { timeOff: TimeOff[] }) {
+  const today = new Date();
+  const [calYear,  setCalYear]  = useState(today.getFullYear());
+  const [calMonth, setCalMonth] = useState(today.getMonth());
+
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  // Week starts Monday: offset from Mon=0
+  const startOffset = (new Date(calYear, calMonth, 1).getDay() + 6) % 7;
+
+  function isBlocked(day: number): boolean {
+    const dayStart = new Date(calYear, calMonth, day).getTime();
+    const dayEnd   = dayStart + 86400000 - 1;
+    return timeOff.some((t) => {
+      const ts = new Date(t.starts_at).getTime();
+      const te = new Date(t.ends_at).getTime();
+      return ts <= dayEnd && te >= dayStart;
+    });
+  }
+
+  function isToday(day: number) {
+    return calYear === today.getFullYear() && calMonth === today.getMonth() && day === today.getDate();
+  }
+
+  function prev() {
+    if (calMonth === 0) { setCalYear((y) => y - 1); setCalMonth(11); }
+    else setCalMonth((m) => m - 1);
+  }
+  function next() {
+    if (calMonth === 11) { setCalYear((y) => y + 1); setCalMonth(0); }
+    else setCalMonth((m) => m + 1);
+  }
+
+  const cells: (number | null)[] = [
+    ...Array<null>(startOffset).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  return (
+    <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
+      {/* Calendar nav */}
+      <div className="flex items-center justify-between border-b border-border/70 bg-muted/20 px-4 py-3">
+        <p className="text-sm font-semibold">
+          {MONTHS_PT[calMonth]} {calYear}
+        </p>
+        <div className="flex gap-1">
+          <button type="button" onClick={prev} className="grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button type="button" onClick={next} className="grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted">
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Weekday headers — Mon-first */}
+      <div className="grid grid-cols-7 border-b border-border/40">
+        {["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"].map((d) => (
+          <div key={d} className="py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {d}
+          </div>
+        ))}
+      </div>
+
+      {/* Day cells */}
+      <div className="grid grid-cols-7 gap-0.5 p-2">
+        {cells.map((day, i) => {
+          if (!day) return <div key={i} />;
+          const blocked = isBlocked(day);
+          const todayMark = isToday(day);
+          return (
+            <div
+              key={i}
+              className={`flex aspect-square items-center justify-center rounded-lg text-xs font-medium
+                ${blocked  ? "bg-amber-500/15 text-amber-700 font-semibold ring-1 ring-amber-400/20 dark:text-amber-400" : ""}
+                ${todayMark && !blocked ? "bg-foreground text-background font-semibold" : ""}
+                ${!blocked && !todayMark ? "text-foreground hover:bg-muted" : ""}
+              `}
+            >
+              {day}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 border-t border-border/40 px-4 py-2.5">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="size-2.5 rounded-sm bg-amber-500/30" />
+          Bloqueado
+        </span>
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="size-2.5 rounded-sm bg-foreground" />
+          Hoje
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Time Input ───────────────────────────────────────────────────────────────
+
+function TimeInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="block min-w-0 flex-1">
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <PremiumTimeSelect value={value} onChange={onChange} className="h-9 rounded-xl" />
+    </label>
+  );
+}
+
+// ─── DateTimeField ────────────────────────────────────────────────────────────
+
+function DateTimeField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   const time = value ? value.slice(11, 16) : "09:00";
+  const date = value ? new Date(value) : undefined;
 
   return (
     <Field label={label}>
-      <div className="grid min-w-0 max-w-full gap-2 sm:grid-cols-[1fr_6.25rem]">
+      <div className="grid gap-2 sm:grid-cols-[1fr_6.5rem]">
         <PremiumDatePicker
           value={value ? value.slice(0, 10) : ""}
           onChange={(selectedDate) => {
@@ -469,7 +1097,7 @@ function DateTimeField({
             onChange(mergeDateAndTime(new Date(`${selectedDate}T12:00:00`), time));
           }}
           placeholder="Escolher data"
-          className="h-11 bg-background"
+          className="h-10 rounded-xl px-3 shadow-none bg-background/70 border-border"
           allowClear={false}
         />
         <PremiumTimeSelect
@@ -478,10 +1106,42 @@ function DateTimeField({
             const base = date ?? new Date();
             onChange(mergeDateAndTime(base, nextTime));
           }}
+          className="h-10 rounded-xl"
         />
       </div>
     </Field>
   );
+}
+
+// ─── Field ────────────────────────────────────────────────────────────────────
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function isPresetNotice(v: number) { return v === 30 || v === 60 || v === 120; }
+
+function formatNotice(min: number): string {
+  if (min < 60) return `${min} minutos`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}min`;
+}
+
+function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString("pt-PT", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
 }
 
 function mergeDateAndTime(date: Date, time: string) {
@@ -489,9 +1149,9 @@ function mergeDateAndTime(date: Date, time: string) {
   const next = new Date(date);
   next.setHours(Number(hours), Number(minutes), 0, 0);
   const yyyy = next.getFullYear();
-  const mm = String(next.getMonth() + 1).padStart(2, "0");
-  const dd = String(next.getDate()).padStart(2, "0");
-  const hh = String(next.getHours()).padStart(2, "0");
-  const min = String(next.getMinutes()).padStart(2, "0");
+  const mm   = String(next.getMonth() + 1).padStart(2, "0");
+  const dd   = String(next.getDate()).padStart(2, "0");
+  const hh   = String(next.getHours()).padStart(2, "0");
+  const min  = String(next.getMinutes()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 }

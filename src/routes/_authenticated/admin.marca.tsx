@@ -7,6 +7,7 @@ import { isStudioImageFile, uploadStudioAsset } from "@/lib/upload";
 import { toast } from "sonner";
 import { Check, ChevronDown, Loader2, Upload } from "lucide-react";
 import type { Json } from "@/integrations/supabase/types";
+import { InternationalPhoneInput, normalizeInternationalPhone } from "@/components/ui/international-phone-input";
 
 export const Route = createFileRoute("/_authenticated/admin/marca")({
   component: BrandPage,
@@ -15,6 +16,7 @@ export const Route = createFileRoute("/_authenticated/admin/marca")({
 type StudioRow = {
   id: string;
   name: string;
+  owner_name: string | null;
   tagline: string | null;
   description: string | null;
   brand_color: string | null;
@@ -94,7 +96,7 @@ function BrandPage() {
   useEffect(() => {
     if (!studio) return;
     const baseSelect =
-      "id,name,tagline,description,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,slug,accepted_payment_methods,business_segment";
+      "id,name,owner_name,tagline,description,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,slug,accepted_payment_methods,business_segment";
     const legacySelect =
       "id,name,tagline,description,brand_color,logo_url,hero_image_url,location,phone,whatsapp,email,instagram,slug,accepted_payment_methods,business_segment";
     supabase
@@ -114,6 +116,7 @@ function BrandPage() {
           .single();
         setData({
           ...(legacy.data as StudioRow),
+          owner_name: null,
           hero_gallery_urls: [],
           business_segment: studio.business_segment,
           public_amenities: null,
@@ -126,6 +129,7 @@ function BrandPage() {
     setSaving(true);
     const payload = {
       name: data.name,
+      owner_name: data.owner_name,
       tagline: data.tagline,
       description: data.description,
       brand_color: data.brand_color,
@@ -133,8 +137,8 @@ function BrandPage() {
       hero_image_url: data.hero_image_url,
       hero_gallery_urls: data.hero_gallery_urls,
       location: data.location,
-      phone: data.phone,
-      whatsapp: data.whatsapp,
+      phone: normalizeInternationalPhone(data.phone),
+      whatsapp: normalizeInternationalPhone(data.whatsapp),
       email: data.email,
       instagram: data.instagram,
       accepted_payment_methods: normalizeAcceptedPaymentMethods(data.accepted_payment_methods),
@@ -152,6 +156,14 @@ function BrandPage() {
       error = legacy.error;
       if (!error) {
         toast.message("Marca guardada. Aplique a nova migração para guardar comodidades públicas.");
+      }
+    }
+    if (error && error.message.includes("owner_name")) {
+      const { owner_name: _ownerName, ...legacyPayload } = payload;
+      const legacy = await supabase.from("studios").update(legacyPayload).eq("id", data.id);
+      error = legacy.error;
+      if (!error) {
+        toast.message("Marca guardada. Aplique a nova migração para guardar o nome da proprietária.");
       }
     }
     setSaving(false);
@@ -321,7 +333,13 @@ function BrandPage() {
         </div>
 
         <div className="grid gap-3 border-b border-border p-3 md:grid-cols-2 md:p-4 xl:grid-cols-4">
-          <Field label="Nome" value={data.name} onChange={(v) => setData({ ...data, name: v })} />
+          <Field label="Nome do estúdio" value={data.name} onChange={(v) => setData({ ...data, name: v })} />
+          <Field
+            label="Nome da proprietária"
+            value={data.owner_name ?? ""}
+            onChange={(v) => setData({ ...data, owner_name: v })}
+            placeholder="Ana Silva"
+          />
           <SegmentField
             value={data.business_segment}
             open={segmentOpen}
@@ -443,7 +461,7 @@ function BrandPage() {
             />
             <ChipButton
               checked={amenities.payments.card}
-              label="Apple Pay, Google Pay e cartão"
+              label="Cartão"
               onClick={() =>
                 updateAmenities({
                   ...amenities,
@@ -575,6 +593,14 @@ function Field({
   onChange: (v: string) => void;
   placeholder?: string;
 }) {
+  if (label === "WhatsApp" || label.startsWith("Telem")) {
+    return (
+      <div className="min-h-[68px]">
+        <InternationalPhoneInput label={label} value={value} onChange={onChange} />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-[68px]">
       <label className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</label>

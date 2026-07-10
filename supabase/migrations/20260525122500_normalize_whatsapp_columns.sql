@@ -10,6 +10,6 @@ SET whatsapp_default_message = COALESCE(
 WHERE whatsapp_default_message IS NULL;
 
 ALTER TABLE public.whatsapp_message_logs
-  ALTER COLUMN provider SET DEFAULT 'twilio_whatsapp_sandbox';
+  ALTER COLUMN provider SET DEFAULT 'senddm_whatsapp';
 
 NOTIFY pgrst, 'reload schema';

@@ -1,5 +1,5 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, type FormEvent } from "react";
+import { createFileRoute, Link, useSearch } from "@tanstack/react-router";
+import { useEffect, useState, type FormEvent } from "react";
 import { GoogleAuthButton } from "@/components/google-auth-button";
 import { AuthField, AuthPrimaryButton } from "@/components/public/auth-field";
 import { AuthPageLayout } from "@/components/public/auth-page-layout";
@@ -8,28 +8,61 @@ import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
 import { toast } from "sonner";
 
+const REF_CODE_KEY = "bellza_ref_code";
+
 export const Route = createFileRoute("/signup")({
-  head: () => ({ meta: [{ title: `Criar conta — ${APP_BRAND.name}` }] }),
+  head: () => ({
+    meta: [
+      { title: `Criar conta — ${APP_BRAND.name}` },
+      { name: "robots", content: "noindex,nofollow,noarchive" },
+    ],
+  }),
+  validateSearch: (s: Record<string, unknown>) => ({
+    ref: typeof s.ref === "string" ? s.ref.toUpperCase().trim() : undefined,
+  }),
   component: SignupPage,
 });
 
 function SignupPage() {
   useAuthRedirectError();
+  const search = useSearch({ from: "/signup" });
+  const refCode = search.ref;
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  // Persist ref code to localStorage so it survives email confirmation redirect
+  useEffect(() => {
+    if (refCode) {
+      try {
+        localStorage.setItem(REF_CODE_KEY, refCode);
+      } catch {
+        // localStorage unavailable — ignore
+      }
+    }
+  }, [refCode]);
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
+
+    // Persist ref code in user_metadata so the server can access it after email verification
+    const storedRef = refCode ?? (() => {
+      try { return localStorage.getItem(REF_CODE_KEY) ?? undefined; } catch { return undefined; }
+    })();
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/callback`,
-        data: { full_name: name },
+        data: {
+          full_name: name,
+          ...(storedRef ? { referral_code: storedRef } : {}),
+        },
       },
     });
     setLoading(false);
@@ -54,6 +87,12 @@ function SignupPage() {
         </p>
       }
     >
+      {refCode && (
+        <div className="mb-4 rounded-xl border border-emerald-200/60 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-700 dark:border-emerald-800/30 dark:bg-emerald-900/10 dark:text-emerald-300">
+          <span className="font-semibold">Indicação ativa.</span>{" "}
+          Quem te indicou ganha crédito Bellza quando a tua conta ficar ativa. 🎉
+        </div>
+      )}
       {submitted ? (
         <div className="rounded-xl border border-border/80 bg-muted/30 p-4 text-sm">
           <p className="font-medium">Verifique o seu email</p>

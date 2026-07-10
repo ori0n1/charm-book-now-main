@@ -9,6 +9,7 @@ export type CreateBookingInput = {
   clientPhone: string;
   clientEmail?: string;
   notes?: string;
+  customerReferralCode?: string;
   policyAcceptance?: {
     studioId: string;
     policyVersion: string;
@@ -36,7 +37,7 @@ export async function createPublicBooking(input: CreateBookingInput): Promise<Bo
   const clientName = input.clientName.trim();
   const clientPhone = normalizeClientPhone(input.clientPhone);
   const clientEmail = input.clientEmail?.trim().toLowerCase() || undefined;
-  const { data, error } = await supabase.rpc("create_public_booking", {
+  const { data, error } = await (supabase as any).rpc("create_public_booking", {
     p_studio_slug: input.studioSlug,
     p_staff_id: input.staffDbId,
     p_starts_at: startsAtIso,
@@ -45,6 +46,7 @@ export async function createPublicBooking(input: CreateBookingInput): Promise<Bo
     p_client_phone: clientPhone,
     p_client_email: clientEmail,
     p_notes: input.notes ?? undefined,
+    p_customer_referral_code: input.customerReferralCode ?? undefined,
   });
   if (error) {
     console.error("[public-booking] create_public_booking failed", {
@@ -53,9 +55,16 @@ export async function createPublicBooking(input: CreateBookingInput): Promise<Bo
       details: error.details,
       hint: error.hint,
       studioSlug: input.studioSlug,
+      staffDbId: input.staffDbId,
+      serviceDbIds: input.serviceDbIds,
       startsAt: startsAtIso,
+      clientPhoneFingerprint: fingerprintPhone(clientPhone),
     });
-    throw new Error(translateBookingError(error.message));
+    throw new Error(
+      translateBookingError(
+        [error.message, error.details, error.hint, error.code].filter(Boolean).join(" "),
+      ),
+    );
   }
   const result = data as unknown as BookingResult;
   if (input.policyAcceptance) {
@@ -67,7 +76,16 @@ export async function createPublicBooking(input: CreateBookingInput): Promise<Bo
 }
 
 function normalizeClientPhone(value: string) {
-  return value.trim().replace(/\s+/g, " ");
+  return value
+    .trim()
+    .replace(/[^\d+\s]/g, "")
+    .replace(/\s+/g, " ");
+}
+
+function fingerprintPhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length <= 4) return "****";
+  return `***${digits.slice(-4)}`;
 }
 
 async function recordPolicyAcceptance(
@@ -82,15 +100,24 @@ async function recordPolicyAcceptance(
     p_payload: {
       cancellation_notice_hours: acceptance.cancellationNoticeHours,
       after_deadline_policy: acceptance.afterDeadlinePolicy,
-      accepted_label: "Li e concordo com as políticas de cancelamento e utilização do sinal.",
+      accepted_label: "Li e concordo com as políticas de cancelamento e pagamento.",
     },
   });
   if (error) throw new Error("Não foi possível registar a aceitação das políticas.");
 }
 
 function translateBookingError(msg: string): string {
+  msg = msg.toLowerCase();
+  if (msg.includes("duplicate key"))
+    return "Este horário acabou de ser reservado. Escolha outro, por favor.";
+  if (msg.includes("permission denied") || msg.includes("row-level security"))
+    return "Não foi possível validar esta reserva. Atualize a página e tente novamente.";
+  if (msg.includes("could not find the function") || msg.includes("schema cache"))
+    return "A reserva não pôde ser preparada agora. Atualize a página e tente novamente.";
+  if (msg.includes("payment_intents_method_no_new_multibanco"))
+    return "Estamos a limpar pagamentos antigos. Atualize a página e tente novamente.";
   if (msg.includes("booking_too_soon"))
-    return "Este horário já não está disponível para agendamento imediato.";
+    return "Este horário já não está disponível para marcação imediata.";
   if (msg.includes("slot_unavailable"))
     return "Este horário acabou de ser reservado. Escolha outro, por favor.";
   if (msg.includes("booking_request_expired"))

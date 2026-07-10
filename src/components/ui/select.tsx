@@ -19,7 +19,7 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "flex h-11 w-full items-center justify-between gap-2 whitespace-nowrap rounded-2xl border border-input bg-background/80 px-3.5 py-2 text-sm shadow-sm ring-offset-background transition data-[placeholder]:text-muted-foreground hover:bg-background focus:outline-none focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1 [&>svg]:shrink-0",
+      "flex min-h-11 min-w-0 w-full max-w-full items-center justify-between gap-2 whitespace-normal rounded-2xl border border-input bg-background/80 px-3.5 py-2 text-left text-sm shadow-sm ring-offset-background transition data-[placeholder]:text-muted-foreground hover:bg-background focus:outline-none focus:ring-2 focus:ring-ring/20 disabled:cursor-not-allowed disabled:opacity-50 [&>span]:min-w-0 [&>span]:truncate [&>svg]:shrink-0",
       className,
     )}
     {...props}
@@ -68,8 +68,8 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        "relative z-[90] max-h-(--radix-select-content-available-height) min-w-[8rem] max-w-[calc(100vw-1rem)] overflow-y-auto overflow-x-hidden rounded-3xl border border-border/80 bg-popover/98 text-popover-foreground shadow-xl shadow-foreground/8 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 origin-(--radix-select-content-transform-origin)",
-        position === "popper" && "w-[var(--radix-select-trigger-width)]",
+        "relative z-[90] max-h-[min(var(--radix-select-content-available-height),calc(100dvh-var(--safe-top)-var(--safe-bottom)-1rem))] min-w-[8rem] max-w-[calc(100vw-1rem)] overflow-y-auto overflow-x-hidden rounded-3xl border border-border/80 bg-popover/98 text-popover-foreground shadow-xl shadow-foreground/8 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2 origin-(--radix-select-content-transform-origin)",
+        position === "popper" && "w-[min(var(--radix-select-trigger-width),calc(100vw-1rem))]",
         className,
       )}
       position={position}
@@ -106,7 +106,7 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-2xl py-2.5 pl-3 pr-9 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex min-w-0 w-full cursor-default select-none items-center rounded-2xl py-2.5 pl-3 pr-9 text-sm outline-none transition-colors focus:bg-muted focus:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate",
       className,
     )}
     {...props}

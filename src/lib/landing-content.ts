@@ -6,189 +6,176 @@ export const PRICING_PLANS = [
     name: "Premium Mensal",
     price: "8,99 €",
     cadence: "/mês",
-    total: "Cobrado mensalmente",
-    equivalent: "Flexível para começar",
-    badges: ["Sem fidelização"],
-    highlighted: false,
-  },
-  {
-    id: "quarterly",
-    name: "Premium Trimestral",
-    price: "22,49 €",
-    cadence: "total",
-    total: "Equivale a 7,50 €/mês",
-    equivalent: "10% de desconto",
-    badges: ["Mais popular"],
+    total: "Cancele quando quiser",
+    equivalent: "Teste gratuito de 14 dias incluído",
+    badges: ["Sem fidelização", "Tudo ilimitado"],
     highlighted: false,
   },
   {
     id: "yearly",
     name: "Premium Anual",
     price: "71,99 €",
-    cadence: "total",
+    cadence: "/ano",
     total: "Equivale a 6,00 €/mês",
-    equivalent: "Melhor valor para equipas estáveis",
-    badges: ["Melhor valor", "Poupe 33%"],
+    equivalent: "Poupe 33% face ao mensal",
+    badges: ["Recomendado", "Melhor custo-benefício"],
     highlighted: true,
   },
 ] as const;
 
 export const PLAN_FEATURES = [
-  "14 dias grátis com acesso completo",
-  "Agenda, clientes e equipa sem taxas por profissional",
-  "Página pública de marcações com a marca do estúdio",
-  "Pagamentos online e sinais integrados",
-  "WhatsApp automático para confirmações e lembretes",
-  "Gestão financeira, comissões e visão do balcão",
-  "PWA para usar no telemóvel, tablet e computador",
-  "Suporte premium por email",
-] as const;
-
-export const LANDING_FAQS = [
-  {
-    question: "Como funciona o teste gratuito de 14 dias?",
-    answer:
-      "Pode experimentar a Bellza durante 14 dias com acesso às principais funcionalidades. No fim do período de teste escolhe o plano que melhor se adapta ao seu estúdio.",
-  },
-  {
-    question: "Preciso de fidelização?",
-    answer:
-      "Não. A Bellza foi desenhada para ser simples de começar e simples de cancelar. Pode gerir a subscrição sem contratos longos.",
-  },
-  {
-    question: "A Bellza está preparada para pagamentos online?",
-    answer:
-      "Sim. A plataforma suporta sinais e pagamentos online, com políticas claras de cancelamento e reembolso apresentadas no fluxo de reserva.",
-  },
-  {
-    question: "Funciona para barbearias e equipas com vários profissionais?",
-    answer:
-      "Sim. Pode organizar serviços, horários, equipa, permissões, agenda por profissional e página pública para receber marcações online.",
-  },
-  {
-    question: "A plataforma cumpre o RGPD?",
-    answer:
-      "A Bellza inclui páginas legais, consentimento no fluxo de marcação, gestão de dados essenciais e informação clara sobre privacidade, cookies e contacto.",
-  },
+  "Aplicativo próprio do estúdio em formato PWA",
+  "Página pública própria com link exclusivo",
+  "Profissionais, clientes e serviços ilimitados",
+  "Agenda online, disponibilidade e reservas ilimitadas",
+  "Mensagens automáticas e notificações ilimitadas",
+  "Pagamentos online, sinais, caixa e relatórios",
+  "Programa de indicação com crédito mensal",
+  "Suporte, atualizações contínuas e 14 dias grátis",
 ] as const;
 
 export const TRUST_PILLARS = [
-  { value: "14 dias", label: "Teste gratuito" },
-  { value: "Online", label: "Pagamentos online" },
-  { value: "RGPD", label: "Pronto para Portugal e UE" },
-  { value: "PWA", label: "Telemóvel, tablet e desktop" },
+  { value: "PWA", label: "Aplicativo próprio para cada estúdio" },
+  { value: "Ilimitado", label: "Equipa, clientes, serviços e avisos" },
+  { value: "14 dias", label: "Teste Premium gratuito" },
+  { value: "Sem loja", label: "Instalável no iPhone e Android" },
+] as const;
+
+export const DIFFERENTIATORS = [
+  {
+    title: "Não é marketplace",
+    description:
+      "O cliente entra diretamente no ambiente do seu estúdio, sem ver concorrentes, anúncios ou outros negócios a disputar a atenção.",
+  },
+  {
+    title: "Aplicativo próprio",
+    description:
+      "A página pública pode ser guardada no telemóvel como app, com nome, identidade e experiência focados na sua marca.",
+  },
+  {
+    title: "Marca independente",
+    description:
+      "Cada estúdio tem link próprio, página própria, agenda própria e comunicação própria dentro da infraestrutura Bellza.",
+  },
 ] as const;
 
 export const FEATURE_BLOCKS = [
   {
-    title: "Gestão de agendamentos",
+    title: "Presença digital do estúdio",
     description:
-      "Agenda por profissional, bloqueios, horários, serviços e estados de reserva numa vista clara para o dia a dia.",
-    points: ["Calendário por equipa", "Reservas 24/7", "Bloqueios e disponibilidade"],
+      "Crie uma página exclusiva para reservas e transforme essa experiência num aplicativo próprio para clientes recorrentes.",
+    points: ["Link próprio", "Página pública", "PWA instalável"],
   },
   {
-    title: "WhatsApp automático",
+    title: "Agenda online completa",
     description:
-      "Confirmações, lembretes e links de gestão enviados com contexto, para reduzir faltas e mensagens manuais.",
-    points: ["Lembretes operacionais", "Links de reserva", "Menos trabalho repetitivo"],
+      "Organize profissionais, serviços, horários, folgas e disponibilidade real sem obrigar a equipa a confirmar tudo manualmente.",
+    points: ["Reservas online", "Disponibilidade real", "Sem conflitos"],
   },
   {
-    title: "Pagamentos online",
+    title: "Recursos ilimitados",
     description:
-      "Cobrança de sinais, regras de cancelamento e comunicação transparente antes da confirmação.",
-    points: ["Pagamentos online", "Sinais por serviço", "Políticas visíveis no checkout"],
+      "A Bellza não cobra por quantidade de profissionais, clientes, serviços, mensagens ou notificações usadas no dia a dia.",
+    points: ["Equipa ilimitada", "Clientes ilimitados", "Avisos ilimitados"],
   },
   {
     title: "Gestão financeira",
     description:
-      "Resumo de receitas, sinais, vendas no balcão e comissões para perceber a saúde do negócio sem folhas soltas.",
-    points: ["Receitas por período", "Comissões", "Histórico financeiro"],
+      "Acompanhe sinais, pagamentos online, caixa, comissões e indicadores importantes num painel pensado para leitura rápida.",
+    points: ["Sinais online", "Caixa", "Relatórios"],
   },
   {
-    title: "Gestão da equipa",
+    title: "Comunicação automática",
     description:
-      "Convites, permissões e funções para manter o painel organizado entre administradores e profissionais.",
-    points: ["Perfis de equipa", "Acesso limitado", "Operação no balcão"],
+      "Confirmações, lembretes, alterações e cancelamentos chegam pelos canais configurados, com logs separados por envio.",
+    points: ["WhatsApp", "E-mail", "Push/PWA"],
   },
   {
-    title: "Página pública do estúdio",
+    title: "Operação independente",
     description:
-      "Uma página de marcações elegante, mobile-first e pronta para partilhar no Instagram, WhatsApp ou Google.",
-    points: ["Link próprio", "Serviços e preços", "Experiência mobile"],
+      "A Bellza liga vários estúdios numa plataforma robusta, mas cada negócio continua com a sua identidade e os seus clientes.",
+    points: ["Sem concorrência na página", "Dados do estúdio", "Experiência premium"],
   },
+] as const;
+
+export const MODULES = [
+  "Aplicativo PWA",
+  "Página pública",
+  "Agenda",
+  "Clientes",
+  "Profissionais",
+  "Serviços",
+  "Pagamentos",
+  "Notificações",
+] as const;
+
+export const REFERRAL_STEPS = [
+  "O estúdio recebe um link exclusivo de indicação.",
+  "Outro estúdio cria conta através desse link.",
+  "Se permanecer assinante por 30 dias, o crédito é aplicado automaticamente.",
 ] as const;
 
 export const SECURITY_POINTS = [
-  "Consentimento e informação clara no fluxo de marcação",
-  "Política de privacidade, cookies, termos, cancelamento e reembolso",
-  "Contacto oficial acessível para suporte e pedidos de dados",
-  "Sessões seguras e autenticação integrada",
+  "Links seguros por reserva e ações auditadas",
+  "Políticas de cancelamento, reembolso, privacidade e cookies",
+  "Sessões protegidas e autenticação integrada",
+  "Dados usados apenas para a operação do estúdio",
 ] as const;
 
-export const TESTIMONIALS = [
+export const LANDING_FAQS = [
   {
-    quote:
-      "A Bellza dá ao estúdio uma imagem mais organizada: agenda limpa, reservas online e menos mensagens espalhadas ao longo do dia.",
-    author: "Gestora de estúdio",
-    context: "Estética e unhas, Portugal",
+    question: "A Bellza cria uma app própria para o meu estúdio?",
+    answer:
+      "Sim. Cada estúdio recebe uma página pública própria que pode ser guardada no telemóvel como PWA, funcionando como um aplicativo do próprio estúdio.",
   },
   {
-    quote:
-      "O ponto forte é sentir que tudo está no mesmo sítio: equipa, clientes, sinais e comunicação com o cliente.",
-    author: "Responsável de barbearia",
-    context: "Equipa com vários profissionais",
+    question: "A Bellza é um marketplace?",
+    answer:
+      "Não. A Bellza não coloca o cliente a comparar estúdios concorrentes. Cada negócio tem o seu link, a sua página e a sua experiência independente.",
+  },
+  {
+    question: "Tenho limites de profissionais ou clientes?",
+    answer:
+      "Não. Os planos incluem profissionais, clientes, serviços, mensagens automáticas e notificações ilimitadas para o uso normal do estúdio.",
+  },
+  {
+    question: "Os clientes conseguem marcar online?",
+    answer:
+      "Sim. O cliente escolhe serviço, profissional, data e horário numa página mobile-first que respeita a disponibilidade real do estúdio.",
+  },
+  {
+    question: "Como funciona o programa de indicação?",
+    answer:
+      "Cada estúdio tem um link próprio. Quando outro estúdio assina através desse link e permanece ativo por pelo menos 30 dias, quem indicou recebe crédito equivalente ao valor mensal do plano.",
+  },
+  {
+    question: "Posso experimentar antes de pagar?",
+    answer:
+      "Sim. A Bellza inclui 14 dias de teste Premium gratuito para validar a página, o aplicativo, a agenda e o painel antes de escolher um plano.",
   },
 ] as const;
 
 export const PREVIEW_STUDIO = {
-  name: "Studio Lumina",
-  slug: "studio-lumina",
+  name: "Estúdio Demo",
+  slug: "estudio-demo",
+  domain: "bellza.pt/estudio-demo",
 } as const;
 
 export const PREVIEW_AGENDA = [
-  {
-    time: "09:00 - 10:00",
-    service: "Design de sobrancelhas",
-    client: "Sofia Almeida",
-    professional: "Mariana Costa",
-    status: "Confirmado",
-    tone: "emerald" as const,
-  },
-  {
-    time: "10:30 - 12:00",
-    service: "Manicure gel + manutenção",
-    client: "Juliana Ferreira",
-    professional: "Rita Mendes",
-    status: "Sinal recebido",
-    tone: "accent" as const,
-  },
-  {
-    time: "14:30 - 15:30",
-    service: "Limpeza de pele",
-    client: "Inês Ribeiro",
-    professional: "Mariana Costa",
-    status: "Aguarda confirmação",
-    tone: "amber" as const,
-  },
+  { time: "09:00", service: "Design de sobrancelhas", client: "Cliente A.", professional: "Profissional 1", status: "Confirmada" },
+  { time: "10:30", service: "Manicure gel", client: "Cliente B.", professional: "Profissional 2", status: "Pago online" },
+  { time: "14:00", service: "Corte + barba", client: "Cliente C.", professional: "Profissional 3", status: "Lembrete enviado" },
 ] as const;
 
 export const PREVIEW_CLIENTS = [
-  {
-    name: "Sofia Almeida",
-    visits: "12 visitas",
-    note: "Prefere horários de manhã e produtos sem fragrância intensa.",
-  },
-  {
-    name: "Juliana Ferreira",
-    visits: "7 visitas",
-    note: "Cliente regular de manicure gel. Próxima manutenção sugerida em 3 semanas.",
-  },
+  { name: "Cliente A.", visits: "12 visitas", note: "Preferências guardadas de forma anónima para demonstração." },
+  { name: "Cliente B.", visits: "5 visitas", note: "Histórico protegido, sem telefones, e-mails ou dados reais." },
 ] as const;
 
 export const PREVIEW_FINANCE = [
   { label: "Receita confirmada", value: "2.840 €", hint: "Este mês" },
-  { label: "Sinais digitais", value: "420 €", hint: "Confirmados online" },
-  { label: "No balcão", value: "1.180 €", hint: "Presencial" },
+  { label: "Sinais online", value: "420 €", hint: "Pagos antes da visita" },
+  { label: "Comissões", value: "680 €", hint: "Equipa" },
 ] as const;
 
 export function exampleBookingUrl(slug = PREVIEW_STUDIO.slug) {

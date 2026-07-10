@@ -38,13 +38,16 @@ export const updateStudioRefundRequest = createServerFn({ method: "POST" })
 
     const request = await loadRefundForAction(sb, data.requestId);
     if (request.studio_id !== data.studioId) throw new Response("forbidden", { status: 403 });
-    if (request.status === "refunded") throw new Error("refund_already_processed");
+    if (["approved", "rejected", "refunded"].includes(request.status)) {
+      throw new Error("refund_already_processed");
+    }
 
     if (data.status === "approved") {
       await assertRefundPaymentIsLiveSucceeded(sb, request);
+      await assertRefundCoveredByStudioBalance(sb, request);
     }
 
-    const { error } = await (sb as any)
+    const { data: updated, error } = await (sb as any)
       .from("refund_requests")
       .update({
         status: data.status,
@@ -52,10 +55,13 @@ export const updateStudioRefundRequest = createServerFn({ method: "POST" })
         reviewed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
+      .select("id,status")
       .eq("id", data.requestId)
       .eq("studio_id", data.studioId)
-      .in("status", ["pending", "in_review", "approved", "rejected"]);
+      .in("status", ["pending", "in_review"])
+      .maybeSingle();
     if (error) throw error;
+    if (!updated?.id) throw new Error("refund_already_processed");
 
     await insertFinancialAuditLog(sb, {
       studioId: data.studioId,
@@ -66,6 +72,8 @@ export const updateStudioRefundRequest = createServerFn({ method: "POST" })
       amountCents: request.amount_cents,
       metadata: { previous_status: request.status, payment_intent_id: request.payment_intent_id },
     });
+
+    await insertClientRefundDecisionNotification(sb, request, data.status, data.note?.trim() || null);
 
     return { ok: true };
   });
@@ -183,7 +191,7 @@ async function loadRefundForAction(sb: SupabaseClient, requestId: string) {
   const { data, error } = await (sb as any)
     .from("refund_requests")
     .select(
-      "id,studio_id,payment_intent_id,status,decision_note,stripe_refund_id,refund_method,admin_notes,payment_intents:payment_intent_id(id,amount_cents,status,stripe_checkout_session_id,stripe_payment_intent_id)",
+      "id,studio_id,appointment_id,payment_intent_id,client_phone,client_email,status,decision_note,stripe_refund_id,refund_method,admin_notes,payment_intents:payment_intent_id(id,amount_cents,status,stripe_checkout_session_id,stripe_payment_intent_id)",
     )
     .eq("id", requestId)
     .maybeSingle();
@@ -192,7 +200,10 @@ async function loadRefundForAction(sb: SupabaseClient, requestId: string) {
   return {
     id: data.id as string,
     studio_id: data.studio_id as string,
+    appointment_id: data.appointment_id as string | null,
     payment_intent_id: data.payment_intent_id as string | null,
+    client_phone: data.client_phone as string | null,
+    client_email: data.client_email as string | null,
     status: data.status as string,
     decision_note: data.decision_note as string | null,
     stripe_refund_id: data.stripe_refund_id as string | null,
@@ -224,6 +235,77 @@ async function assertRefundPaymentIsLiveSucceeded(
   if (duplicate?.id) throw new Error("refund_already_processed");
 }
 
+async function assertRefundCoveredByStudioBalance(
+  sb: SupabaseClient,
+  request: Awaited<ReturnType<typeof loadRefundForAction>>,
+) {
+  const amountCents = Number(request.amount_cents || 0);
+  if (amountCents <= 0) throw new Error("refund_payment_missing");
+
+  const totals = await loadStudioLiveBalanceTotals(sb, request.studio_id);
+  if (amountCents > totals.availableCents) {
+    throw new Error("refund_not_covered_by_balance");
+  }
+}
+
+async function loadStudioLiveBalanceTotals(sb: SupabaseClient, studioId: string) {
+  const [{ data: payments }, { data: refundRequests }, { data: withdrawals }] = await Promise.all([
+    (sb as any)
+      .from("payment_intents")
+      .select("id,amount_cents,appointment_id")
+      .eq("studio_id", studioId)
+      .eq("status", "succeeded")
+      .like("stripe_checkout_session_id", "cs_live_%")
+      .not("appointment_id", "is", null),
+    (sb as any)
+      .from("refund_requests")
+      .select("payment_intent_id,status")
+      .eq("studio_id", studioId)
+      .in("status", ["approved", "refunded"]),
+    (sb as any)
+      .from("withdrawal_requests")
+      .select("amount_cents,status")
+      .eq("studio_id", studioId),
+  ]);
+
+  const appointmentIds = [
+    ...new Set((payments ?? []).map((row: { appointment_id?: string | null }) => row.appointment_id).filter(Boolean)),
+  ];
+  const { data: appointments } =
+    appointmentIds.length > 0
+      ? await (sb as any).from("appointments").select("id,status").in("id", appointmentIds)
+      : { data: [] };
+  const appointmentStatusById = new Map(
+    (appointments ?? []).map((row: { id: string; status?: string }) => [row.id, row.status ?? ""]),
+  );
+  const deductedPaymentIds = new Set(
+    (refundRequests ?? [])
+      .map((row: { payment_intent_id?: string | null }) => row.payment_intent_id)
+      .filter(Boolean),
+  );
+
+  const paidOnlineCents = (payments ?? []).reduce(
+    (sum: number, row: { id: string; amount_cents: number; appointment_id?: string | null }) => {
+      if (deductedPaymentIds.has(row.id)) return sum;
+      if (["cancelled", "no_show"].includes(String(appointmentStatusById.get(row.appointment_id ?? "") ?? ""))) {
+        return sum;
+      }
+      return sum + Number(row.amount_cents || 0);
+    },
+    0,
+  );
+
+  const reservedCents = (withdrawals ?? []).reduce(
+    (sum: number, row: { amount_cents: number; status: string }) =>
+      ["pending", "in_review", "processing", "completed", "paid"].includes(row.status)
+        ? sum + Number(row.amount_cents || 0)
+        : sum,
+    0,
+  );
+
+  return { availableCents: Math.max(0, paidOnlineCents - reservedCents) };
+}
+
 async function insertFinancialAuditLog(
   sb: SupabaseClient,
   input: {
@@ -245,6 +327,37 @@ async function insertFinancialAuditLog(
     amount_cents: input.amountCents,
     currency: "eur",
     metadata: input.metadata ?? {},
+  });
+}
+
+async function insertClientRefundDecisionNotification(
+  sb: SupabaseClient,
+  request: Awaited<ReturnType<typeof loadRefundForAction>>,
+  status: "in_review" | "approved" | "rejected",
+  note: string | null,
+) {
+  if (status === "in_review") return;
+
+  const recipient = request.client_email || request.client_phone;
+  if (!recipient) return;
+
+  const approved = status === "approved";
+  await (sb as any).from("notifications_log").insert({
+    studio_id: request.studio_id,
+    appointment_id: request.appointment_id,
+    channel: request.client_email ? "email" : "whatsapp",
+    recipient,
+    kind: "refund_decision",
+    status: "queued",
+    payload: {
+      refund_request_id: request.id,
+      decision: status,
+      amount_cents: request.amount_cents,
+      message: approved
+        ? "O pedido de reembolso foi aprovado pelo estúdio."
+        : "O pedido de reembolso foi recusado pelo estúdio.",
+      note,
+    },
   });
 }
 

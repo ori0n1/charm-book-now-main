@@ -7,15 +7,15 @@ export function cn(...inputs: ClassValue[]) {
 
 export function formatAppointmentStatus(status?: string | null) {
   const labels: Record<string, string> = {
-    pending: "Por confirmar",
-    confirmed: "Marcação confirmada",
-    completed: "Concluído",
-    cancelled: "Cancelado",
-    no_show: "Faltou",
-    pending_payment: "A aguardar sinal",
+    pending: "Pendente",
+    confirmed: "Confirmada",
+    completed: "Concluída",
+    cancelled: "Cancelada",
+    no_show: "Falta",
+    pending_payment: "Pagamento pendente",
   };
 
-  return labels[status ?? ""] ?? "Por confirmar";
+  return labels[status ?? ""] ?? "Pendente";
 }
 
 export function formatEUR(value: number) {

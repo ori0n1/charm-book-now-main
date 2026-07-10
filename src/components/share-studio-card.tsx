@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
-import { Check, Copy, Download, QrCode, Share2, X } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, QrCode, Share2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -59,14 +59,20 @@ export function ShareStudioCard({ studioName, studioSlug, variant, className }: 
       )}
     >
       <div className="min-w-0 flex-1">
-        <p
-          className={cn(
-            "uppercase tracking-[0.25em] text-muted-foreground",
-            compact ? "text-[8px]" : "text-[9px]",
-          )}
-        >
-          Link público
-        </p>
+        <div className="flex min-w-0 items-center gap-2">
+          <p
+            className={cn(
+              "truncate uppercase tracking-[0.25em] text-muted-foreground",
+              compact ? "text-[8px]" : "text-[9px]",
+            )}
+          >
+            Link público
+          </p>
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+            <span className="size-1.5 rounded-full bg-emerald-500" />
+            Ativa
+          </span>
+        </div>
         <p
           className={cn(
             "mt-0.5 truncate font-mono text-foreground/85",
@@ -79,6 +85,9 @@ export function ShareStudioCard({ studioName, studioSlug, variant, className }: 
       <div className={cn("flex items-center", compact ? "gap-1" : "gap-1")}> 
         <IconBtn compact={compact} label="Copiar" onClick={onCopy}>
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </IconBtn>
+        <IconBtn compact={compact} label="Abrir página" onClick={() => { window.location.href = url; }}>
+          <ExternalLink className="size-3.5" />
         </IconBtn>
         <IconBtn compact={compact} label="Partilhar" onClick={onShare}>
           <Share2 className="size-3.5" />

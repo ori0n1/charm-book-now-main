@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { FaFacebookF, FaInstagram, FaTiktok, FaWhatsapp, FaXTwitter } from "react-icons/fa6";
 
 type PublicFooterProps = {
+  /** Kept for API compatibility but no longer rendered — studio name was removed from footer */
   studioName?: string;
   phone?: string | null;
   whatsapp?: string | null;
@@ -12,15 +13,29 @@ type PublicFooterProps = {
   twitter?: string | null;
 };
 
+const LEGAL = [
+  { to: "/privacidade",          label: "Privacidade"   },
+  { to: "/cookies",              label: "Cookies"       },
+  { to: "/termos",               label: "Termos"        },
+  { to: "/politica-cancelamento",label: "Cancelamento"  },
+  { to: "/politica-reembolso",   label: "Reembolso"     },
+] as const;
+
 export function PublicFooter(props: PublicFooterProps) {
-  const year = new Date().getFullYear();
+  const year  = new Date().getFullYear();
   const links = buildSocialLinks(props);
 
   return (
-    <footer className="border-t border-border bg-background/86 px-5 py-7 text-center backdrop-blur-xl">
-      <div className="mx-auto flex max-w-xl flex-col items-center gap-3 text-[11px] text-muted-foreground">
+    <footer
+      aria-label="Rodapé"
+      className="mt-auto border-t border-border/30 bg-muted/25 backdrop-blur-xl"
+    >
+      {/* Unified centered layout — desktop & mobile */}
+      <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 px-6 py-5">
+
+        {/* Row 1 — Social icons (hidden when studio has none) */}
         {links.length > 0 && (
-          <div className="mb-1 flex flex-wrap items-center justify-center gap-2">
+          <div className="flex items-center gap-2">
             {links.map(({ label, href, icon: Icon }) => (
               <a
                 key={label}
@@ -28,43 +43,55 @@ export function PublicFooter(props: PublicFooterProps) {
                 target="_blank"
                 rel="noreferrer"
                 aria-label={label}
-                className="grid size-9 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition hover:-translate-y-0.5 hover:border-foreground/25 hover:text-foreground"
+                className="grid size-8 place-items-center rounded-full border border-border/50 bg-background text-muted-foreground/55 shadow-sm transition-all hover:border-foreground/20 hover:bg-card hover:text-foreground hover:shadow"
               >
-                <Icon className="size-3.5" />
+                <Icon className="size-3" />
               </a>
             ))}
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-          <Link to="/privacidade" className="hover:text-foreground hover:underline">
-            Política de Privacidade
-          </Link>
-          <span className="opacity-40">·</span>
-          <Link to="/cookies" className="hover:text-foreground hover:underline">
-            Política de Cookies
-          </Link>
-          <span className="opacity-40">·</span>
-          <Link to="/termos" className="hover:text-foreground hover:underline">
-            Termos
-          </Link>
-          <span className="opacity-40">·</span>
-          <Link to="/politica-cancelamento" className="hover:text-foreground hover:underline">
-            Cancelamento
-          </Link>
-          <span className="opacity-40">·</span>
-          <Link to="/politica-reembolso" className="hover:text-foreground hover:underline">
-            Reembolso
-          </Link>
-        </div>
+        {/* Row 2 — Legal links */}
+        <nav
+          aria-label="Links legais"
+          className="flex flex-wrap items-center justify-center gap-x-1 gap-y-1"
+        >
+          {LEGAL.map(({ to, label }, i) => (
+            <span key={to} className="flex items-center gap-1">
+              {i > 0 && <Dot />}
+              <Link
+                to={to}
+                className="whitespace-nowrap text-[11px] text-muted-foreground/55 transition hover:text-foreground hover:underline"
+              >
+                {label}
+              </Link>
+            </span>
+          ))}
+        </nav>
 
-        <p>
-          © {year} {props.studioName ?? ""}
-        </p>
+        {/* Row 3 — Copyright */}
+        <span className="text-[11px] tabular-nums text-muted-foreground/35">
+          © {year}
+        </span>
+        <span className="max-w-full whitespace-normal text-center text-[11px] text-muted-foreground/35 sm:whitespace-nowrap">
+          Bellza — Operado por Silas Oliveira Silva.
+        </span>
+
       </div>
     </footer>
   );
 }
+
+/* ── Separator dot ─────────────────────────────────────── */
+function Dot() {
+  return (
+    <span aria-hidden="true" className="select-none text-muted-foreground/30">
+      ·
+    </span>
+  );
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
 function buildSocialLinks({
   phone,

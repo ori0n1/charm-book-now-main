@@ -5,6 +5,7 @@ import { Scissors, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { computeFinancialSplit, formatEUR } from "@/lib/utils";
+import { ExpandableList } from "@/components/ui/expandable-list";
 
 export const Route = createFileRoute("/_authenticated/admin/comissoes")({
   head: () => ({ meta: [{ title: "Comissões - Painel" }] }),
@@ -103,13 +104,13 @@ function ComissoesPage() {
   }
 
   return (
-    <div className="space-y-4 xl:mx-auto xl:max-w-[88rem]">
-      <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
-        <div className="border-b border-border/70 px-4 py-4 md:px-5">
+    <div className="space-y-3 pb-2 xl:mx-auto xl:max-w-[88rem]">
+      <section className="overflow-hidden rounded-[1.35rem] border border-border bg-card shadow-sm">
+        <div className="border-b border-border/70 px-4 py-3 md:px-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2 text-muted-foreground">
-                <span className="grid size-8 place-items-center rounded-2xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
+                <span className="grid size-7 place-items-center rounded-xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
                   <Scissors className="h-4 w-4" />
                 </span>
                 <span className="text-[10px] uppercase tracking-[0.2em]">Comissões</span>
@@ -122,8 +123,8 @@ function ComissoesPage() {
           </div>
         </div>
 
-        <div className="grid gap-6 p-4 md:p-5 xl:grid-cols-[minmax(0,1.15fr)_32rem] xl:items-start">
-          <div className="rounded-3xl border border-border/70 bg-background/45 p-4">
+        <div className="grid gap-3 p-3 md:p-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(21rem,30rem)] xl:items-start">
+          <div className="rounded-[1.15rem] border border-border/70 bg-background/45 p-3.5 md:p-4">
             <div>
               <h2 className="text-base font-medium">Divisão entre estúdio e equipa</h2>
               <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
@@ -131,7 +132,7 @@ function ComissoesPage() {
               </p>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-3">
               <PercentSlider
                 label="Percentagem do estúdio"
                 value={studio.commission_percent}
@@ -141,9 +142,9 @@ function ComissoesPage() {
               />
             </div>
 
-            <div className="mt-4 rounded-2xl border border-dashed border-emerald-700/25 bg-emerald-950/5 p-4 text-xs">
+            <div className="mt-3 rounded-[1rem] border border-dashed border-emerald-700/25 bg-emerald-950/5 p-3 text-xs">
               <p className="font-medium text-foreground">Exemplo num serviço de {formatEUR(100)}</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="mt-2.5 grid gap-1.5 sm:grid-cols-2">
                 <Line label="Valor total do serviço" value={formatEUR(example.total)} />
                 <Line label="Sinal pago online" value={formatEUR(example.deposit)} />
                 <Line label="A pagar no estúdio" value={formatEUR(example.remaining)} />
@@ -153,8 +154,8 @@ function ComissoesPage() {
             </div>
           </div>
 
-          <div className="grid gap-4">
-            <div className="rounded-3xl border border-border/70 bg-background/45 p-4">
+          <div className="grid gap-3">
+            <div className="rounded-[1.15rem] border border-border/70 bg-background/45 p-3.5 md:p-4">
               <OverrideSection
                 title="Percentagem por profissional"
                 icon={<UserRound className="h-4 w-4" />}
@@ -164,7 +165,7 @@ function ComissoesPage() {
                 onSave={saveOverride}
               />
             </div>
-            <div className="rounded-3xl border border-border/70 bg-background/45 p-4">
+            <div className="rounded-[1.15rem] border border-border/70 bg-background/45 p-3.5 md:p-4">
               <OverrideSection
                 title="Percentagem por serviço"
                 icon={<Scissors className="h-4 w-4" />}
@@ -238,9 +239,9 @@ function PercentSlider(props: {
 }) {
   return (
     <label className="block">
-      <span className="flex items-center justify-between gap-3 text-sm">
-        <span>{props.label}</span>
-        <span className="font-mono text-sm">{props.value}%</span>
+      <span className="flex items-center justify-between gap-3 text-xs font-medium">
+        <span className="text-muted-foreground">{props.label}</span>
+        <span className="rounded-full border border-border bg-background/70 px-2.5 py-1 font-mono text-xs text-foreground">{props.value}%</span>
       </span>
       <input
         type="range"
@@ -252,7 +253,7 @@ function PercentSlider(props: {
         onMouseUp={(e) => props.onCommit(Number((e.target as HTMLInputElement).value))}
         onTouchEnd={(e) => props.onCommit(Number((e.target as HTMLInputElement).value))}
         disabled={props.disabled}
-        className="mt-3 w-full"
+        className="mt-2.5 h-2 w-full accent-emerald-600"
       />
     </label>
   );
@@ -260,7 +261,7 @@ function PercentSlider(props: {
 
 function OverrideSection(props: {
   title: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
   rows: RuleOverride[];
   kind: "staff" | "services";
   studio: StudioRow;
@@ -268,45 +269,64 @@ function OverrideSection(props: {
 }) {
   return (
     <div>
-      <div className="flex items-center gap-2">
-        {props.icon}
-        <h2 className="text-base font-medium">{props.title}</h2>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="grid size-7 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+            {props.icon}
+          </span>
+          <h2 className="truncate text-sm font-semibold">{props.title}</h2>
+        </div>
+        <span className="shrink-0 rounded-full border border-border bg-background/65 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {props.rows.length}
+        </span>
       </div>
-      <div className="mt-4 divide-y divide-border">
+      <div className="mt-3">
         {props.rows.length === 0 && (
-          <p className="py-6 text-center text-sm text-muted-foreground">Sem itens ativos.</p>
+          <p className="py-4 text-center text-sm text-muted-foreground">Sem itens ativos.</p>
         )}
-        {props.rows.map((row) => {
+        <ExpandableList
+          items={props.rows}
+          initialCount={5}
+          className="divide-y divide-border/70"
+          getKey={(row) => row.id}
+          moreLabel={(hidden) => `Ver mais ${hidden} regra${hidden !== 1 ? "s" : ""}`}
+          renderItem={(row) => {
           const studioPercent = row.commission_percent ?? props.studio.commission_percent;
           return (
-            <div key={row.id} className="grid gap-3 py-4 sm:grid-cols-[1fr_auto] sm:items-center">
-              <div>
-                <p className="text-sm font-medium">{row.name}</p>
-                <p className="text-xs text-muted-foreground">
+            <div className="grid gap-2 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{row.name}</p>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
                   {row.commission_percent == null
                     ? "Usa a percentagem padrão do estúdio"
                     : `Estúdio ${studioPercent}% · equipa ${100 - studioPercent}%`}
                 </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
+              <div className="flex items-center gap-2 sm:justify-end">
+                <div className="relative w-24 shrink-0">
+                  <input
                   type="number"
                   min={0}
                   max={100}
                   value={row.commission_percent ?? ""}
-                  placeholder={`${props.studio.commission_percent}%`}
+                  placeholder={`${props.studio.commission_percent}`}
                   onChange={(e) =>
                     props.onSave(props.kind, row, {
                       commission_percent: e.target.value === "" ? null : Number(e.target.value),
                     })
                   }
-                  className="h-9 w-24 rounded-xl border border-border bg-background px-2 text-sm"
+                  className="h-8 w-full rounded-xl border border-border bg-background px-2.5 pr-7 text-sm outline-none transition placeholder:text-muted-foreground/60 focus:border-emerald-700/45 focus:ring-2 focus:ring-emerald-700/10"
                 />
-                <span className="text-xs text-muted-foreground">parte do estúdio</span>
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                    %
+                  </span>
+                </div>
+                <span className="hidden text-[11px] text-muted-foreground sm:inline">parte do estúdio</span>
               </div>
             </div>
           );
-        })}
+          }}
+        />
       </div>
     </div>
   );
@@ -314,10 +334,10 @@ function OverrideSection(props: {
 
 function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-muted-foreground">{label}</span>
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-background/45 px-2.5 py-2">
+      <span className="min-w-0 truncate text-muted-foreground">{label}</span>
       <span
-        className={`font-mono ${
+        className={`shrink-0 font-mono ${
           strong
             ? "font-semibold text-emerald-700 dark:text-emerald-400"
             : "text-emerald-700/90 dark:text-emerald-400/90"

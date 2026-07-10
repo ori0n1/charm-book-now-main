@@ -1,10 +1,15 @@
 import { forwardRef, useEffect, useMemo, useState, type ButtonHTMLAttributes } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { Bell, BellRing, CalendarCheck, CreditCard, RefreshCcw, Settings } from "lucide-react";
+import { Bell, BellRing, CalendarCheck, CreditCard, RefreshCcw, Settings, X } from "lucide-react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
 import { reconcileStudioBookingPayments } from "@/lib/payments.functions";
+import { savePushSubscription, sendTestPushNotification } from "@/lib/push-subscriptions.functions";
+import { requestPushSubscription, shouldRefreshStoredPushSubscription } from "@/lib/pwa-push";
+import { syncStudioPushNotifications } from "@/lib/notification-dispatcher.server";
+import { ClientAvatar } from "@/components/client-avatar";
+import { ExpandableList } from "@/components/ui/expandable-list";
 
 type StudioNotification = {
   id: string;
@@ -34,6 +39,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   const [open, setOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const reconcilePayments = useServerFn(reconcileStudioBookingPayments);
+  const syncPushNotifications = useServerFn(syncStudioPushNotifications);
+  const persistPushSubscription = useServerFn(savePushSubscription);
+  const sendTestPush = useServerFn(sendTestPushNotification);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
     "unsupported",
   );
@@ -42,6 +50,48 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     if (typeof window === "undefined") return;
     setPermission("Notification" in window ? Notification.permission : "unsupported");
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "granted" || !studioId) return;
+    let cancelled = false;
+    requestPushSubscription({ forceRenew: shouldRefreshStoredPushSubscription(`studio:${studioId}`) })
+      .then((result) => {
+        if (cancelled || result.permission !== "granted" || !result.subscription) return;
+        return persistPushSubscription({
+          data: {
+            audience: "studio",
+            studioId,
+            subscription: result.subscription,
+          },
+        });
+      })
+      .catch((error) => console.warn("studio_push_auto_register_failed", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [persistPushSubscription, studioId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator) || !studioId) return;
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type !== "BELLZA_PUSH_SUBSCRIPTION_CHANGED") return;
+      void requestPushSubscription({ forceRenew: true })
+        .then((result) => {
+          if (result.permission !== "granted" || !result.subscription) return;
+          return persistPushSubscription({
+            data: {
+              audience: "studio",
+              studioId,
+              subscription: result.subscription,
+            },
+          });
+        })
+        .catch((error) => console.warn("studio_push_subscription_refresh_failed", error));
+    };
+    navigator.serviceWorker.addEventListener("message", handleMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", handleMessage);
+  }, [persistPushSubscription, studioId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -76,6 +126,11 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         await reconcilePayments({ data: { studioId } });
       } catch (error) {
         console.warn("studio_payment_reconcile_skipped", error);
+      }
+      try {
+        await syncPushNotifications({ data: { studioId } });
+      } catch (error) {
+        console.warn("studio_push_sync_skipped", error);
       }
       await loadNotifications();
     }
@@ -120,30 +175,58 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
       cancelled = true;
       void supabase.removeChannel(channel);
     };
-  }, [reconcilePayments, studioId, studioName]);
+  }, [reconcilePayments, studioId, studioName, syncPushNotifications]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("Notification" in window)) return;
-    if (window.matchMedia("(max-width: 767px)").matches) return;
-    if (Notification.permission !== "default") return;
-    if (localStorage.getItem(permissionStorageKey) === "true") return;
-
-    const timer = window.setTimeout(() => {
-      localStorage.setItem(permissionStorageKey, "true");
-      void Notification.requestPermission().then((next) => setPermission(next));
-    }, 1400);
-
-    return () => window.clearTimeout(timer);
+    setPermission(Notification.permission);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
 
   const unreadCount = useMemo(() => items.filter((item) => !item.read_at).length, [items]);
 
   async function requestPermission() {
     if (typeof window === "undefined" || !("Notification" in window)) return;
-    const next = await Notification.requestPermission();
+    const result = await requestPushSubscription();
+    const next = result.permission;
     localStorage.setItem(permissionStorageKey, "true");
+    if (next === "missing_vapid_key") {
+      toast.message("Não foi possível ativar notificações agora. Tente novamente em instantes.");
+      return;
+    }
+    if (next === "unsupported") {
+      toast.message("As notificações push não estão disponíveis neste navegador.");
+      return;
+    }
+    if (next === "insecure_context") {
+      toast.message("As notificações push exigem HTTPS. Abra pelo domínio oficial da Bellza.");
+      return;
+    }
+    if (next === "push_unsupported") {
+      toast.message("Este navegador não suporta push neste modo. No iPhone, use o PWA instalado.");
+      return;
+    }
     setPermission(next);
+    if (next === "granted" && result.subscription) {
+      await persistPushSubscription({
+        data: {
+          audience: "studio",
+          studioId,
+          subscription: result.subscription,
+        },
+      });
+      toast.success("Avisos push ativados neste dispositivo.");
+      void sendTestPush({ data: { audience: "studio", studioId } });
+    }
   }
 
   async function markAsRead(id: string) {
@@ -174,7 +257,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     <>
       <div className="border-b border-border/70 px-4 py-3">
         <div className="flex items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Central</p>
             <h2 className="mt-1 text-base font-semibold">Notificações</h2>
           </div>
@@ -182,11 +265,19 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
             <button
               type="button"
               onClick={markAllRead}
-              className="rounded-full border border-border px-3 py-1.5 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-border px-2.5 text-center text-[10px] font-semibold leading-none text-muted-foreground transition hover:bg-muted hover:text-foreground sm:px-3 sm:text-[11px]"
             >
-              Ler tudo
+              Marcar todas como lidas
             </button>
           )}
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="grid size-8 shrink-0 place-items-center rounded-full border border-border/80 bg-background/60 text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label="Fechar notificações"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
         {permission !== "granted" && (
           <button
@@ -212,8 +303,13 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
             </p>
           </div>
         ) : (
-          <div className="space-y-1.5">
-            {items.map((item) => {
+          <ExpandableList
+            items={items}
+            initialCount={5}
+            className="space-y-1.5"
+            getKey={(item) => item.id}
+            moreLabel={(hidden) => `Ver mais (${hidden})`}
+            renderItem={(item) => {
               const Icon =
                 item.kind === "payment_confirmed"
                   ? CreditCard
@@ -222,6 +318,14 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
                       item.kind === "withdrawal_requested"
                     ? RefreshCcw
                     : CalendarCheck;
+              const clientName =
+                readPayloadString(item.payload, "clientName") ??
+                readPayloadString(item.payload, "client_name") ??
+                null;
+              const clientAvatarUrl =
+                readPayloadString(item.payload, "clientAvatarUrl") ??
+                readPayloadString(item.payload, "client_avatar_url") ??
+                null;
               return (
                 <button
                   type="button"
@@ -233,19 +337,27 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
                       : "bg-emerald-500/10 ring-1 ring-emerald-500/15 hover:bg-emerald-500/15"
                   }`}
                 >
-                  <span
-                    className={`mt-0.5 grid size-9 shrink-0 place-items-center rounded-2xl ${
-                      item.kind === "payment_confirmed"
-                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
-                        : item.kind === "payment_failed" ||
-                            item.kind === "refund_request" ||
-                            item.kind === "withdrawal_requested"
-                          ? "bg-amber-500/15 text-amber-600 dark:text-amber-300"
-                          : "bg-primary/10 text-primary"
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                  </span>
+                  {clientName || clientAvatarUrl ? (
+                    <ClientAvatar
+                      name={clientName ?? item.title}
+                      avatarUrl={clientAvatarUrl}
+                      className="mt-0.5 size-9 text-xs"
+                    />
+                  ) : (
+                    <span
+                      className={`mt-0.5 grid size-9 shrink-0 place-items-center rounded-2xl ${
+                        item.kind === "payment_confirmed"
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+                          : item.kind === "payment_failed" ||
+                              item.kind === "refund_request" ||
+                              item.kind === "withdrawal_requested"
+                            ? "bg-amber-500/15 text-amber-600 dark:text-amber-300"
+                            : "bg-primary/10 text-primary"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                    </span>
+                  )}
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
                       <span className="truncate text-sm font-semibold">{item.title}</span>
@@ -262,8 +374,8 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
                   </span>
                 </button>
               );
-            })}
-          </div>
+            }}
+          />
         )}
       </div>
     </>
@@ -284,7 +396,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
               aria-label="Fechar notificações"
               onClick={() => setOpen(false)}
             />
-            <div className="absolute left-4 right-4 top-[calc(env(safe-area-inset-top)+5.65rem)] max-h-[calc(100vh-8rem)] overflow-hidden rounded-[1.35rem] border border-border/80 bg-popover/98 text-popover-foreground shadow-2xl shadow-black/20">
+            <div className="absolute left-4 right-4 top-[calc(env(safe-area-inset-top)+5.65rem)] max-h-[calc(100vh-8rem)] overflow-hidden rounded-[1.35rem] border border-border/80 bg-popover/98 text-popover-foreground shadow-2xl shadow-black/20 duration-200 animate-in fade-in-0 zoom-in-95 slide-in-from-top-2">
               {panel}
             </div>
           </div>
@@ -302,7 +414,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         align="end"
         collisionPadding={16}
         sideOffset={12}
-        className="z-[80] w-[min(calc(100vw-1rem),24.5rem)] overflow-hidden rounded-[1.35rem] border-border/80 bg-popover/98 p-0 shadow-2xl shadow-black/18 backdrop-blur-xl duration-200 data-[state=open]:slide-in-from-top-1"
+        className="z-[80] w-[min(calc(100vw-1rem),24.5rem)] overflow-hidden rounded-[1.35rem] border-border/80 bg-popover/98 p-0 shadow-2xl shadow-black/18 backdrop-blur-xl duration-200 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-top-1"
       >
         {panel}
       </PopoverContent>
@@ -342,26 +454,61 @@ function showBrowserNotification(item: StudioNotification, studioName: string) {
   if (typeof window === "undefined" || !("Notification" in window)) return;
   if (Notification.permission !== "granted") return;
 
-  const notification = new Notification(item.title, {
-    body: item.body,
+  const title = normalizeDisplayText(sanitizeNotificationText(item.title, adminNotificationTitle(item.kind)));
+  const body = normalizeDisplayText(sanitizeNotificationText(item.body, adminNotificationBody(item.kind)));
+  const notification = new Notification("Bellza", {
+    body: [title, body].filter(Boolean).join("\n"),
     tag: item.id,
     icon: "/pwa-icon.svg",
     badge: "/pwa-icon.svg",
-    data: { studioName },
+    data: { studioName, url: "/admin" },
   });
 
   notification.onclick = () => {
     window.focus();
+    if (window.location.pathname !== "/admin") window.location.assign("/admin");
     notification.close();
   };
+}
+
+function readPayloadString(payload: Record<string, unknown> | null, key: string) {
+  const value = payload?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function normalizeNotification(item: StudioNotification): StudioNotification {
   return {
     ...item,
-    title: normalizeDisplayText(item.title),
-    body: normalizeDisplayText(item.body),
+    title: normalizeDisplayText(sanitizeNotificationText(item.title, adminNotificationTitle(item.kind))),
+    body: normalizeDisplayText(sanitizeNotificationText(item.body, adminNotificationBody(item.kind))),
   };
+}
+
+function adminNotificationTitle(kind: string) {
+  if (kind === "new_appointment") return "Nova marcação recebida";
+  if (kind === "payment_confirmed") return "Pagamento confirmado";
+  if (kind === "payment_failed") return "Falha no pagamento";
+  if (kind === "refund_request") return "Pedido de reembolso recebido";
+  if (kind === "withdrawal_requested") return "Pedido financeiro recebido";
+  return "Notificação do painel";
+}
+
+function adminNotificationBody(kind: string) {
+  if (kind === "new_appointment") return "Tem uma nova marcação para acompanhar no painel.";
+  if (kind === "payment_confirmed") return "Um pagamento foi confirmado.";
+  if (kind === "payment_failed") return "Um pagamento precisa de atenção.";
+  if (kind === "refund_request") return "Existe um pedido de reembolso para analisar.";
+  if (kind === "withdrawal_requested") return "Existe uma nova atualização financeira para analisar.";
+  return "Tem uma nova ação importante no painel.";
+}
+
+function sanitizeNotificationText(value: string, fallback: string) {
+  const text = String(value ?? "").trim();
+  if (!text) return fallback;
+  const technicalPattern =
+    /\b(from|insert|update|delete|upsert|select|payload|schema|table|row|uuid|endpoint|subscription|webhook)\b|notifications_log|studio_notifications|push_subscriptions|appointment_created|update_professional_status|push_client|push_studio|[_{}[\]"`]/i;
+  if (technicalPattern.test(text)) return fallback;
+  return text.replace(/\s+from\s+\S+$/i, "").trim() || fallback;
 }
 
 function normalizeDisplayText(value: string) {
@@ -379,7 +526,7 @@ function normalizeDisplayText(value: string) {
     [broken(0x4e, 0x6f, 0x74, 0x69, 0x66, 0x69, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xb5, 0x65, 0x73), "Notificações"],
     [broken(0x6e, 0x6f, 0x74, 0x69, 0x66, 0x69, 0x63, 0x61, 0xc3, 0xa7, 0xc3, 0xb5, 0x65, 0x73), "notificações"],
     [broken(0x64, 0x69, 0x73, 0x70, 0x6f, 0x6e, 0xc3, 0xad, 0x76, 0x65, 0x6c), "disponível"],
-    [broken(0x43, 0x6f, 0x6e, 0x63, 0x6c, 0x75, 0xc3, 0xad, 0x64, 0x6f), "Concluído"],
+    [broken(0x43, 0x6f, 0x6e, 0x63, 0x6c, 0x75, 0xc3, 0xad, 0x64, 0x6f), "Concluída"],
     [broken(0x4e, 0xc3, 0xa3, 0x6f), "Não"],
     [broken(0x6e, 0xc3, 0xa3, 0x6f), "não"],
     [broken(0x76, 0xc3, 0xa1, 0x6c, 0x69, 0x64, 0x6f), "válido"],

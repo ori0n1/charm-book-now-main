@@ -3,21 +3,23 @@ export const APP_BRAND = {
   name: "Bellza",
   shortName: "Bellza",
   description:
-    "Software premium de agenda online, pagamentos, equipa, clientes e gestão para estúdios de beleza e barbearias em Portugal.",
-  tagline: "Agenda inteligente. Gestão sem fricção.",
+    "Plataforma premium para salões, estúdios de estética e barbearias criarem a sua própria página, o seu próprio aplicativo PWA, agenda online, reservas, pagamentos, clientes e notificações automáticas.",
+  tagline: "Aplicativo próprio e gestão premium para negócios de beleza.",
   supportEmail: "info@bellza.pt",
   legalName: "Silas Oliveira Silva",
   taxId: "326825487",
   publicSiteHost: "bellza.pt",
 } as const;
 
+export const CANONICAL_ORIGIN = `https://${APP_BRAND.publicSiteHost}`;
+
 export const LANDING_SEO = {
-  title: "Bellza | Software de gestão para estúdios de beleza e barbearias",
+  title: "Bellza | Crie o aplicativo próprio do seu salão ou estúdio",
   description:
-    "Bellza é o SaaS premium para estúdios de estética, manicure, beleza e barbearias em Portugal: agenda online, WhatsApp automático, pagamentos online, equipa, finanças e página pública de marcações.",
+    "Crie uma página exclusiva e um aplicativo PWA próprio para salão de beleza, estúdio de estética ou barbearia, com agenda online, reservas, clientes, pagamentos e notificações ilimitadas.",
   keywords:
-    "Bellza, software para estética Portugal, agenda online para manicure, software para barbearia, gestão de salão de beleza, marcações online Portugal, pagamentos online estética, WhatsApp automático clientes",
-  themeColor: "#111318",
+    "criar aplicativo para salão de beleza, aplicativo para estúdio de estética, aplicativo para barbearia, software para salão, sistema para salão de beleza, agenda online, reservas online, software para estética, aplicativo para agendamento, gestão para estúdios, aplicativo próprio para salão, sistema completo para beleza, Bellza",
+  themeColor: "#f7f3ed",
   locale: "pt_PT",
-  url: "https://bellza.pt/",
+  url: `${CANONICAL_ORIGIN}/`,
 } as const;

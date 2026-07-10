@@ -51,7 +51,7 @@ export function BellzaLogo({
         className={cn(styles.image, "rounded-full object-cover")}
         decoding="async"
       />
-      {showWordmark && <span className={styles.wordmark}>{APP_BRAND.name}</span>}
+      {showWordmark && <span className={cn(styles.wordmark, "min-w-0 truncate")}>{APP_BRAND.name}</span>}
     </>
   );
 

@@ -1,4 +1,16 @@
 User-agent: *
 Allow: /
+Disallow: /admin
+Disallow: /dashboard
+Disallow: /painel
+Disallow: /login
+Disallow: /signup
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /auth
+Disallow: /api
+Disallow: /onboarding
+Disallow: /marcacao
+Disallow: /r/
 
 Sitemap: https://bellza.pt/sitemap.xml

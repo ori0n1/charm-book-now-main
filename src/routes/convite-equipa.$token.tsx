@@ -56,7 +56,7 @@ function TeamInvitePage() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!invite || saving) return;
-    if (password !== confirm) return toast.error("As palavras-passe nao coincidem.");
+    if (password !== confirm) return toast.error("As palavras-passe não coincidem.");
     if (password.length < 6) return toast.error("A palavra-passe deve ter pelo menos 6 caracteres.");
     setSaving(true);
     try {

@@ -1,6 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { getBookingManageability } from "@/lib/booking-manageability";
+import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { formatStudioDateTime } from "@/lib/studio-time";
+import { sendAppointmentLifecycleMessage } from "@/lib/whatsapp.functions";
 
 function admin(): any {
   return getAdminClient();
@@ -12,7 +16,97 @@ export const getClientAppointment = createServerFn({ method: "POST" })
     const sb = admin();
     const appt = await loadAppointmentByToken(sb, data.token);
     if (!appt) throw new Response("appointment_not_found", { status: 404 });
+    await logClientAction(sb, appt, "open", "succeeded", "opened");
     return buildAppointmentPayload(sb, appt);
+  });
+
+export const logClientAppointmentAction = createServerFn({ method: "POST" })
+  .inputValidator((input) =>
+    z
+      .object({
+        token: z.string().min(16),
+        action: z.enum(["reschedule_open", "cancel_open", "contact_whatsapp"]),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data }) => {
+    const sb = admin();
+    const appt = await loadAppointmentByToken(sb, data.token);
+    if (!appt) throw new Response("appointment_not_found", { status: 404 });
+    await logClientAction(sb, appt, data.action, "started", data.action);
+    return { ok: true };
+  });
+
+export const getClientRescheduleSlots = createServerFn({ method: "POST" })
+  .inputValidator((input) =>
+    z.object({ token: z.string().min(16), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(input),
+  )
+  .handler(async ({ data }) => {
+    const sb = admin();
+    const appt = await loadAppointmentByToken(sb, data.token);
+    if (!appt) throw new Response("appointment_not_found", { status: 404 });
+    const policy = getActionPolicy(appt);
+    if (!policy.canReschedule) throw new Error(policy.rescheduleBlockReason);
+    const durationMin = await getAppointmentDuration(sb, appt);
+    const staffId = appt.staff?.id ?? appt.staff_id;
+    const { data: slots, error } = await sb.rpc("get_available_slots", {
+      p_studio_slug: appt.studios?.slug,
+      p_staff_id: staffId,
+      p_date: data.date,
+      p_duration_min: durationMin,
+      p_slot_step_min: 15,
+    });
+    if (error) throw new Error("Não foi possível consultar a disponibilidade.");
+    return {
+      date: data.date,
+      durationMin,
+      staffId,
+      slots: (slots ?? []).map((slot: any) => ({
+        staffId: slot.staff_id,
+        startsAt: slot.slot_start,
+        label: slot.slot_label,
+      })),
+    };
+  });
+
+export const rescheduleClientAppointment = createServerFn({ method: "POST" })
+  .inputValidator((input) =>
+    z.object({ token: z.string().min(16), staffId: z.string().uuid(), startsAt: z.string().datetime() }).parse(input),
+  )
+  .handler(async ({ data }) => {
+    const sb = admin();
+    const appt = await loadAppointmentByToken(sb, data.token);
+    if (!appt) throw new Response("appointment_not_found", { status: 404 });
+    const policy = getActionPolicy(appt);
+    if (!policy.canReschedule) {
+      await logClientAction(sb, appt, "reschedule", "blocked", policy.rescheduleBlockReason);
+      throw new Error(policy.rescheduleBlockReason);
+    }
+    const { error } = await sb.rpc("reschedule_public_appointment", {
+      p_public_token: data.token,
+      p_staff_id: data.staffId,
+      p_starts_at: data.startsAt,
+    });
+    if (error) {
+      await logClientAction(sb, appt, "reschedule", "failed", error.message, { starts_at: data.startsAt });
+      throw new Error(translateActionError(error.message));
+    }
+
+    const fresh = await loadAppointmentByToken(sb, data.token);
+    await logClientAction(sb, fresh ?? appt, "reschedule", "succeeded", "rescheduled", {
+      previous_starts_at: appt.starts_at,
+      starts_at: fresh?.starts_at ?? data.startsAt,
+    });
+    await notifyStudioAppointmentAction(sb, fresh ?? appt, "appointment_rescheduled");
+    if (fresh?.id) {
+      await sendAppointmentLifecycleMessage(sb, fresh.id, "reschedule").catch((error) =>
+        console.error("[client-action] reschedule notification failed", error),
+      );
+      await dispatchPendingStudioPushNotifications({ studioId: fresh.studio_id, appointmentId: fresh.id }).catch((error) =>
+        console.error("[client-action] reschedule push failed", error),
+      );
+    }
+    return buildAppointmentPayload(sb, fresh ?? appt);
   });
 
 export const cancelClientAppointment = createServerFn({ method: "POST" })
@@ -22,7 +116,10 @@ export const cancelClientAppointment = createServerFn({ method: "POST" })
     const appt = await loadAppointmentByToken(sb, data.token);
     if (!appt) throw new Response("appointment_not_found", { status: 404 });
     const policy = getActionPolicy(appt);
-    if (!policy.canCancel) throw new Error(policy.blockReason);
+    if (!policy.canCancel) {
+      await logClientAction(sb, appt, "cancel", "blocked", policy.blockReason);
+      throw new Error(policy.blockReason);
+    }
 
     const { error } = await sb
       .from("appointments")
@@ -36,6 +133,16 @@ export const cancelClientAppointment = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     const fresh = await loadAppointmentByToken(sb, data.token);
+    await logClientAction(sb, fresh ?? appt, "cancel", "succeeded", "cancelled");
+    await notifyStudioAppointmentAction(sb, fresh ?? appt, "appointment_cancelled");
+    if ((fresh ?? appt)?.id) {
+      await sendAppointmentLifecycleMessage(sb, (fresh ?? appt).id, "cancellation").catch((error) =>
+        console.error("[client-action] cancellation notification failed", error),
+      );
+      await dispatchPendingStudioPushNotifications({ studioId: (fresh ?? appt).studio_id, appointmentId: (fresh ?? appt).id }).catch((error) =>
+        console.error("[client-action] cancellation push failed", error),
+      );
+    }
     return buildAppointmentPayload(sb, fresh ?? appt);
   });
 
@@ -80,7 +187,7 @@ async function loadAppointmentByToken(sb: any, token: string) {
   const { data, error } = await sb
     .from("appointments")
     .select(
-      "id,public_token,studio_id,starts_at,ends_at,status,total_price,cancellation_reason,clients(name,phone,email),staff(name),studios(id,name,slug,whatsapp,phone,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text)",
+      "id,public_token,studio_id,staff_id,starts_at,ends_at,created_at,status,total_price,cancellation_reason,clients(name,phone,email),staff(id,name),studios(id,name,slug,timezone,whatsapp,phone,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,payment_policy,deposit_percent,studio_policy_settings)",
     )
     .eq("public_token", token)
     .maybeSingle();
@@ -121,10 +228,11 @@ async function buildAppointmentPayload(sb: any, appt: any) {
     clientPhone: appt.clients?.phone ?? "",
     studioName: appt.studios?.name ?? "Estudio",
     studioSlug: appt.studios?.slug ?? "",
+    studioTimezone: appt.studios?.timezone ?? "Europe/Lisbon",
     studioPhone: appt.studios?.whatsapp ?? appt.studios?.phone ?? "",
     staffName: appt.staff?.name ?? "Profissional",
     services: (services ?? []).map((line: any) => ({
-      name: line.services?.name ?? "Servico",
+      name: line.services?.name ?? "Serviço",
       price: Number(line.price || 0),
       durationMin: Number(line.duration_min || 0),
     })),
@@ -132,44 +240,119 @@ async function buildAppointmentPayload(sb: any, appt: any) {
     refundRequest: refund ?? null,
     policy,
     cancellationText: appt.studios?.cancellation_policy_text ?? null,
+    depositPercent: appt.studios?.deposit_percent ?? null,
+    paymentPolicy: appt.studios?.payment_policy ?? null,
   };
 }
 
 function getActionPolicy(appt: any) {
-  const startsAt = new Date(appt.starts_at).getTime();
-  const endsAt = new Date(appt.ends_at ?? appt.starts_at).getTime();
-  const now = Date.now();
-  const noticeHours = Number(appt.studios?.cancellation_min_notice_hours ?? 24);
-  const deadline = startsAt - noticeHours * 60 * 60 * 1000;
-  const happened = endsAt < now;
-  const cancelled = appt.status === "cancelled";
-  const beforeDeadline = now <= deadline;
-  const refundPolicy = appt.studios?.cancellation_after_deadline_policy ?? "non_refundable";
-  const refundable = Boolean(appt.studios?.refund_requests_enabled) && refundPolicy === "refund_allowed";
+  return getBookingManageability(
+    {
+      startsAt: appt.starts_at,
+      endsAt: appt.ends_at,
+      createdAt: appt.created_at,
+      status: appt.status,
+    },
+    {
+      cancellationNoticeHours: appt.studios?.cancellation_min_notice_hours,
+      rescheduleNoticeHours: getRescheduleNoticeHours(appt.studios?.studio_policy_settings),
+      afterDeadlinePolicy: appt.studios?.cancellation_after_deadline_policy,
+      refundRequestsEnabled: appt.studios?.refund_requests_enabled,
+      paymentPolicy: appt.studios?.payment_policy,
+      depositPercent: appt.studios?.deposit_percent,
+    },
+    appt.studios?.timezone,
+  );
+}
 
-  const blockReason = happened
-    ? "Esta marcacao ja aconteceu."
-    : cancelled
-      ? "Esta marcacao ja foi cancelada."
-      : beforeDeadline
-        ? ""
-        : "O prazo de cancelamento ja passou.";
+function getRescheduleNoticeHours(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const reschedule = (value as { reschedule?: { notice_hours?: unknown } }).reschedule;
+  const hours = Number(reschedule?.notice_hours);
+  return Number.isFinite(hours) && hours >= 0 ? hours : null;
+}
 
-  const refundBlockReason = !refundable
-    ? "O sinal desta marcacao nao e reembolsavel."
-    : blockReason || "";
+async function getAppointmentDuration(sb: any, appt: any) {
+  const { data } = await sb
+    .from("appointment_services")
+    .select("duration_min")
+    .eq("appointment_id", appt.id);
+  const total = (data ?? []).reduce((sum: number, line: any) => sum + Number(line.duration_min || 0), 0);
+  if (total > 0) return total;
+  const start = Date.parse(appt.starts_at);
+  const end = Date.parse(appt.ends_at ?? appt.starts_at);
+  return Math.max(15, Math.round((end - start) / 60000) || 15);
+}
 
-  return {
-    noticeHours,
-    deadlineAt: new Date(deadline).toISOString(),
-    beforeDeadline,
-    happened,
-    cancelled,
-    refundable,
-    canCancel: !happened && !cancelled && beforeDeadline,
-    canRequestRefund: !happened && !cancelled && beforeDeadline && refundable,
-    blockReason,
-    refundBlockReason,
-    refundPolicy,
-  };
+async function notifyStudioAppointmentAction(sb: any, appt: any, kind: "appointment_rescheduled" | "appointment_cancelled") {
+  const clientName = appt.clients?.name ?? "Cliente";
+  const when = formatStudioDateTime(appt.starts_at, appt.studios?.timezone);
+  const title = kind === "appointment_rescheduled" ? "Marcação remarcada" : "Marcação cancelada";
+  const body =
+    kind === "appointment_rescheduled"
+      ? `${clientName} remarcou a marcação para ${when}.`
+      : `${clientName} cancelou a marcação de ${when}.`;
+  const { error } = await sb.rpc("insert_studio_notification", {
+    p_studio_id: appt.studio_id,
+    p_kind: kind,
+    p_title: title,
+    p_body: body,
+    p_payload: {
+      appointment_id: appt.id,
+      client_name: clientName,
+      starts_at: appt.starts_at,
+    },
+  });
+  if (error) {
+    console.error("[client-action] studio notification failed", {
+      studio_id: appt.studio_id,
+      appointment_id: appt.id,
+      kind,
+      error: error.message,
+    });
+  }
+}
+
+async function logClientAction(
+  sb: any,
+  appt: any,
+  action: "open" | "reschedule_open" | "reschedule" | "cancel_open" | "cancel" | "contact_whatsapp",
+  status: "started" | "succeeded" | "failed" | "blocked",
+  result: string,
+  payload: Record<string, unknown> = {},
+) {
+  const publicTokenHash = await sha256(String(appt.public_token ?? ""));
+  const { error } = await sb.from("client_appointment_action_logs").insert({
+    appointment_id: appt.id,
+    studio_id: appt.studio_id,
+    public_token_hash: publicTokenHash,
+    action,
+    status,
+    result,
+    payload,
+  });
+  if (error) {
+    console.error("[client-action] audit log failed", {
+      appointment_id: appt.id,
+      action,
+      status,
+      error: error.message,
+    });
+  }
+}
+
+async function sha256(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function translateActionError(message: string) {
+  const text = message.toLowerCase();
+  if (text.includes("slot_unavailable")) return "Este horário acabou de ficar indisponível. Escolha outro.";
+  if (text.includes("appointment_not_reschedulable")) return "Esta marcação já não pode ser remarcada.";
+  if (text.includes("appointment_not_found")) return "Não encontrámos esta marcação.";
+  return "Não foi possível concluir a ação. Tente novamente.";
 }

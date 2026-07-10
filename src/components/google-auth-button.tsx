@@ -1,6 +1,14 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
+import { resolveAuthLanding } from "@/lib/auth-landing";
+import {
+  createGoogleNoncePair,
+  getGoogleIdentity,
+  isIOSStandalonePwa,
+  loadGoogleIdentityScript,
+} from "@/lib/google-id-token";
 import { cn } from "@/lib/utils";
 
 type GoogleAuthButtonProps = {
@@ -9,11 +17,114 @@ type GoogleAuthButtonProps = {
 };
 
 export function GoogleAuthButton({ mode, className }: GoogleAuthButtonProps) {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
+  const fallbackTimerRef = useRef<number | null>(null);
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
+
+  useEffect(() => {
+    if (!googleClientId || typeof window === "undefined") return;
+    if (isIOSStandalonePwa()) return;
+    const clientId = googleClientId;
+    let cancelled = false;
+
+    async function initGoogleIdentity() {
+      const { rawNonce, hashedNonce } = await createGoogleNoncePair();
+      if (cancelled) return;
+
+      const scriptEl = loadGoogleIdentityScript();
+
+      const setup = () => {
+        if (cancelled) return;
+        const gsi = getGoogleIdentity();
+        if (!gsi) {
+          window.setTimeout(setup, 200);
+          return;
+        }
+
+        gsi.initialize({
+          client_id: clientId,
+          nonce: hashedNonce,
+          use_fedcm_for_prompt: true,
+          callback: async (response: { credential: string }) => {
+            if (fallbackTimerRef.current) {
+              window.clearTimeout(fallbackTimerRef.current);
+              fallbackTimerRef.current = null;
+            }
+            setLoading(true);
+            const { data, error } = await supabase.auth.signInWithIdToken({
+              provider: "google",
+              token: response.credential,
+              nonce: rawNonce,
+            });
+            if (error || !data.user?.id) {
+              setLoading(false);
+              toast.error(error?.message || "Não foi possível continuar com Google.");
+              return;
+            }
+            const landing = await resolveAuthLanding(data.user.id);
+            navigate({ to: landing as never, replace: true });
+          },
+        });
+
+        gsi.prompt();
+      };
+
+      if (getGoogleIdentity()) setup();
+      else scriptEl.addEventListener("load", setup, { once: true });
+    }
+
+    void initGoogleIdentity();
+    return () => {
+      cancelled = true;
+      if (fallbackTimerRef.current) window.clearTimeout(fallbackTimerRef.current);
+      try {
+        getGoogleIdentity()?.cancel();
+      } catch {
+        /* noop */
+      }
+    };
+  }, [googleClientId, navigate]);
 
   async function continueWithGoogle() {
     if (loading) return;
     setLoading(true);
+
+    if (isIOSStandalonePwa()) {
+      await continueWithGoogleRedirect();
+      return;
+    }
+
+    if (googleClientId) {
+      const gsi = getGoogleIdentity();
+      if (gsi) {
+        let fallbackStarted = false;
+        gsi.prompt((notification) => {
+          const unavailable =
+            notification.isNotDisplayed?.() ||
+            notification.isSkippedMoment?.() ||
+            notification.isDismissedMoment?.();
+          if (unavailable && !fallbackStarted) {
+            fallbackStarted = true;
+            if (fallbackTimerRef.current) {
+              window.clearTimeout(fallbackTimerRef.current);
+              fallbackTimerRef.current = null;
+            }
+            void continueWithGoogleRedirect();
+          }
+        });
+        fallbackTimerRef.current = window.setTimeout(() => {
+          fallbackTimerRef.current = null;
+          setLoading(false);
+        }, 5000);
+        return;
+      }
+    }
+
+    await continueWithGoogleRedirect();
+  }
+
+  async function continueWithGoogleRedirect() {
     const redirectTo = `${window.location.origin}/auth/callback`;
     recordAuthDebugEvent({ kind: "google_oauth_start", url: redirectTo });
 
@@ -24,6 +135,7 @@ export function GoogleAuthButton({ mode, className }: GoogleAuthButtonProps) {
         queryParams: {
           access_type: "offline",
           prompt: "select_account",
+          scope: "openid email profile https://www.googleapis.com/auth/user.birthday.read",
         },
       },
     });

@@ -210,7 +210,7 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
       throw new Error("Esta conta ja esta ativa. Entre pelo login.");
     }
     if (["cancelled", "expired"].includes(staff.invite_status ?? "")) {
-      throw new Error("Este convite ja nao esta ativo.");
+      throw new Error("Este convite já não está ativo.");
     }
     if (staff.invite_expires_at && new Date(staff.invite_expires_at).getTime() < Date.now()) {
       await sb

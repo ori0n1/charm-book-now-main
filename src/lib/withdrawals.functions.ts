@@ -237,6 +237,134 @@ export const getWithdrawalOperations = createServerFn({ method: "POST" })
     });
   });
 
+export const getFinancialAdminOverview = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const sb = admin();
+    await assertSaasOwner(sb, (context as any).userId);
+
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - 6);
+    startOfWeek.setHours(0, 0, 0, 0);
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+    const [studiosResult, subscriptionsResult, paymentsResult, clientsResult, notificationsResult, auditLogsResult] = await Promise.all([
+      (sb as any)
+        .from("studios")
+        .select("id,is_active,plan,subscription_status,trial_ends_at,created_at")
+        .limit(1000),
+      (sb as any)
+        .from("subscriptions")
+        .select("id,status,plan,current_period_end,updated_at")
+        .limit(1000),
+      (sb as any)
+        .from("payment_intents")
+        .select("id,studio_id,amount_cents,currency,method,status,created_at,stripe_payment_intent_id,stripe_checkout_session_id,studios:studio_id(name,slug)")
+        .order("created_at", { ascending: false })
+        .limit(500),
+      (sb as any)
+        .from("clients")
+        .select("id,created_at,studio_id")
+        .gte("created_at", startOfMonth.toISOString())
+        .limit(1000),
+      (sb as any)
+        .from("studio_notifications")
+        .select("id,studio_id,kind,title,body,read_at,created_at,studios:studio_id(name,slug)")
+        .in("kind", ["withdrawal_requested", "refund_request", "payment_failed", "payment_confirmed"])
+        .order("created_at", { ascending: false })
+        .limit(24),
+      (sb as any)
+        .from("financial_audit_logs")
+        .select("id,studio_id,actor_user_id,entity_type,entity_id,action,amount_cents,currency,metadata,created_at,studios:studio_id(name,slug)")
+        .order("created_at", { ascending: false })
+        .limit(30),
+    ]);
+
+    const studios = studiosResult.data ?? [];
+    const payments = paymentsResult.data ?? [];
+    const succeededPayments = payments.filter((row: any) => row.status === "succeeded");
+    const failedPayments = payments.filter((row: any) => ["failed", "expired", "canceled"].includes(String(row.status)));
+    const activeStudios = studios.filter((row: any) => row.is_active !== false);
+    const trialStudios = activeStudios.filter((row: any) => row.subscription_status === "trialing" || row.plan === "trial");
+    const premiumStudios = activeStudios.filter((row: any) => row.subscription_status === "active");
+    const blockedStudios = studios.filter((row: any) => row.is_active === false);
+    const pendingPaymentStudios = new Set(
+      payments
+        .filter((row: any) => ["processing", "requires_action", "requires_payment_method", "pending"].includes(String(row.status)))
+        .map((row: any) => row.studio_id)
+        .filter(Boolean),
+    );
+
+    const paymentSummary = {
+      totalRevenueCents: sumPaymentCents(succeededPayments),
+      dayRevenueCents: sumPaymentCentsSince(succeededPayments, startOfDay),
+      weekRevenueCents: sumPaymentCentsSince(succeededPayments, startOfWeek),
+      monthRevenueCents: sumPaymentCentsSince(succeededPayments, startOfMonth),
+      yearRevenueCents: sumPaymentCentsSince(succeededPayments, startOfYear),
+      failedPayments: failedPayments.length,
+      recentPayments: payments.slice(0, 12).map((row: any) => ({
+        id: row.id as string,
+        studioName: row.studios?.name ?? "Estúdio",
+        kind: "payment",
+        title: row.status === "succeeded" ? "Pagamento recebido" : "Pagamento em análise",
+        amountCents: Number(row.amount_cents || 0),
+        currency: (row.currency as string) ?? "eur",
+        status: row.status as string,
+        method: row.method as string,
+        createdAt: row.created_at as string,
+      })),
+    };
+    const subscriptions = subscriptionsResult.data ?? [];
+    const subscriptionSummary = {
+      active: subscriptions.filter((row: any) => row.status === "active").length,
+      trialing: subscriptions.filter((row: any) => row.status === "trialing").length,
+      canceled: subscriptions.filter((row: any) => ["canceled", "cancelled"].includes(String(row.status))).length,
+      pastDue: subscriptions.filter((row: any) => ["past_due", "unpaid", "incomplete"].includes(String(row.status))).length,
+    };
+
+    return {
+      activeStudios: activeStudios.length,
+      activeSubscriptions: subscriptionSummary.active + subscriptionSummary.trialing,
+      subscriptionSummary,
+      newClientsThisMonth: (clientsResult.data ?? []).length,
+      studioSummary: {
+        active: activeStudios.length,
+        trial: trialStudios.length,
+        premium: premiumStudios.length,
+        blocked: blockedStudios.length,
+        pendingPayments: pendingPaymentStudios.size,
+      },
+      paymentSummary,
+      adminEvents: (notificationsResult.data ?? []).map((row: any) => ({
+        id: row.id as string,
+        studioName: row.studios?.name ?? "Estúdio",
+        studioSlug: row.studios?.slug ?? null,
+        kind: row.kind as string,
+        title: row.title as string,
+        body: row.body as string,
+        readAt: row.read_at as string | null,
+        createdAt: row.created_at as string,
+      })),
+      auditLogs: (auditLogsResult.data ?? []).map((row: any) => ({
+        id: row.id as string,
+        studioName: row.studios?.name ?? "Estúdio",
+        studioSlug: row.studios?.slug ?? null,
+        actorUserId: row.actor_user_id as string | null,
+        entityType: row.entity_type as string,
+        entityId: row.entity_id as string,
+        action: row.action as string,
+        amountCents: Number(row.amount_cents || 0),
+        currency: (row.currency as string) ?? "eur",
+        metadata: row.metadata ?? {},
+        createdAt: row.created_at as string,
+      })),
+    };
+  });
+
 export const markWithdrawalProcessing = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => OperatorWithdrawalActionInput.parse(input))
@@ -260,14 +388,24 @@ export const markWithdrawalProcessing = createServerFn({ method: "POST" })
       .in("status", ["in_review", "pending"]);
     if (error) throw error;
 
+    await insertFinancialAuditLog(sb, {
+      studioId: request.studio_id,
+      actorUserId: (context as any).userId,
+      entityType: "withdrawal_request",
+      entityId: data.requestId,
+      action: "platform_withdrawal_processing",
+      amountCents: Number(request.amount_cents || 0),
+      metadata: { previous_status: request.status, note: data.note ?? null },
+    });
+
     await insertWithdrawalNotification(
       sb,
       request.studio_id,
       request.id,
       Number(request.amount_cents || 0),
       "processing",
-      "Levantamento em processamento",
-      "O pedido foi validado e está a ser processado.",
+      "Recebimento online em processamento",
+      "O registo foi validado e está a ser processado.",
     );
     return { ok: true };
   });
@@ -297,14 +435,28 @@ export const markWithdrawalCompleted = createServerFn({ method: "POST" })
       .in("status", ["in_review", "pending", "processing"]);
     if (error) throw error;
 
+    await insertFinancialAuditLog(sb, {
+      studioId: request.studio_id,
+      actorUserId: (context as any).userId,
+      entityType: "withdrawal_request",
+      entityId: data.requestId,
+      action: "platform_withdrawal_completed",
+      amountCents: Number(request.amount_cents || 0),
+      metadata: {
+        previous_status: request.status,
+        proof_url: data.proofUrl ?? null,
+        note: data.note ?? null,
+      },
+    });
+
     await insertWithdrawalNotification(
       sb,
       request.studio_id,
       request.id,
       Number(request.amount_cents || 0),
       "completed",
-      "Levantamento pago",
-      `O levantamento de ${formatCents(Number(request.amount_cents || 0))} foi marcado como pago.`,
+      "Recebimento online confirmado",
+      `O registo de ${formatCents(Number(request.amount_cents || 0))} foi marcado como concluído.`,
     );
     return { ok: true };
   });
@@ -330,13 +482,23 @@ export const rejectWithdrawalRequest = createServerFn({ method: "POST" })
       .in("status", ["in_review", "pending", "processing"]);
     if (error) throw error;
 
+    await insertFinancialAuditLog(sb, {
+      studioId: request.studio_id,
+      actorUserId: (context as any).userId,
+      entityType: "withdrawal_request",
+      entityId: data.requestId,
+      action: "platform_withdrawal_rejected",
+      amountCents: Number(request.amount_cents || 0),
+      metadata: { previous_status: request.status, reason: data.reason },
+    });
+
     await insertWithdrawalNotification(
       sb,
       request.studio_id,
       request.id,
       Number(request.amount_cents || 0),
       "failed",
-      "Levantamento recusado",
+      "Recebimento online recusado",
       data.reason,
     );
     return { ok: true };
@@ -445,8 +607,8 @@ async function insertWithdrawalNotification(
   requestId: string,
   amountCents: number,
   status: WithdrawalStatus,
-  title = "Novo pedido de levantamento",
-  body = `Pedido de levantamento de ${formatCents(amountCents)} aguardando processamento.`,
+  title = "Novo registo financeiro",
+  body = `Registo financeiro de ${formatCents(amountCents)} aguardando processamento.`,
 ) {
   await (sb as any).from("studio_notifications").insert({
     studio_id: studioId,
@@ -454,6 +616,30 @@ async function insertWithdrawalNotification(
     title,
     body,
     payload: { withdrawal_request_id: requestId, amount_cents: amountCents, status },
+  });
+}
+
+async function insertFinancialAuditLog(
+  sb: SupabaseClient,
+  input: {
+    studioId: string;
+    actorUserId: string;
+    entityType: string;
+    entityId: string;
+    action: string;
+    amountCents: number;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  await (sb as any).from("financial_audit_logs").insert({
+    studio_id: input.studioId,
+    actor_user_id: input.actorUserId,
+    entity_type: input.entityType,
+    entity_id: input.entityId,
+    action: input.action,
+    amount_cents: input.amountCents,
+    currency: "eur",
+    metadata: input.metadata ?? {},
   });
 }
 
@@ -527,4 +713,16 @@ function formatCents(value: number) {
   return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
     value / 100,
   );
+}
+
+function sumPaymentCents(rows: Array<{ amount_cents?: number | null }>) {
+  return rows.reduce((sum, row) => sum + Number(row.amount_cents || 0), 0);
+}
+
+function sumPaymentCentsSince(rows: Array<{ amount_cents?: number | null; created_at?: string | null }>, since: Date) {
+  const sinceTime = since.getTime();
+  return rows.reduce((sum, row) => {
+    const createdAt = row.created_at ? new Date(row.created_at).getTime() : 0;
+    return createdAt >= sinceTime ? sum + Number(row.amount_cents || 0) : sum;
+  }, 0);
 }

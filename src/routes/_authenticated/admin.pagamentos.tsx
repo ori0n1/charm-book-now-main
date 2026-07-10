@@ -1,22 +1,12 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { useServerFn } from "@tanstack/react-start";
 import {
   BadgePercent,
   CreditCard,
-  FileText,
-  RefreshCw,
-  Scissors,
   UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  createPlatformBillingPortalSession,
-  createPlatformCheckoutSession,
-  getPlatformSubscriptionSummary,
-  syncPlatformCheckoutReturn,
-} from "@/lib/subscriptions.functions";
 import { computeAttendanceRevenue, computeFinancialSplit, formatEUR } from "@/lib/utils";
 import {
   Select,
@@ -33,6 +23,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { ExpandableList } from "@/components/ui/expandable-list";
 
 export const Route = createFileRoute("/_authenticated/admin/pagamentos")({
   head: () => ({ meta: [{ title: "Financeiro - Painel" }] }),
@@ -105,7 +96,7 @@ type ManualEntry = {
 const PAYMENT_METHODS = [
   { value: "cash", label: "Dinheiro" },
   { value: "mb_way", label: "MB Way" },
-  { value: "card", label: "Apple Pay, Google Pay ou cartão" },
+  { value: "card", label: "Cartão" },
   { value: "bank_transfer", label: "Transferência" },
   { value: "other", label: "Outro" },
 ];
@@ -123,41 +114,14 @@ const selectContentClass =
 const selectItemClass =
   "rounded-2xl px-3 py-2.5 text-sm transition-colors focus:bg-emerald-950/10 focus:text-foreground data-[state=checked]:bg-emerald-950/10 data-[state=checked]:text-foreground";
 
-type BillingSummary = {
-  available: boolean;
-  plan: string;
-  status: string;
-  nextBillingAt: string | null;
-  cancelAtPeriodEnd: boolean;
-  premiumActive: boolean;
-  invoices: {
-    id: string;
-    number: string | null;
-    status: string | null;
-    amountPaid: number;
-    amountDue: number;
-    currency: string;
-    hostedInvoiceUrl: string | null;
-    createdAt: string | null;
-  }[];
-};
-
 function PaymentsPage() {
-  const loadBilling = useServerFn(getPlatformSubscriptionSummary);
-  const startCheckout = useServerFn(createPlatformCheckoutSession);
-  const openPortal = useServerFn(createPlatformBillingPortalSession);
-  const syncCheckoutReturn = useServerFn(syncPlatformCheckoutReturn);
-  const navigate = useNavigate();
   const [studio, setStudio] = useState<StudioRow | null>(null);
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
   const [onlineAppointments, setOnlineAppointments] = useState<OnlineAppointment[]>([]);
   const [onlinePayments, setOnlinePayments] = useState<PaidRow[]>([]);
   const [manualEntries, setManualEntries] = useState<ManualEntry[]>([]);
-  const [billing, setBilling] = useState<BillingSummary | null>(null);
   const [saving, setSaving] = useState(false);
-  const [billingLoading, setBillingLoading] = useState(false);
-  const [checkoutReturnSynced, setCheckoutReturnSynced] = useState(false);
   const [manualFilters, setManualFilters] = useState({
     staffId: "all",
     paymentMethod: "all",
@@ -173,58 +137,12 @@ function PaymentsPage() {
       const result = await loadPaymentSettings(studioId);
       if (result.studio) {
         setStudio(result.studio);
-        void refreshBilling(result.studio.id);
         void refreshFinancialData(result.studio.id);
       }
       setServiceOptions(result.serviceOptions);
       setStaffOptions(result.staffOptions);
     })();
   }, []);
-
-  useEffect(() => {
-    if (!studio?.id || checkoutReturnSynced) return;
-    const params = new URLSearchParams(window.location.search);
-    const billingResult = params.get("billing");
-    const sessionId = params.get("session_id");
-    if (billingResult !== "success" || !sessionId) return;
-
-    setCheckoutReturnSynced(true);
-    setBillingLoading(true);
-    (async () => {
-      try {
-        await syncCheckoutReturn({ data: { studioId: studio.id, sessionId } });
-        await refreshBilling(studio.id);
-        toast.success("Assinatura sincronizada com sucesso.");
-      } catch (error) {
-        console.error("checkout_return_sync_failed", error);
-        toast.info("Pagamento recebido. A assinatura pode demorar alguns instantes a sincronizar.");
-        await refreshBilling(studio.id);
-      } finally {
-        setBillingLoading(false);
-        navigate({ to: "/admin", replace: true });
-      }
-    })();
-  }, [checkoutReturnSynced, navigate, studio?.id, syncCheckoutReturn]);
-
-  async function refreshBilling(studioId: string) {
-    setBillingLoading(true);
-    try {
-      const summary = (await loadBilling({ data: { studioId } })) as BillingSummary;
-      setBilling(summary);
-    } catch {
-      setBilling({
-        available: false,
-        plan: "trial",
-        status: "trialing",
-        nextBillingAt: null,
-        cancelAtPeriodEnd: false,
-        premiumActive: true,
-        invoices: [],
-      });
-    } finally {
-      setBillingLoading(false);
-    }
-  }
 
   async function refreshFinancialData(studioId: string) {
     const db = supabase as any;
@@ -255,25 +173,6 @@ function PaymentsPage() {
     }
     if (!manualResult.error) {
       setManualEntries((manualResult.data ?? []) as ManualEntry[]);
-    }
-  }
-
-  async function openBilling(action: "checkout" | "portal") {
-    if (!studio) return;
-    setBillingLoading(true);
-    try {
-      const result =
-        action === "checkout"
-          ? await startCheckout({ data: { studioId: studio.id } })
-          : await openPortal({ data: { studioId: studio.id } });
-      const url = (result as { url?: string | null }).url;
-      if (!url) throw new Error("billing_url_missing");
-      window.location.href = url;
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Não foi possível abrir a gestão da assinatura.",
-      );
-      setBillingLoading(false);
     }
   }
 
@@ -391,19 +290,6 @@ function PaymentsPage() {
     .filter((member) => member.total > 0);
   return (
     <div className="space-y-4">
-      {checkoutReturnSynced && billingLoading && (
-        <section className="rounded-3xl border border-emerald-700/25 bg-emerald-950/5 p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <RefreshCw className="mt-0.5 h-4 w-4 animate-spin text-emerald-700 dark:text-emerald-400" />
-            <div>
-              <p className="text-sm font-semibold">A confirmar assinatura</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Estamos a validar o pagamento e a ativar o plano premium no painel.
-              </p>
-            </div>
-          </div>
-        </section>
-      )}
       <header className="overflow-hidden rounded-3xl border border-emerald-700/20 bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_42%,rgba(16,185,129,0.06))] p-4 shadow-sm md:p-5">
         <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
           <div>
@@ -413,17 +299,19 @@ function PaymentsPage() {
             <h1 className="mt-2 text-2xl font-light tracking-tight md:text-3xl">
               Gestão financeira do estúdio
             </h1>
-            <p className="mt-2 hidden max-w-2xl text-sm leading-relaxed text-muted-foreground md:block">
-              O saldo levantável mostra apenas sinais pagos online. Pagamentos presenciais ficam
-              registados como receita do estúdio, mas não entram no levantamento.
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              Os pagamentos online são processados pela Stripe e transferidos diretamente para a
+              sua conta. O Bellza apenas apresenta os registos financeiros.
             </p>
           </div>
           <div className="rounded-3xl border border-emerald-700/20 bg-background/70 p-3 shadow-sm">
             <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Saldo levantável
+              Recebimentos online
             </p>
             <MoneyValue value={formatEUR(onlinePaidBalance)} className="mt-1 text-3xl" />
-            <p className="mt-1 text-[11px] text-muted-foreground">Apenas sinais pagos online</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Valores recebidos através da Stripe e enviados diretamente para a sua conta.
+            </p>
           </div>
         </div>
       </header>
@@ -431,8 +319,8 @@ function PaymentsPage() {
       <section className="hidden items-stretch gap-3 md:grid md:grid-cols-3">
         <Metric
           icon={<CreditCard className="h-4 w-4" />}
-          label="Sinal online"
-          value={requirePayment ? `${studio.deposit_percent}%` : "Inativo"}
+          label="Pré-pagamento online"
+          value={requirePayment ? `${studio.deposit_percent ?? 100}%` : "Inativo"}
         />
         <Metric
           icon={<BadgePercent className="h-4 w-4" />}
@@ -448,9 +336,9 @@ function PaymentsPage() {
 
       <section className="grid items-stretch gap-3 md:grid-cols-3">
         <RevenueCard
-          label="Valor previsto"
+          label="Receitas pendentes"
           value={pendingStudioRevenue}
-          note="Restante online ainda não confirmado."
+          note="Valores de reservas ainda não confirmadas ou serviços ainda não concluídos."
         />
         <div className="hidden h-full md:block">
           <RevenueCard
@@ -462,12 +350,12 @@ function PaymentsPage() {
         <RevenueCard
           label="Receita confirmada"
           value={totalRevenue}
-          note="Sinal online + comparecimentos + presencial."
+          note="Receitas já confirmadas provenientes de pré-pagamentos e atendimentos concluídos."
         />
       </section>
 
-      <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
-        <div className="border-b border-border/70 px-4 py-4 md:px-5">
+      <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="border-b border-border/70 px-4 py-3 md:px-5">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2 text-muted-foreground">
               <span className="grid size-8 place-items-center rounded-2xl bg-muted text-foreground">
@@ -477,6 +365,11 @@ function PaymentsPage() {
                 <span className="block text-[10px] uppercase tracking-[0.2em]">
                   Receita por profissional
                 </span>
+                {revenueByStaff.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {revenueByStaff.length} profissional{revenueByStaff.length !== 1 ? "is" : ""}
+                  </span>
+                )}
               </div>
             </div>
             <FinancialFilterBar
@@ -487,31 +380,11 @@ function PaymentsPage() {
           </div>
         </div>
 
-        <div className="p-4 md:p-5">
-          <div className="divide-y divide-border overflow-hidden rounded-3xl border border-border bg-background/45">
-            {revenueByStaff.length === 0 && (
-              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-                Ainda não há receita registada por profissional.
-              </p>
-            )}
-            {revenueByStaff.map((member) => (
-              <div
-                key={member.id}
-                className="grid gap-3 px-4 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center"
-              >
-                <div>
-                  <p className="font-medium">{member.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Online {formatEUR(member.online)} · Presencial {formatEUR(member.manual)}
-                  </p>
-                </div>
-                <MoneyValue value={formatEUR(member.total)} className="text-xl" />
-              </div>
-            ))}
-          </div>
+        <div className="p-3 md:p-4">
+          <StaffRevenueList members={revenueByStaff} />
         </div>
 
-        <div className="hidden md:block">
+        <div className="hidden px-4 pb-4 md:block md:px-5 md:pb-5">
           <ManualEntriesTable entries={filteredManualEntries} />
         </div>
       </section>
@@ -525,37 +398,6 @@ function PaymentsPage() {
           description="Atendimentos presenciais."
         >
           <ManualEntriesTable entries={filteredManualEntries} />
-        </AccordionSection>
-      </div>
-
-      <AccordionSection
-        value="billing-platform"
-        title="Plano e assinatura"
-        description="Plano, faturas e pagamento."
-      >
-        <BillingSection
-          billing={billing}
-          loading={billingLoading}
-          onCheckout={() => openBilling("checkout")}
-          onPortal={() => openBilling("portal")}
-          onRefresh={() => refreshBilling(studio.id)}
-        />
-      </AccordionSection>
-
-      <div className="md:hidden">
-        <FinanceGroupLabel title="Plataforma" />
-        <AccordionSection
-          value="billing-mobile"
-          title="Plano e assinatura"
-          description="Plano, faturas e pagamento."
-        >
-          <BillingSection
-            billing={billing}
-            loading={billingLoading}
-            onCheckout={() => openBilling("checkout")}
-            onPortal={() => openBilling("portal")}
-            onRefresh={() => refreshBilling(studio.id)}
-          />
         </AccordionSection>
       </div>
     </div>
@@ -645,53 +487,6 @@ function normalizeOverride(row: { id: string; name: string }): RuleOverride {
   };
 }
 
-function formatPlan(plan?: string | null) {
-  const labels: Record<string, string> = {
-    trial: "Teste",
-    starter: "Starter",
-    pro: "Pro",
-    business: "Business",
-    monthly: "Premium Mensal",
-    quarterly: "Premium Trimestral",
-    yearly: "Premium Anual",
-  };
-  return labels[plan ?? ""] ?? "Não definido";
-}
-
-function formatSubscriptionStatus(status?: string | null) {
-  const labels: Record<string, string> = {
-    trialing: "Em teste",
-    active: "Ativa",
-    past_due: "Pagamento em atraso",
-    canceled: "Cancelada",
-    unpaid: "Por regularizar",
-    incomplete: "Incompleta",
-    incomplete_expired: "Expirada",
-    paused: "Pausada",
-    paid: "Paga",
-    open: "Em aberto",
-    draft: "Rascunho",
-    void: "Anulada",
-  };
-  return labels[status ?? ""] ?? "Não disponível";
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return "Não disponível";
-  return new Date(value).toLocaleDateString("pt-PT", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function formatCents(value: number, currency = "eur") {
-  return new Intl.NumberFormat("pt-PT", {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format((value || 0) / 100);
-}
-
 function toDateTimeLocal(date: Date) {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
@@ -701,12 +496,18 @@ function toDateTimeLocal(date: Date) {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 }
 
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString("pt-PT", {
-    day: "2-digit",
-    month: "short",
+function formatTimeOnly(value: string) {
+  return new Date(value).toLocaleTimeString("pt-PT", {
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatEntryGroupDate(value: string) {
+  return new Date(`${value}T12:00`).toLocaleDateString("pt-PT", {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
   });
 }
 
@@ -1030,198 +831,155 @@ function ClientPill({ client, onClear }: { client?: ClientOption; onClear: () =>
 }
 
 function ManualEntriesTable({ entries }: { entries: ManualEntry[] }) {
+  const groupedEntries = useMemo(() => {
+    const groups = new Map<string, ManualEntry[]>();
+    for (const entry of entries) {
+      const key = entry.performed_at.slice(0, 10);
+      groups.set(key, [...(groups.get(key) ?? []), entry]);
+    }
+    return Array.from(groups.entries()).map(([date, items]) => ({
+      date,
+      total: items.reduce((sum, entry) => sum + Number(entry.amount || 0), 0),
+      entries: items,
+    }));
+  }, [entries]);
+
   return (
-    <div className="mx-4 mb-4 overflow-hidden rounded-3xl border border-border bg-background/45 md:mx-5 md:mb-5">
-      <div className="hidden gap-3 bg-muted/30 px-4 py-3 text-[10px] uppercase tracking-[0.2em] text-muted-foreground md:grid md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)_minmax(8rem,0.8fr)_minmax(6rem,auto)]">
-        <span>Atendimento</span>
+    <div className="space-y-3 pb-[calc(5.75rem+env(safe-area-inset-bottom))] md:space-y-4 md:pb-0">
+      <div className="hidden grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(7rem,0.65fr)_minmax(6rem,auto)] gap-3 rounded-2xl border border-border/70 bg-muted/20 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground lg:grid">
+        <span>Serviço</span>
         <span>Cliente</span>
-        <span className="md:pl-2">Pagamento</span>
-        <span className="md:text-right">Valor</span>
+        <span>Profissional</span>
+        <span>Pagamento</span>
+        <span className="text-right">Valor</span>
       </div>
       {entries.length === 0 ? (
-        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+        <p className="rounded-2xl border border-border/70 bg-background/45 px-4 py-7 text-center text-sm text-muted-foreground">
           Sem lançamentos manuais para os filtros selecionados.
         </p>
       ) : (
-        entries.map((entry) => (
-          <div
-            key={entry.id}
-            className="grid gap-3 border-t border-border px-4 py-4 text-sm transition first:border-t-0 hover:bg-muted/25 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)_minmax(8rem,0.8fr)_minmax(6rem,auto)] md:items-center"
-          >
-            <div className="space-y-1">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground md:hidden">
-                Atendimento
-              </span>
-              <p className="font-medium">{entry.services?.name ?? "Serviço"}</p>
-              <p className="text-xs text-muted-foreground">
-                {entry.staff?.name ?? "Profissional"} · {formatDateTime(entry.performed_at)}
-              </p>
-              <span className="mt-2 inline-flex rounded-full bg-muted px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                {entry.source === "walk_in" ? "Atendimento presencial avulso" : "Lançamento manual"}
-              </span>
+        <ExpandableList
+          items={groupedEntries}
+          initialCount={5}
+          className="space-y-3 md:space-y-4"
+          getKey={(group) => group.date}
+          moreLabel={(hidden) => `Ver mais ${hidden} dia${hidden !== 1 ? "s" : ""}`}
+          renderItem={(group) => (
+          <section className="overflow-hidden rounded-2xl border border-border/65 bg-card/65">
+            <div className="flex items-center justify-between gap-3 border-b border-border/55 bg-muted/15 px-3.5 py-3 md:px-4">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold capitalize tracking-tight">{formatEntryGroupDate(group.date)}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {group.entries.length} lançamento{group.entries.length !== 1 ? "s" : ""}
+                </p>
+              </div>
+              <MoneyValue value={formatEUR(group.total)} className="shrink-0 text-sm md:text-base" />
             </div>
-            <div className="space-y-1">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground md:hidden">
-                Cliente
-              </span>
-              <p className="font-medium">{entry.clients?.name ?? "Cliente avulso"}</p>
-              <p className="text-xs text-muted-foreground">
-                {entry.clients?.phone ?? "Sem cadastro"}
-              </p>
-            </div>
-            <div className="space-y-1 md:pl-2">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground md:hidden">
-                Pagamento
-              </span>
-              <p>{paymentMethodLabel(entry.payment_method)}</p>
-              {entry.notes && <p className="text-xs text-muted-foreground">{entry.notes}</p>}
-            </div>
-            <div className="space-y-1 md:text-right">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground md:hidden">
-                Valor
-              </span>
-              <MoneyValue value={formatEUR(Number(entry.amount || 0))} className="text-xl" />
-            </div>
-          </div>
-        ))
+
+            <ExpandableList
+              items={group.entries}
+              initialCount={5}
+              className="space-y-2 p-2.5 md:p-3"
+              getKey={(entry) => entry.id}
+              moreLabel={(hidden) => `Ver mais ${hidden} lançamento${hidden !== 1 ? "s" : ""}`}
+              renderItem={(entry) => (
+                <article
+                  key={entry.id}
+                  className="grid gap-2 rounded-xl border border-border/45 bg-background/45 px-3 py-3 text-sm transition hover:border-emerald-700/20 hover:bg-background/70 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.9fr)_minmax(7rem,0.65fr)_minmax(6rem,auto)] lg:items-center lg:gap-3 lg:px-3.5 lg:py-2.5"
+                >
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-start justify-between gap-3 lg:block">
+                      <p className="min-w-0 truncate text-[0.94rem] font-semibold leading-snug lg:text-sm">
+                        {entry.services?.name ?? "Serviço"}
+                      </p>
+                      <MoneyValue
+                        value={formatEUR(Number(entry.amount || 0))}
+                        className="shrink-0 text-sm lg:hidden"
+                      />
+                    </div>
+                    {entry.notes && (
+                      <p className="mt-1 line-clamp-1 text-[11px] leading-relaxed text-muted-foreground">
+                        {entry.notes}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-semibold text-foreground lg:text-sm">
+                      {entry.clients?.name ?? "Cliente avulso"}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {entry.clients?.phone ?? "Sem cadastro"}
+                    </p>
+                  </div>
+
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground lg:block">
+                    <span className="truncate font-medium text-foreground/75 lg:block lg:text-xs">
+                      {entry.staff?.name ?? "Profissional"}
+                    </span>
+                    <span className="text-muted-foreground/60 lg:hidden">·</span>
+                    <span className="tabular-nums lg:block lg:text-xs lg:text-muted-foreground">
+                      {formatTimeOnly(entry.performed_at)}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5 lg:justify-start">
+                    <span className="inline-flex h-5 items-center rounded-full bg-muted/75 px-2 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                      {paymentMethodLabel(entry.payment_method)}
+                    </span>
+                    <span className="inline-flex h-5 items-center rounded-full border border-border/70 px-2 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                      {entry.source === "walk_in" ? "Avulso" : "Manual"}
+                    </span>
+                  </div>
+
+                  <div className="hidden text-right lg:block">
+                    <MoneyValue value={formatEUR(Number(entry.amount || 0))} className="text-sm" />
+                  </div>
+                </article>
+              )}
+            />
+          </section>
+          )}
+        />
       )}
     </div>
   );
 }
 
-function BillingSection({
-  billing,
-  loading,
-  onCheckout,
-  onPortal,
-  onRefresh,
-}: {
-  billing: BillingSummary | null;
-  loading: boolean;
-  onCheckout: () => void;
-  onPortal: () => void;
-  onRefresh: () => void;
-}) {
-  const active = billing?.premiumActive ?? true;
-  const hasSubscription = Boolean(
-    billing &&
-      (billing.status !== "trialing" ||
-        ["monthly", "quarterly", "yearly"].includes(billing.plan ?? "")),
-  );
+type StaffRevenueMember = { id: string; name: string; total: number; online: number; manual: number };
+
+function StaffRevenueList({ members }: { members: StaffRevenueMember[] }) {
+  const LIMIT = 3;
   return (
-    <div className="space-y-5">
-      <div className="grid gap-4 xl:grid-cols-[1fr_22rem] xl:items-start">
-        <div>
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <CreditCard className="h-4 w-4" />
-            <span className="text-[10px] uppercase tracking-[0.2em]">Assinatura da plataforma</span>
-          </div>
-          <h2 className="mt-2 text-base font-medium">Plano, cobrança e acesso premium</h2>
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            Gira a assinatura mensal recorrente do estúdio, atualize o método de pagamento e
-            consulte faturas emitidas para a sua assinatura.
-          </p>
-
-          <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            <SmallStatus label="Plano ativo" value={formatPlan(billing?.plan)} />
-            <SmallStatus label="Estado" value={formatSubscriptionStatus(billing?.status)} />
-            <SmallStatus label="Próxima cobrança" value={formatDate(billing?.nextBillingAt)} />
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-emerald-700/20 bg-emerald-950/5 p-4 shadow-sm xl:max-w-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium">
-                {active ? "Acesso premium ativo" : "Acesso limitado"}
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                {active
-                  ? "As funcionalidades premium permanecem disponíveis enquanto a assinatura estiver ativa ou dentro do período já pago."
-                  : "Regularize a assinatura para recuperar as funcionalidades premium do painel."}
-              </p>
-            </div>
-            <span
-              className={`inline-flex min-h-6 shrink-0 items-center rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase leading-none tracking-wide ${
-                active ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {active ? "Ativo" : "Pendente"}
-            </span>
-          </div>
-
-          <div className="mt-4 grid gap-2">
-            <button
-              type="button"
-              onClick={hasSubscription ? onPortal : onCheckout}
-              disabled={loading}
-              className="rounded-xl bg-foreground px-3 py-2 text-xs font-bold uppercase tracking-wide text-background disabled:opacity-60"
-            >
-              {hasSubscription ? "Gerir assinatura" : "Ativar assinatura"}
-            </button>
-            <button
-              type="button"
-              onClick={onRefresh}
-              disabled={loading}
-              className="flex items-center justify-center gap-2 rounded-xl border border-border px-3 py-2 text-xs font-bold uppercase tracking-wide text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-60"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Atualizar
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-5">
-        <div className="mb-3 flex items-center gap-2 text-muted-foreground">
-          <FileText className="h-4 w-4" />
-          <h3 className="text-xs uppercase tracking-[0.2em]">Histórico de cobranças</h3>
-        </div>
-        <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border">
-          {!billing?.invoices?.length && (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
-              Ainda não existem faturas sincronizadas para este estúdio.
+    <div className="overflow-hidden rounded-2xl border border-border/70 bg-background/55">
+      {members.length === 0 && (
+        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+          Ainda não há receita registada por profissional.
+        </p>
+      )}
+      <ExpandableList
+        items={members}
+        initialCount={LIMIT}
+        className="divide-y divide-border/60"
+        getKey={(member) => member.id}
+        moreLabel={(hidden) => `Ver mais ${hidden} profissional${hidden !== 1 ? "is" : ""}`}
+        renderItem={(member) => (
+          <div className="grid min-h-[4.4rem] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3.5 py-2.5 text-sm md:px-4">
+            <div className="min-w-0">
+            <p className="truncate text-sm font-semibold leading-tight text-foreground">{member.name}</p>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+              Online {formatEUR(member.online)} · Presencial {formatEUR(member.manual)}
             </p>
-          )}
-          {billing?.invoices?.map((invoice) => (
-            <div
-              key={invoice.id}
-              className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[1fr_auto] sm:items-center"
-            >
-              <div>
-                <p className="font-medium">{invoice.number ?? "Fatura"}</p>
-                <p className="text-xs text-muted-foreground">
-                  {formatDate(invoice.createdAt)} · {formatSubscriptionStatus(invoice.status)}
-                </p>
-              </div>
-              <div className="flex items-center justify-between gap-3 sm:justify-end">
-                <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
-                  {formatCents(invoice.amountPaid || invoice.amountDue, invoice.currency)}
-                </span>
-                {invoice.hostedInvoiceUrl && (
-                  <a
-                    href={invoice.hostedInvoiceUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs uppercase tracking-wide text-muted-foreground hover:text-foreground"
-                  >
-                    Abrir
-                  </a>
-                )}
-              </div>
             </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SmallStatus({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-muted/25 p-3">
-      <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-medium">{value}</p>
+            <div className="shrink-0 text-right">
+            <span className="block text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Total
+            </span>
+            <MoneyValue value={formatEUR(member.total)} className="text-base md:text-lg" />
+            </div>
+          </div>
+        )}
+      />
     </div>
   );
 }

@@ -7,7 +7,12 @@ import { APP_BRAND } from "@/lib/app-brand";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/forgot-password")({
-  head: () => ({ meta: [{ title: `Recuperar palavra-passe — ${APP_BRAND.name}` }] }),
+  head: () => ({
+    meta: [
+      { title: `Recuperar palavra-passe — ${APP_BRAND.name}` },
+      { name: "robots", content: "noindex,nofollow,noarchive" },
+    ],
+  }),
   component: ForgotPasswordPage,
 });
 

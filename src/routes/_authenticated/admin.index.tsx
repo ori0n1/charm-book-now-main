@@ -2,13 +2,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import type { InputHTMLAttributes, ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Calendar,
+  ChevronDown,
   CreditCard,
   Euro,
-  Scissors,
   Sparkles,
   TrendingUp,
   Users,
@@ -17,7 +17,11 @@ import {
 import { toast } from "sonner";
 import { ShareStudioCard } from "@/components/share-studio-card";
 import { UpsellMetricsCard } from "@/components/upsell-metrics-card";
+import { ClientAvatar } from "@/components/client-avatar";
+import { ExpandableList } from "@/components/ui/expandable-list";
+import { InternationalPhoneInput } from "@/components/ui/international-phone-input";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
+import { sortAppointmentsChronologically } from "@/lib/appointment-ordering";
 import {
   createPlatformCheckoutSession,
   getPlatformSubscriptionSummary,
@@ -46,7 +50,15 @@ type Appt = {
   starts_at: string;
   status: string;
   total_price: number;
-  clients: { name: string } | null;
+  clients: {
+    id?: string | null;
+    name: string;
+    avatar_url?: string | null;
+    created_at?: string | null;
+    date_of_birth?: string | null;
+    total_spent?: number | null;
+    total_visits?: number | null;
+  } | null;
   staff: ({ id: string; name: string } & FinancialRuleSource) | null;
   appointment_services?: ServiceLine[];
 };
@@ -126,26 +138,29 @@ function OverviewPage() {
   const billing = useQuery({
     queryKey: ["dashboard-subscription-summary", studio?.id],
     enabled: !!studio,
-    staleTime: 30 * 1000,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
     retry: 1,
     queryFn: async () =>
       (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
   const overview = useQuery({
-    queryKey: ["admin-finance-overview", studio?.id],
+    queryKey: ["admin-finance-overview", studio?.id, studio?.role, studio?.staff_id],
     enabled: !!studio,
     staleTime: 20 * 1000,
     queryFn: async () => {
-      const since = new Date(Date.now() - 60 * DAY_MS).toISOString();
+      const since = new Date(Date.now() - 180 * DAY_MS).toISOString();
       const [appointmentResult, { data: staffRows }, { data: serviceRows }, { data: payments }] =
         await Promise.all([
-          fetchAppointments(studio!.id, since),
+          fetchAppointments(studio!.id, since, studio?.role === "staff" ? studio.staff_id : null),
           supabase
             .from("staff")
             .select("id,name")
             .eq("studio_id", studio!.id)
             .eq("is_active", true),
-          supabase.from("services").select("id").eq("studio_id", studio!.id).eq("is_active", true),
+          supabase.from("services").select("id,name").eq("studio_id", studio!.id).eq("is_active", true),
           supabase
             .from("payment_intents")
             .select("appointment_id,amount_cents,status")
@@ -155,14 +170,49 @@ function OverviewPage() {
       return {
         appts: (appointmentResult ?? []) as unknown as Appt[],
         staffRows: (staffRows ?? []) as { id: string; name: string }[],
+        serviceRows: (serviceRows ?? []) as { id: string; name: string }[],
         counts: { services: serviceRows?.length ?? 0, staff: staffRows?.length ?? 0 },
         paidRows: (payments ?? []) as PaidRow[],
       };
     },
   });
 
-  if (!studio || overview.isLoading)
+  useEffect(() => {
+    if (!studio?.id) return;
+    let refreshTimer: number | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        void overview.refetch();
+      }, 650);
+    };
+    const channel = supabase
+      .channel(`admin-overview-live-${studio.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payment_intents", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "booking_payment_requests", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, scheduleRefresh)
+      .subscribe();
+    return () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [overview.refetch, studio?.id]);
+
+  if (!studio || overview.isLoading || billing.isLoading || billing.isFetching)
     return <p className="text-sm text-muted-foreground">A carregar...</p>;
+
+  if (studio.role === "staff") {
+    return (
+      <ProfessionalOverview
+        appointments={overview.data?.appts ?? []}
+        paidRows={overview.data?.paidRows ?? []}
+        studio={studio}
+        period={summaryPeriod}
+        onPeriodChange={setSummaryPeriod}
+      />
+    );
+  }
 
   async function activatePremium(plan: PlanId = "yearly") {
     if (!studio) return;
@@ -193,12 +243,13 @@ function OverviewPage() {
   }
 
   const now = Date.now();
-  const today = appts.filter(
-    (a) => new Date(a.starts_at).toDateString() === new Date().toDateString(),
+  const today = sortAppointmentsChronologically(
+    appts.filter((a) => new Date(a.starts_at).toDateString() === new Date().toDateString()),
+    "future",
   );
-  const upcoming = appts.filter(
+  const upcoming = sortAppointmentsChronologically(appts.filter(
     (a) => new Date(a.starts_at).getTime() >= now && isBillable(a.status),
-  );
+  ), "future");
   const billable = appts.filter((a) =>
     isFinanciallyRelevantAppointment(a.status, paidByAppointment.get(a.id) ?? 0),
   );
@@ -254,13 +305,13 @@ function OverviewPage() {
 
   const chartData = buildDailyData(periodRows, summaryPeriod);
   const maxDayTotal = Math.max(1, ...chartData.map((d) => d.total));
-
   return (
     <>
       <MobileOverview
         today={today}
         upcoming={upcoming}
         totals={totals}
+        scheduledCount={periodRows.length}
         paidByAppointment={paidByAppointment}
         studio={studio}
         billing={billing.data ?? null}
@@ -268,78 +319,83 @@ function OverviewPage() {
         onChoosePremiumPlan={() => setPlanChooserOpen(true)}
       />
 
-      <div className="hidden space-y-7 md:block">
+      <div className="hidden space-y-4 md:block">
         <TrialPremiumBanner
           billing={billing.data ?? null}
           checkoutPlan={checkoutPlan}
           onChoosePremiumPlan={() => setPlanChooserOpen(true)}
         />
 
-        <div className="hidden md:block">
-          <ShareStudioCard studioName={studio.name} studioSlug={studio.slug} />
-        </div>
+        <ShareStudioCard
+          studioName={studio.name}
+          studioSlug={studio.slug}
+          variant="compact"
+          className="w-full"
+        />
 
-        <section className="hidden rounded-2xl border border-border bg-card p-4 shadow-sm md:block md:p-5">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">
-                Atalhos rápido do estúdio
-              </p>
-              <h2 className="mt-2 text-lg font-semibold">Navegue rápido</h2>
+        <section className="grid auto-rows-fr gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
+          <div className="flex h-full min-w-0 flex-col rounded-[1.35rem] border border-border bg-card p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
+                  Operação de hoje
+                </p>
+                <h1 className="mt-2 text-2xl font-light tracking-tight">Resumo do estúdio</h1>
+              </div>
+              <Link
+                to="/admin/agenda"
+                className="rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              >
+                Ver agenda
+              </Link>
+            </div>
+
+            <div className="mt-5 grid flex-1 auto-rows-fr gap-3 sm:grid-cols-3">
+              <DashboardFocusCard
+                label="Faturação de hoje"
+                value={formatEUR(
+                  today.reduce(
+                    (sum, appointment) =>
+                      sum + computeAppointmentSplit(appointment, studio, paidByAppointment.get(appointment.id) ?? 0).total,
+                    0,
+                  ),
+                )}
+                detail="Total faturado nas marcações de hoje."
+                featured
+              />
+              <DashboardFocusCard
+                label="Marcações de hoje"
+                value={String(today.length)}
+                detail="Agendamentos previstos para hoje."
+              />
+              <DashboardFocusCard
+                label="Por receber"
+                value={formatEUR(totals.pending)}
+                detail="Valor que ainda falta receber."
+              />
             </div>
           </div>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Link
-              to="/admin/balcao"
-              className="rounded-2xl border border-border bg-background/70 px-4 py-4 text-center text-sm font-semibold transition hover:border-emerald-700/50 hover:bg-emerald-950/5"
-            >
-              Balcão
-            </Link>
-            <Link
-              to="/admin/comissoes"
-              className="rounded-2xl border border-border bg-background/70 px-4 py-4 text-center text-sm font-semibold transition hover:border-emerald-700/50 hover:bg-emerald-950/5"
-            >
-              Comissões
-            </Link>
-            <Link
-              to="/admin/sinal"
-              className="rounded-2xl border border-border bg-background/70 px-4 py-4 text-center text-sm font-semibold transition hover:border-emerald-700/50 hover:bg-emerald-950/5"
-            >
-              Sinal
-            </Link>
-            <Link
-              to="/admin/servicos"
-              className="rounded-2xl border border-border bg-background/70 px-4 py-4 text-center text-sm font-semibold transition hover:border-emerald-700/50 hover:bg-emerald-950/5"
-            >
-              Serviços
-            </Link>
-          </div>
+
+          <Link
+            to="/admin/recebimento"
+            search={{ connect: undefined }}
+            className="flex h-full min-w-0 flex-col rounded-[1.35rem] border border-border bg-card p-5 shadow-sm transition hover:border-emerald-700/30 hover:bg-muted/20"
+          >
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
+              Recebimentos online
+            </p>
+            <MoneyValue value={formatEUR(totals.received)} className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.55rem,2.2vw,1.875rem)] leading-tight" />
+            <p className="mt-2 text-sm leading-snug text-muted-foreground">
+              Pagamentos online já enviados para a conta do estúdio.
+            </p>
+            <span className="mt-auto inline-flex w-fit items-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground">
+              Ver acompanhamento
+              <ArrowRight className="h-3.5 w-3.5" />
+            </span>
+          </Link>
         </section>
 
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat label="Hoje" value={String(today.length)} icon={<Calendar className="h-4 w-4" />} />
-          <Stat
-            label="Previstos"
-            value={String(upcoming.length)}
-            icon={<TrendingUp className="h-4 w-4" />}
-          />
-          <div className="hidden lg:block">
-            <Stat
-              label="Serviços"
-              value={String(counts.services)}
-              icon={<Scissors className="h-4 w-4" />}
-            />
-          </div>
-          <div className="hidden lg:block">
-            <Stat
-              label="Equipa"
-              value={String(counts.staff)}
-              icon={<Users className="h-4 w-4" />}
-            />
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-border bg-card p-4 shadow-sm md:p-5">
+        <section className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="flex items-center gap-2 text-muted-foreground">
@@ -350,17 +406,16 @@ function OverviewPage() {
               </div>
               <MoneyValue value={formatEUR(totals.total)} className="mt-2 text-3xl" />
               <p className="mt-1 hidden text-xs text-muted-foreground md:block">
-                Previsão sobre o valor total dos serviços · estúdio {studio.commission_percent}% · equipa{" "}
-                {100 - studio.commission_percent}%
+                Valor das marcações confirmadas no período · {periodRows.length} marcações
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-background/45 p-1">
+            <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-background/45 p-1">
               {SUMMARY_PERIODS.map((period) => (
                 <button
                   key={period}
                   type="button"
                   onClick={() => setSummaryPeriod(period)}
-                  className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                  className={`min-w-0 rounded-xl px-3 py-2 text-xs font-semibold transition ${
                     summaryPeriod === period
                       ? "bg-emerald-600 text-white shadow-lg shadow-emerald-950/15"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -372,30 +427,30 @@ function OverviewPage() {
             </div>
           </div>
 
-          <div className="mt-5 grid auto-rows-fr gap-3 lg:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-5 grid auto-rows-fr gap-3 lg:grid-cols-3">
             <FinanceSummaryCard
-              title="Receita total"
+              title="Receita agendada"
               icon={<Euro className="h-4 w-4" />}
               value={formatEUR(totals.total)}
-              caption="Valor total dos serviços"
+              caption={`${periodRows.length} ${periodRows.length === 1 ? "marcação confirmada" : "marcações confirmadas"}`}
               featured
               items={[
-                { label: "Confirmado", value: formatEUR(totals.confirmed) },
-                { label: "Pendente", value: formatEUR(totals.pending) },
+                { label: "Pago", value: formatEUR(totals.confirmed) },
+                { label: "Por receber", value: formatEUR(totals.pending) },
               ]}
             />
             <FinanceSummaryCard
-              title="Pagamentos"
+              title="Recebido online"
               icon={<Wallet className="h-4 w-4" />}
               value={formatEUR(totals.received)}
-              caption="Sinais pagos online"
+              caption="Pago online pelos clientes."
               items={[
-                { label: "No estúdio", value: formatEUR(totals.pending) },
+                { label: "Por receber", value: formatEUR(totals.pending) },
                 { label: "Recebido", value: formatEUR(totals.received) },
               ]}
             />
             <FinanceSummaryCard
-              title="Divisão"
+              title="Valor do estúdio"
               icon={<Users className="h-4 w-4" />}
               value={formatEUR(totals.studio)}
               caption={`Estúdio ${studio.commission_percent}% · equipa ${100 - studio.commission_percent}%`}
@@ -404,125 +459,112 @@ function OverviewPage() {
                 { label: "Equipa", value: formatEUR(totals.professional) },
               ]}
             />
-            <FinanceSummaryCard
-              title="Agenda"
-              icon={<Calendar className="h-4 w-4" />}
-              value={String(periodAppointments.length)}
-              caption={agendaTrend}
-              items={[
-                { label: "Compareceu", value: `${attendanceRate}%` },
-                {
-                  label: "Faltou",
-                  value: String(missedCount),
-                  danger: missedCount > attendedCount && missedCount > 0,
-                },
-              ]}
-            />
           </div>
 
-          <div className="mt-4 hidden gap-3 md:grid lg:grid-cols-[1.45fr_0.75fr]">
-            <div className="rounded-2xl border border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] p-4">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                Movimento diário
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Previsão diária, receita confirmada e sinais já recebidos.
-              </p>
-              <div className="mt-4 flex h-40 items-end gap-2 rounded-2xl bg-background/35 p-3">
-                {chartData.length === 0 && (
-                  <p className="w-full self-center text-center text-sm text-muted-foreground">
-                    Sem dados financeiros neste período.
-                  </p>
-                )}
-                {chartData.map((day) => (
-                  <div key={day.key} className="group relative flex min-w-0 flex-1 flex-col items-center gap-2">
-                    <div className="flex h-28 w-full items-end gap-1 overflow-hidden rounded-xl bg-muted/70 p-1 ring-1 ring-border/40">
-                      <div
-                        className="flex-1 rounded-t-lg bg-gradient-to-t from-emerald-700 to-emerald-400 transition-all duration-300 group-hover:from-emerald-600 group-hover:to-emerald-300"
-                        style={{ height: `${Math.max(6, (day.total / maxDayTotal) * 100)}%` }}
-                      />
-                      <div
-                        className="flex-1 rounded-t-lg bg-gradient-to-t from-sky-700 to-sky-400 opacity-85 transition-all duration-300"
-                        style={{ height: `${day.confirmed > 0 ? Math.max(6, (day.confirmed / maxDayTotal) * 100) : 2}%` }}
-                      />
-                      <div
-                        className="flex-1 rounded-t-lg bg-gradient-to-t from-zinc-500 to-zinc-300 opacity-80 transition-all duration-300 dark:from-zinc-600 dark:to-zinc-400"
-                        style={{ height: `${day.received > 0 ? Math.max(6, (day.received / maxDayTotal) * 100) : 2}%` }}
-                      />
+          <details className="group mt-4 overflow-hidden rounded-[1.25rem] border border-border bg-background/35">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+                  Desempenho e relatórios
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                  Gráfico diário, presença, divisão financeira e upsells.
+                </p>
+              </div>
+              <span className="rounded-full border border-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                Abrir
+              </span>
+            </summary>
+            <div className="grid min-w-0 gap-3 border-t border-border p-3 xl:grid-cols-[minmax(0,1fr)_17rem] 2xl:grid-cols-[minmax(0,1fr)_18rem]">
+              <div className="min-w-0 rounded-2xl border border-border bg-card p-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                      Movimento diário
+                    </p>
+                    <p className="mt-1 max-w-xl text-sm text-foreground">
+                      Previsão diária, receita confirmada e sinais pagos.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                    <ChartLegend color="bg-emerald-400" label="Marcações" />
+                    <ChartLegend color="bg-sky-400" label="Receita" />
+                    <ChartLegend color="bg-zinc-400" label="Sinais" />
+                  </div>
+                </div>
+                <div className="mt-4 rounded-2xl border border-border/70 bg-background/35 px-4 pb-4 pt-5 shadow-inner shadow-black/5">
+                  <div className="grid h-60 grid-cols-[2.75rem_minmax(0,1fr)] gap-3">
+                    <div className="flex flex-col justify-between pb-8 text-right text-[10px] tabular-nums text-muted-foreground">
+                      <span>{formatEUR(maxDayTotal)}</span>
+                      <span>{formatEUR(maxDayTotal / 2)}</span>
+                      <span>0€</span>
                     </div>
-                    <span className="truncate text-[10px] text-muted-foreground">{day.day}</span>
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-3 w-44 -translate-x-1/2 rounded-2xl border border-border bg-popover/98 p-3 text-xs opacity-0 shadow-2xl shadow-black/20 transition duration-150 group-hover:opacity-100">
-                      <p className="font-semibold text-foreground">{day.fullDate}</p>
-                      <p className="mt-1 text-muted-foreground">
-                        Previsto:{" "}
-                        <span className="font-mono text-emerald-600 dark:text-emerald-300">
-                          {formatEUR(day.total)}
-                        </span>
+                    <div className="min-w-0">
+                      <div className="grid h-52 grid-flow-col auto-cols-fr items-end gap-1.5 border-b border-border/70 bg-[linear-gradient(to_top,color-mix(in_oklch,var(--color-border)_32%,transparent)_1px,transparent_1px)] [background-size:100%_33.333%]">
+                    {chartData.length === 0 && (
+                      <p className="w-full self-center text-center text-sm text-muted-foreground">
+                        Sem dados financeiros neste período.
                       </p>
-                      <p className="text-muted-foreground">
-                        Confirmado:{" "}
-                        <span className="font-mono text-sky-600 dark:text-sky-300">
-                          {formatEUR(day.confirmed)}
-                        </span>
-                      </p>
-                      <p className="text-muted-foreground">
-                        Sinal recebido:{" "}
-                        <span className="font-mono text-foreground">{formatEUR(day.received)}</span>
-                      </p>
-                      <p className="text-muted-foreground">
-                        Agendamentos:{" "}
-                        <span className="font-semibold text-foreground">{day.appointments}</span>
-                      </p>
+                    )}
+                    {chartData.map((day) => (
+                      <div key={day.key} className="group flex min-w-0 flex-col items-center justify-end gap-1">
+                        <div className="flex h-44 w-full max-w-11 items-end justify-center gap-1 rounded-xl bg-muted/35 px-1.5 py-1.5 ring-1 ring-border/35">
+                          <div
+                            className="w-2 rounded-t-lg bg-gradient-to-t from-emerald-700 to-emerald-400 shadow-[0_0_18px_rgba(16,185,129,0.18)] transition-all duration-300 group-hover:from-emerald-600 group-hover:to-emerald-300"
+                            style={{ height: `${Math.max(6, (day.total / maxDayTotal) * 100)}%` }}
+                          />
+                          <div
+                            className="w-2 rounded-t-lg bg-gradient-to-t from-sky-700 to-sky-400 opacity-90 shadow-[0_0_16px_rgba(14,165,233,0.14)] transition-all duration-300"
+                            style={{ height: `${day.confirmed > 0 ? Math.max(6, (day.confirmed / maxDayTotal) * 100) : 2}%` }}
+                          />
+                          <div
+                            className="w-2 rounded-t-lg bg-gradient-to-t from-zinc-500 to-zinc-300 opacity-80 transition-all duration-300 dark:from-zinc-600 dark:to-zinc-400"
+                            style={{ height: `${day.received > 0 ? Math.max(6, (day.received / maxDayTotal) * 100) : 2}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                      </div>
+                      <div className="mt-2 grid grid-flow-col auto-cols-fr gap-1.5 text-center text-[10px] tabular-nums text-muted-foreground">
+                        {chartData.map((day, index) => (
+                          <span key={day.key} className={index % 2 === 0 || chartData.length <= 12 ? "block" : "invisible"}>
+                            {day.day}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                ))}
+                </div>
+              </div>
+              <div className="min-w-0 rounded-2xl border border-border bg-card p-4">
+                <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                  Leitura rápida
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Comissão sobre o total do serviço. O pré-pagamento indica apenas o que já foi pago.
+                </p>
+                <div className="mt-4 space-y-2.5">
+                  <SignalLine
+                    label={agendaTrend}
+                    value={`${appointmentGrowth >= 0 ? "+" : ""}${appointmentGrowth}%`}
+                  />
+                  <SignalLine
+                    label="Receita vs período anterior"
+                    value={`${revenueGrowth >= 0 ? "+" : ""}${revenueGrowth}%`}
+                  />
+                  <SignalLine label={attendanceSignal} value={`${attendanceRate}%`} />
+                  <ProgressLine label="Parte do estúdio" value={totals.studio} total={totals.total} />
+                  <ProgressLine label="Parte da equipa" value={totals.professional} total={totals.total} />
+                  <ProgressLine label="Pré-pagamento recebido" value={totals.received} total={totals.total} />
+                  <ProgressLine label="Restante no estúdio" value={totals.pending} total={totals.total} />
+                </div>
+              </div>
+              <div className="min-w-0 xl:col-span-2">
+                <UpsellMetricsCard studioId={studio.id} />
               </div>
             </div>
-            <div className="rounded-2xl border border-border bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.01))] p-4">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                Leitura rápida
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Comissão sobre o total do serviço. O sinal indica apenas o que já foi pago.
-              </p>
-              <div className="mt-4 space-y-2.5">
-                <SignalLine
-                  label={agendaTrend}
-                  value={`${appointmentGrowth >= 0 ? "+" : ""}${appointmentGrowth}%`}
-                />
-                <SignalLine
-                  label="Receita vs período anterior"
-                  value={`${revenueGrowth >= 0 ? "+" : ""}${revenueGrowth}%`}
-                />
-                <SignalLine label={attendanceSignal} value={`${attendanceRate}%`} />
-                <ProgressLine
-                  label="Parte do estúdio"
-                  value={totals.studio}
-                  total={totals.total}
-                />
-                <ProgressLine
-                  label="Parte da equipa"
-                  value={totals.professional}
-                  total={totals.total}
-                />
-                <ProgressLine
-                  label="Sinal já recebido"
-                  value={totals.received}
-                  total={totals.total}
-                />
-                <ProgressLine
-                  label="Restante no estúdio"
-                  value={totals.pending}
-                  total={totals.total}
-                />
-              </div>
-            </div>
-          </div>
+          </details>
         </section>
-
-        <div className="hidden md:block">
-          <UpsellMetricsCard studioId={studio.id} />
-        </div>
 
         <section>
           <div className="mb-3 flex items-center justify-between">
@@ -533,7 +575,7 @@ function OverviewPage() {
               Ver todas
             </Link>
           </div>
-          <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <div className="divide-y divide-border overflow-hidden rounded-[1.25rem] border border-border bg-card shadow-sm">
             {upcoming.length === 0 && (
               <p className="px-4 py-10 text-center text-sm text-muted-foreground">
                 Sem marcações futuras.
@@ -543,9 +585,14 @@ function OverviewPage() {
               const split = computeAppointmentSplit(a, studio, paidByAppointment.get(a.id) ?? 0);
               return (
                 <div key={a.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{a.clients?.name ?? "-"}</p>
-                    <p className="truncate text-xs text-muted-foreground">
+                  <ClientAvatar
+                    name={a.clients?.name}
+                    avatarUrl={a.clients?.avatar_url}
+                    className="size-9 text-xs"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-sm font-medium leading-snug">{a.clients?.name ?? "-"}</p>
+                    <p className="break-words text-xs leading-snug text-muted-foreground">
                       {new Date(a.starts_at).toLocaleString("pt-PT", {
                         dateStyle: "short",
                         timeStyle: "short",
@@ -577,10 +624,294 @@ function OverviewPage() {
   );
 }
 
+function ProfessionalOverview({
+  appointments,
+  paidRows,
+  studio,
+  period,
+  onPeriodChange,
+}: {
+  appointments: Appt[];
+  paidRows: PaidRow[];
+  studio: FinancialRuleSource & {
+    name: string;
+    staff_name?: string | null;
+    deposit_percent: number;
+    payment_policy: string;
+  };
+  period: SummaryPeriod;
+  onPeriodChange: (period: SummaryPeriod) => void;
+}) {
+  const paidByAppointment = new Map<string, number>();
+  for (const p of paidRows) {
+    if (!p.appointment_id || p.status !== "succeeded") continue;
+    paidByAppointment.set(
+      p.appointment_id,
+      (paidByAppointment.get(p.appointment_id) ?? 0) + p.amount_cents / 100,
+    );
+  }
+
+  const now = Date.now();
+  const periodStart = getPeriodStart(period, now);
+  const previousPeriodStart = new Date(periodStart.getTime() - period * DAY_MS);
+  const ownRows = appointments
+    .filter((appointment) =>
+      isFinanciallyRelevantAppointment(
+        appointment.status,
+        paidByAppointment.get(appointment.id) ?? 0,
+      ),
+    )
+    .map((appointment) => ({
+      appointment,
+      split: computeAppointmentSplit(appointment, studio, paidByAppointment.get(appointment.id) ?? 0),
+    }));
+  const periodRows = ownRows.filter((row) => new Date(row.appointment.starts_at) >= periodStart);
+  const previousRows = ownRows.filter((row) => {
+    const startsAt = new Date(row.appointment.starts_at);
+    return startsAt >= previousPeriodStart && startsAt < periodStart;
+  });
+  const totals = sumFinancialRows(periodRows);
+  const previousTotals = sumFinancialRows(previousRows);
+  const attended = periodRows.filter((row) => row.appointment.status === "completed").length;
+  const ticket = periodRows.length ? totals.total / periodRows.length : 0;
+  const revenueGrowth = getGrowthPercent(totals.total, previousTotals.total);
+  const upcoming = sortAppointmentsChronologically(
+    appointments.filter((appointment) => new Date(appointment.starts_at).getTime() >= now),
+    "future",
+  );
+  const topServices = buildServiceRanking(periodRows);
+  const chartData = buildDailyData(periodRows, period);
+  const maxDayTotal = Math.max(1, ...chartData.map((day) => day.total));
+  const professionalName = studio.staff_name ?? "Profissional";
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-3 pb-2 md:space-y-4 md:pb-8">
+      <section className="overflow-hidden rounded-[1.35rem] border border-border bg-card shadow-sm">
+        <div className="bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_52%,rgba(14,165,233,0.08))] px-4 py-4 md:px-5">
+          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
+            Painel da profissional
+          </p>
+          <h1 className="mt-1 text-2xl font-light tracking-tight md:text-3xl">
+            Olá, {professionalName}
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+            Acompanhe apenas a sua agenda, os seus clientes e o seu resultado individual.
+          </p>
+        </div>
+
+        <div className="grid auto-rows-fr grid-cols-2 gap-2 p-3 sm:gap-2.5 lg:grid-cols-3 xl:grid-cols-6">
+          <ProfessionalMetric
+            label="Faturação"
+            value={formatEUR(totals.total)}
+            detail={`${revenueGrowth >= 0 ? "+" : ""}${revenueGrowth}% vs. período anterior`}
+            icon={<Euro className="h-4 w-4" />}
+            featured
+          />
+          <ProfessionalMetric
+            label="Por receber"
+            value={formatEUR(totals.professional)}
+            detail="Valor previsto para si."
+            icon={<Wallet className="h-4 w-4" />}
+          />
+          <ProfessionalMetric
+            label="Atendimentos"
+            value={String(attended)}
+            detail={`${periodRows.length} marcações no período`}
+            icon={<Calendar className="h-4 w-4" />}
+          />
+          <ProfessionalMetric
+            label="Ticket médio"
+            value={formatEUR(ticket)}
+            detail="Média por marcação"
+            icon={<TrendingUp className="h-4 w-4" />}
+          />
+          <ProfessionalMetric
+            label="Comissão"
+            value={formatEUR(totals.commission)}
+            detail="Incluída quando aplicável."
+            icon={<CreditCard className="h-4 w-4" />}
+          />
+          <ProfessionalMetric
+            label="Próximas"
+            value={String(upcoming.length)}
+            detail="Na sua agenda"
+            icon={<Calendar className="h-4 w-4" />}
+          />
+        </div>
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(17rem,21rem)]">
+        <div className="rounded-[1.25rem] border border-border bg-card p-3.5 shadow-sm sm:p-4">
+          <div className="flex flex-col gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+                Evolução
+              </p>
+              <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                Valores dos seus atendimentos no período escolhido.
+              </p>
+            </div>
+            <div className="grid w-full grid-cols-3 rounded-2xl border border-border bg-background/55 p-1">
+              {SUMMARY_PERIODS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => onPeriodChange(value)}
+                  className={`min-w-0 rounded-xl px-2.5 py-2 text-center text-xs font-semibold transition ${
+                    period === value
+                      ? "bg-foreground text-background shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  {value} dias
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-3 grid h-44 grid-flow-col auto-cols-fr items-end gap-1.5 rounded-2xl border border-border/70 bg-background/45 px-3 pb-3 pt-4">
+            {chartData.map((day) => (
+              <div key={day.key} className="flex h-full min-w-0 flex-col justify-end gap-2">
+                <div className="flex flex-1 items-end justify-center rounded-xl bg-muted/30 px-1.5">
+                  <div
+                    className="w-full max-w-5 rounded-t-lg bg-emerald-600 shadow-[0_0_18px_rgba(16,185,129,0.16)]"
+                    style={{ height: `${day.total > 0 ? Math.max(5, (day.total / maxDayTotal) * 100) : 0}%` }}
+                    title={`${day.fullDate}: ${formatEUR(day.total)}`}
+                  />
+                </div>
+                <span className="text-center text-[9px] leading-none text-muted-foreground">{day.day}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="rounded-[1.25rem] border border-border bg-card p-3.5 shadow-sm sm:p-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+              Próxima marcação
+            </p>
+            {upcoming[0] ? (
+              <div className="mt-3 rounded-2xl bg-muted/35 p-3">
+                <p className="text-sm font-semibold">{upcoming[0].clients?.name ?? "Cliente"}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {new Date(upcoming[0].starts_at).toLocaleString("pt-PT", {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}
+                </p>
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-muted-foreground">Sem marcações futuras.</p>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-[1.25rem] border border-border bg-card p-3.5 shadow-sm sm:p-4">
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+            Serviços mais realizados
+          </p>
+          <div className="mt-3 space-y-2">
+            {topServices.length === 0 && (
+              <p className="rounded-2xl border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+                Ainda não existem atendimentos neste período.
+              </p>
+            )}
+            {topServices.map((service) => (
+              <div key={service.name} className="flex items-center justify-between gap-3 rounded-2xl bg-muted/35 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="break-words text-sm font-semibold leading-snug">{service.name}</p>
+                  <p className="text-xs text-muted-foreground">{service.count} atendimento{service.count === 1 ? "" : "s"}</p>
+                </div>
+                <MoneyValue value={formatEUR(service.total)} className="text-sm" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="overflow-hidden rounded-[1.25rem] border border-border bg-card shadow-sm">
+          <button
+            type="button"
+            onClick={() => setPrivacyOpen((open) => !open)}
+            className="flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition hover:bg-muted/30 sm:px-4"
+            aria-expanded={privacyOpen}
+          >
+            <span className="min-w-0">
+              <span className="block text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+                Privacidade do painel
+              </span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                O seu acesso fica limitado ao seu trabalho.
+              </span>
+            </span>
+            <span className="grid size-8 shrink-0 place-items-center rounded-full border border-border bg-background/70 text-muted-foreground">
+              <ChevronDown
+                className={`h-4 w-4 transition-transform duration-200 ${privacyOpen ? "rotate-180" : ""}`}
+              />
+            </span>
+          </button>
+          <div
+            className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+              privacyOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+            }`}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <div className="space-y-2 border-t border-border/70 px-3.5 py-3 text-sm sm:px-4">
+            {[
+              "Agenda, clientes e horários mostram apenas o seu trabalho.",
+              "Dados globais do estúdio, relatórios e configurações ficam ocultos.",
+              "Indicadores financeiros compartilhados dependem das permissões da dona.",
+            ].map((item) => (
+              <div key={item} className="rounded-2xl border border-border/70 bg-background/55 px-3 py-2 text-muted-foreground">
+                {item}
+              </div>
+            ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ProfessionalMetric({
+  label,
+  value,
+  detail,
+  icon,
+  featured,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  icon: ReactNode;
+  featured?: boolean;
+}) {
+  return (
+    <div
+      className={`flex h-full min-h-[7rem] min-w-0 flex-col rounded-2xl border p-3 shadow-sm sm:p-3.5 ${
+        featured
+          ? "border-emerald-700/25 bg-emerald-500/10"
+          : "border-border/75 bg-background/65"
+      }`}
+    >
+      <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
+        <span className="grid size-8 place-items-center rounded-xl bg-card/80">{icon}</span>
+        <p className="min-w-0 whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.12em]">{label}</p>
+      </div>
+      <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.1rem,3.8vw,1.5rem)] font-semibold leading-tight tracking-tight">{value}</p>
+      <p className="mt-auto pt-1 text-xs leading-snug text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
 function MobileOverview({
   today,
   upcoming,
   totals,
+  scheduledCount,
   paidByAppointment,
   studio,
   billing,
@@ -600,6 +931,7 @@ function MobileOverview({
     deposit: number;
     predicted: number;
   };
+  scheduledCount: number;
   paidByAppointment: Map<string, number>;
   studio: FinancialRuleSource & {
     name: string;
@@ -625,8 +957,17 @@ function MobileOverview({
       />
 
       <section className="grid grid-cols-2 gap-3">
-        <MobileMiniMetric label="Hoje" value={String(today.length)} />
-        <MobileMiniMetric label="Receita prevista" value={formatEUR(totals.total)} money />
+        <MobileMiniMetric
+          label="Marcações hoje"
+          value={String(today.length)}
+          detail="Agendamentos previstos"
+        />
+        <MobileMiniMetric
+          label="Receita agendada"
+          value={formatEUR(totals.total)}
+          detail={`${scheduledCount} ${scheduledCount === 1 ? "marcação confirmada" : "marcações confirmadas"}`}
+          money
+        />
       </section>
 
       <ShareStudioCard
@@ -638,35 +979,42 @@ function MobileOverview({
 
       <section className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold">Próximo agendamento</h2>
+          <h2 className="text-sm font-semibold">Próxima marcação</h2>
           <Link to="/admin/agenda" className="text-xs font-medium text-muted-foreground">
             Ver agenda
           </Link>
         </div>
         {next ? (
           <div className="mt-4 flex items-center gap-3">
-            <div className="grid size-12 shrink-0 place-items-center rounded-2xl bg-emerald-600/10 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
-              {new Date(next.starts_at).toLocaleTimeString("pt-PT", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </div>
+            <ClientAvatar
+              name={next.clients?.name}
+              avatarUrl={next.clients?.avatar_url}
+              className="size-12 text-sm"
+            />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">{next.clients?.name ?? "Cliente"}</p>
-              <p className="truncate text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-2">
+                <p className="break-words text-sm font-semibold leading-snug">{next.clients?.name ?? "Cliente"}</p>
+                <span className="shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                  {new Date(next.starts_at).toLocaleTimeString("pt-PT", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+              <p className="break-words text-xs leading-snug text-muted-foreground">
                 {next.staff?.name ?? "Profissional"} · {formatEUR(nextSplit?.total ?? 0)}
               </p>
             </div>
           </div>
         ) : (
-          <p className="mt-4 text-sm text-muted-foreground">Sem agendamentos futuros.</p>
+          <p className="mt-4 text-sm text-muted-foreground">Sem marcações futuras.</p>
         )}
       </section>
 
       <section className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm">
         <h2 className="text-sm font-semibold">Atalhos rápidos</h2>
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <MobileShortcut to="/admin/balcao" label="Balcão" />
+          <MobileShortcut to="/admin/equipa" label="Profissionais" />
           <MobileShortcut to="/admin/comissoes" label="Comissões" />
           <MobileShortcut to="/admin/sinal" label="Sinal" />
           <MobileShortcut to="/admin/servicos" label="Serviços" />
@@ -675,7 +1023,7 @@ function MobileOverview({
 
       <section className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold">Hoje</h2>
+          <h2 className="text-sm font-semibold">Marcações de hoje</h2>
           <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">
             {today.length} marcações
           </span>
@@ -690,17 +1038,22 @@ function MobileOverview({
               to="/admin/agenda"
               className="flex items-center gap-3 rounded-2xl bg-background/65 px-3 py-3"
             >
-              <span className="w-12 shrink-0 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+              <span className="w-12 shrink-0 text-sm font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                 {new Date(item.starts_at).toLocaleTimeString("pt-PT", {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
               </span>
+              <ClientAvatar
+                name={item.clients?.name}
+                avatarUrl={item.clients?.avatar_url}
+                className="size-9 text-xs"
+              />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">
+                <span className="block break-words text-sm font-medium leading-snug">
                   {item.clients?.name ?? "Cliente"}
                 </span>
-                <span className="block truncate text-xs text-muted-foreground">
+                <span className="block break-words text-xs leading-snug text-muted-foreground">
                   {item.staff?.name ?? "Profissional"}
                 </span>
               </span>
@@ -859,7 +1212,7 @@ function SnapshotItem({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-border/70 bg-background/55 px-3 py-3">
       <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate text-sm font-semibold">{value}</p>
+      <p className="mt-1 break-words text-sm font-semibold leading-snug">{value}</p>
     </div>
   );
 }
@@ -885,9 +1238,9 @@ function WithdrawalStatusCard({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Levantamentos
+            Recebimentos online
           </p>
-          <h2 className="mt-1 text-sm font-semibold">Sinais pagos pelas clientes</h2>
+          <h2 className="mt-1 text-sm font-semibold">Sinais recebidos online</h2>
         </div>
         <span className="shrink-0 rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
           {formatEUR((withdrawal?.availableCents ?? 0) / 100)}
@@ -910,7 +1263,7 @@ function WithdrawalStatusCard({
         <button
           type="button"
           onClick={onEditSettings}
-          className="h-11 rounded-2xl border border-border px-4 text-xs font-bold uppercase tracking-wide text-foreground transition hover:bg-muted"
+          className="bellza-panel-action bellza-panel-action-secondary"
         >
           {withdrawal?.settings ? "Editar dados" : "Adicionar dados"}
         </button>
@@ -919,7 +1272,7 @@ function WithdrawalStatusCard({
       <div className="mt-4">
         <div className="flex items-center justify-between gap-3">
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            Histórico de levantamentos
+            Histórico financeiro
           </p>
           {latest && (
             <span className="rounded-full bg-muted px-2 py-1 text-[10px] font-semibold text-muted-foreground">
@@ -928,10 +1281,14 @@ function WithdrawalStatusCard({
           )}
         </div>
         {requests.length > 0 ? (
-          <div className="mt-3 max-h-[26rem] space-y-3 overflow-y-auto pr-1">
-            {requests.map((request) => (
+          <ExpandableList
+            items={requests}
+            initialCount={5}
+            className="mt-3 space-y-3"
+            getKey={(request) => request.id}
+            moreLabel={(hidden) => `Ver mais ${hidden} registo${hidden !== 1 ? "s" : ""}`}
+            renderItem={(request) => (
               <article
-                key={request.id}
                 className="rounded-[1.15rem] border border-border/70 bg-background/60 p-3.5 shadow-sm"
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -943,7 +1300,7 @@ function WithdrawalStatusCard({
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Pedido em {formatDate(request.requestedAt)} · {formatPayoutMethod(request.payoutMethod)}
+                      Registo em {formatDate(request.requestedAt)} · {formatPayoutMethod(request.payoutMethod)}
                     </p>
                     {request.failureReason && (
                       <p className="mt-2 text-xs leading-relaxed text-red-600 dark:text-red-400">
@@ -979,11 +1336,11 @@ function WithdrawalStatusCard({
                   )}
                 </div>
               </article>
-            ))}
-          </div>
+            )}
+          />
         ) : (
           <p className="text-sm text-muted-foreground">
-            Dados financeiros guardados. Ainda não existem pedidos de levantamento.
+            Dados financeiros guardados. Ainda não existem registos online neste período.
           </p>
         )}
       </div>
@@ -1033,7 +1390,7 @@ function WithdrawalTimeline({ request }: { request: WithdrawalSummary["requests"
       {terminalFailed && (
         <div className="rounded-2xl border border-red-500/20 bg-red-500/5 px-3 py-2.5 sm:col-span-3">
           <p className="text-xs font-semibold text-red-600 dark:text-red-400">
-            {request.status === "failed" ? "O levantamento falhou." : "O levantamento foi cancelado."}
+            {request.status === "failed" ? "O registo falhou." : "O registo foi cancelado."}
           </p>
         </div>
       )}
@@ -1166,7 +1523,8 @@ function WithdrawalSetupModal({
     <ModalShell onClose={onClose} title="Dados financeiros do estúdio">
       <div className="rounded-2xl border border-emerald-700/20 bg-emerald-950/[0.03] px-4 py-3 dark:bg-emerald-400/[0.05]">
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Estes dados são usados apenas para receber levantamentos dos sinais pagos pelas clientes.
+          Estes dados são usados apenas para identificar a conta de pagamentos online. Os valores
+          são enviados diretamente para a conta do estúdio.
         </p>
       </div>
       <div className="mt-5 grid gap-4">
@@ -1202,11 +1560,10 @@ function WithdrawalSetupModal({
             placeholder="PT50..."
           />
         ) : (
-          <LabeledInput
+          <InternationalPhoneInput
             label="Contacto MB WAY"
             value={mbWayPhone}
             onChange={setMbWayPhone}
-            placeholder="+351 ..."
           />
         )}
       </div>
@@ -1316,20 +1673,25 @@ function ChoiceButton({
 function MobileMiniMetric({
   label,
   value,
+  detail,
   money,
 }: {
   label: string;
   value: string;
+  detail?: string;
   money?: boolean;
 }) {
   return (
-    <div className="rounded-[1.15rem] border border-border bg-card p-3 shadow-sm">
-      <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+    <div className="flex min-h-[6.6rem] min-w-0 flex-col rounded-[1.15rem] border border-border bg-card p-3 shadow-sm">
+      <p className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground min-[380px]:text-[10px]">
+        {label}
+      </p>
       <p
-        className={`mt-2 truncate text-xl font-semibold ${money ? "text-emerald-700 dark:text-emerald-400" : ""}`}
+        className={`mt-1.5 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.15rem,5vw,1.25rem)] font-semibold leading-tight ${money ? "text-emerald-700 dark:text-emerald-400" : ""}`}
       >
         {value}
       </p>
+      {detail && <p className="mt-auto pt-1 text-[11px] leading-snug text-muted-foreground">{detail}</p>}
     </div>
   );
 }
@@ -1345,27 +1707,54 @@ function MobileShortcut({ to, label }: { to: string; label: string }) {
   );
 }
 
-async function fetchAppointments(studioId: string, since: string) {
-  const full = await supabase
-    .from("appointments")
-    .select(
-      "id,starts_at,status,total_price,clients(name),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
-    )
-    .eq("studio_id", studioId)
-    .gte("starts_at", since)
-    .order("starts_at", { ascending: false })
-    .limit(80);
+async function fetchAppointments(studioId: string, since: string, staffId?: string | null) {
+  const nowIso = new Date().toISOString();
+  const mergeById = (groups: Array<unknown[] | null | undefined>) => {
+    const byId = new Map<string, unknown>();
+    for (const group of groups) {
+      for (const row of group ?? []) {
+        const id = String((row as { id?: unknown }).id ?? "");
+        if (id) byId.set(id, row);
+      }
+    }
+    return sortAppointmentsChronologically(Array.from(byId.values()) as Appt[], "future");
+  };
+
+  const loadPair = async (select: string, limit: number) => {
+    const basePast = supabase
+      .from("appointments")
+      .select(select)
+      .eq("studio_id", studioId)
+      .match(staffId ? { staff_id: staffId } : {});
+    const baseFuture = supabase
+      .from("appointments")
+      .select(select)
+      .eq("studio_id", studioId)
+      .match(staffId ? { staff_id: staffId } : {});
+    const [recent, future] = await Promise.all([
+      basePast.gte("starts_at", since).lt("starts_at", nowIso).order("starts_at", { ascending: false }).limit(limit),
+      baseFuture.gte("starts_at", nowIso).order("starts_at", { ascending: true }).limit(limit),
+    ]);
+    if (recent.error || future.error) return { error: recent.error ?? future.error, data: null };
+    return { error: null, data: mergeById([recent.data, future.data]) };
+  };
+
+  const withAvatar = await loadPair(
+    "id,starts_at,status,total_price,clients(id,name,avatar_url,created_at,date_of_birth,total_spent,total_visits),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
+    500,
+  );
+  if (!withAvatar.error) return withAvatar.data ?? [];
+
+  const full = await loadPair(
+    "id,starts_at,status,total_price,clients(id,name,created_at,date_of_birth,total_spent,total_visits),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
+    500,
+  );
   if (!full.error) return full.data ?? [];
 
-  const legacy = await supabase
-    .from("appointments")
-    .select(
-      "id,starts_at,status,total_price,clients(name),staff(id,name),appointment_services(price,services(name))",
-    )
-    .eq("studio_id", studioId)
-    .gte("starts_at", since)
-    .order("starts_at", { ascending: false })
-    .limit(80);
+  const legacy = await loadPair(
+    "id,starts_at,status,total_price,clients(name),staff(id,name),appointment_services(price,services(name))",
+    500,
+  );
   if (legacy.error) throw legacy.error;
   return legacy.data ?? [];
 }
@@ -1547,6 +1936,27 @@ function buildDailyData(
   }));
 }
 
+function buildServiceRanking(rows: { appointment: Appt; split: ReturnType<typeof computeAppointmentSplit> }[]) {
+  const map = new Map<string, { name: string; count: number; total: number }>();
+  for (const row of rows) {
+    const services =
+      row.appointment.appointment_services?.map((line) => ({
+        name: line.services?.name ?? "Serviço",
+        price: Number(line.price ?? 0),
+      })) ?? [];
+    const fallback = services.length ? services : [{ name: "Serviço", price: row.split.total }];
+    for (const service of fallback) {
+      const current = map.get(service.name) ?? { name: service.name, count: 0, total: 0 };
+      current.count += 1;
+      current.total += service.price;
+      map.set(service.name, current);
+    }
+  }
+  return Array.from(map.values())
+    .sort((a, b) => b.count - a.count || b.total - a.total)
+    .slice(0, 5);
+}
+
 function sumFinancialRows(rows: { split: ReturnType<typeof computeAppointmentSplit> }[]) {
   return rows.reduce(
     (acc, row) => ({
@@ -1667,12 +2077,12 @@ function withdrawalStatusDescription(request: WithdrawalSummary["requests"][numb
   if (request.status === "completed") {
     return request.proofUrl
       ? "Comprovativo disponível para descarga."
-      : "Levantamento concluído. O comprovativo ficará disponível quando for emitido.";
+      : "Registo concluído. O comprovativo ficará disponível quando for emitido.";
   }
-  if (request.status === "processing") return "O pedido está a ser processado.";
-  if (request.status === "failed") return "Não foi possível concluir este levantamento.";
-  if (request.status === "canceled") return "Este pedido foi cancelado.";
-  return "O pedido foi recebido e está em validação.";
+  if (request.status === "processing") return "O registo está a ser processado.";
+  if (request.status === "failed") return "Não foi possível concluir este registo.";
+  if (request.status === "canceled") return "Este registo foi cancelado.";
+  return "O registo foi recebido e está em validação.";
 }
 
 function formatPayoutMethod(method?: string | null) {
@@ -1725,6 +2135,41 @@ function Stat({ label, value, icon }: { label: string; value: string; icon: Reac
   );
 }
 
+function ChartLegend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className={`size-2.5 rounded-full ${color}`} />
+      {label}
+    </span>
+  );
+}
+
+function DashboardFocusCard({
+  label,
+  value,
+  detail,
+  featured,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  featured?: boolean;
+}) {
+  return (
+    <article
+      className={`flex min-h-[8rem] min-w-0 flex-col rounded-2xl border p-4 shadow-sm ${
+        featured
+          ? "border-emerald-700/25 bg-[linear-gradient(135deg,rgba(16,185,129,0.13),rgba(255,255,255,0.02))]"
+          : "border-border bg-background/55"
+      }`}
+    >
+      <p className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+      <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.45rem,2.1vw,1.5rem)] font-light leading-tight tracking-tight text-foreground">{value}</p>
+      <p className="mt-auto pt-3 text-xs leading-snug text-muted-foreground">{detail}</p>
+    </article>
+  );
+}
+
 function FinanceSummaryCard({
   title,
   value,
@@ -1742,7 +2187,7 @@ function FinanceSummaryCard({
 }) {
   return (
     <article
-      className={`flex min-h-[138px] flex-col rounded-2xl border p-4 shadow-sm transition-colors ${
+      className={`flex min-h-[146px] min-w-0 flex-col rounded-2xl border p-4 shadow-sm transition-colors ${
         featured
           ? "border-emerald-700/25 bg-[linear-gradient(135deg,rgba(16,185,129,0.12),rgba(255,255,255,0.02))]"
           : "border-border bg-muted/25 hover:bg-muted/35"
@@ -1753,23 +2198,23 @@ function FinanceSummaryCard({
           <span className="grid size-8 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground">
             {icon}
           </span>
-          <p className="truncate text-[10px] font-semibold uppercase leading-4 tracking-[0.18em] text-muted-foreground">
+          <p className="whitespace-nowrap text-[10px] font-semibold uppercase leading-4 tracking-[0.12em] text-muted-foreground">
             {title}
           </p>
         </div>
       </div>
-      <p className="mt-3 truncate font-mono text-2xl font-semibold leading-none tracking-tight text-emerald-700 dark:text-emerald-400">
+      <p className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[clamp(1.05rem,1.7vw,1.5rem)] font-semibold leading-tight tracking-tight text-emerald-700 dark:text-emerald-400">
         {value}
       </p>
-      <p className="mt-2 truncate text-[11px] leading-4 text-muted-foreground">{caption}</p>
+      <p className="mt-2 text-[11px] leading-4 text-muted-foreground">{caption}</p>
       <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
         {items.map((item) => (
           <div key={item.label} className="min-w-0 rounded-xl bg-background/55 px-2.5 py-2">
-            <p className="truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            <p className="whitespace-nowrap text-[9px] uppercase tracking-[0.08em] text-muted-foreground min-[1180px]:text-[10px]">
               {item.label}
             </p>
             <p
-              className={`mt-1 truncate font-mono text-xs font-semibold ${
+              className={`mt-1 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs font-semibold ${
                 item.danger ? "text-red-500" : "text-foreground"
               }`}
             >

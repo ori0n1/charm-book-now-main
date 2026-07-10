@@ -8,17 +8,19 @@ export function LandingFooter() {
 
   return (
     <footer className="border-t border-border/80 bg-foreground text-background">
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-6 md:grid-cols-[1.45fr_1fr_1fr_1fr]">
+      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-[1.35fr_1fr_1fr_1fr]">
         <div className="space-y-4">
           <BellzaLogo variant="footer" href={null} className="text-background" />
           <p className="max-w-sm text-sm leading-relaxed text-background/62">{APP_BRAND.description}</p>
         </div>
 
         <FooterCol title="Produto">
-          <FooterLink href="#produto">Demonstração</FooterLink>
-          <FooterLink href="#funcionalidades">Funcionalidades</FooterLink>
-          <FooterLink href="#planos">Planos</FooterLink>
-          <FooterLink href="#faq">FAQ</FooterLink>
+          <FooterLink href="/#aplicativo">Aplicativo próprio</FooterLink>
+          <FooterLink href="/#diferenciais">Diferenciais</FooterLink>
+          <FooterLink href="/#funcionalidades">Funcionalidades</FooterLink>
+          <FooterLink href="/#indicacao">Indicação</FooterLink>
+          <FooterLink href="/#planos">Planos</FooterLink>
+          <FooterLink href="/blog">Blog</FooterLink>
         </FooterCol>
 
         <FooterCol title="Conta">
@@ -34,13 +36,12 @@ export function LandingFooter() {
           <FooterLink to="/rgpd">RGPD/GDPR</FooterLink>
           <FooterLink to="/politica-reembolso">Reembolsos</FooterLink>
           <FooterLink to="/politica-cancelamento">Cancelamentos</FooterLink>
-          <FooterLink href="https://www.livroreclamacoes.pt/Inicio/">Livro de Reclamações</FooterLink>
         </FooterCol>
       </div>
 
-      <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 border-t border-background/10 px-4 py-7 text-center text-xs text-background/45 sm:px-6">
+      <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 border-t border-background/10 px-4 py-6 text-center text-xs text-background/45 sm:px-6">
         <p>© {year} {APP_BRAND.name}. Todos os direitos reservados.</p>
-        <p>Portugal · RGPD · SSL · Pagamentos online através de fornecedores certificados</p>
+        <p>Portugal - RGPD - SSL - Pagamentos online através de fornecedores certificados</p>
       </div>
     </footer>
   );

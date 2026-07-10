@@ -13,6 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ExpandableList } from "@/components/ui/expandable-list";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/servicos")({
   component: ServicesPage,
@@ -34,6 +36,14 @@ type Service = {
   media: ServiceMedia[];
   sort_order: number;
 };
+type ServiceTrend = {
+  label: "Em alta" | "Estável" | "Em baixa";
+  current: number;
+  previous: number;
+  growth: number;
+  pairName: string | null;
+};
+type ServiceTrendMap = Record<string, ServiceTrend>;
 
 type ServicePreset = {
   name: string;
@@ -121,11 +131,99 @@ function inferCategoryLabel(serviceName: string) {
   );
 }
 
+async function fetchServiceTrends(services: Service[]): Promise<ServiceTrendMap> {
+  if (services.length === 0) return {};
+  const serviceIds = services.map((service) => service.id);
+  const base = new Map<string, ServiceTrend>(
+    services.map((service) => [
+      service.id,
+      { label: "Estável" as const, current: 0, previous: 0, growth: 0, pairName: null },
+    ]),
+  );
+  const { data, error } = await (supabase as any)
+    .from("appointment_services")
+    .select("service_id,appointment_id,appointments(starts_at,status),services(name)")
+    .in("service_id", serviceIds);
+  if (error) return Object.fromEntries(base);
+
+  const now = Date.now();
+  const currentStart = now - 30 * 86400000;
+  const previousStart = now - 60 * 86400000;
+  const byAppointment = new Map<string, { serviceId: string; serviceName: string }[]>();
+
+  for (const row of data ?? []) {
+    const appointment = Array.isArray(row.appointments) ? row.appointments[0] : row.appointments;
+    if (!appointment || appointment.status !== "completed") continue;
+    const startsAt = new Date(appointment.starts_at).getTime();
+    const current = base.get(row.service_id);
+    if (current) {
+      if (startsAt >= currentStart) current.current += 1;
+      if (startsAt >= previousStart && startsAt < currentStart) current.previous += 1;
+    }
+    const service = Array.isArray(row.services) ? row.services[0] : row.services;
+    const lines = byAppointment.get(row.appointment_id) ?? [];
+    lines.push({ serviceId: row.service_id, serviceName: service?.name ?? "Serviço" });
+    byAppointment.set(row.appointment_id, lines);
+  }
+
+  const pairCounts = new Map<string, Map<string, number>>();
+  for (const lines of byAppointment.values()) {
+    for (const line of lines) {
+      const pairs = pairCounts.get(line.serviceId) ?? new Map<string, number>();
+      for (const other of lines) {
+        if (other.serviceId === line.serviceId) continue;
+        pairs.set(other.serviceName, (pairs.get(other.serviceName) ?? 0) + 1);
+      }
+      pairCounts.set(line.serviceId, pairs);
+    }
+  }
+
+  for (const [serviceId, trend] of base) {
+    const growth = getTrendGrowth(trend.current, trend.previous);
+    trend.growth = growth;
+    trend.label = growth >= 15 ? "Em alta" : growth <= -15 ? "Em baixa" : "Estável";
+    trend.pairName =
+      Array.from(pairCounts.get(serviceId)?.entries() ?? []).sort((a, b) => b[1] - a[1])[0]?.[0] ??
+      null;
+  }
+  return Object.fromEntries(base);
+}
+
+function getTrendGrowth(current: number, previous: number) {
+  if (previous <= 0) return current > 0 ? 100 : 0;
+  return Math.round(((current - previous) / previous) * 100);
+}
+
+function ServiceTrendBadge({ trend }: { trend: ServiceTrend }) {
+  const cls =
+    trend.label === "Em alta"
+      ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-300"
+      : trend.label === "Em baixa"
+        ? "bg-rose-500/10 text-rose-700 dark:text-rose-300"
+        : "bg-muted text-muted-foreground";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide ${cls}`}>
+      {trend.label}
+    </span>
+  );
+}
+
+function getServiceTrendCopy(trend: ServiceTrend) {
+  if (trend.label === "Em alta") {
+    return `Procura a crescer: ${trend.current} vendas nos últimos 30 dias, contra ${trend.previous} no período anterior.`;
+  }
+  if (trend.label === "Em baixa") {
+    return `Procura mais baixa: ${trend.current} vendas nos últimos 30 dias, contra ${trend.previous} no período anterior.`;
+  }
+  return `Procura estável: ${trend.current} vendas nos últimos 30 dias.`;
+}
+
 function ServicesPage() {
   const { studio } = useCurrentStudio();
   const [services, setServices] = useState<Service[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [serviceTrends, setServiceTrends] = useState<ServiceTrendMap>({});
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Service | null>(null);
   const [creating, setCreating] = useState(false);
@@ -146,9 +244,11 @@ function ServicesPage() {
         .order("sort_order"),
       supabase.from("service_category_suggestions").select("id,label").order("sort_order"),
     ]);
-    setServices((s ?? []) as unknown as Service[]);
+    const serviceRows = (s ?? []) as unknown as Service[];
+    setServices(serviceRows);
     setCategories((c ?? []) as Category[]);
     setSuggestions((sug ?? []) as Suggestion[]);
+    setServiceTrends(await fetchServiceTrends(serviceRows));
     setLoading(false);
   }
 
@@ -168,16 +268,16 @@ function ServicesPage() {
 
   return (
     <div className="space-y-8">
-      <header className="flex items-end justify-between gap-4">
+      <header className="grid gap-3 rounded-[1.25rem] border border-border/80 bg-card/95 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
         <div>
           <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Serviços</p>
           <h2 className="mt-1 text-2xl font-light tracking-tight">{services.length} serviços</h2>
         </div>
         <button
           onClick={() => setCreating(true)}
-          className="flex items-center gap-2 rounded-md bg-foreground px-3 py-2 text-sm font-medium text-background"
+          className="bellza-panel-action bellza-panel-action-primary"
         >
-          <Plus className="h-4 w-4" /> Novo
+          <Plus className="h-4 w-4" /> Novo serviço
         </button>
       </header>
 
@@ -186,10 +286,18 @@ function ServicesPage() {
           Sem serviços. Crie o primeiro.
         </p>
       ) : (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          {services.map((s) => {
+        <ExpandableList
+          items={services}
+          initialCount={5}
+          className="grid grid-cols-1 gap-3 md:grid-cols-2"
+          itemClassName="min-w-0"
+          buttonWrapClassName="md:col-span-2"
+          getKey={(service) => service.id}
+          moreLabel={(hidden) => `Mostrar mais ${hidden} serviço${hidden !== 1 ? "s" : ""}`}
+          renderItem={(s) => {
             const cover = s.media?.[0]?.src;
             const cat = categories.find((c) => c.id === s.category_id);
+            const trend = serviceTrends[s.id];
             return (
               <article
                 key={s.id}
@@ -206,11 +314,14 @@ function ServicesPage() {
                       )}
                       <h3 className="mt-1 text-base font-medium">{s.name}</h3>
                     </div>
-                    {s.is_recommended && (
-                      <span className="rounded-full bg-foreground px-2 py-0.5 text-[9px] uppercase tracking-wide text-background">
-                        Top
-                      </span>
-                    )}
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {trend && <ServiceTrendBadge trend={trend} />}
+                      {s.is_recommended && (
+                        <span className="rounded-full bg-foreground px-2 py-0.5 text-[9px] uppercase tracking-wide text-background">
+                          Top
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
                     <span>{s.duration_min} min</span>
@@ -233,8 +344,8 @@ function ServicesPage() {
                 </div>
               </article>
             );
-          })}
-        </div>
+          }}
+        />
       )}
 
       {(editing || creating) && studio && (
@@ -245,6 +356,7 @@ function ServicesPage() {
           categories={categories}
           suggestions={suggestions}
           service={editing}
+          serviceTrend={editing ? serviceTrends[editing.id] : null}
           onCategoriesChanged={load}
           onClose={() => {
             setEditing(null);
@@ -268,6 +380,7 @@ function ServiceModal({
   categories,
   suggestions,
   service,
+  serviceTrend,
   onClose,
   onSaved,
   onCategoriesChanged,
@@ -278,6 +391,7 @@ function ServiceModal({
   categories: Category[];
   suggestions: Suggestion[];
   service: Service | null;
+  serviceTrend: ServiceTrend | null;
   onClose: () => void;
   onSaved: () => void;
   onCategoriesChanged: () => void | Promise<void>;
@@ -304,6 +418,10 @@ function ServiceModal({
     id?: string; // existing upsell_offers.id
     offered_service_id: string;
     discounted_price: number;
+    discount_type: "price" | "percent" | "fixed";
+    discount_value: number | null;
+    display_mode: "percent" | "amount" | "both";
+    duration_min: number | null;
     description: string;
   };
   const [upsellEnabled, setUpsellEnabled] = useState(false);
@@ -355,7 +473,7 @@ function ServiceModal({
       if (service?.id) {
         const { data: offers } = await supabase
           .from("upsell_offers")
-          .select("id,offered_service_id,discounted_price,description")
+          .select("id,offered_service_id,discounted_price,discount_type,discount_value,display_mode,duration_min,description")
           .eq("studio_id", studioId)
           .eq("trigger_service_id", service.id)
           .eq("is_active", true);
@@ -364,6 +482,10 @@ function ServiceModal({
           id: o.id,
           offered_service_id: o.offered_service_id,
           discounted_price: Number(o.discounted_price),
+          discount_type: normalizeDiscountType((o as any).discount_type),
+          discount_value: (o as any).discount_value == null ? null : Number((o as any).discount_value),
+          display_mode: normalizeDisplayMode((o as any).display_mode),
+          duration_min: (o as any).duration_min == null ? null : Number((o as any).duration_min),
           description: o.description ?? "",
         }));
         setUpsells(rows);
@@ -414,12 +536,19 @@ function ServiceModal({
       await supabase.from("upsell_offers").delete().in("id", toDelete);
     }
     for (const r of validRows) {
+      const offered = allServices.find((s) => s.id === r.offered_service_id);
+      const original = offered ? Number(offered.price) : Number(r.discounted_price || 0);
+      const discountedPrice = computeUpsellDiscountedPrice(original, r);
       if (r.id) {
         await supabase
           .from("upsell_offers")
           .update({
             offered_service_id: r.offered_service_id,
-            discounted_price: r.discounted_price,
+            discounted_price: discountedPrice,
+            discount_type: r.discount_type,
+            discount_value: r.discount_value,
+            display_mode: r.display_mode,
+            duration_min: r.duration_min,
             description: r.description || null,
             is_active: true,
           })
@@ -429,7 +558,11 @@ function ServiceModal({
           studio_id: studioId,
           trigger_service_id: triggerServiceId,
           offered_service_id: r.offered_service_id,
-          discounted_price: r.discounted_price,
+          discounted_price: discountedPrice,
+          discount_type: r.discount_type,
+          discount_value: r.discount_value,
+          display_mode: r.display_mode,
+          duration_min: r.duration_min,
           description: r.description || null,
           is_active: true,
         });
@@ -507,7 +640,7 @@ function ServiceModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center overflow-hidden bg-black/60 p-0 backdrop-blur-sm md:items-center md:p-6">
-      <div className="flex max-h-[calc(100dvh-env(safe-area-inset-top)-0.75rem)] w-full max-w-lg flex-col overflow-hidden rounded-t-[1.35rem] border border-border bg-background shadow-2xl shadow-black/35 md:max-h-[92vh] md:rounded-[1.35rem]">
+      <div className="flex max-h-[calc(100dvh-env(safe-area-inset-top)-0.75rem)] w-full max-w-lg flex-col overflow-hidden rounded-t-[1.35rem] border border-border bg-background shadow-2xl shadow-black/35 md:max-h-[92vh] md:max-w-2xl md:rounded-[1.35rem]">
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background/95 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))] backdrop-blur-xl md:pt-5">
           <h3 className="text-lg font-light">{service ? "Editar serviço" : "Novo serviço"}</h3>
           <button
@@ -576,6 +709,25 @@ function ServiceModal({
               Este serviço já existe neste {segmentConfig.labels.business}. Edite o serviço existente em vez de criar uma
               duplicação.
             </p>
+          )}
+
+          {service && serviceTrend && (
+            <div className="rounded-2xl border border-border/80 bg-card/55 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+                  Procura do serviço
+                </p>
+                <ServiceTrendBadge trend={serviceTrend} />
+              </div>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                {getServiceTrendCopy(serviceTrend)}
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {serviceTrend.pairName
+                  ? `Venda cruzada sugerida: combinar com ${serviceTrend.pairName}.`
+                  : "Venda cruzada: ainda sem padrão claro."}
+              </p>
+            </div>
           )}
 
           <input
@@ -694,6 +846,10 @@ function ServiceModal({
                     rowKey: `u-new-${Date.now()}`,
                     offered_service_id: "",
                     discounted_price: 0,
+                    discount_type: "price",
+                    discount_value: null,
+                    display_mode: "both",
+                    duration_min: null,
                     description: "",
                   },
                 ]);
@@ -806,7 +962,7 @@ function CategoryPicker({
           onClick={() => setAdding((v) => !v)}
           className="text-[11px] uppercase tracking-wide text-foreground underline"
         >
-          {adding ? "Fechar" : "+ Nova"}
+          {adding ? "Fechar" : "+ Nova categoria"}
         </button>
       </div>
 
@@ -910,6 +1066,10 @@ type UpsellRow = {
   id?: string;
   offered_service_id: string;
   discounted_price: number;
+  discount_type: "price" | "percent" | "fixed";
+  discount_value: number | null;
+  display_mode: "percent" | "amount" | "both";
+  duration_min: number | null;
   description: string;
 };
 
@@ -952,6 +1112,10 @@ function UpsellEditor({
         rowKey: `u-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         offered_service_id: prefill?.offered_service_id ?? "",
         discounted_price: prefill?.discounted_price ?? 0,
+        discount_type: prefill?.discount_type ?? "price",
+        discount_value: prefill?.discount_value ?? null,
+        display_mode: prefill?.display_mode ?? "both",
+        duration_min: prefill?.duration_min ?? null,
         description: prefill?.description ?? "",
       },
     ]);
@@ -993,13 +1157,15 @@ function UpsellEditor({
           {rows.map((r) => {
             const offered = allServices.find((s) => s.id === r.offered_service_id);
             const original = offered ? Number(offered.price) : 0;
-            const save = Math.max(0, original - (Number(r.discounted_price) || 0));
+            const finalPrice = computeUpsellDiscountedPrice(original, r);
+            const save = Math.max(0, original - finalPrice);
+            const pct = original > 0 ? (save / original) * 100 : 0;
             return (
               <div
                 key={r.rowKey}
-                className="space-y-2 rounded-md border border-border bg-background p-3"
+                className="space-y-3 rounded-2xl border border-border bg-background/80 p-3.5 shadow-sm"
               >
-                <div className="flex items-start gap-2">
+                <div className="flex min-w-0 items-start gap-2">
                   <Select
                     value={r.offered_service_id || "__none"}
                     onValueChange={(nextValue) => {
@@ -1010,13 +1176,17 @@ function UpsellEditor({
                         discounted_price: s
                           ? Math.round(Number(s.price) * 0.8 * 100) / 100
                           : r.discounted_price,
+                        discount_type: s ? "percent" : r.discount_type,
+                        discount_value: s ? 20 : r.discount_value,
+                        display_mode: r.display_mode ?? "both",
+                        duration_min: null,
                       });
                     }}
                   >
-                    <SelectTrigger className="flex-1 rounded-xl border-border bg-background px-2 text-sm shadow-sm">
+                    <SelectTrigger className="min-h-11 flex-1 rounded-xl border-border bg-background px-3 text-sm shadow-sm [&>span]:whitespace-normal [&>span]:text-left [&>span]:leading-snug">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                    <SelectContent className="z-[90] max-h-[min(22rem,70vh)] rounded-2xl border-border bg-popover/98 p-1.5 shadow-2xl">
                       <SelectItem value="__none" className="rounded-xl px-3 py-2.5 text-sm">
                         Escolher serviço
                       </SelectItem>
@@ -1037,7 +1207,7 @@ function UpsellEditor({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <label className="text-[11px]">
                     <span className="text-muted-foreground">Preço c/ desconto (€)</span>
                     <input
@@ -1045,15 +1215,19 @@ function UpsellEditor({
                       min={0}
                       step="0.5"
                       value={r.discounted_price}
-                      onChange={(e) =>
-                        updateRow(r.rowKey, { discounted_price: Number(e.target.value) })
+                        onChange={(e) =>
+                        updateRow(r.rowKey, {
+                          discounted_price: roundCurrency(Number(e.target.value)),
+                          discount_type: "price",
+                          discount_value: null,
+                        })
                       }
-                      className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                      className="mt-1 min-h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
                     />
                   </label>
                   <div className="text-[11px]">
                     <span className="text-muted-foreground">Resumo</span>
-                    <div className="mt-1 flex h-[34px] items-center gap-2 rounded-md border border-border bg-muted/40 px-2 text-[11px]">
+                    <div className="mt-1 flex min-h-10 flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-muted/40 px-3 py-2 text-[11px]">
                       {offered ? (
                         <>
                           <span className="text-muted-foreground line-through">
@@ -1065,8 +1239,8 @@ function UpsellEditor({
                           {save > 0 && (
                             <span className="text-accent">poupa €{save.toFixed(0)}</span>
                           )}
-                          <span className="ml-auto text-muted-foreground">
-                            +{offered.duration_min}min
+                      <span className="ml-auto whitespace-nowrap text-muted-foreground">
+                            +{r.duration_min ?? offered.duration_min}min
                           </span>
                         </>
                       ) : (
@@ -1075,6 +1249,163 @@ function UpsellEditor({
                     </div>
                   </div>
                 </div>
+
+                {offered && (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <label className="text-[11px]">
+                      <span className="text-muted-foreground">Aplicar desconto (%)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        step="1"
+                        placeholder="Ex.: 10"
+                        onChange={(e) => {
+                          const pct = Math.min(100, Math.max(0, Number(e.target.value) || 0));
+                          updateRow(r.rowKey, {
+                            discount_type: "percent",
+                            discount_value: pct,
+                            discounted_price: computeDiscountedPriceFromConfig(original, "percent", pct, original),
+                          });
+                        }}
+                        className="mt-1 min-h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="text-[11px]">
+                      <span className="text-muted-foreground">Aplicar desconto (€)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.5"
+                        placeholder="Ex.: 5"
+                        onChange={(e) => {
+                          const fixed = Math.max(0, Number(e.target.value) || 0);
+                          updateRow(r.rowKey, {
+                            discount_type: "fixed",
+                            discount_value: roundCurrency(fixed),
+                            discounted_price: computeDiscountedPriceFromConfig(original, "fixed", fixed, original),
+                          });
+                        }}
+                        className="mt-1 min-h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {offered && (
+                  <div className="rounded-2xl border border-border bg-muted/20 p-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label className="min-w-0 text-[11px]">
+                        <span className="text-muted-foreground">Tipo de desconto</span>
+                        <Select
+                          value={r.discount_type}
+                          onValueChange={(value) => {
+                            const nextType = normalizeDiscountType(value);
+                            const suggestedPercent = (r.discount_value ?? Math.round(pct)) || 10;
+                            const suggestedFixed = (r.discount_value ?? Math.round(save * 100) / 100) || 2;
+                            const nextValue =
+                              nextType === "percent"
+                                ? Math.max(0, Math.min(100, suggestedPercent))
+                                : nextType === "fixed"
+                                  ? Math.max(0, suggestedFixed)
+                                  : null;
+                            updateRow(r.rowKey, {
+                              discount_type: nextType,
+                              discount_value: nextValue,
+                              discounted_price: computeDiscountedPriceFromConfig(original, nextType, nextValue, Number(r.discounted_price) || original),
+                            });
+                          }}
+                        >
+                          <SelectTrigger className="mt-1 min-h-11 rounded-xl border-border bg-background px-3 text-sm [&>span]:whitespace-normal [&>span]:text-left [&>span]:leading-snug">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="z-[90] max-h-[min(18rem,65vh)] rounded-2xl border-border bg-popover/98 p-1.5 shadow-2xl">
+                            <SelectItem value="percent">Percentagem (%)</SelectItem>
+                            <SelectItem value="fixed">Valor fixo (€)</SelectItem>
+                            <SelectItem value="price">Preço final</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </label>
+
+                      <label className="min-w-0 text-[11px]">
+                        <span className="text-muted-foreground">
+                          {r.discount_type === "percent"
+                            ? "Desconto (%)"
+                            : r.discount_type === "fixed"
+                              ? "Desconto (€)"
+                              : "Preço final (€)"}
+                        </span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={r.discount_type === "percent" ? 100 : undefined}
+                          step={r.discount_type === "percent" ? "1" : "0.5"}
+                          value={r.discount_type === "price" ? Number(r.discounted_price || 0) : (r.discount_value ?? "")}
+                          onChange={(e) => {
+                            const value = Number(e.target.value);
+                            if (r.discount_type === "price") {
+                              updateRow(r.rowKey, { discounted_price: value, discount_value: null });
+                              return;
+                            }
+                            const nextValue =
+                              r.discount_type === "percent"
+                                ? Math.min(100, Math.max(0, value))
+                                : Math.max(0, value);
+                            updateRow(r.rowKey, {
+                              discount_value: nextValue,
+                              discounted_price: computeDiscountedPriceFromConfig(original, r.discount_type, nextValue, Number(r.discounted_price) || original),
+                            });
+                          }}
+                          className="mt-1 min-h-11 w-full rounded-xl border border-border bg-background px-3 text-sm"
+                        />
+                      </label>
+
+                      <label className="min-w-0 text-[11px]">
+                        <span className="text-muted-foreground">Duração nesta oferta</span>
+                        <input
+                          type="number"
+                          min={1}
+                          step="1"
+                          value={r.duration_min ?? ""}
+                          placeholder={`${offered.duration_min} min`}
+                          onChange={(e) => {
+                            const value = Number(e.target.value);
+                            updateRow(r.rowKey, {
+                              duration_min: value > 0 ? Math.round(value) : null,
+                            });
+                          }}
+                          className="mt-1 min-h-11 w-full rounded-xl border border-border bg-background px-3 text-sm"
+                        />
+                        <span className="mt-1 block text-[10px] leading-tight text-muted-foreground">
+                          Vazio usa {offered.duration_min} min.
+                        </span>
+                      </label>
+
+                      <label className="min-w-0 text-[11px]">
+                        <span className="text-muted-foreground">Destacar no checkout</span>
+                        <Select
+                          value={r.display_mode}
+                          onValueChange={(value) => updateRow(r.rowKey, { display_mode: normalizeDisplayMode(value) })}
+                        >
+                          <SelectTrigger className="mt-1 min-h-11 rounded-xl border-border bg-background px-3 text-sm [&>span]:whitespace-normal [&>span]:text-left [&>span]:leading-snug">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="z-[90] max-h-[min(18rem,65vh)] rounded-2xl border-border bg-popover/98 p-1.5 shadow-2xl">
+                            <SelectItem value="percent">Apenas percentagem</SelectItem>
+                            <SelectItem value="amount">Apenas valor poupado</SelectItem>
+                            <SelectItem value="both">Percentagem e valor</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </label>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] md:grid-cols-4">
+                      <MiniSummary label="Original" value={`€${original.toFixed(2)}`} muted />
+                      <MiniSummary label="Desconto" value={formatUpsellDiscountSummary(save, pct, r.display_mode)} />
+                      <MiniSummary label="Economia" value={`€${save.toFixed(2)}`} />
+                      <MiniSummary label="Preço final" value={`€${finalPrice.toFixed(2)}`} strong />
+                    </div>
+                  </div>
+                )}
 
                 <input
                   value={r.description}
@@ -1122,4 +1453,86 @@ function UpsellEditor({
       )}
     </div>
   );
+}
+
+function MiniSummary({
+  label,
+  value,
+  muted,
+  strong,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+  strong?: boolean;
+}) {
+  return (
+    <div className="min-w-0 rounded-xl border border-border bg-background/70 px-2.5 py-2">
+      <p className="break-words text-[9px] font-bold uppercase tracking-[0.1em] text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-1 break-words font-mono text-[12px] leading-snug",
+          strong ? "font-extrabold text-accent" : "font-semibold text-foreground",
+          muted && "text-muted-foreground line-through",
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function normalizeDiscountType(value: unknown): UpsellRow["discount_type"] {
+  return value === "percent" || value === "fixed" || value === "price" ? value : "price";
+}
+
+function normalizeDisplayMode(value: unknown): UpsellRow["display_mode"] {
+  return value === "percent" || value === "amount" || value === "both" ? value : "both";
+}
+
+function computeDiscountedPriceFromConfig(
+  original: number,
+  discountType: UpsellRow["discount_type"],
+  discountValue: number | null,
+  fallbackPrice: number,
+) {
+  const value = Number(discountValue ?? 0);
+  if (discountType === "percent") {
+    return roundCurrency(Math.max(0, original * (1 - Math.min(100, Math.max(0, value)) / 100)));
+  }
+  if (discountType === "fixed") {
+    return roundCurrency(Math.max(0, original - Math.max(0, value)));
+  }
+  return roundCurrency(Math.max(0, fallbackPrice));
+}
+
+function computeUpsellDiscountedPrice(original: number, row: UpsellRow) {
+  return computeDiscountedPriceFromConfig(
+    original,
+    row.discount_type,
+    row.discount_value,
+    Number(row.discounted_price) || original,
+  );
+}
+
+function formatUpsellDiscountSummary(
+  save: number,
+  pct: number,
+  mode: UpsellRow["display_mode"],
+) {
+  const roundedPct = Math.round((pct + Number.EPSILON) * 100) / 100;
+  const percent = `${roundedPct.toLocaleString("pt-PT", {
+    minimumFractionDigits: roundedPct % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}%`;
+  const amount = `€${save.toFixed(2)}`;
+  if (mode === "percent") return percent;
+  if (mode === "amount") return amount;
+  return `${percent} · ${amount}`;
+}
+
+function roundCurrency(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }

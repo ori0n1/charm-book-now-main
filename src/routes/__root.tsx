@@ -12,10 +12,13 @@ import {
 import { Toaster } from "sonner";
 
 import { supabase } from "@/integrations/supabase/client";
+import { CookieBanner } from "@/components/cookie-banner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { APP_BRAND } from "@/lib/app-brand";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
 import appCss from "../styles.css?url";
+
+const SERVICE_WORKER_VERSION = "20260707-pwa-safe-update";
 
 function NotFoundComponent() {
   return (
@@ -85,6 +88,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { title: `${APP_BRAND.name} | ${APP_BRAND.tagline}` },
       { name: "description", content: APP_BRAND.description },
+      { name: "theme-color", content: "#f7f3ed" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
+      { name: "apple-mobile-web-app-title", content: APP_BRAND.shortName },
+      { name: "application-name", content: APP_BRAND.shortName },
+      { name: "format-detection", content: "telephone=no" },
       { property: "og:title", content: APP_BRAND.name },
       { property: "og:description", content: APP_BRAND.description },
       { property: "og:type", content: "website" },
@@ -100,7 +110,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: appCss,
       },
-      { rel: "manifest", href: "/manifest.webmanifest" },
+      // NOTE: manifest is injected per-route so studio pages get a studio-specific
+      // manifest (name, icon, start_url) while admin/landing get the Bellza one.
       { rel: "icon", href: "/bellza-logo.png", type: "image/png" },
       { rel: "apple-touch-icon", href: "/bellza-logo.png" },
     ],
@@ -132,8 +143,45 @@ function RootComponent() {
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      let updateTimer: number | undefined;
+      void navigator.serviceWorker
+        .register("/sw.js", { scope: "/", updateViaCache: "none" })
+        .then((registration) => {
+          if (registration.waiting) console.info("[pwa] update waiting for next safe launch", { version: SERVICE_WORKER_VERSION });
+          registration.addEventListener("updatefound", () => {
+            const worker = registration.installing;
+            if (!worker) return;
+            worker.addEventListener("statechange", () => {
+              if (worker.state !== "installed" || !navigator.serviceWorker.controller) return;
+              console.info("[pwa] update installed in background", { version: SERVICE_WORKER_VERSION });
+            });
+          });
+          const update = () => void registration.update().catch(() => undefined);
+          update();
+          updateTimer = window.setInterval(update, 6 * 60 * 60 * 1000);
+        })
+        .catch(() => undefined);
+      return () => {
+        if (updateTimer) window.clearInterval(updateTimer);
+      };
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    const refreshSession = () => {
+      if (document.visibilityState === "hidden") return;
+      void supabase.auth.getSession();
+    };
+
+    refreshSession();
+    window.addEventListener("focus", refreshSession);
+    document.addEventListener("visibilitychange", refreshSession);
+    return () => {
+      window.removeEventListener("focus", refreshSession);
+      document.removeEventListener("visibilitychange", refreshSession);
+    };
   }, []);
 
   useEffect(() => {
@@ -155,7 +203,18 @@ function RootComponent() {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <Outlet />
-        <Toaster richColors position="top-center" />
+        <Toaster
+          richColors
+          position="top-center"
+          offset={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
+          mobileOffset={{ top: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
+          toastOptions={{
+            classNames: {
+              toast: "bellza-toast-safe-area",
+            },
+          }}
+        />
+        <CookieBanner />
       </QueryClientProvider>
     </ThemeProvider>
   );

@@ -8,6 +8,38 @@ export const AUTH_DEBUG_STORAGE_KEY = "bellza:auth-debug-events";
 let debugFetchInstalled = false;
 let nativeFetch: typeof fetch | null = null;
 
+const AUTH_STORAGE_KEY = "bellza.supabase.auth";
+const LEGACY_AUTH_STORAGE_KEYS = [
+  `sb-${new URL(PUBLIC_SUPABASE_URL).hostname.split(".")[0]}-auth-token`,
+];
+
+const durableAuthStorage =
+  typeof window !== "undefined"
+    ? {
+        getItem: (key: string) => {
+          const current = window.localStorage.getItem(key);
+          if (current || key !== AUTH_STORAGE_KEY) return current;
+          return LEGACY_AUTH_STORAGE_KEYS.map((legacyKey) => window.localStorage.getItem(legacyKey)).find(Boolean) ?? null;
+        },
+        setItem: (key: string, value: string) => {
+          window.localStorage.setItem(key, value);
+          if (key === AUTH_STORAGE_KEY) {
+            for (const legacyKey of LEGACY_AUTH_STORAGE_KEYS) {
+              window.localStorage.setItem(legacyKey, value);
+            }
+          }
+        },
+        removeItem: (key: string) => {
+          window.localStorage.removeItem(key);
+          if (key === AUTH_STORAGE_KEY) {
+            for (const legacyKey of LEGACY_AUTH_STORAGE_KEYS) {
+              window.localStorage.removeItem(legacyKey);
+            }
+          }
+        },
+      }
+    : undefined;
+
 function createSupabaseClient() {
   const env = import.meta.env;
   const processEnv = typeof process !== "undefined" && process.env ? process.env : {};
@@ -32,16 +64,20 @@ function createSupabaseClient() {
     throw new Error(message);
   }
 
-  if (isBrowser) installGlobalDebugFetch();
+  // debugFetch só ativo em desenvolvimento — em produção usa o fetch nativo
+  const isDebugEnabled = isBrowser && import.meta.env.DEV;
+  if (isDebugEnabled) installGlobalDebugFetch();
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     global: {
-      fetch: isBrowser ? ((input, init) => debugFetch(input, init, nativeFetch ?? fetch)) : undefined,
+      fetch: isDebugEnabled ? ((input, init) => debugFetch(input, init, nativeFetch ?? fetch)) : undefined,
     },
     auth: {
-      storage: typeof window !== "undefined" ? localStorage : undefined,
+      storage: durableAuthStorage,
+      storageKey: AUTH_STORAGE_KEY,
       persistSession: true,
       autoRefreshToken: true,
+      detectSessionInUrl: false,
       flowType: "pkce",
     },
   });

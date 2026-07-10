@@ -1,57 +1,91 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
-  ArrowDownRight,
-  BarChart3,
+  BadgeCheck,
+  Ban,
   CalendarClock,
   CheckCircle2,
-  Clock,
-  ExternalLink,
-  Eye,
-  Info,
+  ChevronLeft,
+  ChevronRight,
+  CircleDollarSign,
+  Edit3,
+  FileText,
   RefreshCcw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
+  TimerReset,
   Wallet,
+  X,
   XCircle,
 } from "lucide-react";
-import { toast } from "sonner";
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useServerFn } from "@tanstack/react-start";
+
+import { updateStudioRefundRequest } from "@/lib/refund-operations.functions";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
-import {
-  getPolicyParts,
-  type PolicyTextParts,
-  type RefundPolicyValue,
-} from "@/lib/policy-text";
-import { updateStudioRefundRequest } from "@/lib/refund-operations.functions";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
+import { ExpandableList } from "@/components/ui/expandable-list";
 
 export const Route = createFileRoute("/_authenticated/admin/politicas")({
-  head: () => ({ meta: [{ title: "Políticas e Cancelamentos" }] }),
-  component: PoliciesPage,
+  component: AdminPoliciesPage,
 });
 
-type RefundPolicy = RefundPolicyValue;
-type StudioPolicy = {
+type RefundStatus = StudioRefundRequestListItem["status"];
+type RefundView = "pending" | "approved" | "rejected";
+type PeriodFilter = "all" | "today" | "7d" | "30d";
+type MainTab = "policies" | "refunds";
+type PolicyKey = "cancellation" | "reschedule" | "deposit" | "refund" | "late" | "no_show" | "general" | "privacy" | "terms";
+
+const PAGE_SIZE = 8;
+
+type RefundPolicy = "non_refundable" | "reschedule_only" | "refund_allowed";
+
+type StudioCompliancePolicies = {
   id: string;
+  payment_policy: "pay_in_studio" | "pre_payment";
+  deposit_percent: number;
   cancellation_min_notice_hours: number;
   cancellation_after_deadline_policy: RefundPolicy;
   refund_requests_enabled: boolean;
   cancellation_policy_text: string | null;
   legal_policy_version: string;
+  studio_policy_settings: StudioPolicySettings;
+  updated_at?: string | null;
 };
 
-type RefundRequest = {
+type StudioPolicySettings = Partial<Record<PolicyKey, PolicySetting>>;
+
+type PolicySetting = {
+  active?: boolean;
+  text?: string | null;
+  notice_hours?: number | null;
+  updated_at?: string | null;
+};
+
+type StudioRefundRequestListItem = {
   id: string;
   created_at: string;
   status: "pending" | "in_review" | "approved" | "rejected" | "refunded";
-  reason: string;
+  reason: string | null;
   client_name: string | null;
   client_phone: string | null;
   client_email: string | null;
   reviewed_at: string | null;
+  resolved_at?: string | null;
   decision_note: string | null;
+  deposit_amount_cents?: number | null;
+  refund_amount_cents?: number | null;
+  service_name?: string | null;
+  custom_service_name?: string | null;
+  appointment_start_at?: string | null;
   payment_intents?: {
     amount_cents: number | null;
     status: string | null;
@@ -64,895 +98,1302 @@ type RefundRequest = {
   } | null;
 };
 
-type RefundTab = "all" | "pending" | "approved" | "rejected";
+const statusCopy: Record<RefundStatus, string> = {
+  pending: "Pendente",
+  in_review: "Pendente",
+  approved: "Aprovado",
+  rejected: "Recusado",
+  refunded: "Aprovado",
+};
 
-function PoliciesPage() {
+const policyTitles: Record<PolicyKey, string> = {
+  cancellation: "Política de Cancelamento",
+  reschedule: "Política de Remarcação",
+  deposit: "Política de Sinal",
+  refund: "Política de Reembolso",
+  late: "Política de Atrasos",
+  no_show: "Política de Faltas",
+  general: "Regras Gerais",
+  privacy: "Política de Privacidade",
+  terms: "Termos e Condições",
+};
+
+function AdminPoliciesPage() {
   const { studio } = useCurrentStudio();
   const updateRefund = useServerFn(updateStudioRefundRequest);
-  const [data, setData] = useState<StudioPolicy | null>(null);
-  const [refunds, setRefunds] = useState<RefundRequest[]>([]);
-  const [noticeMode, setNoticeMode] = useState<"24" | "48" | "custom">("24");
-  const [saving, setSaving] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<MainTab>("policies");
+  const [policies, setPolicies] = useState<StudioCompliancePolicies | null>(null);
+  const [draft, setDraft] = useState<StudioCompliancePolicies | null>(null);
+  const [editingPolicy, setEditingPolicy] = useState<PolicyKey | null>(null);
+  const [refunds, setRefunds] = useState<StudioRefundRequestListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<RefundTab>("pending");
-  const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [busyRefundId, setBusyRefundId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [refundView, setRefundView] = useState<RefundView>("pending");
+  const [period, setPeriod] = useState<PeriodFilter>("30d");
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     if (!studio) return;
-    let cancelled = false;
 
-    async function init() {
-      setLoading(true);
-      const { data: row, error } = await supabase
-        .from("studios")
-        .select(
-          "id,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version",
-        )
-        .eq("id", studio.id)
-        .maybeSingle();
-
-      if (!cancelled) {
-        if (error || !row) {
-          toast.error("Não foi possível carregar as políticas.");
-        } else {
-          const normalized = normalizePolicy(row);
-          setData(normalized);
-          setNoticeMode(
-            normalized.cancellation_min_notice_hours === 24
-              ? "24"
-              : normalized.cancellation_min_notice_hours === 48
-                ? "48"
-                : "custom",
-          );
-        }
-
-        await loadRefunds(studio.id);
-      }
-      setLoading(false);
-    }
-
-    init();
+    let alive = true;
+    setLoading(true);
+    Promise.all([loadPolicy(studio.id), loadRefundList(studio.id)])
+      .then(([policyData, refundData]) => {
+        if (!alive) return;
+        const normalized = normalizePolicy(policyData);
+        setPolicies(normalized);
+        setDraft(normalized);
+        setRefunds(refundData);
+      })
+      .catch((error) => {
+        console.error("Erro ao carregar políticas e reembolsos", error);
+        if (alive) toast.error("Não foi possível carregar esta central.");
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
 
     return () => {
-      cancelled = true;
+      alive = false;
     };
   }, [studio]);
 
-  async function loadRefunds(studioId: string) {
-    const { data: rows, error } = await (supabase as any)
-      .from("refund_requests")
-      .select(
-        "id,created_at,status,reason,client_name,client_phone,client_email,decision_note,reviewed_at,payment_intents(amount_cents,status,stripe_checkout_session_id),appointments(starts_at,total_price,appointment_services(services(name)))",
-      )
-      .eq("studio_id", studioId)
-      .order("created_at", { ascending: false })
-      .limit(50);
+  useEffect(() => {
+    setPage(0);
+  }, [activeTab, period, query, refundView]);
 
-    if (error) return;
-    setRefunds((rows ?? []) as RefundRequest[]);
+  const summary = useMemo(() => buildSummary(refunds), [refunds]);
+  const policyRows = useMemo(() => (draft ? buildPolicyRows(draft) : []), [draft]);
+  const filteredRefunds = useMemo(
+    () => filterRefunds(refunds, refundView, period, query),
+    [period, query, refundView, refunds],
+  );
+  const totalPages = Math.max(1, Math.ceil(filteredRefunds.length / PAGE_SIZE));
+  const pagedRefunds = filteredRefunds.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  async function refreshRefunds() {
+    if (!studio) return;
+    const data = await loadRefundList(studio.id);
+    setRefunds(data);
   }
 
-  async function save() {
-    if (!data) return;
+  async function savePolicy() {
+    if (!studio || !draft) return false;
     setSaving(true);
-    const version = new Date().toISOString().slice(0, 10);
-    const { error } = await supabase
-      .from("studios")
-      .update({
-        cancellation_min_notice_hours: data.cancellation_min_notice_hours,
-        cancellation_after_deadline_policy: data.cancellation_after_deadline_policy,
-        refund_requests_enabled: data.refund_requests_enabled,
-        cancellation_policy_text: data.cancellation_policy_text,
-        legal_policy_version: version,
-      })
-      .eq("id", data.id);
-
-    setSaving(false);
-    if (error) return toast.error(error.message);
-
-    setData({ ...data, legal_policy_version: version });
-    toast.success("Políticas atualizadas.");
+    try {
+      const version = new Date().toISOString().slice(0, 10);
+      const { error } = await supabase
+        .from("studios")
+        .update({
+          payment_policy: draft.payment_policy,
+          deposit_percent: draft.deposit_percent,
+          cancellation_min_notice_hours: draft.cancellation_min_notice_hours,
+          cancellation_after_deadline_policy: draft.cancellation_after_deadline_policy,
+          refund_requests_enabled: draft.refund_requests_enabled,
+          cancellation_policy_text: draft.cancellation_policy_text,
+          legal_policy_version: version,
+          studio_policy_settings: draft.studio_policy_settings,
+          updated_at: new Date().toISOString(),
+        } as any)
+        .eq("id", studio.id);
+      if (error) throw error;
+      const updated = { ...draft, legal_policy_version: version, updated_at: new Date().toISOString() };
+      const normalized = normalizePolicy(updated);
+      setPolicies(normalized);
+      setDraft(normalized);
+      toast.success("Política atualizada.");
+      return true;
+    } catch (error) {
+      console.error("Erro ao guardar política", error);
+      toast.error("Não foi possível guardar a política.");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function updateRefundStatus(id: string, status: RefundRequest["status"], note?: string) {
-    if (!studio || status === "refunded") return;
+  function discardDraft() {
+    setDraft(policies);
+    setEditingPolicy(null);
+  }
+
+  async function handleRefundAction(refundId: string, action: "approve" | "reject") {
+    if (!studio) return;
+    setBusyRefundId(refundId);
     try {
       await updateRefund({
         data: {
           studioId: studio.id,
-          requestId: id,
-          status,
-          note: note?.trim() || undefined,
+          requestId: refundId,
+          status: action === "approve" ? "approved" : "rejected",
         },
       });
+      toast.success(action === "approve" ? "Reembolso aprovado e saldo atualizado." : "Pedido recusado e cliente notificado.");
+      await refreshRefunds();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      if (message.includes("refund_payment_not_live")) {
-        toast.error("Este reembolso não está ligado a um pagamento live confirmado.");
-        return;
-      }
-      if (message.includes("refund_already_processed")) {
-        toast.error("Este reembolso já foi processado.");
-        return;
-      }
-      toast.error("Não foi possível atualizar este pedido.");
-      return;
+      console.error("Erro ao processar reembolso", error);
+      toast.error("Não foi possível processar este pedido.");
+    } finally {
+      setBusyRefundId(null);
     }
-
-    setRefunds((current) =>
-      current.map((item) =>
-        item.id === id
-          ? {
-              ...item,
-              status,
-              reviewed_at: new Date().toISOString(),
-              decision_note: note || item.decision_note,
-            }
-          : item,
-      ),
-    );
-
-    toast.success(
-      status === "approved"
-        ? "Reembolso aprovado para processamento."
-        : "Pedido atualizado.",
-    );
   }
 
-  const filteredRefunds = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return refunds.filter((request) => {
-      if (tab !== "all" && request.status !== tab) return false;
-
-      if (dateFrom) {
-        const from = new Date(dateFrom);
-        const created = new Date(request.created_at);
-        if (created < from) return false;
-      }
-
-      if (dateTo) {
-        const to = new Date(dateTo);
-        to.setHours(23, 59, 59, 999);
-        const created = new Date(request.created_at);
-        if (created > to) return false;
-      }
-
-      if (!query) return true;
-
-      const text = [
-        request.client_name,
-        request.client_email,
-        request.client_phone,
-        request.reason,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-
-      return text.includes(query);
-    });
-  }, [refunds, tab, search, dateFrom, dateTo]);
-
-  const summary = useMemo(() => {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    let pending = 0;
-    let approvedThisMonth = 0;
-    let rejectedThisMonth = 0;
-    let refundedValue = 0;
-    let approvedTotal = 0;
-
-    for (const request of refunds) {
-      const created = new Date(request.created_at);
-      if (request.status === "pending" || request.status === "in_review") {
-        pending += 1;
-      }
-      if (["approved", "refunded"].includes(request.status)) {
-        const cents = Number(request.payment_intents?.amount_cents ?? 0);
-        approvedTotal += 1;
-        if (request.status === "approved") {
-          if (created >= new Date(monthStart)) approvedThisMonth += 1;
-        }
-        if (request.status === "refunded") {
-          refundedValue += cents;
-          if (created >= new Date(monthStart)) rejectedThisMonth += 0;
-        }
-      }
-      if (request.status === "rejected") {
-        const createdRejected = new Date(request.created_at);
-        if (createdRejected >= new Date(monthStart)) rejectedThisMonth += 1;
-      }
-    }
-
-    const approvalRate = approvedTotal ? Math.round((refundedValue ? approvedTotal : 0) / approvedTotal) : 0;
-    const rateForShow = approvedTotal
-      ? Math.round((approvedTotal / (approvedTotal + Math.max(rejectedThisMonth, 0))) * 100)
-      : 0;
-
-    return {
-      pending,
-      approvedThisMonth,
-      rejectedThisMonth,
-      refundedValue,
-      rateForShow,
-    } as const;
-  }, [refunds]);
-
-  if (loading || !data) {
+  if (loading || !draft) {
     return (
-      <div className="mx-auto max-w-6xl space-y-4">
-        <div className="h-24 animate-pulse rounded-2xl bg-muted/60" />
-        <div className="h-24 animate-pulse rounded-2xl bg-muted/60" />
+      <div className="flex min-h-[320px] items-center justify-center">
+        <div className="text-sm text-muted-foreground">A carregar a central...</div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-5">
-      <header className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex items-start gap-3">
-            <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-500">
-              <ShieldCheck className="h-4 w-4" />
-            </span>
-            <div>
-              <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                Central de Políticas e Conformidade
-              </p>
-              <h1 className="mt-1 text-xl font-light tracking-tight">Estúdio</h1>
-              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                Gestão de políticas, prazos e reembolsos com rápida localização,
-                filtros e controlo total.
-              </p>
-            </div>
+    <div className="w-full max-w-none space-y-3 px-3 pb-24 pt-3 md:px-5 md:pb-4 md:pt-4">
+      <div className="flex flex-col gap-3 border-b border-border/60 pb-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+            <ShieldCheck className="h-4 w-4" />
+            Central do Estúdio
           </div>
-
-          <div className="flex items-center gap-1 rounded-xl border border-border bg-muted/60 px-1.5 py-1 text-xs text-muted-foreground">
-            <CalendarClock className="mr-1.5 h-3.5 w-3.5" />
-            <span className="rounded-lg bg-background px-2 py-1.5 font-medium text-foreground shadow-sm">
-              Versão <span className="font-semibold">{data.legal_policy_version}</span>
-            </span>
-          </div>
-        </div>
-      </header>
-
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricTile
-          label="Pendentes"
-          value={summary.pending}
-          icon={<Eye className="h-4 w-4" />}
-          accent="pending"
-        />
-        <MetricTile
-          label="Aprovados este mês"
-          value={summary.approvedThisMonth}
-          icon={<CheckCircle2 className="h-4 w-4" />}
-          accent="approved"
-        />
-        <MetricTile
-          label="Recusados este mês"
-          value={summary.rejectedThisMonth}
-          icon={<XCircle className="h-4 w-4" />}
-          accent="rejected"
-        />
-        <MetricTile
-          label="Total reembolsado"
-          value={new Intl.NumberFormat("pt-PT", {
-            style: "currency",
-            currency: "EUR",
-          }).format(summary.refundedValue / 100)}
-          icon={<Wallet className="h-4 w-4" />}
-          accent="value"
-        />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-border bg-card p-4">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="grid size-8 place-items-center rounded-lg bg-sky-500/10 text-sky-500">
-                  <RefreshCcw className="h-4 w-4" />
-                </span>
-                <div>
-                  <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                    Pedidos de reembolso
-                  </p>
-                  <h2 className="text-base font-medium leading-tight">
-                    Fila operacional
-                  </h2>
-                </div>
-              </div>
-              <span className="rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                {filteredRefunds.length} de {refunds.length}
-              </span>
-            </div>
-
-            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-              <label className="relative sm:w-64">
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Cliente, email, telefone ou motivo..."
-                  className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-xs outline-none transition focus:border-foreground/40"
-                />
-                <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              </label>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Clock className="h-3.5 w-3.5" />
-                <input
-                  type="date"
-                  value={dateFrom}
-                  onChange={(event) => setDateFrom(event.target.value)}
-                  className="h-9 rounded-lg border border-border bg-background px-2 text-xs outline-none transition focus:border-foreground/40"
-                />
-                <span className="text-[10px] font-semibold uppercase tracking-widest">até</span>
-                <input
-                  type="date"
-                  value={dateTo}
-                  onChange={(event) => setDateTo(event.target.value)}
-                  className="h-9 rounded-lg border border-border bg-background px-2 text-xs outline-none transition focus:border-foreground/40"
-                />
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {(["all", "pending", "approved", "rejected"] as RefundTab[]).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setTab(item)}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
-                    tab === item
-                      ? item === "pending"
-                        ? "border-foreground bg-foreground text-background"
-                        : item === "approved"
-                          ? "border-emerald-500/70 bg-emerald-500/12 text-emerald-600"
-                          : item === "rejected"
-                            ? "border-red-500/70 bg-red-500/12 text-red-600"
-                            : "border-foreground/70 bg-muted text-foreground"
-                      : "border-border text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {item === "all" ? "Todos" : item === "pending" ? "Pendentes" : item === "approved" ? "Aprovados" : "Recusados"}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-3 space-y-2">
-              {filteredRefunds.length === 0 ? (
-                <EmptyState />
-              ) : (
-                filteredRefunds.map((request) => (
-                  <RefundCard
-                    key={request.id}
-                    request={request}
-                    onUpdate={(status, note) => updateRefundStatus(request.id, status, note)}
-                  />
-                ))
-              )}
-            </div>
-          </div>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground md:text-2xl">
+            Políticas, reembolsos e conformidade
+          </h1>
         </div>
 
-        <aside className="space-y-4">
-          <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                Pré-visualização para o cliente
-              </p>
-              {(() => {
-                const parts = getPolicyParts(
-                  data.cancellation_after_deadline_policy,
-                  data.cancellation_min_notice_hours,
-                );
-                if (!parts.badge) return null;
-                return (
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${microBadgeTone(
-                      parts.refundTone,
-                    )}`}
-                  >
-                    {parts.refundTone === "warning" ? (
-                      <AlertTriangle className="h-3 w-3" />
-                    ) : parts.refundTone === "muted" ? (
-                      <RefreshCcw className="h-3 w-3" />
-                    ) : (
-                      <Info className="h-3 w-3" />
-                    )}
-                    {parts.badge}
-                  </span>
-                );
-              })()}
-            </div>
-
-            <PolicyPreview
-              parts={getPolicyParts(
-                data.cancellation_after_deadline_policy,
-                data.cancellation_min_notice_hours,
-              )}
-              customText={data.cancellation_policy_text?.trim() || null}
-            />
-
-            <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              <span>
-                Versão aplicada <span className="font-semibold text-foreground">{data.legal_policy_version}</span>
-              </span>
-              <span className="flex h-2 w-2 items-center justify-center">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span className="absolute h-1.5 w-1.5 animate-ping rounded-full bg-emerald-500/80" />
-              </span>
-            </div>
-          </div>
-
-          <PolicyConfigurator
-            data={data}
-            noticeMode={noticeMode}
-            saving={saving}
-            onChange={(patch) => setData((current) => (current ? { ...current, ...patch } : current))}
-            onNoticeModeChange={(mode) => setNoticeMode(mode)}
-            onSave={save}
-          />
-        </aside>
-      </section>
-    </div>
-  );
-}
-
-function MetricTile({
-  label,
-  value,
-  icon,
-  accent,
-}: {
-  label: string;
-  value: string | number;
-  icon: React.ReactNode;
-  accent: "pending" | "approved" | "rejected" | "value";
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl border border-border bg-card p-3 shadow-sm">
-      <div className="space-y-0.5">
-        <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-          {label}
-        </p>
-        <p className="text-base font-medium tabular-nums text-foreground">
-          {value}
-        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[640px] xl:min-w-[700px]">
+          <Metric label="Pendentes" value={summary.pending} icon={<TimerReset className="h-4 w-4" />} tone="amber" />
+          <Metric label="Aprovados" value={summary.approvedThisMonth} icon={<CheckCircle2 className="h-4 w-4" />} tone="emerald" />
+          <Metric label="Recusados" value={summary.rejectedThisMonth} icon={<XCircle className="h-4 w-4" />} tone="rose" />
+          <Metric label="Valor reembolsado" value={formatMoney(summary.totalRefundedCents)} icon={<Wallet className="h-4 w-4" />} tone="sky" />
+        </div>
       </div>
-      <span
-        className={`grid size-9 shrink-0 place-items-center rounded-xl ${
-          accent === "pending"
-            ? "bg-amber-500/12 text-amber-600"
-            : accent === "approved"
-              ? "bg-emerald-500/12 text-emerald-600"
-              : accent === "rejected"
-                ? "bg-red-500/12 text-red-600"
-                : "bg-sky-500/12 text-sky-600"
-        }`}
-      >
-        {icon}
-      </span>
+
+      <div className="flex items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg bg-muted p-1">
+          <TabButton active={activeTab === "policies"} onClick={() => setActiveTab("policies")}>
+            Políticas
+          </TabButton>
+          <TabButton active={activeTab === "refunds"} onClick={() => setActiveTab("refunds")}>
+            Reembolsos
+          </TabButton>
+        </div>
+        <div className="hidden items-center gap-2 text-xs text-muted-foreground md:flex">
+          <BadgeCheck className="h-4 w-4 text-emerald-600" />
+          Atualização automática entre saldo, histórico e notificações
+        </div>
+      </div>
+
+      {activeTab === "policies" ? (
+        <div className="space-y-3">
+          <ManageabilityPolicyPanel
+            draft={draft}
+            saving={saving}
+            onChange={setDraft}
+            onSave={savePolicy}
+            onDiscard={discardDraft}
+          />
+        <section className="rounded-xl border border-border/70 bg-card shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Políticas do Estúdio</h2>
+              <p className="text-xs text-muted-foreground">Edite cada regra no painel lateral.</p>
+            </div>
+            <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+              {policyRows.length} políticas
+            </span>
+          </div>
+
+          <ExpandableList
+            items={policyRows}
+            initialCount={5}
+            className="divide-y divide-border/60"
+            getKey={(policy) => policy.key}
+            moreLabel={(hidden) => `Ver mais ${hidden} política${hidden !== 1 ? "s" : ""}`}
+            renderItem={(policy) => (
+              <PolicyRow policy={policy} onEdit={() => setEditingPolicy(policy.key)} />
+            )}
+          />
+        </section>
+        </div>
+      ) : (
+        <section className="rounded-xl border border-border/70 bg-card shadow-sm">
+          <div className="flex flex-col gap-2 border-b border-border/60 px-3 py-3 md:flex-row md:items-center md:justify-between md:px-4">
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border/70 bg-background px-3 py-2">
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Pesquisar cliente, serviço ou motivo"
+                className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+            </div>
+
+            <div className="flex gap-2 overflow-x-auto">
+              <CompactSelect value={refundView} onChange={(value) => setRefundView(value as RefundView)}>
+                <SelectItem value="pending">Pendentes</SelectItem>
+                <SelectItem value="approved">Aprovados</SelectItem>
+                <SelectItem value="rejected">Recusados</SelectItem>
+              </CompactSelect>
+              <CompactSelect value={period} onChange={(value) => setPeriod(value as PeriodFilter)}>
+                <SelectItem value="30d">30 dias</SelectItem>
+                <SelectItem value="7d">7 dias</SelectItem>
+                <SelectItem value="today">Hoje</SelectItem>
+                <SelectItem value="all">Tudo</SelectItem>
+              </CompactSelect>
+            </div>
+          </div>
+
+          <RefundTable
+            refunds={pagedRefunds}
+            busyRefundId={busyRefundId}
+            onAction={handleRefundAction}
+          />
+
+          <div className="flex flex-col gap-2 border-t border-border/60 px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              {filteredRefunds.length === 0
+                ? "Nenhum pedido encontrado"
+                : `${page * PAGE_SIZE + 1}-${Math.min((page + 1) * PAGE_SIZE, filteredRefunds.length)} de ${filteredRefunds.length}`}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1 px-2"
+                disabled={page === 0}
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Anterior
+              </Button>
+              <span className="min-w-14 text-center">Página {page + 1}/{totalPages}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1 px-2"
+                disabled={page >= totalPages - 1}
+                onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}
+              >
+                Seguinte
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {editingPolicy ? (
+        <PolicyDrawer
+          policyKey={editingPolicy}
+          draft={draft}
+          saving={saving}
+          onChange={setDraft}
+          onClose={discardDraft}
+          onSave={async () => {
+            const ok = await savePolicy();
+            if (ok) setEditingPolicy(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
 
-function PolicyConfigurator({
-  data,
-  noticeMode,
+function ManageabilityPolicyPanel({
+  draft,
   saving,
   onChange,
-  onNoticeModeChange,
   onSave,
+  onDiscard,
 }: {
-  data: StudioPolicy;
-  noticeMode: "24" | "48" | "custom";
+  draft: StudioCompliancePolicies;
   saving: boolean;
-  onChange: (patch: Partial<StudioPolicy>) => void;
-  onNoticeModeChange: (mode: "24" | "48" | "custom") => void;
-  onSave: () => Promise<void>;
+  onChange: (policy: StudioCompliancePolicies) => void;
+  onSave: () => Promise<boolean>;
+  onDiscard: () => void;
 }) {
+  const cancellationHours = Number(draft.cancellation_min_notice_hours ?? 24);
+  const rescheduleHours = getRescheduleNoticeHoursFromSettings(draft);
+
+  function updateCancellationHours(hours: number) {
+    onChange(
+      updatePolicySetting(
+        { ...draft, cancellation_min_notice_hours: hours },
+        "cancellation",
+        { active: true, notice_hours: hours },
+      ),
+    );
+  }
+
+  function updateRescheduleHours(hours: number) {
+    onChange(updatePolicySetting(draft, "reschedule", { active: true, notice_hours: hours }));
+  }
+
   return (
-    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="grid size-8 place-items-center rounded-lg bg-violet-500/10 text-violet-500">
-            <BarChart3 className="h-4 w-4" />
-          </span>
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Configuração
+    <section className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+      <div>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 max-w-3xl">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              <CalendarClock className="h-4 w-4" />
+              Cancelamentos e Reembolsos
+            </div>
+            <h2 className="mt-2 text-xl font-semibold tracking-tight text-foreground">
+              Regras de cancelamento, remarcação e reembolso
+            </h2>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              Defina aqui as regras que explicam quando uma cliente pode alterar uma marcação e quando pode pedir reembolso.
             </p>
-            <h3 className="text-sm font-medium">Políticas ativas</h3>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={onDiscard} disabled={saving}>
+              Repor
+            </Button>
+            <Button size="sm" onClick={onSave} disabled={saving}>
+              {saving ? "A guardar..." : "Guardar regras"}
+            </Button>
           </div>
         </div>
-        <span
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.16em] ${
-            data.cancellation_after_deadline_policy === "non_refundable"
-              ? "border-amber-500/40 bg-amber-500/12 text-amber-600"
-              : "border-border bg-muted/60 text-foreground"
-          }`}
-        >
-          {data.cancellation_after_deadline_policy === "refund_allowed"
-            ? "Com reembolso"
-            : data.cancellation_after_deadline_policy === "reschedule_only"
-              ? "Só remarcação"
-              : "Não reembolsável"}
-        </span>
       </div>
 
-      <div className="mt-3 space-y-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Prazo mínimo de cancelamento
-          </p>
-          <div className="mt-2 grid grid-cols-3 gap-2">
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        <PolicyRuleCard
+          title="Prazo mínimo para cancelar"
+          description="Quando este prazo passa, o botão Cancelar fica bloqueado para a cliente."
+          value={cancellationHours}
+          onChange={updateCancellationHours}
+          exampleTitle="Exemplo de cancelamento"
+          actionLabel="cancelar"
+        />
+
+        <PolicyRuleCard
+          title="Prazo mínimo para remarcar"
+          description="Quando este prazo passa, o botão Remarcar fica bloqueado para a cliente."
+          value={rescheduleHours}
+          onChange={updateRescheduleHours}
+          exampleTitle="Exemplo de remarcação"
+          actionLabel="remarcar"
+        />
+
+        <div className="rounded-lg bg-muted/30 p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Política de reembolso</h3>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                Escolha o que acontece quando a cliente cancela dentro do prazo permitido.
+              </p>
+            </div>
+            <ToggleRow
+              checked={draft.refund_requests_enabled}
+              onCheckedChange={(checked) =>
+                onChange(updatePolicySetting({ ...draft, refund_requests_enabled: checked }, "refund", { active: checked }))
+              }
+              text="Ativo"
+            />
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
             {[
-              ["24", "24 horas"],
-              ["48", "48 horas"],
-              ["custom", "Personalizado"],
+              ["refund_allowed", "Permitir pedido de reembolso", "A cliente pode pedir reembolso quando cancelar dentro do prazo."],
+              ["reschedule_only", "Apenas remarcação", "O valor fica válido para remarcar, sem pedido de devolução."],
+              ["non_refundable", "Sem reembolso", "O pagamento ou sinal não gera pedido de reembolso automático."],
             ].map(([value, label]) => (
               <button
                 key={value}
                 type="button"
-                onClick={() => {
-                  onNoticeModeChange(value as typeof noticeMode);
-                  if (value === "24" || value === "48") {
-                    onChange({ cancellation_min_notice_hours: Number(value) });
-                  }
-                }}
-                className={`h-9 rounded-xl border text-xs font-medium transition ${
-                  noticeMode === value
-                    ? "border-foreground bg-foreground text-background"
-                    : "border-border hover:bg-muted"
-                }`}
+                onClick={() =>
+                  onChange(
+                    updatePolicySetting(
+                      { ...draft, cancellation_after_deadline_policy: value as RefundPolicy },
+                      "refund",
+                      { text: refundPolicyLabel(value as RefundPolicy) },
+                    ),
+                  )
+                }
+                className={cn(
+                  "min-h-10 rounded-lg border px-3 py-2 text-center text-sm font-semibold transition hover:bg-muted/60",
+                  draft.cancellation_after_deadline_policy === value ? "border-foreground bg-foreground text-background" : "border-border bg-card",
+                )}
               >
                 {label}
               </button>
             ))}
           </div>
-          {noticeMode === "custom" && (
-            <label className="mt-2 block">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Horas antes da marcação
-              </span>
-              <input
-                type="number"
-                min={1}
-                value={data.cancellation_min_notice_hours}
-                onChange={(event) =>
-                  onChange({
-                    cancellation_min_notice_hours: Math.max(1, Number(event.target.value || 1)),
-                  })
-                }
-                className="mt-1 h-9 w-full rounded-xl border border-border bg-background px-3 text-xs outline-none transition focus:border-foreground/40"
-              />
-            </label>
-          )}
         </div>
 
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Política de reembolso do sinal
+        <div className="rounded-lg bg-muted/30 p-3">
+          <h3 className="text-sm font-semibold text-foreground">Texto visível para clientes</h3>
+          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+            Este texto aparece na experiência pública para explicar as regras do estúdio em linguagem simples.
           </p>
-          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-            O que acontece com o sinal pago se o cliente cancelar dentro do prazo.
-          </p>
-          <div className="mt-2 grid gap-2 sm:grid-cols-3">
-            {([
-              ["refund_allowed", "Reembolso possível", "O estúdio analisa"],
-              ["reschedule_only", "Só remarcação", "Sem devolução em dinheiro"],
-              ["non_refundable", "Não reembolsável", "Sinal nunca devolvido"],
-            ] as const).map((option) => {
-              const meta = getPolicyParts(option[0], data.cancellation_min_notice_hours);
-              const isActive = data.cancellation_after_deadline_policy === option[0];
-              const isWarning = option[0] === "non_refundable";
-              return (
-                <button
-                  key={option[0]}
-                  type="button"
-                  onClick={() => onChange({ cancellation_after_deadline_policy: option[0] })}
-                  className={`flex min-h-[4.5rem] flex-col justify-between rounded-xl border px-3 py-2.5 text-left transition ${
-                    isActive
-                      ? isWarning
-                        ? "border-amber-500/60 bg-amber-500/15 text-foreground"
-                        : "border-foreground bg-foreground text-background"
-                      : "border-border hover:bg-muted"
-                  }`}
-                >
-                  <span className="text-[11px] font-semibold leading-snug">{meta.optionTitle}</span>
-                  <span
-                    className={`mt-1 text-[10px] leading-snug ${
-                      isActive
-                        ? isWarning
-                          ? "text-amber-700 dark:text-amber-300"
-                          : "text-background/75"
-                        : "text-muted-foreground"
-                    }`}
-                  >
-                    {meta.optionSubtitle}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Nota adicional para o cliente
-          </p>
-          <textarea
-            value={data.cancellation_policy_text ?? ""}
+          <Textarea
+            className="mt-3 min-h-28 resize-y"
+            value={draft.cancellation_policy_text ?? ""}
             onChange={(event) =>
-              onChange({ cancellation_policy_text: event.target.value })
+              onChange({
+                ...updatePolicySetting(draft, "cancellation", { text: event.target.value }),
+                cancellation_policy_text: event.target.value,
+              })
             }
-            rows={3}
-            placeholder="Ex: Para tatuagens grandes o sinal cobre o tempo de desenho já realizado."
-            className="mt-1.5 w-full resize-none rounded-xl border border-border bg-background px-3 py-2.5 text-xs outline-none transition focus:border-foreground/40"
           />
         </div>
+      </div>
+    </section>
+  );
+}
 
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={saving}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-foreground text-xs font-bold uppercase tracking-[0.16em] text-background transition hover:opacity-90 disabled:opacity-60"
-        >
-          {saving ? "A guardar..." : "Guardar políticas"}
-        </button>
+function PolicyRuleCard({
+  title,
+  description,
+  value,
+  onChange,
+  exampleTitle,
+  actionLabel,
+}: {
+  title: string;
+  description: string;
+  value: number;
+  onChange: (hours: number) => void;
+  exampleTitle: string;
+  actionLabel: "cancelar" | "remarcar";
+}) {
+  const exampleDeadline = value === 24 ? "02/07 às 16:00" : `${value} horas antes da reserva`;
+  return (
+    <div className="rounded-lg bg-muted/30 p-3">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px]">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>
+        </div>
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Horas</Label>
+          <Input
+            className="mt-1.5 h-10 text-base font-semibold"
+            type="number"
+            min={0}
+            value={value}
+            onChange={(event) => onChange(Math.max(0, Number(event.target.value) || 0))}
+          />
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg bg-card px-3 py-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{exampleTitle}</p>
+        <div className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+          <ExampleItem label="Reserva" value="03/07 às 16:00" />
+          <ExampleItem label={`Pode ${actionLabel} até`} value={exampleDeadline} />
+          <ExampleItem label="Depois disso" value="O botão fica bloqueado" />
+        </div>
+        <div className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium leading-relaxed text-amber-800">
+          {value} horas significa exatamente {value} horas antes do horário da reserva, e não apenas no dia anterior.
+        </div>
+        <div className="hidden">
+          Outro exemplo: reserva em 10/08 às 09:00. Último momento para {actionLabel}: 09/08 às 09:00 quando o prazo é 24 horas.
+        </div>
       </div>
     </div>
   );
 }
 
-function RefundCard({
-  request,
-  onUpdate,
+function ExampleItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md bg-background px-2.5 py-2">
+      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
+      <div className="mt-1 break-words text-sm font-semibold text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  icon,
+  tone,
 }: {
-  request: RefundRequest;
-  onUpdate: (status: RefundRequest["status"], note?: string) => void;
+  label: string;
+  value: string | number;
+  icon: ReactNode;
+  tone: "amber" | "emerald" | "rose" | "sky";
 }) {
-  const [note, setNote] = useState("");
-  const [open, setOpen] = useState(false);
+  const toneClass = {
+    amber: "text-amber-700 bg-amber-50",
+    emerald: "text-emerald-700 bg-emerald-50",
+    rose: "text-rose-700 bg-rose-50",
+    sky: "text-sky-700 bg-sky-50",
+  }[tone];
 
   return (
-    <div className="grid gap-3 rounded-2xl border border-border bg-background p-4 transition hover:shadow-sm sm:grid-cols-[minmax(0,1fr)_auto]">
-      <div className="min-w-0 space-y-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="truncate text-sm font-semibold text-foreground">
-            {request.client_name || "Cliente"}
-          </p>
-          <span
-            className={`inline-flex items-center rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${refundStatusClass(request.status)}`}
-          >
-            {refundStatusLabel(request.status)}
-          </span>
-        </div>
+    <div className="flex min-h-14 items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2 shadow-sm">
+      <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass)}>{icon}</span>
+      <div className="min-w-0">
+        <div className="truncate text-[11px] font-medium text-muted-foreground">{label}</div>
+        <div className="truncate text-base font-semibold text-foreground">{value}</div>
+      </div>
+    </div>
+  );
+}
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <ExternalLink className="h-3 w-3" />
-            {refundServiceLabel(request)}
-          </span>
-          <span className="inline-flex items-center gap-1.5 font-semibold tabular-nums text-foreground">
-            <Wallet className="h-3 w-3" />
-            {formatRefundAmount(request)}
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarClock className="h-3 w-3" />
-            {formatRefundDate(request)}
-          </span>
-        </div>
+function TabButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "h-9 rounded-md px-4 text-sm font-medium transition",
+        active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
 
-        <div className="rounded-xl border border-border bg-muted/50 px-3 py-2">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {request.reason}
-          </p>
-        </div>
+function PolicyRow({
+  policy,
+  onEdit,
+}: {
+  policy: ReturnType<typeof buildPolicyRows>[number];
+  onEdit: () => void;
+}) {
+  return (
+    <div className="grid min-h-14 grid-cols-[1fr_auto] items-center gap-3 px-4 py-2 transition hover:bg-muted/35 md:grid-cols-[minmax(260px,1fr)_140px_150px_92px]">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+          {policy.icon}
+        </span>
+        <span className="truncate text-sm font-medium text-foreground">{policy.title}</span>
+      </div>
 
-        {open && (
-          <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-3">
-            <label className="block">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                Nota interna
-              </span>
-              <textarea
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                rows={2}
-                className="mt-1 w-full resize-none rounded-lg border border-border bg-background px-2.5 py-2 text-xs outline-none transition focus:border-foreground/40"
-              />
-            </label>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onUpdate("approved", note)}
-                disabled={request.status === "approved"}
-                className="inline-flex h-9 items-center rounded-lg border border-emerald-500/70 bg-emerald-500/10 px-3 text-[11px] font-bold text-emerald-600 transition hover:bg-emerald-500/20 disabled:opacity-40"
-              >
-                Aprovar
-              </button>
-              <button
-                type="button"
-                onClick={() => onUpdate("rejected", note)}
-                disabled={request.status === "rejected"}
-                className="inline-flex h-9 items-center rounded-lg border border-red-500/70 bg-red-500/10 px-3 text-[11px] font-bold text-red-600 transition hover:bg-red-500/20 disabled:opacity-40"
-              >
-                Recusar
-              </button>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted"
-              >
-                Fechar
-              </button>
-            </div>
+      <div className="hidden md:block">
+        <StatusBadge active={policy.active} />
+      </div>
+
+      <div className="hidden text-sm text-muted-foreground md:block">{policy.updatedAt}</div>
+
+      <Button variant="outline" size="sm" className="h-8 gap-1.5 px-2.5" onClick={onEdit}>
+        <Edit3 className="h-3.5 w-3.5" />
+        Editar
+      </Button>
+
+      <div className="col-span-2 flex items-center justify-between text-xs text-muted-foreground md:hidden">
+        <StatusBadge active={policy.active} />
+        <span>{policy.updatedAt}</span>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ active }: { active: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+        active ? "bg-emerald-50 text-emerald-700" : "bg-muted text-muted-foreground",
+      )}
+    >
+      {active ? "Ativa" : "Inativa"}
+    </span>
+  );
+}
+
+function PolicyDrawer({
+  policyKey,
+  draft,
+  saving,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  policyKey: PolicyKey;
+  draft: StudioCompliancePolicies;
+  saving: boolean;
+  onChange: (policy: StudioCompliancePolicies) => void;
+  onClose: () => void;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <div className="fixed inset-0 z-50">
+      <button
+        type="button"
+        aria-label="Fechar"
+        className="absolute inset-0 bg-background/70 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <aside className="absolute right-0 top-0 flex h-full w-full max-w-lg flex-col border-l border-border bg-background shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
+          <div className="min-w-0">
+            <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Editar política</div>
+            <h2 className="truncate text-lg font-semibold text-foreground">{policyTitles[policyKey]}</h2>
           </div>
-        )}
-      </div>
+          <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
 
-      <div className="flex items-center justify-end gap-2 sm:flex-col sm:items-end">
-        <button
-          type="button"
-          onClick={() => setOpen((current) => !current)}
-          className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border text-[11px] font-bold transition ${
-            open
-              ? "border-foreground bg-foreground text-background"
-              : "border-border text-muted-foreground hover:bg-muted"
-          }`}
-          title={open ? "Fechar ações" : "Ações"}
-        >
-          {open ? <ArrowDownRight className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-        </button>
-      </div>
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          <PolicyEditor policyKey={policyKey} draft={draft} onChange={onChange} />
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-border/70 px-5 py-4">
+          <Button variant="outline" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button onClick={onSave} disabled={saving}>
+            {saving ? "A guardar..." : "Guardar"}
+          </Button>
+        </div>
+      </aside>
     </div>
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-4 py-10 text-center text-xs text-muted-foreground">
-      <RefreshCcw className="mx-auto mb-3 h-5 w-5 text-muted-foreground/70" />
-      <p className="font-medium text-foreground/70">Sem pedidos para esta vista</p>
-      <p className="mt-1">
-        Utilize filtros e pesquisa para localizar um pedido rapidamente.
-      </p>
-    </div>
-  );
-}
-
-function PolicyPreview({
-  parts,
-  customText,
+function PolicyEditor({
+  policyKey,
+  draft,
+  onChange,
 }: {
-  parts: PolicyTextParts;
-  customText: string | null;
+  policyKey: PolicyKey;
+  draft: StudioCompliancePolicies;
+  onChange: (policy: StudioCompliancePolicies) => void;
+}) {
+  const setting = draft.studio_policy_settings[policyKey] ?? {};
+  const setSetting = (patch: Partial<PolicySetting>) => onChange(updatePolicySetting(draft, policyKey, patch));
+
+  if (policyKey === "cancellation") {
+    return (
+      <>
+        <Field label="Estado">
+          <ToggleRow
+            checked={Boolean(setting.active)}
+            onCheckedChange={(checked) => setSetting({ active: checked })}
+            text="Política ativa"
+          />
+        </Field>
+        <Field label="Aviso mínimo">
+          <Input
+            type="number"
+            min={0}
+            value={draft.cancellation_min_notice_hours}
+            onChange={(event) => {
+              const hours = Math.max(0, Number(event.target.value) || 0);
+              onChange(updatePolicySetting({ ...draft, cancellation_min_notice_hours: hours }, "cancellation", { notice_hours: hours }));
+            }}
+          />
+        </Field>
+        <Field label="Texto visível para clientes">
+          <Textarea
+            rows={7}
+            value={draft.cancellation_policy_text ?? setting.text ?? ""}
+            onChange={(event) =>
+              onChange({
+                ...updatePolicySetting(draft, "cancellation", { text: event.target.value }),
+                cancellation_policy_text: event.target.value,
+              })
+            }
+          />
+        </Field>
+      </>
+    );
+  }
+
+  if (policyKey === "refund") {
+    return (
+      <>
+        <Field label="Estado">
+          <ToggleRow
+            checked={draft.refund_requests_enabled}
+            onCheckedChange={(checked) =>
+              onChange(updatePolicySetting({ ...draft, refund_requests_enabled: checked }, "refund", { active: checked }))
+            }
+            text="Pedidos de reembolso ativos"
+          />
+        </Field>
+        <Field label="Regra de reembolso">
+          <div className="grid gap-2">
+            {[
+              ["refund_allowed", "Reembolso permitido"],
+              ["reschedule_only", "Apenas reagendamento"],
+              ["non_refundable", "Sem reembolso"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() =>
+                  onChange(
+                    updatePolicySetting(
+                      { ...draft, cancellation_after_deadline_policy: value as RefundPolicy },
+                      "refund",
+                      { text: refundPolicyLabel(value as RefundPolicy) },
+                    ),
+                  )
+                }
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-left text-sm transition hover:bg-muted/60",
+                  draft.cancellation_after_deadline_policy === value ? "border-foreground bg-foreground text-background" : "border-border bg-background",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </Field>
+      </>
+    );
+  }
+
+  if (policyKey === "reschedule") {
+    return (
+      <>
+        <Field label="Estado">
+          <ToggleRow
+            checked={Boolean(setting.active)}
+            onCheckedChange={(checked) => setSetting({ active: checked })}
+            text="Remarcação pela cliente ativa"
+          />
+        </Field>
+        <Field label="Prazo mínimo para remarcar">
+          <Input
+            type="number"
+            min={0}
+            value={getRescheduleNoticeHoursFromSettings(draft)}
+            onChange={(event) => setSetting({ notice_hours: Math.max(0, Number(event.target.value) || 0) })}
+          />
+        </Field>
+        <Field label="Resumo">
+          <Textarea
+            rows={5}
+            value={setting.text ?? ""}
+            onChange={(event) => setSetting({ text: event.target.value })}
+          />
+        </Field>
+      </>
+    );
+  }
+
+  if (policyKey === "deposit") {
+    return (
+      <>
+        <Field label="Estado">
+          <ToggleRow
+            checked={draft.payment_policy === "pre_payment"}
+            onCheckedChange={(checked) =>
+              onChange(
+                updatePolicySetting(
+                  { ...draft, payment_policy: checked ? "pre_payment" : "pay_in_studio" },
+                  "deposit",
+                  { active: checked },
+                ),
+              )
+            }
+            text="Exigir sinal online"
+          />
+        </Field>
+        <Field label="Valor do sinal">
+          <Input
+            type="number"
+            min={1}
+            max={100}
+            value={draft.deposit_percent}
+            onChange={(event) => {
+              const depositPercent = Math.min(100, Math.max(1, Number(event.target.value) || 1));
+              onChange(
+                updatePolicySetting(
+                  { ...draft, deposit_percent: depositPercent },
+                  "deposit",
+                  { text: `Sinal de ${depositPercent}% para confirmar reservas online.` },
+                ),
+              );
+            }}
+          />
+        </Field>
+        <Field label="Resumo">
+          <Textarea
+            rows={5}
+            value={setting.text ?? ""}
+            onChange={(event) => setSetting({ text: event.target.value })}
+          />
+        </Field>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Field label="Estado">
+        <ToggleRow
+          checked={Boolean(setting.active)}
+          onCheckedChange={(checked) => setSetting({ active: checked })}
+          text="Política ativa"
+        />
+      </Field>
+      <Field label="Resumo operacional">
+        <Textarea
+          rows={7}
+          value={setting.text ?? ""}
+          onChange={(event) => setSetting({ text: event.target.value })}
+        />
+      </Field>
+    </>
+  );
+}
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function ToggleRow({
+  checked,
+  text,
+  disabled,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  text: string;
+  disabled?: boolean;
+  onCheckedChange?: (checked: boolean) => void;
 }) {
   return (
-    <div className="mt-3 space-y-2.5">
-      <div className="rounded-xl border border-border bg-background p-3">
-        <div className="flex items-center gap-2">
-          <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            {parts.rescheduleLabel}
-          </p>
-        </div>
-        <p className="mt-1.5 text-xs leading-relaxed text-foreground/85">
-          {parts.rescheduleBody}
-        </p>
+    <label className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
+      <Checkbox checked={checked} disabled={disabled} onCheckedChange={(value) => onCheckedChange?.(value === true)} />
+      {text}
+    </label>
+  );
+}
+
+function CompactSelect({
+  value,
+  onChange,
+  children,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className="h-9 w-[132px] shrink-0">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>{children}</SelectContent>
+    </Select>
+  );
+}
+
+function RefundTable({
+  refunds,
+  busyRefundId,
+  onAction,
+}: {
+  refunds: StudioRefundRequestListItem[];
+  busyRefundId: string | null;
+  onAction: (refundId: string, action: "approve" | "reject") => Promise<void>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const limit = 5;
+  const hasMore = refunds.length > limit;
+  const visibleRefunds = expanded || !hasMore ? refunds : refunds.slice(0, limit);
+
+  if (refunds.length === 0) {
+    return (
+      <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 text-center">
+        <SlidersHorizontal className="h-6 w-6 text-muted-foreground" />
+        <p className="text-sm font-medium text-foreground">Nenhum pedido nesta seleção</p>
+        <p className="text-xs text-muted-foreground">A pesquisa e os filtros ajudam a localizar rapidamente.</p>
       </div>
-      <div
-        className={`rounded-xl border p-3 ${
-          parts.refundTone === "warning"
-            ? "border-amber-500/35 bg-amber-500/8"
-            : "border-border bg-background"
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <Wallet
-            className={`h-3.5 w-3.5 ${
-              parts.refundTone === "warning"
-                ? "text-amber-600 dark:text-amber-300"
-                : "text-muted-foreground"
-            }`}
-          />
-          <p
-            className={`text-[10px] font-semibold uppercase tracking-[0.18em] ${
-              parts.refundTone === "warning"
-                ? "text-amber-700 dark:text-amber-200"
-                : "text-muted-foreground"
-            }`}
+    );
+  }
+
+  return (
+    <>
+      <div className="hidden md:block">
+        <table className="w-full table-fixed">
+          <thead className="bg-muted/40 text-left text-xs font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            <tr>
+              <th className="px-4 py-2">Cliente</th>
+              <th className="px-4 py-2">Serviço</th>
+              <th className="w-28 px-4 py-2">Valor</th>
+              <th className="w-32 px-4 py-2">Data</th>
+              <th className="w-28 px-4 py-2">Estado</th>
+              <th className="w-44 px-4 py-2 text-right">Ações</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/60">
+            {visibleRefunds.map((refund) => (
+              <RefundTableRow key={refund.id} refund={refund} busy={busyRefundId === refund.id} onAction={onAction} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="divide-y divide-border/60 md:hidden">
+        {visibleRefunds.map((refund) => (
+          <RefundMobileRow key={refund.id} refund={refund} busy={busyRefundId === refund.id} onAction={onAction} />
+        ))}
+      </div>
+
+      {hasMore && (
+        <div className="px-3 pb-3 pt-2 sm:px-4">
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className="mx-auto flex min-h-10 w-full max-w-sm items-center justify-center rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs font-semibold text-muted-foreground shadow-sm transition hover:border-foreground/15 hover:bg-muted hover:text-foreground active:scale-[0.99]"
           >
-            {parts.refundLabel}
-          </p>
-        </div>
-        <p className="mt-1.5 text-xs leading-relaxed text-foreground/85">
-          {parts.refundBody}
-        </p>
-      </div>
-      {customText && (
-        <div className="rounded-xl border border-border bg-muted/40 p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            Nota adicional
-          </p>
-          <p className="mt-1.5 whitespace-pre-line text-xs leading-relaxed text-foreground/85">
-            {customText}
-          </p>
+            {expanded ? "Ver menos" : `Ver mais ${refunds.length - limit} pedido${refunds.length - limit !== 1 ? "s" : ""}`}
+          </button>
         </div>
       )}
+    </>
+  );
+}
+
+function RefundTableRow({
+  refund,
+  busy,
+  onAction,
+}: {
+  refund: StudioRefundRequestListItem;
+  busy: boolean;
+  onAction: (refundId: string, action: "approve" | "reject") => Promise<void>;
+}) {
+  const canProcess = refund.status === "pending" || refund.status === "in_review";
+
+  return (
+    <tr className="h-14 transition hover:bg-muted/30">
+      <td className="min-w-0 px-4 py-2">
+        <div className="truncate text-sm font-medium text-foreground">{refund.client_name || "Cliente"}</div>
+        <div className="truncate text-xs text-muted-foreground">{refund.reason || "Pedido de reembolso"}</div>
+      </td>
+      <td className="truncate px-4 py-2 text-sm text-foreground">{serviceLabel(refund)}</td>
+      <td className="px-4 py-2 text-sm font-semibold text-foreground">{formatMoney(refundAmountCents(refund))}</td>
+      <td className="px-4 py-2 text-sm text-muted-foreground">{formatBookingDate(refundDate(refund))}</td>
+      <td className="px-4 py-2">
+        <RefundStatusBadge status={refund.status} />
+      </td>
+      <td className="px-4 py-2">
+        <div className="flex justify-end gap-2">
+          {canProcess ? (
+            <>
+              <Button size="sm" className="h-8 px-2.5" disabled={busy} onClick={() => onAction(refund.id, "approve")}>
+                Aprovar
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 px-2.5" disabled={busy} onClick={() => onAction(refund.id, "reject")}>
+                Recusar
+              </Button>
+            </>
+          ) : (
+            <span className="text-xs text-muted-foreground">Finalizado</span>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function RefundMobileRow({
+  refund,
+  busy,
+  onAction,
+}: {
+  refund: StudioRefundRequestListItem;
+  busy: boolean;
+  onAction: (refundId: string, action: "approve" | "reject") => Promise<void>;
+}) {
+  const canProcess = refund.status === "pending" || refund.status === "in_review";
+
+  return (
+    <div className="space-y-2 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-foreground">{refund.client_name || "Cliente"}</div>
+          <div className="truncate text-xs text-muted-foreground">{serviceLabel(refund)} · {formatBookingDate(refundDate(refund))}</div>
+        </div>
+        <div className="text-right">
+          <div className="text-sm font-semibold text-foreground">{formatMoney(refundAmountCents(refund))}</div>
+          <RefundStatusBadge status={refund.status} />
+        </div>
+      </div>
+
+      {canProcess ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Button size="sm" className="h-8" disabled={busy} onClick={() => onAction(refund.id, "approve")}>
+            Aprovar
+          </Button>
+          <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => onAction(refund.id, "reject")}>
+            Recusar
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function refundStatusLabel(status: RefundRequest["status"]) {
-  if (status === "in_review") return "Em análise";
-  if (status === "approved") return "Aprovado";
-  if (status === "rejected") return "Recusado";
-  if (status === "refunded") return "Reembolsado";
-  return "Pendente";
+function RefundStatusBadge({ status }: { status: RefundStatus }) {
+  const view = status === "approved" || status === "refunded" ? "approved" : status === "rejected" ? "rejected" : "pending";
+  const classes = {
+    pending: "bg-amber-50 text-amber-700",
+    approved: "bg-emerald-50 text-emerald-700",
+    rejected: "bg-rose-50 text-rose-700",
+  }[view];
+
+  return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-medium", classes)}>{statusCopy[status]}</span>;
 }
 
-function refundStatusClass(status: RefundRequest["status"]) {
-  if (status === "in_review") return "bg-sky-500/10 text-sky-600";
-  if (status === "approved") return "bg-emerald-500/10 text-emerald-600";
-  if (status === "rejected") return "bg-red-500/10 text-red-600";
-  if (status === "refunded") return "bg-violet-500/10 text-violet-600";
-  return "bg-amber-500/10 text-amber-600";
+async function loadPolicy(studioId: string): Promise<StudioCompliancePolicies> {
+  const { data, error } = await supabase
+    .from("studios")
+    .select(
+      "id,payment_policy,deposit_percent,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version,studio_policy_settings,updated_at",
+    )
+    .eq("id", studioId)
+    .maybeSingle();
+  if (error || !data) throw error ?? new Error("studio_policy_not_found");
+  return data as unknown as StudioCompliancePolicies;
 }
 
-function refundServiceLabel(request: RefundRequest) {
-  const names = request.appointments?.appointment_services
-    ?.map((line) => line.services?.name)
-    .filter(Boolean);
-  return names?.length ? names.join(", ") : "Marcação";
+async function loadRefundList(studioId: string): Promise<StudioRefundRequestListItem[]> {
+  const { data, error } = await (supabase as any)
+    .from("refund_requests")
+    .select(
+      "id,created_at,status,reason,client_name,client_phone,client_email,decision_note,reviewed_at,payment_intents(amount_cents,status,stripe_checkout_session_id),appointments(starts_at,total_price,appointment_services(services(name)))",
+    )
+    .eq("studio_id", studioId)
+    .order("created_at", { ascending: false })
+    .limit(80);
+  if (error) throw error;
+  return (data ?? []) as StudioRefundRequestListItem[];
 }
 
-function formatRefundAmount(request: RefundRequest) {
-  const cents = request.payment_intents?.amount_cents;
-  const amount = typeof cents === "number" ? cents / 100 : Number(request.appointments?.total_price ?? 0);
-  return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(
-    amount || 0,
+function normalizePolicy(policy: StudioCompliancePolicies): StudioCompliancePolicies {
+  const settings = normalizePolicySettings(policy.studio_policy_settings, policy);
+  return {
+    ...policy,
+    payment_policy: policy.payment_policy === "pre_payment" ? "pre_payment" : "pay_in_studio",
+    deposit_percent: Number(policy.deposit_percent ?? 30),
+    cancellation_policy_text:
+      policy.cancellation_policy_text ||
+      "O sinal garante a reserva. Cancelamentos fora do prazo podem não ser elegíveis para reembolso.",
+    cancellation_min_notice_hours: policy.cancellation_min_notice_hours ?? 24,
+    cancellation_after_deadline_policy: policy.cancellation_after_deadline_policy ?? "non_refundable",
+    refund_requests_enabled: policy.refund_requests_enabled ?? false,
+    studio_policy_settings: settings,
+  };
+}
+
+function getRescheduleNoticeHoursFromSettings(policy: StudioCompliancePolicies) {
+  const raw = Number(policy.studio_policy_settings?.reschedule?.notice_hours);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  return Number(policy.cancellation_min_notice_hours ?? 24);
+}
+
+function buildPolicyRows(policy: StudioCompliancePolicies) {
+  const settings = policy.studio_policy_settings ?? {};
+  const row = (key: PolicyKey, icon: ReactNode, active: boolean) => ({
+    key,
+    title: policyTitles[key],
+    active,
+    updatedAt: formatDate(settings[key]?.updated_at || policy.updated_at),
+    icon,
+  });
+  return [
+    row("deposit", <CircleDollarSign className="h-4 w-4" />, policy.payment_policy === "pre_payment"),
+    row("late", <TimerReset className="h-4 w-4" />, Boolean(settings.late?.active)),
+    row("no_show", <Ban className="h-4 w-4" />, Boolean(settings.no_show?.active)),
+    row("general", <FileText className="h-4 w-4" />, Boolean(settings.general?.active)),
+    row("privacy", <ShieldCheck className="h-4 w-4" />, Boolean(settings.privacy?.active)),
+    row("terms", <FileText className="h-4 w-4" />, Boolean(settings.terms?.active)),
+  ];
+}
+
+function normalizePolicySettings(value: unknown, policy: StudioCompliancePolicies): StudioPolicySettings {
+  const raw = isPolicySettings(value) ? value : {};
+  const now = policy.updated_at ?? null;
+  return {
+    cancellation: {
+      active: raw.cancellation?.active ?? true,
+      text: raw.cancellation?.text ?? policy.cancellation_policy_text,
+      notice_hours: raw.cancellation?.notice_hours ?? Number(policy.cancellation_min_notice_hours ?? 24),
+      updated_at: raw.cancellation?.updated_at ?? now,
+    },
+    reschedule: {
+      active: raw.reschedule?.active ?? true,
+      text: raw.reschedule?.text ?? `Clientes podem remarcar até ${Number(policy.cancellation_min_notice_hours ?? 24)} horas antes da reserva.`,
+      notice_hours: raw.reschedule?.notice_hours ?? Number(policy.cancellation_min_notice_hours ?? 24),
+      updated_at: raw.reschedule?.updated_at ?? now,
+    },
+    deposit: {
+      active: policy.payment_policy === "pre_payment",
+      text: raw.deposit?.text ?? `Sinal de ${Number(policy.deposit_percent ?? 30)}% para confirmar reservas online.`,
+      updated_at: raw.deposit?.updated_at ?? now,
+    },
+    refund: {
+      active: Boolean(policy.refund_requests_enabled),
+      text: raw.refund?.text ?? refundPolicyLabel(policy.cancellation_after_deadline_policy),
+      updated_at: raw.refund?.updated_at ?? now,
+    },
+    late: {
+      active: raw.late?.active ?? false,
+      text: raw.late?.text ?? "Atrasos podem reduzir a duração do serviço para não prejudicar reservas seguintes.",
+      updated_at: raw.late?.updated_at ?? now,
+    },
+    no_show: {
+      active: raw.no_show?.active ?? false,
+      text: raw.no_show?.text ?? "Faltas sem aviso podem limitar futuras reservas online.",
+      updated_at: raw.no_show?.updated_at ?? now,
+    },
+    general: {
+      active: raw.general?.active ?? true,
+      text: raw.general?.text ?? "As regras gerais ajudam a manter reservas claras, pontuais e confirmadas.",
+      updated_at: raw.general?.updated_at ?? now,
+    },
+    privacy: {
+      active: raw.privacy?.active ?? true,
+      text: raw.privacy?.text ?? "Os dados dos clientes são utilizados apenas para marcações, comunicação e gestão do serviço.",
+      updated_at: raw.privacy?.updated_at ?? now,
+    },
+    terms: {
+      active: raw.terms?.active ?? true,
+      text: raw.terms?.text ?? "Ao marcar, o cliente aceita as condições do estúdio apresentadas no fluxo de reserva.",
+      updated_at: raw.terms?.updated_at ?? now,
+    },
+  };
+}
+
+function isPolicySettings(value: unknown): value is StudioPolicySettings {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function updatePolicySetting(
+  draft: StudioCompliancePolicies,
+  key: PolicyKey,
+  patch: Partial<PolicySetting>,
+): StudioCompliancePolicies {
+  const current = draft.studio_policy_settings[key] ?? {};
+  return {
+    ...draft,
+    studio_policy_settings: {
+      ...draft.studio_policy_settings,
+      [key]: {
+        ...current,
+        ...patch,
+        updated_at: new Date().toISOString(),
+      },
+    },
+  };
+}
+
+function refundPolicyLabel(value: RefundPolicy) {
+  if (value === "refund_allowed") return "Reembolso permitido dentro das regras do estúdio.";
+  if (value === "reschedule_only") return "Cancelamentos fora do prazo permitem apenas reagendamento.";
+  return "O sinal não é reembolsável após o prazo definido.";
+}
+
+function buildSummary(refunds: StudioRefundRequestListItem[]) {
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  return refunds.reduce(
+    (summary, refund) => {
+      const decidedAt = refund.resolved_at || refund.reviewed_at ? new Date(refund.resolved_at || refund.reviewed_at || "") : null;
+      if (refund.status === "pending" || refund.status === "in_review") summary.pending += 1;
+      if ((refund.status === "approved" || refund.status === "refunded") && decidedAt && decidedAt >= startOfMonth) {
+        summary.approvedThisMonth += 1;
+      }
+      if (refund.status === "rejected" && decidedAt && decidedAt >= startOfMonth) summary.rejectedThisMonth += 1;
+      if (refund.status === "approved" || refund.status === "refunded") {
+        summary.totalRefundedCents += refundAmountCents(refund);
+      }
+      return summary;
+    },
+    { pending: 0, approvedThisMonth: 0, rejectedThisMonth: 0, totalRefundedCents: 0 },
   );
 }
 
-function formatRefundDate(request: RefundRequest) {
-  const value = request.appointments?.starts_at ?? request.created_at;
-  return new Intl.DateTimeFormat("pt-PT", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
+function filterRefunds(
+  refunds: StudioRefundRequestListItem[],
+  view: RefundView,
+  period: PeriodFilter,
+  query: string,
+) {
+  const normalizedQuery = query.trim().toLowerCase();
+  const cutoff = periodCutoff(period);
+
+  return refunds.filter((refund) => {
+    const statusGroup =
+      refund.status === "approved" || refund.status === "refunded"
+        ? "approved"
+        : refund.status === "rejected"
+          ? "rejected"
+          : "pending";
+    if (statusGroup !== view) return false;
+
+    const createdAt = refund.created_at ? new Date(refund.created_at) : null;
+    if (cutoff && createdAt && createdAt < cutoff) return false;
+
+    if (!normalizedQuery) return true;
+    const haystack = [
+      refund.client_name,
+      refund.client_email,
+      refund.service_name,
+      refund.custom_service_name,
+      refund.reason,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(normalizedQuery);
+  });
 }
 
-function microBadgeTone(tone: PolicyTextParts["refundTone"]) {
-  if (tone === "warning") return "border-amber-500/40 bg-amber-500/12 text-amber-600";
-  if (tone === "muted") return "border-border bg-muted/60 text-foreground/80";
-  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-600";
+function periodCutoff(period: PeriodFilter) {
+  if (period === "all") return null;
+  const date = new Date();
+  if (period === "today") date.setHours(0, 0, 0, 0);
+  if (period === "7d") date.setDate(date.getDate() - 7);
+  if (period === "30d") date.setDate(date.getDate() - 30);
+  return date;
 }
 
-function normalizePolicy(
-  row: Omit<Partial<StudioPolicy>, "cancellation_after_deadline_policy"> & {
-    id: string;
-    cancellation_after_deadline_policy?: string | null;
-  },
-): StudioPolicy {
-  return {
-    id: row.id,
-    cancellation_min_notice_hours: Number(row.cancellation_min_notice_hours ?? 24),
-    cancellation_after_deadline_policy:
-      row.cancellation_after_deadline_policy === "refund_allowed" ||
-      row.cancellation_after_deadline_policy === "reschedule_only"
-        ? row.cancellation_after_deadline_policy
-        : "non_refundable",
-    refund_requests_enabled: row.refund_requests_enabled ?? true,
-    cancellation_policy_text: row.cancellation_policy_text ?? null,
-    legal_policy_version: row.legal_policy_version ?? "2026-05-28",
-  };
+function refundAmountCents(refund: StudioRefundRequestListItem) {
+  return refund.refund_amount_cents || refund.deposit_amount_cents || refund.payment_intents?.amount_cents || 0;
+}
+
+function serviceLabel(refund: StudioRefundRequestListItem) {
+  if (refund.service_name || refund.custom_service_name) return refund.service_name || refund.custom_service_name || "Serviço";
+  const names = refund.appointments?.appointment_services
+    ?.map((line) => line.services?.name)
+    .filter(Boolean);
+  return names?.length ? names.join(", ") : "Serviço";
+}
+
+function refundDate(refund: StudioRefundRequestListItem) {
+  return refund.appointment_start_at || refund.appointments?.starts_at || refund.created_at;
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "Sem data";
+  return new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
+}
+
+function formatBookingDate(value?: string | null) {
+  if (!value) return "Sem data";
+  return new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "short" }).format(new Date(value));
+}
+
+function formatMoney(cents: number) {
+  return new Intl.NumberFormat("pt-PT", { style: "currency", currency: "EUR" }).format(cents / 100);
 }

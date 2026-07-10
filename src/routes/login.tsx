@@ -12,7 +12,13 @@ import { resolveTeamLoginIdentifier } from "@/lib/access.functions";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
-  head: () => ({ meta: [{ title: `Entrar — ${APP_BRAND.name}` }] }),
+  head: () => ({
+    meta: [
+      { title: `Entrar - ${APP_BRAND.name}` },
+      { name: "robots", content: "noindex,nofollow,noarchive" },
+      { name: "theme-color", content: "#f7f3ed" },
+    ],
+  }),
   component: LoginPage,
 });
 
@@ -25,6 +31,7 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [resending, setResending] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,11 +39,17 @@ function LoginPage() {
     async function redirectIfAlreadySignedIn() {
       try {
         const session = await settleSessionFromCurrentUrl("/login");
-        if (cancelled || !session?.user?.id) return;
+        if (cancelled) return;
+        if (!session?.user?.id) {
+          setCheckingSession(false);
+          return;
+        }
+
         const landing = await resolveAuthLanding(session.user.id);
         if (!cancelled) navigate({ to: landing as never, replace: true });
       } catch {
         // Let the user submit the login form if an existing session cannot be resolved.
+        if (!cancelled) setCheckingSession(false);
       }
     }
 
@@ -96,11 +109,15 @@ function LoginPage() {
     <AuthPageLayout
       variant="login"
       title="Entrar na Bellza"
-      description="Acesso seguro ao painel do seu estúdio."
+      description="Aceda ao painel, à página pública e ao aplicativo do seu estúdio."
       footer={
         <p className="text-center text-xs text-muted-foreground">
           Sem conta?{" "}
-          <Link to="/signup" className="font-semibold text-foreground underline-offset-2 hover:underline">
+          <Link
+            to="/signup"
+            search={{ ref: undefined }}
+            className="font-semibold text-foreground underline-offset-2 hover:underline"
+          >
             Criar conta Bellza
           </Link>
         </p>
@@ -108,14 +125,19 @@ function LoginPage() {
     >
       <GoogleAuthButton
         mode="login"
-        className="h-11 rounded-xl bg-card/70 font-semibold shadow-sm backdrop-blur hover:-translate-y-0.5"
+        className="h-10 rounded-xl bg-card/70 font-semibold shadow-sm backdrop-blur hover:-translate-y-0.5"
       />
-      <div className="my-5 flex items-center gap-3 text-[11px] font-semibold uppercase text-muted-foreground">
+      <div className="my-4 flex items-center gap-3 text-[10px] font-semibold uppercase text-muted-foreground">
         <span className="h-px flex-1 bg-border" />
         <span>ou email</span>
         <span className="h-px flex-1 bg-border" />
       </div>
-      <form onSubmit={onSubmit} className="space-y-3.5">
+      {checkingSession && (
+        <div className="mb-2.5 rounded-xl border border-border/70 bg-muted/30 px-3.5 py-2.5 text-xs text-muted-foreground">
+          A verificar sessão...
+        </div>
+      )}
+      <form onSubmit={onSubmit} className="space-y-3">
         <AuthField
           label="Email ou WhatsApp"
           labelClassName="text-[11px] font-semibold uppercase"
@@ -133,7 +155,7 @@ function LoginPage() {
           type="password"
           required
           minLength={6}
-          placeholder="••••••••"
+          placeholder="********"
           className="font-medium placeholder:font-normal"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -143,13 +165,13 @@ function LoginPage() {
             Esqueceu-se da palavra-passe?
           </Link>
         </div>
-        <AuthPrimaryButton disabled={loading} className="mt-1 h-11 rounded-xl font-semibold">
+        <AuthPrimaryButton disabled={loading} className="mt-1 h-10 rounded-xl font-semibold">
           {loading ? "A entrar..." : "Entrar"}
         </AuthPrimaryButton>
       </form>
 
       {needsConfirm && (
-        <div className="mt-4 rounded-xl border border-border/80 bg-muted/30 p-4 text-xs text-muted-foreground">
+        <div className="mt-3 rounded-xl border border-border/80 bg-muted/30 p-3 text-xs text-muted-foreground">
           <p>Confirme o email antes de entrar. Verifique a caixa de entrada.</p>
           <button
             type="button"

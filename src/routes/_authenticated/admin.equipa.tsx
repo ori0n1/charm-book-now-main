@@ -44,12 +44,18 @@ import {
 } from "lucide-react";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import {
+  InternationalPhoneInput,
+  isValidInternationalPhone,
+  normalizeInternationalPhone,
+} from "@/components/ui/international-phone-input";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ExpandableList } from "@/components/ui/expandable-list";
 
 const DAY_MS = 86400000;
 
@@ -65,6 +71,7 @@ type Staff = {
   bio: string | null;
   photo_url: string | null;
   rating: number | null;
+  reviews_count?: number | null;
   is_active: boolean;
   commission_percent?: number | null;
 };
@@ -95,6 +102,7 @@ type StaffPerformance = {
   trendDirection: "up" | "down" | "flat";
 };
 type AccessRole = "manager" | "staff" | "desk_staff";
+type StaffAgendaVisibility = "private" | "team_busy" | "team_basic";
 type StaffAccess = {
   staffId: string;
   userId: string;
@@ -155,6 +163,28 @@ const DEFAULT_CATEGORY_LABELS = [
   "Pestanas",
   "Depilação",
   "Massagem",
+];
+
+const STAFF_AGENDA_VISIBILITY_OPTIONS: Array<{
+  value: StaffAgendaVisibility;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "private",
+    title: "Agenda privada",
+    description: "Cada profissional vê apenas a própria agenda.",
+  },
+  {
+    value: "team_busy",
+    title: "Agenda compartilhada",
+    description: "A equipa vê horários ocupados dos outros profissionais, sem dados da cliente.",
+  },
+  {
+    value: "team_basic",
+    title: "Ver detalhes básicos",
+    description: "Mostra serviço, horário, duração e profissional responsável.",
+  },
 ];
 
 const CATEGORY_RULES: { label: string; words: string[] }[] = [
@@ -263,7 +293,7 @@ function TeamMetric({
         )}
       </p>
       <p
-        className={`mt-0.5 truncate text-[12px] font-semibold leading-4 ${
+        className={`mt-0.5 min-w-0 break-words text-[12px] font-semibold leading-4 ${
           money ? "font-mono text-emerald-700 dark:text-emerald-400" : ""
         }`}
       >
@@ -427,7 +457,7 @@ function roundMoney(value: number) {
 }
 
 function TeamPage() {
-  const { studio } = useCurrentStudio();
+  const { studio, refetch } = useCurrentStudio();
   const labels = getSegmentConfig(studio?.business_segment).labels;
   const [staff, setStaff] = useState<Staff[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -457,6 +487,12 @@ function TeamPage() {
   const [expandedStaff, setExpandedStaff] = useState<Record<string, boolean>>({});
   const [deskEmail, setDeskEmail] = useState("");
   const [deskBusy, setDeskBusy] = useState(false);
+  const [agendaVisibility, setAgendaVisibility] = useState<StaffAgendaVisibility>("private");
+  const [savingAgendaVisibility, setSavingAgendaVisibility] = useState(false);
+
+  useEffect(() => {
+    setAgendaVisibility((studio?.staff_agenda_visibility ?? "private") as StaffAgendaVisibility);
+  }, [studio?.staff_agenda_visibility]);
 
   async function load() {
     if (!studio) return;
@@ -474,7 +510,7 @@ function TeamPage() {
       await Promise.all([
         supabase
           .from("staff")
-          .select("id,name,role,whatsapp,bio,photo_url,rating,is_active,commission_percent")
+          .select("id,name,role,whatsapp,bio,photo_url,rating,reviews_count,is_active,commission_percent")
           .eq("studio_id", studio.id)
           .order("sort_order")
           .order("name"),
@@ -563,6 +599,25 @@ function TeamPage() {
     } finally {
       setDeskBusy(false);
     }
+  }
+
+  async function saveAgendaVisibility(nextVisibility: StaffAgendaVisibility) {
+    if (!studio || savingAgendaVisibility || nextVisibility === agendaVisibility) return;
+    const previous = agendaVisibility;
+    setAgendaVisibility(nextVisibility);
+    setSavingAgendaVisibility(true);
+    const { error } = await supabase
+      .from("studios")
+      .update({ staff_agenda_visibility: nextVisibility } as any)
+      .eq("id", studio.id);
+    setSavingAgendaVisibility(false);
+    if (error) {
+      setAgendaVisibility(previous);
+      toast.error(error.message);
+      return;
+    }
+    await refetch();
+    toast.success("Permissão da agenda atualizada.");
   }
 
   function openAccessModal(member: Staff) {
@@ -712,7 +767,7 @@ function TeamPage() {
 
   return (
     <div className="space-y-8">
-      <header className="flex items-end justify-between gap-4">
+      <header className="grid gap-3 rounded-[1.25rem] border border-border/80 bg-card/95 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
         <div>
           <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Equipa</p>
           <h2 className="mt-1 text-2xl font-light tracking-tight">
@@ -722,9 +777,9 @@ function TeamPage() {
         <button
           type="button"
           onClick={() => setCreating(true)}
-          className="flex items-center gap-2 rounded-md bg-foreground px-3 py-2 text-sm font-medium text-background"
+          className="bellza-panel-action bellza-panel-action-primary"
         >
-          <Plus className="h-4 w-4" /> Nova
+          <Plus className="h-4 w-4" /> Nova profissional
         </button>
       </header>
 
@@ -739,6 +794,45 @@ function TeamPage() {
               Abra o card de uma profissional para convidar, reenviar convite, alterar permissao ou
               remover acesso ao painel.
             </p>
+          </div>
+        </div>
+      </section>
+
+      <section className="overflow-hidden rounded-2xl border border-border bg-card/80 p-4 shadow-sm">
+        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-center">
+          <div className="min-w-0">
+            <p className="break-words text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+              Agenda da equipa
+            </p>
+            <h3 className="mt-1 break-words text-base font-semibold">Visibilidade entre profissionais</h3>
+            <p className="mt-1 max-w-xl break-words text-sm leading-relaxed text-muted-foreground">
+              Defina o que um profissional pode ver quando abre a agenda do estúdio.
+            </p>
+          </div>
+          <div className="grid min-w-0 auto-rows-fr grid-cols-1 gap-2 sm:grid-cols-3">
+            {STAFF_AGENDA_VISIBILITY_OPTIONS.map((option) => {
+              const active = agendaVisibility === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={savingAgendaVisibility}
+                  onClick={() => void saveAgendaVisibility(option.value)}
+                  className={`flex min-h-[6.5rem] w-full min-w-0 flex-col justify-center rounded-2xl border px-3.5 py-3.5 text-left transition ${
+                    active
+                      ? "border-foreground bg-foreground text-background shadow-sm"
+                      : "border-border bg-background/60 text-foreground hover:border-foreground/20 hover:bg-background"
+                  } disabled:cursor-wait disabled:opacity-70`}
+                >
+                  <span className="block min-w-0 max-w-full whitespace-normal break-words text-xs font-semibold leading-snug [overflow-wrap:anywhere]">
+                    {option.title}
+                  </span>
+                  <span className={`mt-1.5 block min-w-0 max-w-full whitespace-normal break-words text-[11px] leading-snug [overflow-wrap:anywhere] ${active ? "text-background/75" : "text-muted-foreground"}`}>
+                    {option.description}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </section>
@@ -780,8 +874,15 @@ function TeamPage() {
           {labels.emptyProfessionals}
         </p>
       ) : (
-        <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {staff.map((m) => {
+        <ExpandableList
+          items={staff}
+          initialCount={5}
+          className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3"
+          itemClassName="min-w-0"
+          buttonWrapClassName="sm:col-span-2 lg:col-span-3"
+          getKey={(member) => member.id}
+          moreLabel={(hidden) => `Mostrar mais ${hidden} profissional${hidden !== 1 ? "is" : ""}`}
+          renderItem={(m) => {
             const memberAccess = access[m.id];
             const metrics = performance[m.id] ?? emptyPerformance();
             const pendingStudioAmount = roundMoney(Math.max(0, metrics.professional - metrics.received));
@@ -812,18 +913,19 @@ function TeamPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
-                      <h3 className="truncate text-sm font-semibold">{m.name}</h3>
+                      <h3 className="min-w-0 break-words text-sm font-semibold leading-tight">{m.name}</h3>
                       <span className={`h-2 w-2 shrink-0 rounded-full ${accessState.dot}`} />
                     </div>
                     <div className="mt-1 flex min-w-0 items-center gap-2">
                       <span
-                        className={`inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${accessState.badge}`}
+                        className={`inline-flex max-w-full min-w-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${accessState.badge}`}
                       >
-                        <span className="truncate">{accessState.label}</span>
+                        <span className="min-w-0 whitespace-normal break-words leading-tight">{accessState.label}</span>
                       </span>
                       {m.rating !== null && (
                         <span className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
                           <Star className="h-3 w-3 fill-foreground" /> {Number(m.rating).toFixed(1)}
+                          {m.reviews_count ? <span>· {m.reviews_count}</span> : null}
                         </span>
                       )}
                     </div>
@@ -937,7 +1039,7 @@ function TeamPage() {
                         ? inviteStatusLabel(memberAccess.inviteStatus ?? memberAccess.status)
                         : "Sem acesso"}
                     </span>
-                    <p className="mt-2 truncate text-xs text-muted-foreground">
+                    <p className="mt-2 min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
                       {memberAccess ? memberAccess.email : "Sem login autorizado"}
                     </p>
                     {memberAccess && (
@@ -994,9 +1096,9 @@ function TeamPage() {
                 </div>
               </div>
             </article>
-          );
-          })}
-        </div>
+            );
+          }}
+        />
       )}
 
       {(editing || creating) && studio && (
@@ -1130,8 +1232,8 @@ function TeamPage() {
                   <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
                     Convite pronto
                   </p>
-                  <h3 className="truncate text-xl font-light">{shareInvite.staffName}</h3>
-                  <p className="text-sm text-muted-foreground">
+                  <h3 className="min-w-0 break-words text-xl font-light leading-tight [overflow-wrap:anywhere]">{shareInvite.staffName}</h3>
+                  <p className="min-w-0 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
                     {inviteStatusLabel(shareInvite.status)} · {accessRoleLabel(shareInvite.role)}
                   </p>
                 </div>
@@ -1238,8 +1340,10 @@ function StaffModal({
   }
 
   async function save() {
+    const normalizedWhatsapp = normalizeInternationalPhone(whatsapp);
     if (!name.trim()) return toast.error("Nome obrigatório");
     if (!whatsapp.trim()) return toast.error("WhatsApp obrigatório");
+    if (!isValidInternationalPhone(whatsapp)) return toast.error("Confirme o WhatsApp da profissional.");
     if (photoUploading) return toast.error("Aguarde o upload da foto terminar.");
     setSaving(true);
     if (!staff) {
@@ -1247,7 +1351,7 @@ function StaffModal({
         .from("staff")
         .select("id")
         .eq("studio_id", studioId)
-        .eq("whatsapp", whatsapp.trim())
+        .eq("whatsapp", normalizedWhatsapp)
         .maybeSingle();
       if (duplicate?.id) {
         setSaving(false);
@@ -1258,7 +1362,7 @@ function StaffModal({
       studio_id: studioId,
       name: name.trim(),
       role: role.trim() || null,
-      whatsapp: whatsapp.trim(),
+      whatsapp: normalizedWhatsapp,
       bio: bio.trim() || null,
       photo_url: photo || null,
       is_active: active,
@@ -1283,119 +1387,131 @@ function StaffModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center md:p-6">
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-background p-5 md:rounded-2xl">
-        <div className="mb-5 flex items-center justify-between">
+    /* Outer: safe-area top so modal never starts behind the iOS notch */
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 px-0 pb-0 pt-[max(0px,env(safe-area-inset-top))] md:items-center md:p-6">
+      {/* Inner: flex-col so header + footer are always visible, only middle scrolls */}
+      <div className="flex max-h-[calc(92dvh-env(safe-area-inset-top,0px))] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl bg-background md:max-h-[min(90dvh,48rem)] md:rounded-2xl">
+
+        {/* ── Sticky header ── always visible, never scrolls away */}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h3 className="text-lg font-light">
             {staff ? labels.editProfessional : labels.newProfessional}
           </h3>
-          <button type="button" onClick={onClose} aria-label="Fechar">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              disabled={photoUploading}
-              className="relative h-16 w-16 overflow-hidden rounded-full border border-dashed border-border bg-muted/30 disabled:opacity-80"
-            >
-              {photo ? (
-                <img src={photo} className="h-full w-full object-cover" alt="" />
-              ) : (
-                <Upload className="m-auto h-4 w-4 text-muted-foreground" />
-              )}
-              {photoUploading && (
-                <span className="absolute inset-0 grid place-items-center bg-background/70 backdrop-blur-sm">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                </span>
-              )}
-            </button>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/*"
-              hidden
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void upload(file);
-                e.currentTarget.value = "";
-              }}
-            />
-            <p className="text-xs text-muted-foreground">
-              {photoUploading ? "A carregar foto..." : "Toque para alterar a foto"}
-            </p>
-          </div>
-          <label className="block text-xs">
-            <span className="text-muted-foreground">Nome</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ex.: Ana Silva"
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block text-xs">
-            <span className="text-muted-foreground">Função / cargo</span>
-            <input
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              placeholder={labels.professionalRolePlaceholder}
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block text-xs">
-            <span className="text-muted-foreground">WhatsApp</span>
-            <input
-              value={whatsapp}
-              onChange={(e) => setWhatsapp(e.target.value)}
-              placeholder="+351 912 345 678"
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block text-xs">
-            <span className="text-muted-foreground">Descrição</span>
-            <textarea
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              placeholder={labels.professionalBioPlaceholder}
-              rows={2}
-              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            />
-          </label>
-
-          <section className="space-y-2">
-            <div>
-              <p className="text-sm font-medium text-foreground">Serviços que realiza</p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Selecione serviços já registados. As categorias servem apenas para organizar a lista
-                e nunca substituem o nome do serviço.
-              </p>
-            </div>
-
-            <ServicesPicker
-              studioId={studioId}
-              services={services}
-              categories={categories}
-              suggestions={suggestions}
-              businessSegment={businessSegment}
-              value={serviceIds}
-              onChange={setServiceIds}
-              onReloadCatalog={onReloadCatalog}
-            />
-          </section>
-
-          <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />{" "}
-            Ativa
-          </label>
-        </div>
-        <div className="mt-5 flex gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 rounded-md border border-border py-2.5 text-sm"
+            aria-label="Fechar"
+            className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:text-foreground"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* ── Scrollable content ── */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={photoUploading}
+                className="relative h-16 w-16 overflow-hidden rounded-full border border-dashed border-border bg-muted/30 disabled:opacity-80"
+              >
+                {photo ? (
+                  <img src={photo} className="h-full w-full object-cover" alt="" />
+                ) : (
+                  <Upload className="m-auto h-4 w-4 text-muted-foreground" />
+                )}
+                {photoUploading && (
+                  <span className="absolute inset-0 grid place-items-center bg-background/70 backdrop-blur-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  </span>
+                )}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/*"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void upload(file);
+                  e.currentTarget.value = "";
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                {photoUploading ? "A carregar foto..." : "Toque para alterar a foto"}
+              </p>
+            </div>
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Nome</span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex.: Ana Silva"
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Função / cargo</span>
+              <input
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                placeholder={labels.professionalRolePlaceholder}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <InternationalPhoneInput
+              label="WhatsApp"
+              value={whatsapp}
+              onChange={setWhatsapp}
+              inputClassName="rounded-md"
+            />
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Descrição</span>
+              <textarea
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                placeholder={labels.professionalBioPlaceholder}
+                rows={2}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+
+            <section className="space-y-4 rounded-2xl border border-border bg-card/35 px-4 py-4 shadow-sm sm:px-5">
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-foreground">Serviços que realiza</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Selecione serviços já registados. As categorias servem apenas para organizar a lista
+                  e nunca substituem o nome do serviço.
+                </p>
+              </div>
+
+              <ServicesPicker
+                studioId={studioId}
+                services={services}
+                categories={categories}
+                suggestions={suggestions}
+                businessSegment={businessSegment}
+                value={serviceIds}
+                onChange={setServiceIds}
+                onReloadCatalog={onReloadCatalog}
+              />
+            </section>
+
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />{" "}
+              Ativa
+            </label>
+          </div>
+        </div>
+
+        {/* ── Sticky footer ── always visible at the bottom */}
+        <div className="flex shrink-0 gap-2 border-t border-border px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 rounded-xl border border-border py-2.5 text-sm"
           >
             Cancelar
           </button>
@@ -1403,7 +1519,7 @@ function StaffModal({
             type="button"
             onClick={save}
             disabled={saving || photoUploading}
-            className="flex-1 rounded-md bg-foreground py-2.5 text-sm font-medium text-background disabled:opacity-50"
+            className="flex-1 rounded-xl bg-foreground py-2.5 text-sm font-medium text-background disabled:opacity-50"
           >
             {saving ? "A guardar..." : "Guardar"}
           </button>
@@ -1531,7 +1647,8 @@ function ServicesPicker({
 
     categories.forEach((c) => {
       const items = services.filter((s) => s.category_id === c.id).filter(filterFn);
-      if (!q || items.length) buckets.push({ cat: c, items });
+      // Always hide categories with 0 services — prevents the giant list of empty categories
+      if (items.length > 0) buckets.push({ cat: c, items });
     });
 
     const uncategorized = services.filter((s) => !s.category_id).filter(filterFn);
@@ -1661,7 +1778,7 @@ function ServicesPicker({
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-border bg-card/45 p-3 shadow-sm sm:p-4">
+    <div className="space-y-4 rounded-xl border border-border bg-card/45 p-4 shadow-sm sm:p-4">
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1678,10 +1795,10 @@ function ServicesPicker({
                 key={s.id}
                 type="button"
                 onClick={() => toggle(s.id)}
-                className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-[11px] font-medium text-background shadow-sm transition hover:opacity-90"
+                className="inline-flex min-h-8 min-w-0 max-w-full items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-[11px] font-medium text-background shadow-sm transition hover:opacity-90"
                 aria-label={`Remover ${s.name}`}
               >
-                <span className="max-w-[180px] truncate">{s.name}</span>
+                <span className="min-w-0 max-w-full whitespace-normal break-words leading-tight [overflow-wrap:anywhere]">{s.name}</span>
                 <X className="h-3.5 w-3.5" />
               </button>
             ))}
@@ -1716,18 +1833,18 @@ function ServicesPicker({
                   type="button"
                   onClick={() => selectPreset(preset)}
                   disabled={!!busyPreset}
-                  className={`rounded-md border px-3 py-2 text-left text-xs transition disabled:opacity-60 ${
+                  className={`min-w-0 rounded-md border px-3 py-2 text-left text-xs transition disabled:opacity-60 ${
                     isSelected
                       ? "border-foreground bg-foreground text-background"
                       : "border-border bg-background hover:bg-muted"
                   }`}
                 >
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{preset.name}</span>
+                  <span className="flex min-w-0 items-center justify-between gap-2">
+                    <span className="min-w-0 break-words font-medium leading-snug">{preset.name}</span>
                     {isSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
                   </span>
                   <span
-                    className={`mt-0.5 block ${
+                    className={`mt-0.5 block min-w-0 break-words leading-snug ${
                       isSelected ? "text-background/70" : "text-muted-foreground"
                     }`}
                   >
@@ -1771,9 +1888,9 @@ function ServicesPicker({
                       }`}
                     >
                       <span className="min-w-0">
-                        <span className="block truncate text-sm font-semibold">{service.name}</span>
+                        <span className="block min-w-0 break-words text-sm font-semibold leading-snug">{service.name}</span>
                         <span
-                          className={`mt-0.5 block truncate text-xs ${
+                          className={`mt-0.5 block min-w-0 break-words text-xs leading-snug ${
                             on ? "text-background/70" : "text-muted-foreground"
                           }`}
                         >
@@ -1874,7 +1991,7 @@ function ServicesPicker({
                             onClick={() => toggle(s.id)}
                             className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-sm transition ${on ? "bg-muted" : "hover:bg-muted/60"}`}
                           >
-                            <span className="min-w-0 truncate">{s.name}</span>
+                            <span className="min-w-0 break-words text-left leading-snug [overflow-wrap:anywhere]">{s.name}</span>
                             <span
                               className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? "border-foreground bg-foreground text-background" : "border-border"}`}
                             >

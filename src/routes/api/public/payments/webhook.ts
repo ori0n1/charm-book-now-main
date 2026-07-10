@@ -1,6 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type Stripe from "stripe";
-import { createStripeClient, type StripeEnv, verifyWebhook, verifyWebhookBody } from "@/lib/stripe.server";
+import {
+  assertStripeProductionConfig,
+  createStripeClient,
+  type StripeEnv,
+  verifyWebhook,
+  verifyWebhookBody,
+} from "@/lib/stripe.server";
 import {
   getPlanByPriceId,
   getPlanIdFromSubscription,
@@ -8,7 +14,11 @@ import {
 } from "@/lib/subscription-plans.server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { markTrialUsed } from "@/lib/subscription-helpers";
+import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
+import { processReferralsOnPayment, rejectReferralOnCancellation } from "@/lib/referrals.functions";
+import { syncConnectAccountFromWebhook } from "@/lib/stripe-connect.functions";
+import { handleInPersonMbWayPaymentIntent } from "@/lib/in-person-mbway.functions";
 
 type StripeMetadata = Record<string, string | undefined>;
 type StripePayload = Record<string, unknown> & {
@@ -16,6 +26,7 @@ type StripePayload = Record<string, unknown> & {
   amount?: number | null;
   amount_received?: number | null;
   amount_total?: number | null;
+  latest_charge?: string | StripePayload | null;
   currency?: string | null;
   customer?: string | null;
   payment_intent?: string | StripePayload | null;
@@ -30,6 +41,14 @@ type StripePayload = Record<string, unknown> & {
   cancel_at_period_end?: boolean;
   metadata?: StripeMetadata;
   lines?: { data?: Array<{ price?: { id?: string } }> };
+};
+
+type StripeWebhookEvent = {
+  id?: string;
+  type: string;
+  livemode?: boolean;
+  account?: string;
+  data: { object: StripePayload };
 };
 
 type SubscriptionWithPeriodEnd = Stripe.Subscription & {
@@ -58,9 +77,133 @@ function hasPeriodAccess(status: string, currentPeriodEnd: string | null) {
   return false;
 }
 
+function currencyMatches(left?: string | null, right?: string | null) {
+  return (left || "eur").toLowerCase() === (right || "eur").toLowerCase();
+}
+
+async function loadReservedBookingPayment(
+  sb: ReturnType<typeof getAdminClient>,
+  input: {
+    stripePaymentIntentId: string;
+    bookingRequestId?: string | null;
+    appointmentId?: string | null;
+  },
+) {
+  const select =
+    "id,studio_id,appointment_id,booking_request_id,amount_cents,currency,status,stripe_payment_intent_id,stripe_checkout_session_id,stripe_connect_account_id,booking_payment_requests:booking_request_id(id,studio_id,status,total_price),appointments:appointment_id(id,studio_id,status,total_price)";
+
+  const byStripe = await (sb as any)
+    .from("payment_intents")
+    .select(select)
+    .eq("stripe_payment_intent_id", input.stripePaymentIntentId)
+    .maybeSingle();
+  if (byStripe.error) throw byStripe.error;
+  if (byStripe.data?.id) return byStripe.data;
+
+  if (input.bookingRequestId) {
+    const byBooking = await (sb as any)
+      .from("payment_intents")
+      .select(select)
+      .eq("booking_request_id", input.bookingRequestId)
+      .is("stripe_payment_intent_id", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (byBooking.error) throw byBooking.error;
+    if (byBooking.data?.id) return byBooking.data;
+  }
+
+  if (input.appointmentId) {
+    const byAppointment = await (sb as any)
+      .from("payment_intents")
+      .select(select)
+      .eq("appointment_id", input.appointmentId)
+      .is("stripe_payment_intent_id", null)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (byAppointment.error) throw byAppointment.error;
+    if (byAppointment.data?.id) return byAppointment.data;
+  }
+
+  return null;
+}
+
+function assertBookingPaymentMatchesStripe(row: any, pi: StripePayload) {
+  const metadata = pi.metadata ?? {};
+  const amountReceived = Number(pi.amount_received ?? pi.amount ?? 0);
+  const expectedAmount = Number(row.amount_cents || 0);
+  if (!row?.id) throw new Error("payment_reservation_missing");
+  if (expectedAmount <= 0 || amountReceived < expectedAmount) {
+    throw new Error("payment_amount_mismatch");
+  }
+  if (!currencyMatches(row.currency as string | null, pi.currency)) {
+    throw new Error("payment_currency_mismatch");
+  }
+  if (metadata.studio_id && metadata.studio_id !== row.studio_id) {
+    throw new Error("payment_studio_mismatch");
+  }
+  if (metadata.booking_request_id && row.booking_request_id && metadata.booking_request_id !== row.booking_request_id) {
+    throw new Error("payment_booking_mismatch");
+  }
+  if (metadata.appointment_id && row.appointment_id && metadata.appointment_id !== row.appointment_id) {
+    throw new Error("payment_appointment_mismatch");
+  }
+}
+
+function extractLatestChargeId(pi: StripePayload) {
+  const latest = pi.latest_charge;
+  if (typeof latest === "string") return latest;
+  if (latest && typeof latest === "object" && typeof latest.id === "string") return latest.id;
+  return null;
+}
+
+async function loadStripeFinancialPatch(
+  env: StripeEnv,
+  pi: StripePayload,
+  stripeAccount?: string | null,
+) {
+  const chargeId = extractLatestChargeId(pi);
+  if (!chargeId) {
+    return { financial_details_status: "pending" };
+  }
+
+  const stripe = createStripeClient(env);
+  const charge = await stripe.charges.retrieve(
+    chargeId,
+    { expand: ["balance_transaction"] },
+    stripeAccount ? { stripeAccount } : undefined,
+  );
+  const balanceTransaction =
+    typeof charge.balance_transaction === "object" && charge.balance_transaction
+      ? charge.balance_transaction
+      : null;
+
+  if (!balanceTransaction) {
+    return {
+      stripe_charge_id: charge.id,
+      financial_details_status: "pending",
+    };
+  }
+
+  return {
+    stripe_charge_id: charge.id,
+    stripe_balance_transaction_id: balanceTransaction.id,
+    gross_amount_cents: Number(balanceTransaction.amount || charge.amount || pi.amount_received || pi.amount || 0),
+    stripe_fee_cents: Number(balanceTransaction.fee || 0),
+    net_amount_cents: Number(balanceTransaction.net || 0),
+    available_on: balanceTransaction.available_on
+      ? new Date(balanceTransaction.available_on * 1000).toISOString()
+      : null,
+    financial_details_status: "confirmed",
+  };
+}
+
 async function handlePaymentIntent(
   pi: StripePayload,
   kind: "succeeded" | "failed" | "processing" | "canceled",
+  stripeAccount?: string | null,
+  env: StripeEnv = "live",
 ) {
   const sb = getAdminClient();
   const appointmentId = pi.metadata?.appointment_id;
@@ -81,32 +224,33 @@ async function handlePaymentIntent(
 
   if (!pi.id) return;
 
-  const { data: previousPayment } = await sb
-    .from("payment_intents")
-    .select("status")
-    .eq("stripe_payment_intent_id", pi.id)
-    .maybeSingle();
-
-  if (!previousPayment && bookingRequestId && pi.metadata?.studio_id) {
-    await sb.from("payment_intents").insert({
-      studio_id: pi.metadata.studio_id,
-      booking_request_id: bookingRequestId,
-      appointment_id: appointmentId ?? null,
-      stripe_payment_intent_id: pi.id,
-      amount_cents: Number(pi.amount ?? 0),
-      currency: typeof pi.currency === "string" ? pi.currency : "eur",
-      method:
-        pi.metadata?.method === "mb_way" || pi.metadata?.method === "card"
-          ? pi.metadata.method
-          : "card",
-      status: piStatus,
-      updated_at: new Date().toISOString(),
-    });
+  const reservedPayment = await loadReservedBookingPayment(sb, {
+    stripePaymentIntentId: pi.id,
+    bookingRequestId,
+    appointmentId,
+  });
+  if (!reservedPayment?.id) {
+    throw new Error("payment_reservation_missing");
   }
+  assertBookingPaymentMatchesStripe(reservedPayment, pi);
+
+  const financialPatch =
+    kind === "succeeded"
+      ? await loadStripeFinancialPatch(env, pi, stripeAccount).catch((error) => {
+          console.error("[payments-webhook] financial_details_load_failed", {
+            stripe_payment_intent_id: pi.id,
+            stripe_account: stripeAccount ?? null,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          return { financial_details_status: "pending" };
+        })
+      : {};
 
   const paymentPatch = {
     stripe_payment_intent_id: pi.id,
+    stripe_connect_account_id: stripeAccount ?? reservedPayment.stripe_connect_account_id ?? null,
     status: piStatus,
+    ...financialPatch,
     updated_at: new Date().toISOString(),
   };
 
@@ -146,12 +290,21 @@ async function handlePaymentIntent(
           .eq("stripe_payment_intent_id", pi.id);
         throw new Error(error.message);
       }
-      if (previousPayment?.status !== "succeeded") {
+      if (reservedPayment.status !== "succeeded") {
         await sendAppointmentConfirmationMessage(sb, { stripePaymentIntentId: pi.id }).catch(
-          () => {
-            // Silently ignore WhatsApp failures
+          (error) => {
+            console.error("[payments-webhook] whatsapp_confirmation_failed", {
+              stripe_payment_intent_id: pi.id,
+              booking_request_id: bookingRequestId,
+              error,
+            });
           },
         );
+        await dispatchStudioPushForPayment(sb, {
+          studioId: String(reservedPayment.studio_id),
+          bookingRequestId,
+          appointmentId: null,
+        });
       }
       return;
     }
@@ -163,12 +316,21 @@ async function handlePaymentIntent(
       })
       .eq("id", appointmentId)
       .eq("status", "pending_payment");
-    if (previousPayment?.status !== "succeeded") {
+    if (reservedPayment.status !== "succeeded") {
       await sendAppointmentConfirmationMessage(sb, { stripePaymentIntentId: pi.id }).catch(
-        () => {
-          // Silently ignore WhatsApp failures
+        (error) => {
+          console.error("[payments-webhook] whatsapp_confirmation_failed", {
+            stripe_payment_intent_id: pi.id,
+            appointment_id: appointmentId,
+            error,
+          });
         },
       );
+      await dispatchStudioPushForPayment(sb, {
+        studioId: String(reservedPayment.studio_id),
+        bookingRequestId: null,
+        appointmentId: appointmentId ?? null,
+      });
     }
   } else if (kind === "processing") {
     if (bookingRequestId) {
@@ -207,9 +369,40 @@ async function handlePaymentIntent(
   }
 }
 
-async function handleCheckoutSession(session: StripePayload, env: StripeEnv) {
+async function dispatchStudioPushForPayment(
+  sb: ReturnType<typeof getAdminClient>,
+  input: { studioId: string; bookingRequestId?: string | null; appointmentId?: string | null },
+) {
+  let appointmentId = input.appointmentId ?? null;
+  if (!appointmentId && input.bookingRequestId) {
+    const { data } = await (sb as any)
+      .from("booking_payment_requests")
+      .select("appointment_id")
+      .eq("id", input.bookingRequestId)
+      .eq("studio_id", input.studioId)
+      .maybeSingle();
+    appointmentId = data?.appointment_id ?? null;
+  }
+  console.info("[payments-webhook] studio_push_dispatch_after_payment", {
+    studio_id: input.studioId,
+    booking_request_id: input.bookingRequestId ?? null,
+    appointment_id: appointmentId,
+  });
+  await dispatchPendingStudioPushNotifications({
+    studioId: input.studioId,
+    appointmentId: appointmentId ?? undefined,
+  }).catch((error) => {
+    console.error("[payments-webhook] studio_push_dispatch_failed", {
+      studio_id: input.studioId,
+      appointment_id: appointmentId,
+      error,
+    });
+  });
+}
+
+async function handleCheckoutSession(session: StripePayload, env: StripeEnv, stripeAccount?: string | null) {
   if (isBookingCheckoutSession(session)) {
-    await handleBookingCheckoutSession(session, env);
+    await handleBookingCheckoutSession(session, env, stripeAccount);
     return;
   }
 
@@ -240,7 +433,7 @@ function isBookingCheckoutSession(session: StripePayload) {
   );
 }
 
-async function handleBookingCheckoutSession(session: StripePayload, env: StripeEnv) {
+async function handleBookingCheckoutSession(session: StripePayload, env: StripeEnv, stripeAccount?: string | null) {
   const metadata = session.metadata ?? {};
   const paymentIntentId =
     typeof session.payment_intent === "string"
@@ -252,7 +445,11 @@ async function handleBookingCheckoutSession(session: StripePayload, env: StripeE
   if (!paymentIntentId) return;
 
   const stripe = createStripeClient(env);
-  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+  const paymentIntent = await stripe.paymentIntents.retrieve(
+    paymentIntentId,
+    undefined,
+    stripeAccount ? { stripeAccount } : undefined,
+  );
   const mergedMetadata = {
     ...metadata,
     ...(paymentIntent.metadata ?? {}),
@@ -260,8 +457,7 @@ async function handleBookingCheckoutSession(session: StripePayload, env: StripeE
 
   const paid =
     session.payment_status === "paid" ||
-    paymentIntent.status === "succeeded" ||
-    session.status === "complete";
+    paymentIntent.status === "succeeded";
 
   await handlePaymentIntent(
     {
@@ -269,10 +465,16 @@ async function handleBookingCheckoutSession(session: StripePayload, env: StripeE
       amount: paymentIntent.amount_received || paymentIntent.amount || session.amount_total || 0,
       amount_received: paymentIntent.amount_received,
       currency: paymentIntent.currency || session.currency || "eur",
+      latest_charge:
+        typeof paymentIntent.latest_charge === "string" || paymentIntent.latest_charge === null
+          ? paymentIntent.latest_charge
+          : undefined,
       metadata: mergedMetadata,
       status: paymentIntent.status,
     },
     paid ? "succeeded" : paymentIntent.status === "processing" ? "processing" : "failed",
+    stripeAccount,
+    env,
   );
 }
 
@@ -378,6 +580,25 @@ async function syncSubscription(
 
   const { error: studioError } = await sb.from("studios").update(patch).eq("id", studioId);
   if (studioError) throw studioError;
+
+  // Referral processing: check if 30-day hold has passed for pending referrals
+  if (status === "active" && studioId) {
+    try {
+      await processReferralsOnPayment(studioId);
+    } catch (err) {
+      // Non-critical: log but don't fail the webhook
+      console.error("[webhook] referral processing failed", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Referral rejection: cancel within hold period
+  if (status === "canceled" && studioId) {
+    try {
+      await rejectReferralOnCancellation(studioId);
+    } catch (err) {
+      console.error("[webhook] referral rejection failed", err instanceof Error ? err.message : err);
+    }
+  }
 }
 
 async function handleSubscription(subscription: StripePayload, env: StripeEnv) {
@@ -436,7 +657,7 @@ async function syncWithdrawalRequest(
     patch.processed_at = now;
   }
   if (status === "failed") {
-    patch.failure_reason = obj.failure_message || obj.failure_code || "Não foi possível concluir o levantamento.";
+    patch.failure_reason = obj.failure_message || obj.failure_code || "Não foi possível concluir o registo financeiro.";
   }
   if (proofUrl) patch.proof_url = proofUrl;
 
@@ -482,31 +703,69 @@ async function releaseBillingEventClaim(eventId?: string) {
 }
 
 async function processWebhookEvent(
-  event: { id?: string; type: string; livemode?: boolean; data: { object: StripePayload } },
+  event: StripeWebhookEvent,
   env: StripeEnv,
 ) {
+  console.info("[stripe-webhook] event_received", {
+    eventId: event.id ?? null,
+    type: event.type,
+    livemode: event.livemode ?? null,
+    connectAccount: event.account ?? null,
+  });
   if (typeof event.livemode === "boolean" && event.livemode !== (env === "live")) {
     throw new Error("webhook_environment_mismatch");
   }
   const obj = event.data.object;
+  const sb = getAdminClient();
   const claimed = await claimBillingEvent(event as { id?: string; type: string; data: { object: StripePayload } });
-  if (!claimed) return;
+  if (!claimed) {
+    console.info("[stripe-webhook] event_duplicate_ignored", {
+      eventId: event.id ?? null,
+      type: event.type,
+    });
+    return;
+  }
   try {
     switch (event.type) {
       case "payment_intent.succeeded":
-        await handlePaymentIntent(obj, "succeeded");
+        {
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "succeeded");
+          if (inPersonMbWay.handled) {
+            if (inPersonMbWay.previousStatus !== "succeeded" && inPersonMbWay.studioId) {
+              await dispatchStudioPushForPayment(sb, {
+                studioId: inPersonMbWay.studioId,
+                bookingRequestId: null,
+                appointmentId: inPersonMbWay.appointmentId ?? null,
+              });
+            }
+            break;
+          }
+        }
+        await handlePaymentIntent(obj, "succeeded", event.account ?? null, env);
         break;
       case "payment_intent.processing":
-        await handlePaymentIntent(obj, "processing");
+        {
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "processing");
+          if (inPersonMbWay.handled) break;
+        }
+        await handlePaymentIntent(obj, "processing", event.account ?? null, env);
         break;
       case "payment_intent.payment_failed":
-        await handlePaymentIntent(obj, "failed");
+        {
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "failed");
+          if (inPersonMbWay.handled) break;
+        }
+        await handlePaymentIntent(obj, "failed", event.account ?? null, env);
         break;
       case "payment_intent.canceled":
-        await handlePaymentIntent(obj, "canceled");
+        {
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "canceled");
+          if (inPersonMbWay.handled) break;
+        }
+        await handlePaymentIntent(obj, "canceled", event.account ?? null, env);
         break;
       case "checkout.session.completed":
-        await handleCheckoutSession(obj, env);
+        await handleCheckoutSession(obj, env, event.account ?? null);
         break;
       case "invoice.paid":
       case "invoice.payment_succeeded":
@@ -520,22 +779,35 @@ async function processWebhookEvent(
         break;
       case "transfer.created":
       case "payout.created":
+        if (event.account) await syncConnectAccountFromWebhook(event.account);
         await syncWithdrawalRequest(obj, "processing");
         break;
       case "transfer.paid":
       case "payout.paid":
+        if (event.account) await syncConnectAccountFromWebhook(event.account);
         await syncWithdrawalRequest(obj, "completed");
         break;
       case "transfer.failed":
       case "payout.failed":
+        if (event.account) await syncConnectAccountFromWebhook(event.account);
         await syncWithdrawalRequest(obj, "failed");
         break;
       case "payout.canceled":
+        if (event.account) await syncConnectAccountFromWebhook(event.account);
         await syncWithdrawalRequest(obj, "canceled");
+        break;
+      case "balance.available":
+      case "account.updated":
+        if (event.account) await syncConnectAccountFromWebhook(event.account);
+        else if (typeof obj.id === "string" && obj.id.startsWith("acct_")) await syncConnectAccountFromWebhook(obj.id);
         break;
       default:
         break;
     }
+    console.info("[stripe-webhook] event_processed", {
+      eventId: event.id ?? null,
+      type: event.type,
+    });
   } catch (error) {
     await releaseBillingEventClaim(event.id);
     throw error;
@@ -547,6 +819,7 @@ async function handleWebhook(req: Request, env: StripeEnv) {
     id?: string;
     type: string;
     livemode?: boolean;
+    account?: string;
     data: { object: StripePayload };
   };
   await processWebhookEvent(event, env);
@@ -555,25 +828,14 @@ async function handleWebhook(req: Request, env: StripeEnv) {
 async function handleWebhookWithoutEnv(req: Request) {
   const signature = req.headers.get("stripe-signature");
   const body = await req.text();
-  const attempts: StripeEnv[] = ["live", "sandbox"];
-  let lastError: unknown;
-
-  for (const env of attempts) {
-    try {
-      const event = (await verifyWebhookBody(body, signature, env)) as {
-        id?: string;
-        type: string;
-        livemode?: boolean;
-        data: { object: StripePayload };
-      };
-      await processWebhookEvent(event, env);
-      return;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("webhook_verification_failed");
+  const event = (await verifyWebhookBody(body, signature, "live")) as {
+    id?: string;
+    type: string;
+    livemode?: boolean;
+    account?: string;
+    data: { object: StripePayload };
+  };
+  await processWebhookEvent(event, "live");
 }
 
 export const Route = createFileRoute("/api/public/payments/webhook")({
@@ -582,8 +844,12 @@ export const Route = createFileRoute("/api/public/payments/webhook")({
       POST: async ({ request }) => {
         const rawEnv = new URL(request.url).searchParams.get("env");
         try {
-          if (rawEnv === "sandbox" || rawEnv === "live") {
-            await handleWebhook(request, rawEnv);
+          assertStripeProductionConfig("live");
+          if (rawEnv && rawEnv !== "live") {
+            throw new Error("stripe_live_only_webhook");
+          }
+          if (rawEnv === "live") {
+            await handleWebhook(request, "live");
           } else {
             await handleWebhookWithoutEnv(request);
           }

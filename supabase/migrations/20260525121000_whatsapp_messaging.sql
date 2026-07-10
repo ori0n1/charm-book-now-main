@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_message_logs (
   appointment_id UUID REFERENCES public.appointments(id) ON DELETE SET NULL,
   payment_intent_id UUID REFERENCES public.payment_intents(id) ON DELETE SET NULL,
   idempotency_key TEXT NOT NULL UNIQUE,
-  provider TEXT NOT NULL DEFAULT 'twilio_whatsapp_sandbox',
+  provider TEXT NOT NULL DEFAULT 'senddm_whatsapp',
   recipient_phone TEXT,
   status TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'failed', 'skipped')),
   reason TEXT,
@@ -25,19 +25,6 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_message_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-ALTER TABLE public.whatsapp_message_logs
-  ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'twilio_whatsapp_sandbox',
-  ADD COLUMN IF NOT EXISTS recipient_phone TEXT,
-  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending',
-  ADD COLUMN IF NOT EXISTS reason TEXT,
-  ADD COLUMN IF NOT EXISTS provider_message_id TEXT,
-  ADD COLUMN IF NOT EXISTS message TEXT,
-  ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
-
-ALTER TABLE public.whatsapp_message_logs
-  ALTER COLUMN provider SET DEFAULT 'twilio_whatsapp_sandbox';
 
 CREATE INDEX IF NOT EXISTS idx_whatsapp_message_logs_studio_created
   ON public.whatsapp_message_logs(studio_id, created_at DESC);

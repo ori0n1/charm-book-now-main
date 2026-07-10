@@ -1,16 +1,20 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
+import { createStripeClient, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
 import { getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 
 const PAYMENT_METHOD_MESSAGES: Record<string, string> = {
+  connect_not_ready:
+    "Este estúdio ainda não configurou os pagamentos online. Entre em contacto com o estúdio para concluir a reserva.",
   mb_way_unavailable:
     "MB WAY não está disponível nesta configuração. Escolha outro método ou contacte o estúdio.",
+  mb_way_connect_not_ready:
+    "MB WAY ainda não está ativo na conta Stripe deste estúdio. Escolha cartão ou contacte o estúdio.",
   card_unavailable:
-    "Cartão, Apple Pay e Google Pay não estão disponíveis nesta configuração. Escolha outro método ou contacte o estúdio.",
+    "Cartão não está disponível nesta configuração. Escolha outro método ou contacte o estúdio.",
   mb_way_phone_invalid:
     "MB WAY exige um telemóvel português válido. Verifique o número e recomece a reserva.",
   payment_method_unavailable:
@@ -22,27 +26,14 @@ function admin(): any {
 }
 
 function stripeEnv(): StripeEnv {
-  return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
+  if (process.env.STRIPE_ENV !== "live") {
+    throw new Error("stripe_live_required");
+  }
+  return "live";
 }
 
 function appBaseUrl() {
-  const configured = (
-    process.env.APP_URL ??
-    process.env.VITE_APP_URL ??
-    process.env.PUBLIC_APP_URL ??
-    ""
-  ).replace(/\/$/, "");
-  if (configured) return configured;
-
-  const request = getRequest();
-  const origin = request?.headers.get("origin");
-  if (origin) return origin.replace(/\/$/, "");
-  const host = request?.headers.get("host");
-  if (host) {
-    const proto = request?.headers.get("x-forwarded-proto") || "https";
-    return `${proto}://${host}`.replace(/\/$/, "");
-  }
-  return "http://127.0.0.1:5173";
+  return resolveStripeAppBaseUrl({ request: getRequest() });
 }
 
 const CreateIntentInput = z
@@ -61,7 +52,13 @@ const ReconcileStudioInput = z.object({
 
 async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIntentId: string) {
   const stripe = createStripeClient(stripeEnv());
-  const fresh = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
+  const reservation = await loadPaymentReservationForConfirmation(sb, requestId, stripePaymentIntentId);
+  const stripeAccount = reservation.stripe_connect_account_id as string | null | undefined;
+  const fresh = await stripe.paymentIntents.retrieve(
+    stripePaymentIntentId,
+    undefined,
+    stripeAccount ? { stripeAccount } : undefined,
+  );
   const freshStatus = normalizeStripeStatus(fresh.status);
   if (freshStatus !== "succeeded") {
     await sb
@@ -74,6 +71,7 @@ async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIn
       .eq("stripe_payment_intent_id", stripePaymentIntentId);
     throw new Error("payment_not_confirmed");
   }
+  assertStripePaymentMatchesReservation(reservation, fresh);
   const { data: previous } = await sb
     .from("payment_intents")
     .select("status")
@@ -99,10 +97,46 @@ async function confirmBookingRequest(sb: any, requestId: string, stripePaymentIn
   }
   if (previous?.status !== "succeeded") {
     await sendAppointmentConfirmationMessage(sb, { stripePaymentIntentId }).catch((sendError) => {
-      console.error("twilio whatsapp confirmation failed", sendError);
+      console.error("senddm whatsapp confirmation failed", sendError);
     });
   }
   return data as string;
+}
+
+async function loadPaymentReservationForConfirmation(
+  sb: any,
+  requestId: string,
+  stripePaymentIntentId: string,
+) {
+  const { data, error } = await sb
+    .from("payment_intents")
+    .select("id,studio_id,booking_request_id,amount_cents,currency,status,stripe_payment_intent_id,stripe_connect_account_id,booking_payment_requests:booking_request_id(id,studio_id,status)")
+    .eq("booking_request_id", requestId)
+    .or(`stripe_payment_intent_id.eq.${stripePaymentIntentId},stripe_payment_intent_id.is.null`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.id) throw new Error("payment_reservation_missing");
+  return data;
+}
+
+function assertStripePaymentMatchesReservation(row: any, paymentIntent: any) {
+  const metadata = paymentIntent.metadata ?? {};
+  const expectedAmount = Number(row.amount_cents || 0);
+  const receivedAmount = Number(paymentIntent.amount_received || paymentIntent.amount || 0);
+  if (expectedAmount <= 0 || receivedAmount < expectedAmount) {
+    throw new Error("payment_amount_mismatch");
+  }
+  if ((row.currency || "eur").toLowerCase() !== (paymentIntent.currency || "eur").toLowerCase()) {
+    throw new Error("payment_currency_mismatch");
+  }
+  if (metadata.studio_id && metadata.studio_id !== row.studio_id) {
+    throw new Error("payment_studio_mismatch");
+  }
+  if (metadata.booking_request_id && metadata.booking_request_id !== row.booking_request_id) {
+    throw new Error("payment_booking_mismatch");
+  }
 }
 
 async function expireStaleReservations(sb: any) {
@@ -152,7 +186,7 @@ async function selectPaymentIntentById(sb: any, id: string) {
   const { data } = await sb
     .from("payment_intents")
     .select(
-      "id, status, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+      "id, status, stripe_payment_intent_id, stripe_checkout_session_id, stripe_connect_account_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
     )
     .eq("id", id)
     .maybeSingle();
@@ -167,9 +201,12 @@ async function reconcileCheckoutSessionPayment(sb: any, row: any) {
   if (!checkoutSessionId) return row;
 
   const stripe = createStripeClient(stripeEnv());
-  const session = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
-    expand: ["payment_intent"],
-  });
+  const stripeAccount = row.stripe_connect_account_id as string | null | undefined;
+  const session = await stripe.checkout.sessions.retrieve(
+    checkoutSessionId,
+    { expand: ["payment_intent"] },
+    stripeAccount ? { stripeAccount } : undefined,
+  );
   const paymentIntent =
     typeof session.payment_intent === "object" && session.payment_intent
       ? session.payment_intent
@@ -250,7 +287,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const existingQuery = sb
       .from("payment_intents")
       .select(
-        "id, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, amount_cents, currency, method, status, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
+        "id, stripe_payment_intent_id, stripe_checkout_session_id, stripe_connect_account_id, client_secret, amount_cents, currency, method, status, hosted_voucher_url, expires_at, appointment_id, booking_request_id",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -286,6 +323,14 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     const amountCents = source.amountCents;
     if (amountCents < 50) throw new Error("amount_too_low");
 
+    // Stripe Connect guard — studio must have an active Connect account to receive deposits
+    if (!source.connectAccountId || !source.connectChargesEnabled || !source.connectOnboardingCompleted) {
+      throw new Error(PAYMENT_METHOD_MESSAGES.connect_not_ready);
+    }
+    if (data.method === "mb_way" && !source.connectMbWayPaymentsEnabled) {
+      throw new Error(PAYMENT_METHOD_MESSAGES.mb_way_connect_not_ready);
+    }
+
     const paymentMethodType = data.method === "mb_way" ? "mb_way" : "card";
     const billingPhone =
       data.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : source.clientPhone;
@@ -314,7 +359,9 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
             currency: source.currency,
             unit_amount: amountCents,
             product_data: {
-              name: `Sinal de reserva - ${source.studioName}`,
+              name: source.depositPercent >= 100
+                ? `Pagamento integral - ${source.studioName}`
+                : `Sinal de reserva - ${source.studioName}`,
               description: new Date(source.startsAt).toLocaleString("pt-PT"),
             },
           },
@@ -337,7 +384,13 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     } satisfies Parameters<typeof stripe.checkout.sessions.create>[0];
     let checkoutSession;
     try {
-      checkoutSession = await stripe.checkout.sessions.create(checkoutSessionPayload);
+      checkoutSession = await stripe.checkout.sessions.create(
+        checkoutSessionPayload,
+        {
+          stripeAccount: source.connectAccountId,
+          idempotencyKey: `booking-direct:${source.connectAccountId}:${bookingRequestId ?? appointmentId}:${amountCents}:${data.method}`,
+        },
+      );
     } catch (error) {
       const reason = stripePaymentFailureReason(error, data.method);
       console.error("stripe_booking_checkout_failed", {
@@ -364,6 +417,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
         booking_request_id: bookingRequestId,
         stripe_checkout_session_id: checkoutSession.id,
         stripe_payment_intent_id: checkoutPaymentIntent?.id ?? null,
+        stripe_connect_account_id: source.connectAccountId,
         client_secret: checkoutPaymentIntent?.client_secret ?? null,
         amount_cents: amountCents,
         currency: source.currency,
@@ -416,7 +470,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
     const query = sb
       .from("payment_intents")
       .select(
-        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, stripe_connect_account_id, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
       )
       .order("created_at", { ascending: false })
       .limit(1);
@@ -441,6 +495,8 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
       const stripe = createStripeClient(stripeEnv());
       const fresh = await stripe.paymentIntents.retrieve(
         currentPi.stripe_payment_intent_id as string,
+        undefined,
+        currentPi.stripe_connect_account_id ? { stripeAccount: currentPi.stripe_connect_account_id as string } : undefined,
       );
       const freshStatus = normalizeStripeStatus(fresh.status);
       const expiresAt = currentPi.expires_at;
@@ -501,7 +557,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
         await sendAppointmentConfirmationMessage(sb, {
           stripePaymentIntentId: currentPi.stripe_payment_intent_id as string,
         }).catch((sendError) => {
-          console.error("twilio whatsapp confirmation failed", sendError);
+          console.error("senddm whatsapp confirmation failed", sendError);
         });
         return {
           appointmentStatus: "confirmed",
@@ -519,7 +575,7 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
         await sendAppointmentConfirmationMessage(sb, {
           stripePaymentIntentId: currentPi.stripe_payment_intent_id as string,
         }).catch((sendError) => {
-          console.error("twilio whatsapp confirmation failed", sendError);
+          console.error("senddm whatsapp confirmation failed", sendError);
         });
         return {
           appointmentStatus: "confirmed",
@@ -546,7 +602,7 @@ export const reconcileStudioBookingPayments = createServerFn({ method: "POST" })
     const { data: rows, error } = await sb
       .from("payment_intents")
       .select(
-        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
+        "id, status, stripe_payment_intent_id, stripe_checkout_session_id, stripe_connect_account_id, client_secret, hosted_voucher_url, expires_at, method, appointment_id, booking_request_id, amount_cents, currency",
       )
       .eq("studio_id", data.studioId)
       .in("status", ["requires_action", "processing"])
@@ -630,7 +686,9 @@ async function loadPaymentSource(
 async function loadStudio(sb: any, studioId: string) {
   const { data: studio } = await sb
     .from("studios")
-    .select("name, slug, accepted_payment_methods, currency, deposit_percent")
+    .select(
+      "name, slug, accepted_payment_methods, currency, deposit_percent, stripe_connect_account_id, stripe_connect_charges_enabled, stripe_connect_onboarding_completed, stripe_connect_mb_way_payments_enabled",
+    )
     .eq("id", studioId)
     .maybeSingle();
   if (!studio) throw new Error("studio_not_found");
@@ -667,6 +725,11 @@ function buildPaymentSource(input: {
     depositPercent,
     totalCents,
     amountCents,
+    // Stripe Connect — deposits go directly to the studio's account
+    connectAccountId: (input.studio.stripe_connect_account_id as string | null) ?? null,
+    connectChargesEnabled: Boolean(input.studio.stripe_connect_charges_enabled),
+    connectOnboardingCompleted: Boolean(input.studio.stripe_connect_onboarding_completed),
+    connectMbWayPaymentsEnabled: Boolean(input.studio.stripe_connect_mb_way_payments_enabled),
   };
 }
 

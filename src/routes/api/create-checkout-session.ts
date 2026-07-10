@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
+import { createStripeClient, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
 import { getSubscriptionPlans, isSubscriptionPlanId } from "@/lib/subscription-plans.server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import {
@@ -11,26 +11,14 @@ import {
 } from "@/lib/subscription-helpers";
 
 function stripeEnv(): StripeEnv {
-  return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
+  if (process.env.STRIPE_ENV !== "live") {
+    throw new Error("stripe_live_required");
+  }
+  return "live";
 }
 
 function appBaseUrl(request: Request) {
-  const configured = (
-    process.env.APP_URL ??
-    process.env.VITE_APP_URL ??
-    process.env.PUBLIC_APP_URL ??
-    ""
-  ).replace(/\/$/, "");
-  if (configured) return configured;
-
-  const origin = request.headers.get("origin");
-  if (origin) return origin.replace(/\/$/, "");
-  const host = request.headers.get("host");
-  if (host) {
-    const proto = request.headers.get("x-forwarded-proto") || "https";
-    return `${proto}://${host}`.replace(/\/$/, "");
-  }
-  return "http://127.0.0.1:5173";
+  return resolveStripeAppBaseUrl({ request });
 }
 
 async function getUserFromRequest(request: Request) {
@@ -66,6 +54,10 @@ export const Route = createFileRoute("/api/create-checkout-session")({
 
           const stripe = createStripeClient(stripeEnv());
           const customerId = await ensureCustomer(sb, stripe, studio);
+          const price = await stripe.prices.retrieve(plan.priceId);
+          if (price.livemode !== (stripeEnv() === "live")) {
+            return Response.json({ error: "stripe_price_environment_mismatch" }, { status: 500 });
+          }
 
           // Reserve checkout session to prevent race condition
           // This record will be updated by webhook when Stripe confirms
@@ -82,27 +74,30 @@ export const Route = createFileRoute("/api/create-checkout-session")({
             studio.subscription_status,
             studio.trial_used_at,
           );
-          const session = await stripe.checkout.sessions.create({
-            mode: "subscription",
-            customer: customerId,
-            line_items: [{ price: plan.priceId, quantity: 1 }],
-            customer_update: { address: "auto", name: "auto" },
-            metadata: {
-              user_id: user.id,
-              studio_id: studio.id,
-              plan: plan.id,
-            },
-            subscription_data: {
+          const session = await stripe.checkout.sessions.create(
+            {
+              mode: "subscription",
+              customer: customerId,
+              line_items: [{ price: plan.priceId, quantity: 1 }],
+              customer_update: { address: "auto", name: "auto" },
               metadata: {
                 user_id: user.id,
                 studio_id: studio.id,
                 plan: plan.id,
               },
-              ...(trialEnd ? { trial_end: trialEnd } : {}),
+              subscription_data: {
+                metadata: {
+                  user_id: user.id,
+                  studio_id: studio.id,
+                  plan: plan.id,
+                },
+                ...(trialEnd ? { trial_end: trialEnd } : {}),
+              },
+              success_url: `${appBaseUrl(request)}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
+              cancel_url: `${appBaseUrl(request)}/admin/pagamentos?billing=cancelled`,
             },
-            success_url: `${appBaseUrl(request)}/admin/pagamentos?billing=success&session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${appBaseUrl(request)}/admin/pagamentos?billing=cancelled`,
-          });
+            { idempotencyKey: `platform-subscription:${studio.id}:${user.id}:${plan.id}` },
+          );
 
           return Response.json({ url: session.url });
         } catch (error) {

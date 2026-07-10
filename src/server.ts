@@ -44,6 +44,84 @@ function withSecurityHeaders(response: Response): Response {
   });
 }
 
+function isPrivateIndexingPath(pathname: string): boolean {
+  return (
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/painel") ||
+    pathname.startsWith("/api") ||
+    pathname.startsWith("/auth") ||
+    pathname.startsWith("/onboarding") ||
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/signup") ||
+    pathname.startsWith("/forgot-password") ||
+    pathname.startsWith("/reset-password") ||
+    pathname.startsWith("/marcacao") ||
+    pathname.startsWith("/r/")
+  );
+}
+
+function canonicalUrlForRequest(request: Request): string {
+  const url = new URL(request.url);
+  const pathname = url.pathname !== "/" ? url.pathname.replace(/\/+$/, "") : "/";
+  return `https://bellza.pt${pathname}`;
+}
+
+function withSeoHeaders(request: Request, response: Response): Response {
+  const url = new URL(request.url);
+  const headers = new Headers(response.headers);
+  const isPrivate = isPrivateIndexingPath(url.pathname);
+
+  if (isPrivate) {
+    headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+  } else if (
+    (request.method === "GET" || request.method === "HEAD") &&
+    (headers.get("content-type") ?? "").includes("text/html")
+  ) {
+    headers.set("Link", `<${canonicalUrlForRequest(request)}>; rel="canonical"`);
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function withPwaUpdateHeaders(request: Request, response: Response): Response {
+  const url = new URL(request.url);
+  const headers = new Headers(response.headers);
+  const contentType = headers.get("content-type") ?? "";
+  const isPwaMetadata =
+    url.pathname === "/sw.js" ||
+    url.pathname === "/manifest.webmanifest" ||
+    url.pathname.startsWith("/api/public/studio-manifest/");
+
+  if (isPwaMetadata) {
+    headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    headers.set("Pragma", "no-cache");
+    headers.set("Expires", "0");
+  } else if (
+    (request.method === "GET" || request.method === "HEAD") &&
+    contentType.includes("text/html")
+  ) {
+    headers.set("Cache-Control", "no-cache, must-revalidate");
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function canonicalHostRedirect(request: Request): Response | null {
+  // Do not redirect between bellza.pt and www.bellza.pt. Installed PWAs are
+  // origin-scoped; redirecting an existing www installation to the bare domain
+  // can make the OS open the target as a normal browser tab instead of the app.
+  return null;
+}
+
 function isCatastrophicSsrErrorBody(body: string, responseStatus: number): boolean {
   let payload: unknown;
   try {
@@ -88,12 +166,35 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
+      const redirect = canonicalHostRedirect(request);
+      if (redirect) return withSecurityHeaders(redirect);
+
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return withSecurityHeaders(await normalizeCatastrophicSsrResponse(response));
+      return withPwaUpdateHeaders(
+        request,
+        withSeoHeaders(request, withSecurityHeaders(await normalizeCatastrophicSsrResponse(response))),
+      );
     } catch (error) {
       console.error(error);
       return brandedErrorResponse();
     }
+  },
+  async scheduled(_event: unknown, _env: unknown, ctx: { waitUntil: (promise: Promise<unknown>) => void }) {
+    ctx.waitUntil(
+      Promise.all([
+        import("./lib/notification-dispatcher.server")
+          .then((module) => module.dispatchPendingStudioPushNotifications())
+          .catch((error) => console.error("studio_push_dispatch_failed", error)),
+        import("./lib/public-client.functions")
+          .then((module) =>
+            Promise.all([
+              module.dispatchPendingClientPushNotifications(),
+              module.dispatchPendingClientCenterPushNotifications(),
+            ]),
+          )
+          .catch((error) => console.error("client_push_dispatch_failed", error)),
+      ]),
+    );
   },
 };

@@ -1,11 +1,17 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "tanstack-start-app",
+	"workers_dev": true,
 	"compatibility_date": "2025-09-24",
 	"compatibility_flags": [
 		"nodejs_compat"
 	],
 	"main": "src/server.ts",
+	"triggers": {
+		"crons": [
+			"*/2 * * * *"
+		]
+	},
 	"routes": [
 		{
 			"pattern": "www.bellza.pt",
@@ -23,11 +29,24 @@
 		}
 	],
 	"vars": {
-		"STRIPE_ENV": "sandbox",
-		"VITE_STRIPE_PUBLISHABLE_KEY": "pk_test_51Rla7YKbvF5Ti1rY426CkmKNcrTiYIzya0LNZK2dSLb5x3aufyrQTrR4Fn7J2CylqTCf6GgiX7SoTf58AzSe4x2r00ngKcZgZE",
+		"STRIPE_ENV": "live",
+		"SENDDM_API_BASE_URL": "https://api.sent.dm",
+		"SENDDM_MODEL_ID": "aca219e7-63cb-4eea-a8fd-9aee187e8676",
+		"SENDDM_TEMPLATE_INTERNAL_NAME": "Marcação",
+		"SENDDM_WHATSAPP_TEMPLATE_ID": "1772571720773309",
+		"SENDDM_WHATSAPP_TEMPLATE_NAME": "new_template__hkmlmqkyap",
+		"SENDDM_WHATSAPP_TEMPLATE_LANGUAGE": "pt_BR",
+		"SENDDM_WHATSAPP_SENDER_ID": "+12024900381",
+		"EMAIL_NOTIFICATIONS_ENABLED": "true",
+		"EMAIL_FROM": "Bellza <notificacoes@bellza.pt>",
+		"RESEND_API_BASE_URL": "https://api.resend.com",
+		"ENABLE_IN_PERSON_MB_WAY": "true",
+		"APP_URL": "https://bellza.pt",
 		"SUPABASE_PUBLISHABLE_KEY": "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP",
+		"VITE_GOOGLE_CLIENT_ID": "522932289328-079ntkgk3gcg6pmnls5ihfa91mnbff8n.apps.googleusercontent.com",
+		"VITE_VAPID_PUBLIC_KEY": "BH4ThNbLHGnXjx6PkX3ew2T1QVOnLanflhiXJdpWGhfR1j_iDsw9TBF25ipM1N5m3LjD7TkYeCNDcNRxTCLNryY",
 		"VITE_SUPABASE_PROJECT_ID": "pwmdzpvnatrvfpgcvnzg",
 		"VITE_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP",
 		"VITE_SUPABASE_URL": "https://pwmdzpvnatrvfpgcvnzg.supabase.co"
-	},
+	}
 }

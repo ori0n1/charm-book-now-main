@@ -13,6 +13,7 @@ import {
   type Upsell,
   SERVICE_DB_ID,
   STAFF_DB_ID,
+  normalizeStaffStatus,
 } from "@/data/studio";
 import type { Json } from "@/integrations/supabase/types";
 
@@ -25,10 +26,14 @@ type LiveStudio = typeof staticStudio & {
   phone?: string | null;
   instagram?: string | null;
   description?: string | null;
+  timezone?: string | null;
   updated_at?: string | null;
   payment_policy?: "pay_in_studio" | "pre_payment" | null;
   deposit_percent?: number | null;
   accepted_payment_methods?: string[] | null;
+  stripe_connect_charges_enabled?: boolean | null;
+  stripe_connect_onboarding_completed?: boolean | null;
+  stripe_connect_mb_way_payments_enabled?: boolean | null;
   min_booking_notice_min?: number | null;
   public_amenities?: Json | null;
   cancellation_min_notice_hours?: number | null;
@@ -62,9 +67,9 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
 
   async function load() {
     const studioSelect =
-      "id,name,slug,tagline,description,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,business_segment,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version";
+      "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,stripe_connect_charges_enabled,stripe_connect_onboarding_completed,stripe_connect_mb_way_payments_enabled,business_segment,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version";
     const legacyStudioSelect =
-      "id,name,slug,tagline,description,brand_color,logo_url,hero_image_url,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,business_segment";
+      "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,business_segment";
     let studioResult = await supabase
       .from("studios")
       .select(`${studioSelect},public_amenities,min_booking_notice_min`)
@@ -84,7 +89,7 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
         .eq("id", studioId)
         .maybeSingle();
     }
-    const [{ data: svc }, { data: cats }, { data: staff }, { data: links }, { data: offers }] =
+    const [{ data: svc }, { data: cats }, { data: links }, offersResult] =
       await Promise.all([
         supabase
           .from("services")
@@ -100,20 +105,47 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
           .select("id,label,sort_order")
           .eq("studio_id", studioId)
           .order("sort_order"),
-        supabase
-          .from("staff")
-          .select("id,name,role,bio,photo_url,rating,is_active")
-          .eq("studio_id", studioId)
-          .eq("is_active", true)
-          .order("sort_order"),
         supabase.from("staff_services").select("staff_id,service_id"),
         supabase
           .from("upsell_offers")
-          .select("id,trigger_service_id,offered_service_id,discounted_price,description,is_active")
+          .select("id,trigger_service_id,offered_service_id,discounted_price,discount_type,discount_value,display_mode,duration_min,description,is_active")
           .eq("studio_id", studioId)
           .eq("is_active", true),
       ]);
-    const st = studioResult.data;
+    let offers = offersResult.data as any[] | null;
+    if (offersResult.error) {
+      const { data } = await supabase
+        .from("upsell_offers")
+        .select("id,trigger_service_id,offered_service_id,discounted_price,description,is_active")
+        .eq("studio_id", studioId)
+        .eq("is_active", true);
+      offers = data as any[] | null;
+    }
+
+    // Staff query with graceful fallback for missing optional columns
+    let staffResult: any = await supabase
+      .from("staff")
+      .select("id,name,role,bio,photo_url,rating,reviews_count,is_active,current_status")
+      .eq("studio_id", studioId)
+      .eq("is_active", true)
+      .order("sort_order");
+    if (staffResult.error) {
+      staffResult = await supabase
+        .from("staff")
+        .select("id,name,role,bio,photo_url,rating,is_active,current_status")
+        .eq("studio_id", studioId)
+        .eq("is_active", true)
+        .order("sort_order");
+    }
+    if (staffResult.error) {
+      staffResult = await supabase
+        .from("staff")
+        .select("id,name,role,bio,photo_url,rating,is_active")
+        .eq("studio_id", studioId)
+        .eq("is_active", true);
+    }
+    const staff = staffResult.data;
+    const st = studioResult.data as Partial<LiveStudio> | null;
 
     const liveStudio: LiveStudio = st
       ? ({ ...staticStudio, ...st } as LiveStudio)
@@ -146,8 +178,9 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
           : [];
 
     const linkMap = new Map<string, string[]>();
-    const staffIds = new Set((staff ?? []).map((p) => p.id));
-    (links ?? []).forEach((l) => {
+    const staffRows = (staff ?? []) as Array<{ id: string }>;
+    const staffIds = new Set(staffRows.map((p) => p.id));
+    ((links ?? []) as Array<{ staff_id: string; service_id: string }>).forEach((l) => {
       if (!staffIds.has(l.staff_id)) return;
       const arr = linkMap.get(l.staff_id) ?? [];
       arr.push(l.service_id);
@@ -156,34 +189,44 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
 
     const liveProfessionals: Professional[] =
       staff && staff.length
-        ? staff.map((p) => ({
-            id: p.id,
-            name: p.name,
-            role: p.role ?? "",
-            rating: p.rating ? Number(p.rating) : undefined,
-            photo: p.photo_url ?? "",
-            serviceIds: linkMap.get(p.id) ?? [],
-          }))
+        ? staff
+            .map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              role: p.role ?? "",
+              rating: p.rating ? Number(p.rating) : undefined,
+              reviewsCount: p.reviews_count ? Number(p.reviews_count) : undefined,
+              photo: p.photo_url ?? "",
+              serviceIds: linkMap.get(p.id) ?? [],
+              currentStatus: normalizeStaffStatus(p.current_status),
+            }))
         : allowStaticFallback
           ? staticProfessionals
           : [];
 
     const servicesById = new Map(liveServices.map((s) => [s.id, s]));
     const upsellsByServiceId: Record<string, LiveUpsell[]> = {};
-    (offers ?? []).forEach((o) => {
+    (offers ?? []).forEach((o: any) => {
       const offered = servicesById.get(o.offered_service_id);
       if (!offered) return;
       const photo = offered.media?.[0]?.src ?? "";
+      const discountType = normalizeUpsellDiscountType(o.discount_type);
+      const displayMode = normalizeUpsellDisplayMode(o.display_mode);
+      const upsellDurationMin = o.duration_min == null ? null : Number(o.duration_min);
       const arr = upsellsByServiceId[o.trigger_service_id] ?? [];
       arr.push({
         id: o.id,
         offeredServiceId: o.offered_service_id,
         name: `+ ${offered.name}`,
         description: o.description ?? offered.description ?? "",
-        durationMin: offered.durationMin,
+        durationMin: upsellDurationMin ?? offered.durationMin,
+        upsellDurationMin,
         originalPrice: offered.price,
         price: Number(o.discounted_price),
         photo,
+        discountType,
+        discountValue: o.discount_value == null ? null : Number(o.discount_value),
+        displayMode,
       });
       upsellsByServiceId[o.trigger_service_id] = arr;
     });
@@ -263,6 +306,14 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
   }, [studioId]);
 
   return state;
+}
+
+function normalizeUpsellDiscountType(value: unknown): Upsell["discountType"] {
+  return value === "percent" || value === "fixed" || value === "price" ? value : "price";
+}
+
+function normalizeUpsellDisplayMode(value: unknown): Upsell["displayMode"] {
+  return value === "percent" || value === "amount" || value === "both" ? value : "both";
 }
 
 // Re-export ID maps for legacy refs

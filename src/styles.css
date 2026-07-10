@@ -42,6 +42,14 @@
 
 :root {
   --radius: 0.875rem;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --mobile-page-max: 100vw;
+  --mobile-gutter: clamp(0.75rem, 4vw, 1rem);
+  --fixed-footer-height: 0px;
+  --radius-responsive: 1.25rem;
 
   /* Editorial Precision palette — refined contrast */
   --background: oklch(0.975 0.008 80); /* warm bone, slightly deeper */
@@ -130,6 +138,35 @@
   scrollbar-width: none;
 }
 
+/* Premium scrollbar used across Bellza panels.
+   Keeps horizontal/vertical overflow usable without the native browser look. */
+.premium-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--color-foreground) 26%, transparent)
+    color-mix(in oklch, var(--color-background) 72%, transparent);
+}
+.premium-scrollbar::-webkit-scrollbar {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+.premium-scrollbar::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--color-background) 76%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--color-border) 70%, transparent);
+}
+.premium-scrollbar::-webkit-scrollbar-thumb {
+  border: 0.2rem solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: color-mix(in oklch, var(--color-foreground) 30%, transparent);
+}
+.premium-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklch, var(--color-accent) 62%, var(--color-foreground));
+}
+.premium-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* Premium minimal scrollbar — desktop admin sidebar.
    The thumb is invisible at rest and fades in on hover / focus / active,
    producing a discrete, modern feel consistent with high-end SaaS panels. */
@@ -171,12 +208,31 @@
   background: transparent;
 }
 
+.bellza-toast-safe-area {
+  max-width: min(calc(100vw - 1.5rem), 28rem);
+}
+
+[data-sonner-toaster][data-y-position="top"] {
+  top: max(1rem, calc(env(safe-area-inset-top, 0px) + 1rem)) !important;
+}
+
+@media (max-width: 640px) {
+  [data-sonner-toaster] {
+    width: min(calc(100vw - 1rem), 25rem) !important;
+  }
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
   }
   * {
     min-width: 0;
+    box-sizing: border-box;
+  }
+  *::before,
+  *::after {
+    box-sizing: border-box;
   }
   html {
     -webkit-tap-highlight-color: transparent;
@@ -185,6 +241,7 @@
     scrollbar-gutter: stable;
     overscroll-behavior-x: none;
     touch-action: pan-y;
+    width: 100%;
     /* Slightly larger base improves legibility across the app without
        breaking responsive layouts (everything in rem scales with it). */
     font-size: 16.5px;
@@ -195,9 +252,15 @@
     }
   }
   body {
+    width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+    min-width: 0;
     max-width: 100%;
     overflow-x: hidden;
     overscroll-behavior-x: none;
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
@@ -218,9 +281,195 @@
   h4 {
     letter-spacing: -0.02em;
   }
+  img,
+  video,
+  canvas,
+  svg {
+    max-width: 100%;
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+  }
+  :where(p, h1, h2, h3, h4, h5, h6, span, a, button, label, li, dd, dt) {
+    max-width: 100%;
+  }
 }
 
 @layer components {
+  .bellza-responsive-page,
+  .public-booking,
+  .public-shell,
+  .admin-shell {
+    width: 100%;
+    max-width: calc(100vw - var(--safe-left) - var(--safe-right));
+    overflow-x: hidden;
+    overflow-wrap: normal;
+    word-break: normal;
+    overscroll-behavior-x: none;
+  }
+
+  .bellza-responsive-page :where(.flex, .grid),
+  .public-booking :where(.flex, .grid),
+  .public-shell :where(.flex, .grid),
+  .admin-shell :where(.flex, .grid) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .bellza-responsive-page :where(button, a, [role="button"]),
+  .public-booking :where(button, a, [role="button"]),
+  .public-shell :where(button, a, [role="button"]),
+  .admin-shell :where(button, a, [role="button"]) {
+    min-width: 0;
+    max-width: 100%;
+    touch-action: manipulation;
+  }
+
+  .bellza-responsive-page :where([data-fixed-footer]),
+  .public-booking :where([data-fixed-footer]),
+  .admin-shell :where([data-fixed-footer]) {
+    padding-bottom: max(0.75rem, var(--safe-bottom));
+  }
+
+  .bellza-safe-fixed-offset {
+    padding-bottom: calc(var(--fixed-footer-height, 0px) + var(--safe-bottom) + 1rem);
+  }
+
+  .rounded-responsive {
+    border-radius: var(--radius-responsive);
+  }
+
+  .text-safe {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .text-safe-break {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  .text-safe-truncate {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .responsive-grid {
+    display: grid;
+    min-width: 0;
+    max-width: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+    gap: 0.75rem;
+  }
+
+  .responsive-actions {
+    display: grid;
+    min-width: 0;
+    max-width: 100%;
+    gap: 0.5rem;
+  }
+
+  @media (min-width: 380px) {
+    .responsive-actions {
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+    }
+  }
+
+  .bellza-panel-actions {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr));
+    gap: 0.5rem;
+  }
+
+  .bellza-panel-action {
+    display: inline-flex;
+    min-height: 2.75rem;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.9rem;
+    padding: 0.7rem 1rem;
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 750;
+    line-height: 1.15;
+    transition:
+      transform 0.18s ease,
+      opacity 0.18s ease,
+      background-color 0.18s ease,
+      border-color 0.18s ease,
+      color 0.18s ease;
+  }
+
+  .bellza-panel-action:hover {
+    opacity: 0.92;
+  }
+
+  .bellza-panel-action:active {
+    transform: scale(0.985);
+  }
+
+  .bellza-panel-action:disabled {
+    pointer-events: none;
+    opacity: 0.6;
+  }
+
+  .bellza-panel-action svg {
+    flex-shrink: 0;
+  }
+
+  .bellza-panel-action-primary {
+    background: var(--color-foreground);
+    color: var(--color-background);
+    box-shadow: 0 8px 22px oklch(0 0 0 / 0.08);
+  }
+
+  .bellza-panel-action-secondary {
+    border: 1px solid color-mix(in oklch, var(--color-border) 86%, transparent);
+    background: color-mix(in oklch, var(--color-background) 76%, var(--color-card));
+    color: var(--color-muted-foreground);
+  }
+
+  .bellza-panel-action-secondary:hover {
+    background: var(--color-muted);
+    color: var(--color-foreground);
+  }
+
+  .bellza-panel-action-emerald {
+    background: oklch(0.45 0.11 155);
+    color: white;
+    box-shadow: 0 8px 22px oklch(0.45 0.11 155 / 0.16);
+  }
+
+  @media (min-width: 640px) {
+    .bellza-panel-actions {
+      width: auto;
+      min-width: min(100%, 20rem);
+    }
+
+    .bellza-panel-action {
+      width: clamp(9.5rem, 22vw, 14rem);
+      padding-inline: 1.15rem;
+    }
+  }
+
   .admin-shell {
     --admin-mobile-card-radius: 1.35rem;
     --admin-mobile-shadow: 0 1px 2px oklch(0 0 0 / 0.04), 0 10px 24px oklch(0 0 0 / 0.06);
@@ -309,6 +558,20 @@
       font-size: 16px;
       max-width: 100%;
       box-sizing: border-box;
+    }
+
+    .admin-content .mobile-form-actions {
+      margin-top: 0.95rem;
+      padding-top: 0.85rem;
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.65rem);
+      border-top: 1px solid color-mix(in oklch, var(--color-border) 58%, transparent);
+    }
+
+    .admin-content .mobile-form-actions > :where(button, a, [role="button"]) {
+      margin-top: 0;
+      box-shadow:
+        0 1px 2px oklch(0 0 0 / 0.14),
+        0 12px 26px oklch(0 0 0 / 0.18);
     }
 
     .admin-content
@@ -417,14 +680,44 @@
     }
   }
 
+  @media (min-width: 768px) {
+    .admin-content .mobile-form-actions {
+      margin-top: 1.1rem;
+      padding-top: 0;
+      padding-bottom: 0;
+      border-top: 0;
+    }
+  }
+
   .public-booking {
     overflow-x: hidden;
   }
 
   /* ── Public marketing & auth surfaces (Bellza) ── */
   .public-shell {
+    --background: oklch(0.985 0.012 82);
+    --foreground: oklch(0.18 0.012 70);
+    --card: oklch(1 0 0);
+    --muted: oklch(0.94 0.012 82);
+    --muted-foreground: oklch(0.46 0.018 70);
+    --border: oklch(0.86 0.018 78);
+    --accent: oklch(0.66 0.13 76);
+    --accent-foreground: oklch(0.14 0.012 70);
     background-color: var(--color-background);
     color: var(--color-foreground);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .public-shell {
+      --background: oklch(0.23 0.014 70);
+      --foreground: oklch(0.95 0.012 82);
+      --card: oklch(0.29 0.014 70);
+      --muted: oklch(0.35 0.014 70);
+      --muted-foreground: oklch(0.76 0.018 82);
+      --border: oklch(0.44 0.018 70);
+      --accent: oklch(0.74 0.13 76);
+      --accent-foreground: oklch(0.16 0.014 70);
+    }
   }
 
   .public-grid-bg {
@@ -529,8 +822,8 @@
   }
 
   .public-input {
-    min-height: 2.875rem;
-    padding: 0.75rem 0.95rem;
+    min-height: 2.625rem;
+    padding: 0.64rem 0.9rem;
     border-radius: 0.85rem;
     border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
     background: color-mix(in oklch, var(--background) 92%, var(--card));
@@ -594,6 +887,40 @@
       stroke 0.15s ease !important;
   }
 
+  .admin-content :where(button, a, [role="button"], [role="combobox"]),
+  .public-booking :where(button, a, [role="button"], [role="combobox"]),
+  .public-shell :where(button, a, [role="button"], [role="combobox"]) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .admin-content :where(table),
+  .public-booking :where(table),
+  .public-shell :where(table) {
+    max-width: 100%;
+  }
+
+  .admin-content :where(th, td),
+  .public-booking :where(th, td),
+  .public-shell :where(th, td) {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-content :where(.truncate),
+  .public-booking :where(.truncate),
+  .public-shell :where(.truncate) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .admin-content :where(.break-anywhere),
+  .public-booking :where(.break-anywhere),
+  .public-shell :where(.break-anywhere) {
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
   @media (max-width: 767px) {
     .public-booking :where(h1, h2, h3, p, span, button, a, input, textarea) {
       overflow-wrap: normal;
@@ -616,5 +943,32 @@
     .public-booking :where(input, textarea, button, [role="combobox"]) {
       min-height: 2.75rem;
     }
+  }
+}
+
+@layer utilities {
+  .pt-safe-4 {
+    padding-top: max(1rem, var(--safe-top));
+  }
+  .pr-safe-4 {
+    padding-right: max(1rem, var(--safe-right));
+  }
+  .pb-safe-3 {
+    padding-bottom: max(0.75rem, var(--safe-bottom));
+  }
+  .pb-safe-4 {
+    padding-bottom: max(1rem, var(--safe-bottom));
+  }
+  .pb-safe-8 {
+    padding-bottom: calc(var(--safe-bottom) + 2rem);
+  }
+  .pl-safe-4 {
+    padding-left: max(1rem, var(--safe-left));
+  }
+  .h-dvh-safe {
+    height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
+  }
+  .max-h-dvh-safe {
+    max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
   }
 }

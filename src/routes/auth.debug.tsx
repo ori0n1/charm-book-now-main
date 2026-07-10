@@ -1,8 +1,19 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AUTH_DEBUG_STORAGE_KEY, supabase, supabasePublicConfig } from "@/integrations/supabase/client";
 
+// Esta página só existe em desenvolvimento.
+// Em produção é redirecionada para a raiz para não expor informação de ambiente.
 export const Route = createFileRoute("/auth/debug")({
+  head: () => ({
+    meta: [
+      { title: "Diagnóstico de autenticação - Bellza" },
+      { name: "robots", content: "noindex,nofollow,noarchive" },
+    ],
+  }),
+  beforeLoad() {
+    if (import.meta.env.PROD) throw redirect({ to: "/" });
+  },
   component: AuthDebugPage,
 });
 

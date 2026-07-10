@@ -275,6 +275,7 @@ export type Database = {
       clients: {
         Row: {
           created_at: string;
+          date_of_birth: string | null;
           email: string | null;
           id: string;
           name: string;
@@ -287,6 +288,7 @@ export type Database = {
         };
         Insert: {
           created_at?: string;
+          date_of_birth?: string | null;
           email?: string | null;
           id?: string;
           name: string;
@@ -299,6 +301,7 @@ export type Database = {
         };
         Update: {
           created_at?: string;
+          date_of_birth?: string | null;
           email?: string | null;
           id?: string;
           name?: string;
@@ -784,11 +787,13 @@ export type Database = {
         Row: {
           bio: string | null;
           created_at: string;
+          current_status: string | null;
           id: string;
           is_active: boolean;
           name: string;
           photo_url: string | null;
           rating: number | null;
+          reviews_count: number;
           role: string | null;
           commission_percent: number | null;
           deposit_professional_percent: number | null;
@@ -802,6 +807,7 @@ export type Database = {
         Insert: {
           bio?: string | null;
           created_at?: string;
+          current_status?: string | null;
           id?: string;
           invite_code?: string | null;
           invite_expires_at?: string | null;
@@ -812,6 +818,7 @@ export type Database = {
           name: string;
           photo_url?: string | null;
           rating?: number | null;
+          reviews_count?: number;
           role?: string | null;
           commission_percent?: number | null;
           deposit_professional_percent?: number | null;
@@ -825,6 +832,7 @@ export type Database = {
         Update: {
           bio?: string | null;
           created_at?: string;
+          current_status?: string | null;
           id?: string;
           invite_code?: string | null;
           invite_expires_at?: string | null;
@@ -835,6 +843,7 @@ export type Database = {
           name?: string;
           photo_url?: string | null;
           rating?: number | null;
+          reviews_count?: number;
           role?: string | null;
           commission_percent?: number | null;
           deposit_professional_percent?: number | null;
@@ -969,6 +978,57 @@ export type Database = {
           },
         ];
       };
+      studio_reviews: {
+        Row: {
+          id: string;
+          studio_id: string;
+          user_id: string;
+          appointment_id: string | null;
+          rating: number;
+          comment: string | null;
+          staff_ids: string[];
+          reviewer_name: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          studio_id: string;
+          user_id: string;
+          appointment_id?: string | null;
+          rating: number;
+          comment?: string | null;
+          staff_ids?: string[];
+          reviewer_name?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          studio_id?: string;
+          user_id?: string;
+          appointment_id?: string | null;
+          rating?: number;
+          comment?: string | null;
+          staff_ids?: string[];
+          reviewer_name?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "studio_reviews_studio_id_fkey";
+            columns: ["studio_id"];
+            isOneToOne: false;
+            referencedRelation: "studios";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "studio_reviews_appointment_id_fkey";
+            columns: ["appointment_id"];
+            isOneToOne: false;
+            referencedRelation: "appointments";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       studios: {
         Row: {
           accepted_payment_methods: string[];
@@ -995,6 +1055,7 @@ export type Database = {
           min_booking_notice_min: number;
           name: string;
           onboarding_completed_at: string | null;
+          owner_name: string | null;
           payment_policy: string;
           phone: string | null;
           plan: Database["public"]["Enums"]["subscription_plan"];
@@ -1037,6 +1098,7 @@ export type Database = {
           min_booking_notice_min?: number;
           name: string;
           onboarding_completed_at?: string | null;
+          owner_name?: string | null;
           payment_policy?: string;
           phone?: string | null;
           plan?: Database["public"]["Enums"]["subscription_plan"];
@@ -1079,6 +1141,7 @@ export type Database = {
           min_booking_notice_min?: number;
           name?: string;
           onboarding_completed_at?: string | null;
+          owner_name?: string | null;
           payment_policy?: string;
           phone?: string | null;
           plan?: Database["public"]["Enums"]["subscription_plan"];
@@ -1103,7 +1166,11 @@ export type Database = {
           conversions_count: number;
           created_at: string;
           description: string | null;
+          discount_type: string;
+          discount_value: number | null;
+          display_mode: string;
           discounted_price: number;
+          duration_min: number | null;
           extra_revenue: number;
           id: string;
           is_active: boolean;
@@ -1116,7 +1183,11 @@ export type Database = {
           conversions_count?: number;
           created_at?: string;
           description?: string | null;
+          discount_type?: string;
+          discount_value?: number | null;
+          display_mode?: string;
           discounted_price: number;
+          duration_min?: number | null;
           extra_revenue?: number;
           id?: string;
           is_active?: boolean;
@@ -1129,7 +1200,11 @@ export type Database = {
           conversions_count?: number;
           created_at?: string;
           description?: string | null;
+          discount_type?: string;
+          discount_value?: number | null;
+          display_mode?: string;
           discounted_price?: number;
+          duration_min?: number | null;
           extra_revenue?: number;
           id?: string;
           is_active?: boolean;

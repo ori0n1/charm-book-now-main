@@ -16,8 +16,12 @@ const LEGACY_KEY = "lumiere:theme";
 
 function readStoredPreference(): ThemePreference {
   if (typeof window === "undefined") return "system";
-  const stored = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_KEY);
-  if (stored === "light" || stored === "dark" || stored === "system") return stored;
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_KEY);
+    if (stored === "light" || stored === "dark" || stored === "system") return stored;
+  } catch {
+    // ignore
+  }
   return "system";
 }
 
@@ -46,9 +50,14 @@ function applyTheme(resolved: ResolvedTheme, animate = false) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  // SSR-safe defaults — THEME_INIT_SCRIPT already applied the correct class
+  // before React hydrates, so no flash occurs with these defaults.
   const [preference, setPreferenceState] = useState<ThemePreference>("system");
   const [theme, setThemeState] = useState<ResolvedTheme>("light");
 
+  // Mount: read stored preference and apply to DOM WITHOUT animation.
+  // This is the only place we call applyTheme for the initial state —
+  // no separate hasHydrated effect that could race and reset to "light".
   useEffect(() => {
     const stored = readStoredPreference();
     const resolved = resolveTheme(stored);
@@ -57,20 +66,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     applyTheme(resolved, false);
   }, []);
 
-  const [hasHydrated, setHasHydrated] = useState(false);
-  useEffect(() => {
-    setHasHydrated(true);
-  }, []);
-
-  useEffect(() => {
-    if (!hasHydrated) return;
-    applyTheme(theme, true);
-  }, [theme, hasHydrated]);
-
+  // System media query: update live when OS preference changes.
   useEffect(() => {
     if (preference !== "system") return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => setThemeState(resolveTheme("system"));
+    const onChange = () => {
+      const resolved = resolveTheme("system");
+      setThemeState(resolved);
+      applyTheme(resolved, false);
+    };
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [preference]);
@@ -84,6 +88,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         setPreferenceState(next);
         setThemeState(resolved);
         persistPreference(next);
+        applyTheme(resolved, true); // user-triggered → animate
       },
       toggle() {
         const next: ThemePreference = theme === "dark" ? "light" : "dark";
@@ -91,6 +96,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         setPreferenceState(next);
         setThemeState(resolved);
         persistPreference(next);
+        applyTheme(resolved, true); // user-triggered → animate
       },
     }),
     [preference, theme],

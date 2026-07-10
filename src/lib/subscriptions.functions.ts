@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import type Stripe from "stripe";
 import { z } from "zod";
-import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
+import { createStripeClient, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
 import {
   getSubscriptionPlans,
   getPlanByPriceId,
@@ -27,6 +27,7 @@ import {
   releaseCheckoutSession,
   markTrialUsed,
 } from "@/lib/subscription-helpers";
+import { getStudioSubscriptionAccess } from "@/lib/subscription-access";
 
 function priceRef(priceId: string) {
   return priceId.length > 8 ? `...${priceId.slice(-8)}` : priceId;
@@ -49,27 +50,14 @@ function logCheckoutError(error: unknown, details: Record<string, unknown>) {
 }
 
 function stripeEnv(): StripeEnv {
-  return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
+  if (process.env.STRIPE_ENV !== "live") {
+    throw new Error("stripe_live_required");
+  }
+  return "live";
 }
 
 function appBaseUrl() {
-  const configured = (
-    process.env.APP_URL ??
-    process.env.VITE_APP_URL ??
-    process.env.PUBLIC_APP_URL ??
-    ""
-  ).replace(/\/$/, "");
-  if (configured) return configured;
-
-  const request = getRequest();
-  const origin = request?.headers.get("origin");
-  if (origin) return origin.replace(/\/$/, "");
-  const host = request?.headers.get("host");
-  if (host) {
-    const proto = request?.headers.get("x-forwarded-proto") || "https";
-    return `${proto}://${host}`.replace(/\/$/, "");
-  }
-  return "http://127.0.0.1:5173";
+  return resolveStripeAppBaseUrl({ request: getRequest() });
 }
 
 function defaultPlanId(): SubscriptionPlanId {
@@ -79,13 +67,13 @@ function defaultPlanId(): SubscriptionPlanId {
 
 const StudioInput = z.object({
   studioId: z.string().uuid(),
-  plan: z.enum(["monthly", "quarterly", "yearly"]).optional(),
+  plan: z.enum(["monthly", "yearly"]).optional(),
   action: z.enum(["manage", "cancel"]).optional(),
 });
 
 const PlanChangeInput = z.object({
   studioId: z.string().uuid(),
-  plan: z.enum(["monthly", "quarterly", "yearly"]),
+  plan: z.enum(["monthly", "yearly"]),
 });
 
 const CheckoutReturnInput = z.object({
@@ -278,7 +266,10 @@ async function findStripeSubscriptionForStudio(
 ) {
   if (input.studioSubscriptionId && !input.studioSubscriptionId.startsWith("checkout_pending:")) {
     try {
-      const subscription = await stripe.subscriptions.retrieve(input.studioSubscriptionId);
+      const subscription = await stripe.subscriptions.retrieve(
+        input.studioSubscriptionId,
+        { expand: ["schedule"] },
+      );
       if (getPlanIdFromSubscription(input.env, subscription)) {
         return subscription;
       }
@@ -554,7 +545,9 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertStudioAccess(sb, (context as any).userId, data.studioId);
+    await assertStudioAccess(sb, (context as any).userId, data.studioId, {
+      allowExpiredTrial: true,
+    });
     const { data: studio, error } = await sb
       .from("studios")
       .select(
@@ -640,7 +633,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       studio.premium_access_until ??
       studio.subscription_current_period_end;
     const trialEndsAt = studio.trial_ends_at ?? null;
-    const hasStripePlan = ["monthly", "quarterly", "yearly"].includes(subscription?.plan ?? "");
+    const hasStripePlan = ["monthly", "quarterly", "yearly"].includes(subscription?.plan ?? ""); // quarterly kept for historical data
     const studioTrialActive =
       studio.subscription_status === "trialing" &&
       trialEndsAt &&
@@ -650,7 +643,15 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       hasPeriodAccess(rawStatus, premiumUntil) ||
       hasPeriodAccess(studio.subscription_status as string, premiumUntil);
     const trialActive = Boolean(studioTrialActive || subscriptionTrialActive);
-    const premiumActive = paidActive || trialActive;
+    const access = getStudioSubscriptionAccess({
+      subscription_status: rawStatus,
+      subscription_current_period_end:
+        subscription?.current_period_end ?? studio.subscription_current_period_end ?? null,
+      premium_access_until: studio.premium_access_until ?? null,
+      trial_ends_at: trialEndsAt,
+      is_active: true,
+    });
+    const premiumActive = paidActive || trialActive || access.premiumActive;
     const status =
       rawStatus === "canceled" && paidActive
         ? "active"
@@ -704,16 +705,134 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       },
     );
 
+    // Detect schedule-based cancellation.
+    // Stripe billing portal sometimes uses subscription schedules instead of cancel_at_period_end flag.
+    // Use || so that EITHER the subscription row OR the studio row being true is sufficient.
+    let cancelAtPeriodEnd =
+      Boolean(subscription?.cancel_at_period_end) ||
+      Boolean(studio.subscription_cancel_at_period_end);
+
+    if (!cancelAtPeriodEnd && stripeSubscription) {
+      // Log raw Stripe data to diagnose what Stripe actually returns
+      const rawScheduleField = (stripeSubscription as any).schedule;
+      const rawCancelFlag = stripeSubscription.cancel_at_period_end;
+      console.info("stripe_cancellation_debug", {
+        studioId: studio.id,
+        subscriptionId: stripeSubscription.id,
+        stripeCancelAtPeriodEnd: rawCancelFlag,
+        stripeScheduleField: rawScheduleField
+          ? (typeof rawScheduleField === "string" ? rawScheduleField : JSON.stringify(rawScheduleField))
+          : null,
+        dbCancelAtPeriodEnd: subscription?.cancel_at_period_end,
+      });
+
+      // Step 1: Attached schedule (expanded or ID)
+      const scheduleId = getSubscriptionScheduleId(stripeSubscription);
+      if (scheduleId) {
+        try {
+          const schedule = typeof scheduleId === "string"
+            ? await stripe.subscriptionSchedules.retrieve(scheduleId)
+            : rawScheduleField as Stripe.SubscriptionSchedule;
+          console.info("stripe_attached_schedule_data", {
+            studioId: studio.id,
+            scheduleId: schedule.id,
+            status: schedule.status,
+            endBehavior: schedule.end_behavior,
+            phases: schedule.phases?.length,
+          });
+          if (schedule && schedule.status === "active" && schedule.end_behavior === "cancel") {
+            cancelAtPeriodEnd = true;
+          }
+        } catch (err) {
+          console.warn("stripe_attached_schedule_retrieve_failed", { studioId: studio.id, error: String(err) });
+        }
+      }
+
+      // Step 2: List all customer schedules
+      if (!cancelAtPeriodEnd) {
+        const stripeCustomerId =
+          subscription?.stripe_customer_id ??
+          (studio.stripe_customer_id as string | null) ??
+          (typeof stripeSubscription.customer === "string"
+            ? stripeSubscription.customer
+            : stripeSubscription.customer?.id ?? null);
+        if (stripeCustomerId) {
+          try {
+            const allSchedules = await stripe.subscriptionSchedules.list({
+              customer: stripeCustomerId,
+              limit: 10,
+            });
+            console.info("stripe_schedule_list_data", {
+              studioId: studio.id,
+              count: allSchedules.data.length,
+              schedules: allSchedules.data.map((s) => ({
+                id: s.id,
+                status: s.status,
+                endBehavior: s.end_behavior,
+                subscription: typeof s.subscription === "string" ? s.subscription : s.subscription?.id,
+                phases: s.phases?.length,
+              })),
+            });
+            const cancellingSchedule = allSchedules.data.find((s) => {
+              const subId =
+                typeof s.subscription === "string" ? s.subscription : s.subscription?.id;
+              if (subId !== stripeSubscription.id) return false;
+              if (!["active", "not_started"].includes(s.status)) return false;
+              const stripeCurrentPeriodEnd = getCurrentPeriodEnd(stripeSubscription);
+              // Check end_behavior OR phases ending at/before current period end
+              if (s.end_behavior === "cancel") return true;
+              // Stripe may use "release" end_behavior but with phases ending at period end
+              if (s.phases && s.phases.length > 0) {
+                const lastPhase = s.phases[s.phases.length - 1];
+                if (lastPhase.end_date && stripeCurrentPeriodEnd) {
+                  // If schedule ends on or before the subscription's current period end → cancels
+                  if (Number(lastPhase.end_date) <= Number(stripeCurrentPeriodEnd) + 60) {
+                    return true;
+                  }
+                }
+              }
+              return false;
+            });
+            if (cancellingSchedule) {
+              cancelAtPeriodEnd = true;
+              console.info("stripe_schedule_cancellation_confirmed", {
+                studioId: studio.id,
+                scheduleId: cancellingSchedule.id,
+                endBehavior: cancellingSchedule.end_behavior,
+              });
+              // Persist to DB so future loads skip the Stripe API call
+              if (subscription?.stripe_subscription_id) {
+                await sb
+                  .from("subscriptions")
+                  .update({ cancel_at_period_end: true })
+                  .eq("stripe_subscription_id", subscription.stripe_subscription_id);
+              }
+            }
+          } catch (err) {
+            console.warn("stripe_schedule_list_failed", { studioId: studio.id, error: String(err) });
+          }
+        }
+      }
+    }
+    const visibleCancelAtPeriodEnd = Boolean(
+      cancelAtPeriodEnd &&
+        hasStripePlan &&
+        premiumActive &&
+        status !== "trialing" &&
+        rawStatus !== "checkout_pending",
+    );
+    const displayPlan =
+      status === "trialing" && trialActive && !paidActive
+        ? studio.plan ?? "trial"
+        : subscription?.plan ?? studio.plan ?? "trial";
     return {
       available: true,
-      plan: subscription?.plan ?? studio.plan ?? "trial",
+      plan: displayPlan,
       status,
       nextBillingAt,
       trialEndsAt,
       daysRemaining,
-      cancelAtPeriodEnd: Boolean(
-        subscription?.cancel_at_period_end ?? studio.subscription_cancel_at_period_end,
-      ),
+      cancelAtPeriodEnd: visibleCancelAtPeriodEnd,
       pendingChange,
       premiumActive,
       invoices: await loadRecentInvoices(
@@ -729,7 +848,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId;
-    await assertStudioAccess(sb, userId, data.studioId);
+    await assertStudioAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
     await rateLimitOrThrow({
       key: `billing-checkout:${userId}:${data.studioId}`,
       limit: 6,
@@ -826,6 +945,8 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
           metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
           ...(trialEnd ? { trial_end: trialEnd } : {}),
         },
+      }, {
+        idempotencyKey: `platform-subscription:${studio.id}:${userId}:${plan.id}`,
       });
     } catch (error) {
       await releaseCheckoutSession(sb, { userId, studioId: studio.id });
@@ -847,7 +968,7 @@ export const syncPlatformCheckoutReturn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId as string;
-    await assertStudioAccess(sb, userId, data.studioId);
+    await assertStudioAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
     await rateLimitOrThrow({
       key: `billing-checkout-sync:${userId}:${data.studioId}`,
       limit: 12,
@@ -883,7 +1004,7 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId;
-    await assertStudioAccess(sb, userId, data.studioId);
+    await assertStudioAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
     await rateLimitOrThrow({
       key: `billing-portal:${userId}:${data.studioId}`,
       limit: 8,
@@ -948,29 +1069,131 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
         });
       });
     }
-    const configuration = await ensureBillingPortalConfiguration(stripe, env, stripeSubscription);
-    const session = await stripe.billingPortal.sessions.create({
+    let configuration: string | undefined;
+    try {
+      configuration = await ensureBillingPortalConfiguration(stripe, env, stripeSubscription ?? undefined);
+    } catch (error) {
+      console.error("stripe_billing_portal_configuration_failed", {
+        studioId: studio.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      // Fall back to Stripe's default portal configuration
+    }
+
+    // Detect schedule-based cancellation.
+    // Stripe billing portal uses subscription schedules with end_behavior:"cancel" instead of
+    // the cancel_at_period_end flag — so we check both the subscription's attached schedule
+    // AND list all schedules for the customer as a fallback.
+    let scheduledForCancellation = Boolean(stripeSubscription?.cancel_at_period_end);
+    if (!scheduledForCancellation && stripeSubscription) {
+      // Step 1: expanded schedule on subscription object
+      const scheduleId = getSubscriptionScheduleId(stripeSubscription);
+      if (scheduleId) {
+        try {
+          const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+          if (schedule.status === "active" && schedule.end_behavior === "cancel") {
+            scheduledForCancellation = true;
+            console.info("stripe_portal_schedule_attached_detected", { studioId: studio.id, scheduleId });
+          }
+        } catch {
+          // Ignore
+        }
+      }
+      // Step 2: list all schedules for customer (portal may not link schedule to subscription)
+      if (!scheduledForCancellation && customerId) {
+        try {
+          const schedules = await stripe.subscriptionSchedules.list({ customer: customerId, limit: 10 });
+          const found = schedules.data.find((s) => {
+            const subId = typeof s.subscription === "string" ? s.subscription : s.subscription?.id;
+            return subId === stripeSubscription.id && s.status === "active" && s.end_behavior === "cancel";
+          });
+          if (found) {
+            scheduledForCancellation = true;
+            console.info("stripe_portal_schedule_list_detected", { studioId: studio.id, scheduleId: found.id });
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    }
+
+    // Only add cancel flow_data if subscription is actively cancellable (not already scheduled)
+    const isCancellable =
+      stripeSubscription &&
+      ["active", "trialing", "past_due"].includes(stripeSubscription.status) &&
+      !scheduledForCancellation;
+
+    const portalArgs: Record<string, unknown> = {
       customer: customerId,
-      configuration,
+      ...(configuration ? { configuration } : {}),
       return_url: `${appBaseUrl()}/admin/premium`,
-      ...(data.action === "cancel" &&
-      stripeSubscription?.id
+      ...(data.action === "cancel" && isCancellable
         ? {
             flow_data: {
               type: "subscription_cancel",
-              subscription_cancel: {
-                subscription: stripeSubscription.id,
-              },
+              subscription_cancel: { subscription: stripeSubscription!.id },
               after_completion: {
                 type: "redirect",
-                redirect: {
-                  return_url: `${appBaseUrl()}/admin/premium`,
-                },
+                redirect: { return_url: `${appBaseUrl()}/admin/premium` },
               },
             },
           }
         : {}),
-    });
+    };
+
+    let session: Stripe.BillingPortal.Session;
+    try {
+      session = await stripe.billingPortal.sessions.create(portalArgs as any);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // Stripe rejects when subscription is already scheduled for cancellation via a schedule.
+      // Retry without flow_data and persist the real state to DB so badge updates on next load.
+      if (msg.includes("canceled at period end") || msg.includes("cancel_at_period_end")) {
+        // Stripe confirms this subscription is already scheduled for cancellation.
+        // Persist to BOTH studios and subscriptions tables so the badge is correct on next load.
+        const subIdToUpdate =
+          stripeSubscription?.id ??
+          subscription?.stripe_subscription_id ??
+          refreshedSubscription?.stripe_subscription_id;
+        console.warn("stripe_portal_retry_without_flow_data", {
+          studioId: studio.id,
+          subIdToUpdate,
+          hasStripeSubscription: Boolean(stripeSubscription),
+        });
+        // Update studios table (always available, used as fallback in summary)
+        const { error: studioErr } = await sb
+          .from("studios")
+          .update({ subscription_cancel_at_period_end: true })
+          .eq("id", studio.id);
+        if (studioErr) {
+          console.error("stripe_cancel_studio_update_failed", { studioId: studio.id, error: studioErr.message });
+        } else {
+          console.info("stripe_cancel_studio_update_ok", { studioId: studio.id });
+        }
+        // Also update subscriptions table
+        if (subIdToUpdate) {
+          const { error: subErr } = await sb
+            .from("subscriptions")
+            .update({ cancel_at_period_end: true })
+            .eq("stripe_subscription_id", subIdToUpdate);
+          if (subErr) {
+            console.error("stripe_cancel_sub_update_failed", { studioId: studio.id, error: subErr.message });
+          } else {
+            console.info("stripe_cancel_sub_update_ok", { studioId: studio.id, subIdToUpdate });
+          }
+        }
+        const { flow_data: _ignored, ...argsWithoutFlow } = portalArgs as any;
+        session = await stripe.billingPortal.sessions.create(argsWithoutFlow);
+      } else {
+        console.error("stripe_billing_portal_session_create_failed", {
+          studioId: studio.id,
+          customerId,
+          hasConfiguration: Boolean(configuration),
+          message: msg,
+        });
+        throw error;
+      }
+    }
     return { url: session.url };
   });
 

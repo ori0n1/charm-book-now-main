@@ -2,15 +2,14 @@ import { Link } from "@tanstack/react-router";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
 import { BellzaLogo } from "@/components/bellza-logo";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
-  { href: "#produto", label: "Produto" },
-  { href: "#funcionalidades", label: "Funcionalidades" },
-  { href: "#planos", label: "Planos" },
-  { href: "#seguranca", label: "Segurança" },
-  { href: "#faq", label: "FAQ" },
+  { href: "/#aplicativo", label: "Aplicativo" },
+  { href: "/#diferenciais", label: "Diferenciais" },
+  { href: "/#indicacao", label: "Indicação" },
+  { href: "/#planos", label: "Planos" },
+  { href: "/#faq", label: "FAQ" },
 ] as const;
 
 export function LandingHeader() {
@@ -19,10 +18,10 @@ export function LandingHeader() {
   return (
     <header className="public-nav">
       <nav
-        className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6"
+        className="relative mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6"
         aria-label="Principal"
       >
-        <BellzaLogo variant="navbar" />
+        <BellzaLogo variant="navbar" className="min-w-0 shrink" />
 
         <div className="hidden items-center gap-1 lg:flex">
           {NAV_LINKS.map((link) => (
@@ -32,17 +31,20 @@ export function LandingHeader() {
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          <ThemeToggle className="size-9" />
+        <div className="flex shrink-0 items-center justify-end gap-2">
           <Link to="/login" className="public-btn-ghost hidden sm:inline-flex">
             Entrar
           </Link>
-          <Link to="/signup" className="public-btn-primary hidden h-9 px-4 text-sm sm:inline-flex">
-            Começar grátis
+          <Link
+            to="/signup"
+            search={{ ref: undefined }}
+            className="public-btn-primary hidden h-9 px-4 text-sm sm:inline-flex"
+          >
+            Testar grátis
           </Link>
           <button
             type="button"
-            className="inline-flex size-9 items-center justify-center rounded-full border border-border/80 bg-card/60 lg:hidden"
+            className="inline-flex size-9 items-center justify-center rounded-full border border-border/80 bg-card/80 shadow-sm lg:hidden"
             aria-expanded={mobileOpen}
             aria-controls="landing-mobile-nav"
             onClick={() => setMobileOpen((open) => !open)}
@@ -71,11 +73,20 @@ export function LandingHeader() {
               {link.label}
             </a>
           ))}
-          <Link to="/login" onClick={() => setMobileOpen(false)} className="rounded-xl px-3 py-2.5 text-sm">
+          <Link
+            to="/login"
+            onClick={() => setMobileOpen(false)}
+            className="rounded-xl px-3 py-2.5 text-sm font-semibold text-muted-foreground"
+          >
             Entrar
           </Link>
-          <Link to="/signup" onClick={() => setMobileOpen(false)} className="public-btn-primary mt-2">
-            Começar 14 dias grátis
+          <Link
+            to="/signup"
+            search={{ ref: undefined }}
+            onClick={() => setMobileOpen(false)}
+            className="rounded-xl bg-foreground px-3 py-2.5 text-sm font-semibold text-background"
+          >
+            Testar grátis
           </Link>
         </div>
       </div>
