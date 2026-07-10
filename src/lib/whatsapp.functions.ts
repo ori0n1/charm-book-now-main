@@ -165,7 +165,7 @@ export const testWhatsAppMessage = createServerFn({ method: "POST" })
     if (!to) throw new Error("Telefone invalido para WhatsApp.");
 
     const startsAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-    const bookingUrl = await loadLatestAppointmentPublicUrlForStudio(sb, data.studioId);
+    const bookingUrl = await loadLatestAppointmentPublicUrlForStudio(sb, data.studioId, to);
     const ctx: ConfirmationContext = {
       studioId: studio.id,
       studioName: studio.name ?? "Estúdio",
@@ -1511,19 +1511,23 @@ async function ensureAppointmentPublicUrl(sb: any, appointmentId: string) {
   return `${getPublicOrigin()}/r/${token}`;
 }
 
-async function loadLatestAppointmentPublicUrlForStudio(sb: any, studioId: string) {
+async function loadLatestAppointmentPublicUrlForStudio(sb: any, studioId: string, phone: string) {
   const { data, error } = await sb
     .from("appointments")
-    .select("id")
+    .select("id,clients(phone)")
     .eq("studio_id", studioId)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(30);
   if (error) throw new Error(error.message);
-  if (!data?.id) {
-    throw new Error("Crie uma marcação antes de enviar o teste, para que o botão use um link real da reserva.");
+  const normalizedTarget = normalizeWhatsAppPhone(phone);
+  const appointment = ((data ?? []) as any[]).find((row) => {
+    const client = Array.isArray(row.clients) ? row.clients[0] : row.clients;
+    return normalizeWhatsAppPhone(client?.phone) === normalizedTarget;
+  });
+  if (!appointment?.id) {
+    throw new Error("Para testar o botão, use o WhatsApp de uma cliente que já tenha uma marcação neste estúdio.");
   }
-  return ensureAppointmentPublicUrl(sb, data.id);
+  return ensureAppointmentPublicUrl(sb, appointment.id);
 }
 
 function getPublicOrigin() {
