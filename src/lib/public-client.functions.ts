@@ -222,7 +222,7 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     const { data: clientsByUser, error: clientsByUserError } = userId
       ? await sb
           .from("clients")
-          .select("id,name,phone,email,avatar_url,date_of_birth,total_spent,total_visits,updated_at,contact_consent_at,contact_consent_version,policy_accepted_at,policy_version")
+          .select("id,name,phone,email,avatar_url,date_of_birth,account_kind,total_spent,total_visits,updated_at,contact_consent_at,contact_consent_version,policy_accepted_at,policy_version")
           .eq("studio_id", data.studioId)
           .eq("auth_user_id", userId)
       : { data: [], error: null };
@@ -523,11 +523,13 @@ function chooseCanonicalPublicClient(
       const clientEmail = normalizePublicClientEmail(client?.email);
       const totalVisits = Number(client?.total_visits ?? 0);
       const totalSpent = Number(client?.total_spent ?? 0);
+      const accountKind = String(client?.account_kind ?? "").trim();
       return (
         (preferredPhone && phone === preferredPhone ? 120 : 0) +
         (sessionEmail && clientEmail === sessionEmail ? 80 : 0) +
-        (phone ? 60 : 0) +
-        (rawPhone.startsWith("account:") ? -80 : 0) +
+        (phone ? 90 : 0) +
+        (accountKind === "account" ? 25 : 0) +
+        (rawPhone.startsWith("account:") ? -120 : 0) +
         (client?.contact_consent_at ? 35 : 0) +
         (client?.policy_accepted_at ? 35 : 0) +
         (totalVisits > 0 ? 20 : 0) +

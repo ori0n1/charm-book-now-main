@@ -671,10 +671,12 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
         const area = (await loadPublicClientArea({
           data: { studioId: studio.id },
         })) as PublicClientAreaPayload;
+        const savedPhone = normalizeSharedInternationalPhone(profile?.phone || nextPhone || area.profile.phone || "");
         setClientArea({
           ...area,
           profile: {
             ...area.profile,
+            phone: savedPhone || area.profile.phone,
             dateOfBirth: savedDateOfBirth ?? area.profile.dateOfBirth ?? null,
           },
         });
@@ -1815,7 +1817,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               const nextPhone = normalizeSharedInternationalPhone(phone);
               if (!isValidSharedInternationalPhone(nextPhone)) {
                 toast.error("Indique um WhatsApp válido antes de continuar.");
-                return;
+                throw new Error("invalid_public_client_phone");
               }
               setClientProfileSaving(true);
               try {
@@ -1823,6 +1825,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               } catch (error) {
                 console.error("[public-client] phone save failed", error);
                 toast.error("Não foi possível guardar o WhatsApp. Tente novamente.");
+                throw error;
               } finally {
                 setClientProfileSaving(false);
               }
@@ -6910,7 +6913,11 @@ function ClientAccountArea({
                     <SharedInternationalPhoneInput value={phoneDraft} onChange={onPhoneDraftChange} />
                     <button
                       type="button"
-                      onClick={() => onSavePhone(phoneDraft).then(() => onPhoneEditorOpenChange(false))}
+                      onClick={() => {
+                        void onSavePhone(phoneDraft)
+                          .then(() => onPhoneEditorOpenChange(false))
+                          .catch(() => undefined);
+                      }}
                       disabled={savingProfile}
                       className="h-12 rounded-xl bg-foreground px-5 text-xs font-black uppercase tracking-[0.14em] text-background disabled:opacity-50"
                     >
