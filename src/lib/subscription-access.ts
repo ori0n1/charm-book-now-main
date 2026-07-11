@@ -67,7 +67,7 @@ export function getStudioSubscriptionAccess(
     };
   }
 
-  const trialActive = TRIAL_STATUSES.has(status) && isFutureDate(studio.trial_ends_at, now);
+  const trialActive = isFutureDate(studio.trial_ends_at, now) && !activeSubscription;
   if (trialActive) {
     return {
       premiumActive: true,

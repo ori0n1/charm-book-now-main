@@ -627,6 +627,18 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         });
         return subscription;
       })) ?? subscription;
+    const studioTrialActiveByDate = Boolean(
+      studio.trial_ends_at &&
+        new Date(studio.trial_ends_at as string).getTime() > Date.now(),
+    );
+    if (
+      studioTrialActiveByDate &&
+      subscription &&
+      ["canceled", "incomplete_expired", "unpaid"].includes(String(subscription.status)) &&
+      !hasPeriodAccess(String(subscription.status), subscription.current_period_end)
+    ) {
+      subscription = null;
+    }
     const rawStatus = (subscription?.status ?? studio.subscription_status ?? "trialing") as string;
     const premiumUntil =
       subscription?.current_period_end ??
