@@ -27,7 +27,7 @@ import {
   releaseCheckoutSession,
   markTrialUsed,
 } from "@/lib/subscription-helpers";
-import { getStudioSubscriptionAccess } from "@/lib/subscription-access";
+import { getStudioSubscriptionAccess, isFutureDate } from "@/lib/subscription-access";
 
 function priceRef(priceId: string) {
   return priceId.length > 8 ? `...${priceId.slice(-8)}` : priceId;
@@ -362,6 +362,7 @@ async function refreshSubscriptionFromStripe(
     subscription: Awaited<ReturnType<typeof loadSubscriptionForStudio>>;
     env: StripeEnv;
     reason: string;
+    trialEndsAt?: string | null;
   },
 ) {
   if (
@@ -384,6 +385,21 @@ async function refreshSubscriptionFromStripe(
   if (!stripeSubscription) {
     console.info("stripe_subscription_reconcile_none", {
       studioId: input.studioId,
+      reason: input.reason,
+    });
+    return input.subscription;
+  }
+  const stripePeriodEnd = getCurrentPeriodEnd(stripeSubscription);
+  const stripeCurrentPeriodEnd = stripePeriodEnd ? new Date(stripePeriodEnd * 1000).toISOString() : null;
+  if (
+    isFutureDate(input.trialEndsAt) &&
+    ["canceled", "incomplete_expired", "unpaid"].includes(String(stripeSubscription.status)) &&
+    !hasPeriodAccess(String(stripeSubscription.status), stripeCurrentPeriodEnd)
+  ) {
+    console.info("stripe_subscription_reconcile_skipped_terminal_subscription_during_trial", {
+      studioId: input.studioId,
+      subscriptionId: stripeSubscription.id,
+      status: stripeSubscription.status,
       reason: input.reason,
     });
     return input.subscription;
@@ -513,6 +529,7 @@ async function recoverPendingCheckout(
     studioId: string;
     customerId: string | null;
     env: StripeEnv;
+    trialEndsAt?: string | null;
   },
 ) {
   if (!input.customerId) return false;
@@ -532,6 +549,21 @@ async function recoverPendingCheckout(
   if (!session || typeof session.subscription !== "string") return false;
 
   const subscription = await stripe.subscriptions.retrieve(session.subscription);
+  const periodEnd = getCurrentPeriodEnd(subscription);
+  const currentPeriodEnd = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+  if (
+    isFutureDate(input.trialEndsAt) &&
+    ["canceled", "incomplete_expired", "unpaid"].includes(String(subscription.status)) &&
+    !hasPeriodAccess(String(subscription.status), currentPeriodEnd)
+  ) {
+    await releaseCheckoutSession(sb, { userId: input.userId, studioId: input.studioId });
+    console.info("stripe_checkout_recovery_skipped_terminal_subscription_during_trial", {
+      studioId: input.studioId,
+      subscriptionId: subscription.id,
+      status: subscription.status,
+    });
+    return false;
+  }
   await syncCheckoutSubscription(sb, subscription, input.env, {
     userId: input.userId,
     studioId: input.studioId,
@@ -581,6 +613,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         studioId: studio.id as string,
         customerId: studio.stripe_customer_id as string | null,
         env: stripeEnv(),
+        trialEndsAt: studio.trial_ends_at as string | null,
       }).catch((error) => {
         console.error("stripe_checkout_recovery_failed", {
           studioId: studio.id,
@@ -589,6 +622,8 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         return false;
       });
       if (recovered) {
+        subscription = await loadSubscriptionForStudio(sb, studio.id as string, userId);
+      } else if (subscription?.status === "checkout_pending") {
         subscription = await loadSubscriptionForStudio(sb, studio.id as string, userId);
       }
     }
@@ -620,6 +655,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         subscription,
         env: stripeEnv(),
         reason: "summary",
+        trialEndsAt: studio.trial_ends_at as string | null,
       }).catch((error) => {
         console.error("stripe_subscription_reconcile_failed", {
           studioId: studio.id,
@@ -673,10 +709,12 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
             ? "trialing"
             : rawStatus;
     const rawNextBillingAt =
-      subscription?.current_period_end ??
-      studio.subscription_current_period_end ??
-      studio.trial_ends_at ??
-      null;
+      trialActive && !paidActive
+        ? studio.trial_ends_at ?? null
+        : subscription?.current_period_end ??
+          studio.subscription_current_period_end ??
+          studio.trial_ends_at ??
+          null;
     const nextBillingAt =
       status === "trialing" && !hasStripePlan
         ? rawNextBillingAt
@@ -877,6 +915,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       studioId: studio.id,
       customerId,
       env,
+      trialEndsAt: studio.trial_ends_at,
     }).catch((error) => {
       console.error("stripe_checkout_recovery_before_create_failed", {
         studioId: studio.id,
@@ -894,6 +933,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
         subscription: existingSubscription,
         env,
         reason: "before_checkout",
+        trialEndsAt: studio.trial_ends_at,
       }).catch((error) => {
         console.error("stripe_subscription_reconcile_before_checkout_failed", {
           studioId: studio.id,
@@ -1036,6 +1076,7 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
       subscription,
       env,
       reason: "before_portal",
+      trialEndsAt: studio.trial_ends_at,
     }).catch((error) => {
       console.error("stripe_subscription_reconcile_before_portal_failed", {
         studioId: studio.id,
@@ -1241,6 +1282,7 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
         subscription: existingSubscription,
         env,
         reason: "before_plan_change",
+        trialEndsAt: studio.trial_ends_at,
       }).catch((error) => {
         console.error("stripe_subscription_reconcile_before_plan_change_failed", {
           studioId: studio.id,
