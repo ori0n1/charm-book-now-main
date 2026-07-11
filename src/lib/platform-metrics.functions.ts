@@ -165,8 +165,8 @@ export const getPlatformMetrics = createServerFn({ method: "POST" })
 
     // ── Revenue ───────────────────────────────────────────────────────────────
     // Monthly plan: 8.99 € → 899 cents/month
-    // Yearly plan:  71.99 € / 12 → ~600 cents/month contribution to MRR
-    const mrrCents = monthlySubs.length * 899 + yearlySubs.length * Math.round(7199 / 12);
+    // Yearly plan:  89.99 € / 12 → ~750 cents/month contribution to MRR
+    const mrrCents = monthlySubs.length * 899 + yearlySubs.length * Math.round(8999 / 12);
     const arrCents = mrrCents * 12;
 
     // ── Growth chart ──────────────────────────────────────────────────────────

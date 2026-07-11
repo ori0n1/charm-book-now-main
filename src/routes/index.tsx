@@ -80,8 +80,8 @@ const HERO_BENEFITS = [
     text: "Reservas diretas, disponibilidade real e menos mensagens manuais.",
   },
   {
-    title: "Tudo ilimitado",
-    text: "Profissionais, clientes, serviços, mensagens e notificações.",
+    title: "Fase de lançamento",
+    text: "Funcionalidades atuais incluídas nas condições desta fase.",
   },
 ] as const;
 
@@ -177,7 +177,7 @@ function LandingPage() {
       "@type": "Offer",
       name: plan.name,
       priceCurrency: "EUR",
-      price: plan.id === "monthly" ? "8.99" : "71.99",
+      price: plan.id === "monthly" ? "8.99" : "89.99",
     })),
     featureList: PLAN_FEATURES,
     areaServed: { "@type": "Country", name: "Portugal" },
@@ -388,10 +388,15 @@ function LandingPage() {
 
         <section id="planos" className="scroll-mt-28 bg-foreground py-14 text-background sm:py-16">
           <div className="mx-auto max-w-7xl px-4 sm:px-6">
+            <div className="mb-4 flex justify-center">
+              <span className="rounded-full border border-background/15 bg-background/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-background/78">
+                Oferta de Lançamento
+              </span>
+            </div>
             <SectionIntro
               label="Planos"
-              title="Preço simples, produto completo."
-              description="Teste gratuito de 14 dias, cancelamento a qualquer momento no mensal e todos os recursos essenciais incluídos."
+              title="Preço simples para entrar cedo na Bellza."
+              description="Teste gratuito de 14 dias, condições especiais de lançamento e funcionalidades atuais incluídas nesta fase da plataforma."
               inverted
             />
             <div className="mt-8 grid gap-4 lg:grid-cols-[0.82fr_1.18fr]">
@@ -441,6 +446,9 @@ function LandingPage() {
                     <p className={`mt-1 text-xs font-semibold ${plan.highlighted ? "text-accent" : "text-background/48"}`}>
                       {plan.equivalent}
                     </p>
+                    <p className={`mt-3 text-xs leading-relaxed ${plan.highlighted ? "text-muted-foreground" : "text-background/52"}`}>
+                      Inclui todas as funcionalidades disponíveis nesta fase de lançamento.
+                    </p>
                     <button
                       type="button"
                       onClick={() => startPlanCheckout(plan.id)}
@@ -453,6 +461,11 @@ function LandingPage() {
                 ))}
               </div>
             </div>
+            <p className="mx-auto mt-6 max-w-3xl text-center text-xs leading-relaxed text-background/48">
+              A Bellza encontra-se em evolução contínua. No futuro poderão ser disponibilizados novos planos,
+              funcionalidades e condições comerciais. As alterações não afetam retroativamente aquilo que for
+              contratado, salvo comunicação prévia e nos termos aplicáveis.
+            </p>
           </div>
         </section>
 

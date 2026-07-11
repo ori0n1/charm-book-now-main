@@ -1419,8 +1419,8 @@ function PlanChooserModal({
     {
       id: "yearly",
       name: "Anual",
-      price: "71,99 € total",
-      detail: "Equivale a 6,00 €/mês.",
+      price: "89,99 € total",
+      detail: "Equivale a 7,50 €/mês.",
       badge: "Melhor valor",
     },
   ];
@@ -1429,7 +1429,7 @@ function PlanChooserModal({
     <ModalShell onClose={onClose} title="Escolha o plano Premium">
       <p className="text-sm leading-relaxed text-muted-foreground">
         Pode escolher o plano agora e manter o teste gratuito até ao fim. O pagamento é
-        confirmado com segurança antes de libertar o acesso premium.
+        confirmado com segurança antes de libertar o acesso premium. As funcionalidades atuais estão incluídas nesta fase de lançamento.
       </p>
       <div className="mt-5 grid gap-3">
         {plans.map((plan) => (

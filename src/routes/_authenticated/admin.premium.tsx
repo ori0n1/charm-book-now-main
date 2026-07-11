@@ -63,15 +63,15 @@ const PLANS: {
   {
     id: "yearly",
     name: "Anual",
-    price: "71,99 €",
+    price: "89,99 €",
     cadence: "por ano",
-    savings: "Poupe 33%",
+    savings: "Poupe cerca de 17%",
     highlighted: true,
   },
 ];
 
 const PLAN_FEATURES = [
-  "Marcações online ilimitadas",
+  "Marcações online",
   "Painel financeiro completo",
   "Múltiplos profissionais",
   "WhatsApp de confirmação automático",
@@ -429,6 +429,9 @@ function PremiumAccessPage() {
       <section className="rounded-[1.75rem] border border-border bg-card p-4 shadow-sm md:p-5">
         <div className="flex items-end justify-between gap-4">
           <div>
+            <span className="mb-2 inline-flex rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+              Condições especiais de lançamento
+            </span>
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
               Planos disponíveis
             </p>
@@ -477,6 +480,9 @@ function PremiumAccessPage() {
                   <p className="text-3xl font-light leading-none tracking-tight">{plan.price}</p>
                   <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                     {plan.cadence}
+                  </p>
+                  <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                    Inclui todas as funcionalidades disponíveis nesta fase de lançamento.
                   </p>
                 </div>
                 <ul className="mt-4 space-y-2">
@@ -531,6 +537,10 @@ function PremiumAccessPage() {
             );
           })}
         </div>
+        <p className="mx-auto mt-5 max-w-2xl text-center text-xs leading-relaxed text-muted-foreground">
+          A Bellza está em evolução contínua. No futuro poderão surgir novos planos, funcionalidades e condições
+          comerciais, sem afetar retroativamente aquilo que for contratado, salvo comunicação prévia e nos termos aplicáveis.
+        </p>
       </section>
     </div>
   );

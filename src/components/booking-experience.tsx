@@ -3516,6 +3516,7 @@ function ServiceCard({
             </div>
             <button
               onClick={onSelect}
+              aria-label={selected ? `Remover ${service.name}` : "Agendar"}
               className={cn(
                 "h-9 shrink-0 rounded-xl px-3 text-[0.68rem] font-extrabold shadow-sm transition-all active:scale-[0.98] md:h-10 md:px-4 md:text-xs",
                 selected

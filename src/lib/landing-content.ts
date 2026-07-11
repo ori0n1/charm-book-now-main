@@ -8,17 +8,17 @@ export const PRICING_PLANS = [
     cadence: "/mês",
     total: "Cancele quando quiser",
     equivalent: "Teste gratuito de 14 dias incluído",
-    badges: ["Sem fidelização", "Tudo ilimitado"],
+    badges: ["Sem fidelização", "Preço de lançamento"],
     highlighted: false,
   },
   {
     id: "yearly",
     name: "Premium Anual",
-    price: "71,99 €",
+    price: "89,99 €",
     cadence: "/ano",
-    total: "Equivale a 6,00 €/mês",
-    equivalent: "Poupe 33% face ao mensal",
-    badges: ["Recomendado", "Melhor custo-benefício"],
+    total: "Equivale a 7,50 €/mês",
+    equivalent: "Poupe cerca de 17% face ao mensal",
+    badges: ["Recomendado", "Condições de lançamento"],
     highlighted: true,
   },
 ] as const;
@@ -26,9 +26,9 @@ export const PRICING_PLANS = [
 export const PLAN_FEATURES = [
   "Aplicativo próprio do estúdio em formato PWA",
   "Página pública própria com link exclusivo",
-  "Profissionais, clientes e serviços ilimitados",
-  "Agenda online, disponibilidade e reservas ilimitadas",
-  "Mensagens automáticas e notificações ilimitadas",
+  "Múltiplos profissionais, clientes e serviços",
+  "Agenda online, disponibilidade e reservas",
+  "Mensagens automáticas e notificações",
   "Pagamentos online, sinais, caixa e relatórios",
   "Programa de indicação com crédito mensal",
   "Suporte, atualizações contínuas e 14 dias grátis",
@@ -36,7 +36,7 @@ export const PLAN_FEATURES = [
 
 export const TRUST_PILLARS = [
   { value: "PWA", label: "Aplicativo próprio para cada estúdio" },
-  { value: "Ilimitado", label: "Equipa, clientes, serviços e avisos" },
+  { value: "Completo", label: "Equipa, clientes, serviços e avisos" },
   { value: "14 dias", label: "Teste Premium gratuito" },
   { value: "Sem loja", label: "Instalável no iPhone e Android" },
 ] as const;
@@ -73,10 +73,10 @@ export const FEATURE_BLOCKS = [
     points: ["Reservas online", "Disponibilidade real", "Sem conflitos"],
   },
   {
-    title: "Recursos ilimitados",
+    title: "Gestão completa",
     description:
-      "A Bellza não cobra por quantidade de profissionais, clientes, serviços, mensagens ou notificações usadas no dia a dia.",
-    points: ["Equipa ilimitada", "Clientes ilimitados", "Avisos ilimitados"],
+      "Nesta fase de lançamento, as funcionalidades atuais ajudam o estúdio a gerir equipa, clientes, serviços e comunicação num só lugar.",
+    points: ["Múltiplos profissionais", "Base de clientes organizada", "Avisos e notificações"],
   },
   {
     title: "Gestão financeira",
@@ -136,7 +136,7 @@ export const LANDING_FAQS = [
   {
     question: "Tenho limites de profissionais ou clientes?",
     answer:
-      "Não. Os planos incluem profissionais, clientes, serviços, mensagens automáticas e notificações ilimitadas para o uso normal do estúdio.",
+      "Durante a fase de lançamento, o plano inclui as funcionalidades atuais para gerir profissionais, clientes, serviços, mensagens automáticas e notificações no uso normal do estúdio.",
   },
   {
     question: "Os clientes conseguem marcar online?",
