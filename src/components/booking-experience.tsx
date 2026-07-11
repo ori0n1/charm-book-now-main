@@ -162,6 +162,13 @@ function getRequiredServiceIds(service: Service | null, selectedUpsells: Upsell[
   ]);
 }
 
+function getRequiredServiceIdsForServices(services: Service[], selectedUpsells: Upsell[]) {
+  return uniqueServiceIds([
+    ...services.map((service) => service.id),
+    ...selectedUpsells.map((upsell) => getUpsellOfferedServiceId(upsell)),
+  ]);
+}
+
 function professionalCanPerformServices(professional: Professional, serviceIds: string[]) {
   if (serviceIds.length === 0) return true;
   // Empty serviceIds = staff not yet linked -> treat as eligible for all services.
@@ -433,6 +440,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const [step, setStep] = useState<Step>(0);
   const [categoryId, setCategoryId] = useState<string>("all");
   const [service, setService] = useState<Service | null>(null);
+  const [selectedServices, setSelectedServices] = useState<Service[]>([]);
   const [professional, setProfessional] = useState<Professional | "any" | null>(null);
   const [date, setDate] = useState<Date | null>(null);
   const [time, setTime] = useState<string | null>(null);
@@ -943,6 +951,49 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const resolveServiceId = (id: string) => SERVICE_DB_ID[id] ?? id;
   const resolveStaffId = (id: string) => STAFF_DB_ID[id] ?? id;
 
+  useEffect(() => {
+    const nextPrimary = selectedServices[0] ?? null;
+    if (service?.id === nextPrimary?.id) return;
+    setService(nextPrimary);
+    setExtras({});
+  }, [selectedServices, service?.id]);
+
+  const resetBookingSlot = () => {
+    setDate(null);
+    setTime(null);
+    setSelectedSlot(null);
+  };
+
+  const handleToggleService = (picked: Service) => {
+    setSelectedServices((current) => {
+      const exists = current.some((item) => item.id === picked.id);
+      return exists ? current.filter((item) => item.id !== picked.id) : [...current, picked];
+    });
+    setProfessional(null);
+    resetBookingSlot();
+    setExtras({});
+  };
+
+  const continueWithSelectedServices = () => {
+    if (selectedServices.length === 0) {
+      toast.error("Escolha pelo menos um serviÃ§o para continuar.");
+      return;
+    }
+    const requiredIds = selectedServices.map((item) => item.id);
+    const eligible = professionals.filter(
+      (p) => p.serviceIds.length === 0 || professionalCanPerformServices(p, requiredIds),
+    );
+    const currentProfessional =
+      professional && professional !== "any" && professionalCanPerformServices(professional, requiredIds)
+        ? professional
+        : null;
+    if (currentProfessional) setProfessional(currentProfessional);
+    else if (eligible.length === 1) setProfessional(eligible[0]);
+    else setProfessional(null);
+    resetBookingSlot();
+    setStep(2);
+  };
+
   async function submitBooking() {
     if (!service || !date || !time || !professional) return;
     if (!clientValid) {
@@ -976,7 +1027,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       return;
     }
     const serviceDbIds = [
-      resolveServiceId(service.id),
+      ...selectedServices.map((item) => resolveServiceId(item.id)),
       ...(addedUpsells
         .map((u) => {
           const offeredServiceId = getUpsellOfferedServiceId(u);
@@ -1098,8 +1149,12 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     [extras, upsells],
   );
   const selectedServiceIds = useMemo(
-    () => getRequiredServiceIds(service, rawSelectedUpsells),
-    [service, rawSelectedUpsells],
+    () => getRequiredServiceIdsForServices(selectedServices, rawSelectedUpsells),
+    [selectedServices, rawSelectedUpsells],
+  );
+  const selectedServiceIdSet = useMemo(
+    () => new Set(selectedServices.map((item) => item.id)),
+    [selectedServices],
   );
 
   const eligiblePros = useMemo(() => {
@@ -1127,20 +1182,20 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       const line = calculateUpsellLine(upsell);
       const offeredServiceId = getUpsellOfferedServiceId(upsell);
       if (
-        upsell.id === service.id ||
+        selectedServiceIdSet.has(upsell.id) ||
         !offeredServiceId ||
-        offeredServiceId === service.id ||
+        selectedServiceIdSet.has(offeredServiceId) ||
         upsell.name.trim().length === 0 ||
         line.originalPrice <= 0 ||
         line.finalPrice < 0
       ) {
         return false;
       }
-      const requiredIds = uniqueServiceIds([service.id, offeredServiceId]);
+      const requiredIds = uniqueServiceIds([...selectedServices.map((item) => item.id), offeredServiceId]);
       if (selectedPro) return professionalCanPerformServices(selectedPro, requiredIds);
       return professionals.some((p) => professionalCanPerformServices(p, requiredIds));
     });
-  }, [service, upsells, professional, professionals, selectedSlotProfessional]);
+  }, [service, upsells, professional, professionals, selectedSlotProfessional, selectedServiceIdSet, selectedServices]);
   const addedUpsells = useMemo(
     () => compatibleUpsells.filter((u) => extras[u.id]),
     [compatibleUpsells, extras],
@@ -1177,9 +1232,11 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const upsellsTotal = addedUpsellsPricing.finalTotal;
   const upsellsDuration = addedUpsells.reduce((sum, u) => sum + u.durationMin, 0);
   const upsellsSavings = addedUpsellsPricing.savingsTotal;
+  const servicesTotal = selectedServices.reduce((sum, item) => sum + item.price, 0);
+  const servicesDuration = selectedServices.reduce((sum, item) => sum + item.durationMin, 0);
 
-  const total = (service?.price ?? 0) + upsellsTotal;
-  const totalDuration = (service?.durationMin ?? 0) + upsellsDuration;
+  const total = servicesTotal + upsellsTotal;
+  const totalDuration = servicesDuration + upsellsDuration;
 
   const handleToggleExtra = async (id: string) => {
     const isSelected = Boolean(extras[id]);
@@ -1192,7 +1249,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       const slotProfessional =
         selectedSlotProfessional ??
         (professional && professional !== "any" ? (professional as Professional) : null);
-      const requiredIds = uniqueServiceIds([service.id, getUpsellOfferedServiceId(upsell)]);
+      const requiredIds = uniqueServiceIds([
+        ...selectedServices.map((item) => item.id),
+        getUpsellOfferedServiceId(upsell),
+      ]);
       if (slotProfessional && !professionalCanPerformServices(slotProfessional, requiredIds)) {
         toast.error(INCOMPATIBLE_UPSELL_MESSAGE);
         return;
@@ -1201,7 +1261,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     setExtras((current) => ({ ...current, [id]: !current[id] }));
 
     if (!isSelected && service && upsell && date && selectedSlot?.staff_id) {
-      const nextDuration = service.durationMin + upsellsDuration + upsell.durationMin;
+      const nextDuration = servicesDuration + upsellsDuration + upsell.durationMin;
       const slotProfessional =
         selectedSlotProfessional ??
         (professional && professional !== "any" ? (professional as Professional) : null);
@@ -1926,39 +1986,11 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                     activeId={activeCategoryId ?? ""}
                     onPick={(id) => {
                       setCategoryId(id);
-                      setService(null);
-                      setProfessional(null);
-                      setDate(null);
-                      setTime(null);
-                      setSelectedSlot(null);
-                      setExtras({});
                     }}
-                    selected={service}
-                    onSelect={(s) => {
-                      setService(s);
-                      setDate(null);
-                      setTime(null);
-                      setSelectedSlot(null);
-                      setExtras({});
+                    selectedServices={selectedServices}
+                    onToggleService={handleToggleService}
+                    onContinue={continueWithSelectedServices}
                       // Auto-select when only 1 professional is eligible — skip step 1
-                      const eligible = professionals.filter(
-                        (p) => p.serviceIds.length === 0 || p.serviceIds.includes(s.id),
-                      );
-                      const currentProfessional =
-                        professional && professional !== "any"
-                          ? eligible.find((p) => p.id === (professional as Professional).id)
-                          : null;
-                      if (currentProfessional) {
-                        setProfessional(currentProfessional);
-                        setStep(2);
-                      } else if (eligible.length === 1) {
-                        setProfessional(eligible[0]);
-                        setStep(2);
-                      } else {
-                        setProfessional(null);
-                        setStep(2);
-                      }
-                    }}
                   />
                 </>
               ) : publicTab === "professionals" ? (
@@ -1970,6 +2002,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                   onPick={(picked) => {
                     setProfessional(picked);
                     setService(null);
+                    setSelectedServices([]);
                     setDate(null);
                     setTime(null);
                     setSelectedSlot(null);
@@ -1999,7 +2032,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               selected={professional}
               studioSlug={studio.slug}
               studioTimezone={studio.timezone}
-              durationMin={service.durationMin + upsellsDuration}
+              durationMin={totalDuration || service.durationMin}
               onSelect={(p) => {
                 setProfessional(p);
                 setDate(null);
@@ -2067,6 +2100,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           {step === 4 && service && date && time && (
             <ReviewStepPremium
               service={service}
+              services={selectedServices.length > 0 ? selectedServices : [service]}
               proLabel={proLabel}
               date={date}
               time={time}
@@ -3185,15 +3219,17 @@ function CategoryStep({
   services,
   activeId,
   onPick,
-  selected,
-  onSelect,
+  selectedServices,
+  onToggleService,
+  onContinue,
 }: {
   categories: Category[];
   services: Service[];
   activeId: string;
   onPick: (id: string) => void;
-  selected: Service | null;
-  onSelect: (s: Service) => void;
+  selectedServices: Service[];
+  onToggleService: (s: Service) => void;
+  onContinue: () => void;
 }) {
   const activeCategory = categories.find((c) => c.id === activeId);
   const [showAllCategories, setShowAllCategories] = useState(false);
@@ -3205,6 +3241,9 @@ function CategoryStep({
   const visibleServices = services.filter((service) =>
     `${service.name} ${service.description ?? ""}`.toLowerCase().includes(query.toLowerCase()),
   );
+  const selectedIds = new Set(selectedServices.map((service) => service.id));
+  const selectedTotal = selectedServices.reduce((sum, service) => sum + service.price, 0);
+  const selectedDuration = selectedServices.reduce((sum, service) => sum + service.durationMin, 0);
 
   return (
     <section id="public-services" className="animate-slide-up space-y-3 pt-3">
@@ -3275,6 +3314,44 @@ function CategoryStep({
             </div>
           </div>
         )}
+        {selectedServices.length > 0 && (
+          <div className="rounded-[1.35rem] border border-accent/25 bg-accent/10 p-3 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-mono text-[9px] font-black uppercase tracking-[0.18em] text-accent">
+                  Selecionados
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {selectedServices.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onToggleService(item)}
+                      className="inline-flex max-w-full items-center gap-1 rounded-full bg-background/80 px-2.5 py-1 text-[11px] font-bold text-foreground ring-1 ring-border"
+                      title="Remover serviço"
+                    >
+                      <span className="max-w-[12rem] truncate">{item.name}</span>
+                      <X className="size-3 text-muted-foreground" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className={moneyClass("text-base")}>{formatMoney(selectedTotal)}</p>
+                <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  {selectedDuration} min
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onContinue}
+              className="mt-3 flex h-11 w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-extrabold text-background shadow-sm transition active:scale-[0.98]"
+            >
+              Continuar
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -3290,8 +3367,8 @@ function CategoryStep({
             renderItem={(s) => (
               <ServiceCard
                 service={s}
-                selected={selected?.id === s.id}
-                onSelect={() => onSelect(s)}
+                selected={selectedIds.has(s.id)}
+                onSelect={() => onToggleService(s)}
               />
             )}
           />
@@ -3448,10 +3525,10 @@ function ServiceCard({
             >
               {selected ? (
                 <span className="inline-flex items-center gap-1.5">
-                  <Check className="size-3.5" strokeWidth={3} /> Selecionado
+                  <Check className="size-3.5" strokeWidth={3} /> Remover
                 </span>
               ) : (
-                "Agendar"
+                "Adicionar"
               )}
             </button>
           </div>
@@ -4792,6 +4869,7 @@ function ReviewStep({
   const isFullPay = requiresDeposit && depositRate >= 100;
   const showPaymentPolicySummary = false as boolean;
   const policySummary = `${policyParts.rescheduleBody} ${policyParts.refundBody}`;
+  const services = [service];
   return (
     <section className="animate-slide-up space-y-5 pt-4">
       {/* Identification card */}
@@ -4880,6 +4958,9 @@ function ReviewStep({
         <SectionTitle>Resumo</SectionTitle>
         <div className="mt-3 space-y-px overflow-hidden rounded-2xl bg-card ring-1 ring-border">
           <Row label="Serviço" value={service.name} />
+          {services.slice(1).map((item, index) => (
+            <Row key={item.id} label={`ServiÃ§o ${index + 2}`} value={item.name} />
+          ))}
           <Row label="Profissional" value={proLabel} />
           <Row label="Data" value={formatDate(date)} />
           <Row label="Hora" value={time} />
@@ -4920,6 +5001,7 @@ function ReviewStep({
 
 function ReviewStepPremium({
   service,
+  services = [service],
   proLabel,
   date,
   time,
@@ -4948,6 +5030,7 @@ function ReviewStepPremium({
   onOpenPolicy,
 }: {
   service: Service;
+  services?: Service[];
   proLabel: string;
   date: Date;
   time: string;
@@ -4997,13 +5080,14 @@ function ReviewStepPremium({
     editingClientDetails || !clientAccountEmail || !client.email || !/\S+@\S+\.\S+/.test(client.email);
   const showPhoneField =
     editingClientDetails || !clientAccountEmail || !isValidSharedInternationalPhone(client.phone);
+  const selectedServiceIdsInReview = new Set(services.map((item) => item.id));
   const validUpsells = availableUpsells.filter((upsell) => {
     const line = calculateUpsellLine(upsell);
     const offeredServiceId =
       "offeredServiceId" in upsell ? String((upsell as Upsell & { offeredServiceId?: string }).offeredServiceId ?? "") : "";
     return (
-      upsell.id !== service.id &&
-      offeredServiceId !== service.id &&
+      !selectedServiceIdsInReview.has(upsell.id) &&
+      !selectedServiceIdsInReview.has(offeredServiceId) &&
       upsell.name.trim().length > 0 &&
       line.originalPrice > 0 &&
       line.finalPrice >= 0
@@ -5216,6 +5300,25 @@ function ReviewStepPremium({
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {services.length > 1 && (
+        <div>
+          <SectionTitle>ServiÃ§os escolhidos</SectionTitle>
+          <div className="mt-3 space-y-2 rounded-2xl border border-border bg-card p-3 shadow-sm">
+            {services.map((item, index) => (
+              <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl bg-background/70 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-extrabold text-foreground">{item.name}</p>
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    {index + 1} de {services.length} · {item.durationMin} min
+                  </p>
+                </div>
+                <span className={moneyClass("shrink-0 text-sm")}>{formatMoney(item.price)}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
