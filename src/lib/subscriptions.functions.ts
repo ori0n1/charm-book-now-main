@@ -33,6 +33,21 @@ function priceRef(priceId: string) {
   return priceId.length > 8 ? `...${priceId.slice(-8)}` : priceId;
 }
 
+function checkoutIdempotencyKey(input: {
+  studioId: string;
+  userId: string;
+  planId: SubscriptionPlanId;
+  priceId: string;
+}) {
+  return [
+    "platform-subscription",
+    input.studioId,
+    input.userId,
+    input.planId,
+    input.priceId,
+  ].join(":");
+}
+
 function logCheckoutError(error: unknown, details: Record<string, unknown>) {
   const stripeError = error as {
     code?: string;
@@ -998,7 +1013,12 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
           ...(trialEnd ? { trial_end: trialEnd } : {}),
         },
       }, {
-        idempotencyKey: `platform-subscription:${studio.id}:${userId}:${plan.id}`,
+        idempotencyKey: checkoutIdempotencyKey({
+          studioId: studio.id,
+          userId,
+          planId: plan.id,
+          priceId: plan.priceId,
+        }),
       });
     } catch (error) {
       await releaseCheckoutSession(sb, { userId, studioId: studio.id });
