@@ -74,7 +74,7 @@ export function PublicFooter(props: PublicFooterProps) {
           © {year}
         </span>
         <span className="max-w-full whitespace-normal text-center text-[11px] text-muted-foreground/35 sm:whitespace-nowrap">
-          Bellza — Operado por Silas Oliveira Silva.
+          Bellza.
         </span>
 
       </div>
