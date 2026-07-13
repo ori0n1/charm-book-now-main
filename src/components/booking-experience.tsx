@@ -6020,6 +6020,17 @@ function ClientAccountArea({
   );
   const completedReviews = history.filter((a) => reviewedApptIds.has(a.id));
   const unreadNotifications = notifications.filter((item) => item.status !== "read").length;
+  const followedStudiosCount = followedStudios.length;
+
+  function openFollowedStudios() {
+    onTabChange("profile");
+    window.setTimeout(() => {
+      document.getElementById("client-followed-studios")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 80);
+  }
 
   async function markAllNotificationsRead() {
     if (unreadNotifications === 0 || markingAllNotifications) return;
@@ -6422,11 +6433,12 @@ function ClientAccountArea({
               color="emerald"
             />
             <DashboardTile
-              icon={<Star className="size-4" />}
-              label="Avaliações"
-              value={completedReviews.length > 0 ? `${completedReviews.length}` : pendingReviews.length > 0 ? `${pendingReviews.length}` : "—"}
-              sub={completedReviews.length > 0 ? "realizadas" : pendingReviews.length > 0 ? "por fazer" : "sem avaliações"}
+              icon={<Heart className="size-4" />}
+              label={"Est\u00fadios seguidos"}
+              value={String(followedStudiosCount)}
+              sub={`${followedStudiosCount} est\u00fadio${followedStudiosCount === 1 ? "" : "s"} seguido${followedStudiosCount === 1 ? "" : "s"}`}
               color="amber"
+              onClick={openFollowedStudios}
             />
             <DashboardTile
               icon={<Wallet className="size-4" />}
@@ -7158,7 +7170,10 @@ function ClientAccountArea({
           </div>
 
           {/* Followed studios */}
-          <div className="overflow-hidden rounded-[1.2rem] border border-border bg-card shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
+          <div
+            id="client-followed-studios"
+            className="scroll-mt-4 overflow-hidden rounded-[1.2rem] border border-border bg-card shadow-[0_2px_12px_rgba(0,0,0,0.04)]"
+          >
             <div className="border-b border-border px-4 py-3">
               <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Estúdios seguidos</p>
             </div>
@@ -7226,12 +7241,14 @@ function DashboardTile({
   value,
   sub,
   color,
+  onClick,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   sub: string;
   color: "emerald" | "blue" | "amber" | "purple";
+  onClick?: () => void;
 }) {
   const palette = {
     emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -7239,8 +7256,8 @@ function DashboardTile({
     amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
     purple: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
   } as const;
-  return (
-    <div className="flex flex-col gap-2 rounded-[1.1rem] border border-border bg-card p-3.5 shadow-sm">
+  const content = (
+    <>
       <div className={cn("grid size-8 place-items-center rounded-lg", palette[color])}>
         {icon}
       </div>
@@ -7249,6 +7266,24 @@ function DashboardTile({
         <p className="mt-0.5 text-base font-extrabold tracking-tight text-foreground">{value}</p>
         <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{sub}</p>
       </div>
+    </>
+  );
+  const className =
+    "flex flex-col gap-2 rounded-[1.1rem] border border-border bg-card p-3.5 shadow-sm";
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={cn(className, "text-left transition hover:border-accent/35 hover:bg-muted/30")}
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className={className}>
+      {content}
     </div>
   );
 }
