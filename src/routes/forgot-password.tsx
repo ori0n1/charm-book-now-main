@@ -57,13 +57,15 @@ function ForgotPasswordPage() {
     if (loading || remaining > 0) return;
     setLoading(true);
     const key = email.trim().toLowerCase();
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    const { error } = await supabase.auth.resetPasswordForEmail(key, {
       redirectTo: `${window.location.origin}/reset-password`,
     });
     setLoading(false);
 
     if (error) {
-      toast.error(error.message);
+      const waitSeconds = getResetRequestWaitSeconds(error.message);
+      if (waitSeconds > 0) setRemaining(waitSeconds);
+      toast.error(formatResetRequestError(error.message));
       return;
     }
 
@@ -117,4 +119,16 @@ function ForgotPasswordPage() {
       )}
     </AuthPageLayout>
   );
+}
+
+function formatResetRequestError(message: string) {
+  const seconds = getResetRequestWaitSeconds(message);
+  if (seconds) {
+    return `Por segurança, aguarde ${seconds}s antes de pedir outro link. Use sempre o email mais recente.`;
+  }
+  return message;
+}
+
+function getResetRequestWaitSeconds(message: string) {
+  return Number(message.match(/(\d+)\s*seconds?/i)?.[1] ?? 0);
 }

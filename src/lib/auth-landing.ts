@@ -41,7 +41,10 @@ export async function getSettledSession(maxAttempts = 8): Promise<Session | null
   return null;
 }
 
-export async function settleSessionFromCurrentUrl(cleanPath?: string): Promise<Session | null> {
+export async function settleSessionFromCurrentUrl(
+  cleanPath?: string,
+  options: { forceCodeExchange?: boolean } = {},
+): Promise<Session | null> {
   const url = new URL(window.location.href);
   const code = url.searchParams.get("code");
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -52,13 +55,14 @@ export async function settleSessionFromCurrentUrl(cleanPath?: string): Promise<S
       hasCode: Boolean(code),
       hashKeys: [...hash.keys()],
       cleanPath: cleanPath ?? window.location.pathname,
+      forceCodeExchange: Boolean(options.forceCodeExchange),
     }),
   });
 
   if (code) {
     const codeKey = `bellza:pkce-code:${code}`;
     const alreadyHandled = sessionStorage.getItem(codeKey) === "1";
-    const currentSession = await getSettledSession(1);
+    const currentSession = options.forceCodeExchange ? null : await getSettledSession(1);
     window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
 
     if (currentSession) return currentSession;
@@ -87,6 +91,24 @@ export async function settleSessionFromCurrentUrl(cleanPath?: string): Promise<S
       throw error;
     }
     sessionStorage.setItem(codeKey, "1");
+  }
+
+  const accessToken = hash.get("access_token");
+  const refreshToken = hash.get("refresh_token");
+  if (accessToken && refreshToken) {
+    const { error } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+    recordAuthDebugEvent({
+      kind: "set_session_from_hash",
+      url: `${url.origin}${url.pathname}`,
+      ok: !error,
+      message: error?.message,
+    });
+    window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
+    if (error) throw error;
+    return getSettledSession();
   }
 
   if (window.location.hash) {

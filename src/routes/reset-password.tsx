@@ -4,6 +4,7 @@ import { AuthField, AuthPrimaryButton } from "@/components/public/auth-field";
 import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
+import { settleSessionFromCurrentUrl } from "@/lib/auth-landing";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/reset-password")({
@@ -23,19 +24,43 @@ function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [valid, setValid] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
   const isTeamInvite =
     typeof window !== "undefined" && new URLSearchParams(window.location.search).get("invite") === "team";
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data, error }) => {
-      setChecking(false);
-      if (error || !data.session) {
+    let cancelled = false;
+
+    async function validateRecoverySession() {
+      try {
+        const cleanPath = `/reset-password${isTeamInvite ? "?invite=team" : ""}`;
+        const session = await settleSessionFromCurrentUrl(cleanPath, { forceCodeExchange: true });
+        if (cancelled) return;
+        if (!session) {
+          setErrorMessage("O link expirou, já foi usado ou foi substituído por um pedido mais recente.");
+          setValid(false);
+          return;
+        }
+        setValid(true);
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message.toLowerCase() : "";
+        setErrorMessage(
+          message.includes("expired") || message.includes("invalid")
+            ? "O link expirou, já foi usado ou foi substituído por um pedido mais recente."
+            : "Não foi possível validar este link de recuperação. Peça um novo link e use o email mais recente.",
+        );
         setValid(false);
-        return;
+      } finally {
+        if (!cancelled) setChecking(false);
       }
-      setValid(true);
-    });
-  }, []);
+    }
+
+    void validateRecoverySession();
+    return () => {
+      cancelled = true;
+    };
+  }, [isTeamInvite]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -66,14 +91,16 @@ function ResetPasswordPage() {
     return (
       <AuthPageLayout
         title="Link inválido"
-        description="O link expirou ou já foi utilizado."
+        description={errorMessage || "O link expirou ou já foi utilizado."}
         footer={
           <Link to="/forgot-password" className="block text-center text-sm font-medium underline-offset-2 hover:underline">
             Solicitar novo link
           </Link>
         }
       >
-        <p className="text-sm text-muted-foreground">Peça um novo email de recuperação para continuar.</p>
+        <p className="text-sm text-muted-foreground">
+          Se pediu mais de um email, use sempre o link do email mais recente.
+        </p>
       </AuthPageLayout>
     );
   }
