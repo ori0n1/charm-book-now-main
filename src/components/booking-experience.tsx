@@ -7062,57 +7062,6 @@ function ClientAccountArea({
             </div>
           </div>
 
-          {upcoming.length > 0 && (
-            <div className="overflow-hidden rounded-[1.2rem] border border-border bg-card shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-              <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-                <div className="grid size-7 place-items-center rounded-lg bg-emerald-500/10">
-                  <CalendarDays className="size-3.5 text-emerald-600 dark:text-emerald-400" />
-                </div>
-                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-muted-foreground">Próximas reservas</p>
-                <span className="ml-auto rounded-full bg-emerald-500/12 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                  {upcoming.length}
-                </span>
-              </div>
-              <ExpandableList
-                items={upcoming}
-                initialCount={4}
-                className="divide-y divide-border"
-                getKey={(appointment) => appointment.id}
-                moreLabel={(hidden) => `Ver mais ${hidden} reserva${hidden !== 1 ? "s" : ""}`}
-                renderItem={(appointment) => (
-                  <div className="px-4 py-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-extrabold text-foreground">
-                          {appointment.services[0]?.name ?? "Serviço"}
-                        </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          {formatDateTimeShort(appointment.startsAt)}
-                          {appointment.staffName ? ` · ${appointment.staffName}` : ""}
-                        </p>
-                      </div>
-                      <span className="shrink-0 rounded-full bg-emerald-500/12 px-2.5 py-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                        {clientStatusLabel(appointment.status)}
-                      </span>
-                    </div>
-                    {appointment.totalPrice > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                          {formatMoney(appointment.totalPrice)}
-                        </span>
-                        {appointment.paidAmount > 0 && (
-                          <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-700 dark:text-emerald-300">
-                            Pago {formatMoney(appointment.paidAmount)}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              />
-            </div>
-          )}
-
           {/* App + actions */}
           <div className="overflow-hidden rounded-[1.2rem] border border-border bg-card shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
             <div className="border-b border-border px-4 py-3">
