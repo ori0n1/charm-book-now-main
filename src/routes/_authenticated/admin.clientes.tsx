@@ -856,11 +856,11 @@ function ClientIdentity({
 function ClientBadges({ badges, compact = false }: { badges: ClientBadge[]; compact?: boolean }) {
   if (badges.length === 0) return null;
   return (
-    <div className={`mt-1 flex flex-wrap gap-1 ${compact ? "max-w-[12rem]" : ""}`}>
+    <div className={`mt-1 flex flex-wrap gap-1 ${compact ? "max-w-[14rem] justify-end" : ""}`}>
       {badges.map((badge) => (
         <span
           key={badge.label}
-          className={`rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em] leading-tight ${badgeToneClass(
+          className={`rounded-full border border-current/10 leading-tight ${compact ? "px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.06em] opacity-80" : "px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em]"} ${badgeToneClass(
             badge.tone,
           )}`}
         >
@@ -918,7 +918,26 @@ function ClientDetails({
   const birthdayToday = isBirthdayToday(client.dateOfBirth);
   const relationshipInsight = getClientRelationshipInsight(client);
   const automationEvents = getClientAutomationEvents(client);
-  const contextMetrics = getClientContextMetrics(client);
+  const keyContextMetrics = [
+    {
+      label: "Última visita",
+      value: client.daysSinceLastVisit === null ? "Sem visita" : `${client.daysSinceLastVisit} dias`,
+    },
+    {
+      label: "Retorno esperado",
+      value: client.suggestedReturnAt ? formatDate(client.suggestedReturnAt) : "A aprender",
+    },
+    { label: "Ticket médio", value: formatEUR(client.averageSpend), money: true },
+  ];
+  const relationshipDetails = [
+    { label: "Visitas", value: String(client.completedAppointments) },
+    { label: "Frequência", value: client.avgIntervalDays ? `${client.avgIntervalDays} dias` : "A aprender" },
+    { label: "Presença", value: client.attendanceRate === null ? "Sem dados" : `${client.attendanceRate}%` },
+  ];
+  const preferenceDetails = [
+    { label: "Aniversário", value: formatBirthdayLabel(client.dateOfBirth) },
+    { label: "Serviço favorito", value: client.favoriteServices[0] ?? "A aprender" },
+  ];
 
   return (
     <section className="overflow-hidden rounded-3xl border border-border bg-card p-4 shadow-sm md:p-5 max-w-full">
@@ -963,9 +982,11 @@ function ClientDetails({
       )}
 
       {faltasWarning && (
-        <div className="mt-4 flex items-start gap-2 rounded-3xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+        <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>Cliente com histórico de faltas. Avaliar suspensão.</p>
+          <p>
+            {client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.
+          </p>
         </div>
       )}
 
@@ -991,21 +1012,41 @@ function ClientDetails({
         </div>
       )}
 
-      <div className="mt-4 rounded-3xl border border-border bg-background/60 p-4">
+      <div className="mt-4 rounded-2xl border border-border/70 bg-background/55 p-3 md:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
+          <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
               Contexto do cliente
             </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Sinais simples para falar no momento certo.
-            </p>
           </div>
-          <ClientBadges badges={client.badges} />
+          <ClientBadges badges={client.badges} compact />
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-          {contextMetrics.map((metric) => (
-            <MiniMetric
+
+        {relationshipInsight && (
+          <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2.5 text-amber-900 dark:text-amber-100">
+            <div className="flex flex-col gap-2 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-800/75 dark:text-amber-200/75">
+                  Insight principal
+                </p>
+                <p className="mt-1 text-sm font-semibold leading-snug">{relationshipInsight}</p>
+              </div>
+              <a
+                href={whatsAppUrl(client)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-amber-600/20 bg-background/70 px-3 text-[11px] font-semibold text-foreground transition hover:bg-background"
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                Enviar mensagem
+              </a>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-3 grid grid-cols-1 gap-2 min-[430px]:grid-cols-3">
+          {keyContextMetrics.map((metric) => (
+            <ContextMetric
               key={metric.label}
               label={metric.label}
               value={metric.value}
@@ -1013,21 +1054,12 @@ function ClientDetails({
             />
           ))}
         </div>
-        <div className="hidden">
-          <MiniMetric label="Frequência" value={client.avgIntervalDays ? `${client.avgIntervalDays} dias` : "A aprender"} />
-          <MiniMetric label="Última visita" value={client.daysSinceLastVisit === null ? "Sem visita" : `${client.daysSinceLastVisit} dias`} />
-          <MiniMetric label="Retorno" value={client.suggestedReturnAt ? formatDate(client.suggestedReturnAt) : "A aprender"} />
-          <MiniMetric label="Presença" value={client.attendanceRate === null ? "Sem dados" : `${client.attendanceRate}%`} />
-          <MiniMetric label="Ticket médio" value={formatEUR(client.averageSpend)} money />
-          <MiniMetric label="Visitas" value={String(client.completedAppointments)} />
-          <MiniMetric label="Aniversário" value={formatBirthdayLabel(client.dateOfBirth)} />
-          <MiniMetric label="Favorito" value={client.favoriteServices[0] ?? "A aprender"} />
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <ContextGroup title="Relacionamento" items={relationshipDetails} />
+          <ContextGroup title="Preferências" items={preferenceDetails} />
         </div>
-        {relationshipInsight && (
-          <SuggestionPill label="Insight inteligente" value={relationshipInsight} />
-        )}
         {automationEvents.length > 0 && (
-          <div className="mt-3 rounded-2xl border border-border/80 bg-card/70 px-3 py-2.5">
+          <div className="mt-3 rounded-2xl border border-border/60 bg-card/50 px-3 py-2">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
               Automações do cliente
             </p>
@@ -1210,6 +1242,51 @@ function MiniMetric({
   );
 }
 
+function ContextMetric({
+  label,
+  value,
+  money = false,
+}: {
+  label: string;
+  value: string;
+  money?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/55 px-3 py-2">
+      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+      <p
+        className={`mt-1 truncate text-sm font-semibold tracking-tight ${
+          money ? "text-emerald-700 dark:text-emerald-400" : "text-foreground"
+        }`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ContextGroup({
+  title,
+  items,
+}: {
+  title: string;
+  items: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <div className="rounded-xl border border-border/50 bg-card/40 px-3 py-2">
+      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
+      <dl className="mt-2 grid gap-1.5">
+        {items.map((item) => (
+          <div key={item.label} className="flex min-w-0 items-center justify-between gap-3 text-xs">
+            <dt className="shrink-0 text-muted-foreground">{item.label}</dt>
+            <dd className="min-w-0 truncate text-right font-medium text-foreground">{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 function InfoPill({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-border bg-background/70 p-3">
@@ -1218,17 +1295,6 @@ function InfoPill({ icon, label, value }: { icon: React.ReactNode; label: string
         <span className="uppercase tracking-wide">{label}</span>
       </div>
       <p className="mt-1 font-medium">{value}</p>
-    </div>
-  );
-}
-
-function SuggestionPill({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="mt-4 rounded-2xl border border-border/80 bg-card/70 px-3 py-2.5">
-      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-        {label}
-      </p>
-      <p className="mt-1 text-sm leading-snug text-foreground">{value}</p>
     </div>
   );
 }
