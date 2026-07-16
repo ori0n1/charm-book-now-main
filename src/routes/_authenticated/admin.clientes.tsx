@@ -721,6 +721,8 @@ function ClientTableRow({ client, onDetails }: { client: ClientSummary; onDetail
 }
 
 function ClientDesktopCard({ client, onDetails }: { client: ClientSummary; onDetails: () => void }) {
+  const display = getClientDisplayInfo(client);
+
   return (
     <article className="overflow-hidden rounded-2xl border border-border/90 bg-card px-4 py-3 shadow-sm">
       <div className="grid gap-4 md:grid-cols-[minmax(12rem,1fr)_minmax(17rem,0.9fr)_auto] md:items-center">
@@ -731,11 +733,11 @@ function ClientDesktopCard({ client, onDetails }: { client: ClientSummary; onDet
             </span>
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
-                <p className="min-w-0 text-sm font-semibold leading-tight">{client.name}</p>
+                <p className="min-w-0 truncate text-sm font-semibold leading-tight">{display.name}</p>
                 {client.bookingStatus !== "active" && <StatusDot status={client.bookingStatus} />}
               </div>
               <p className="mt-0.5 text-xs leading-tight text-muted-foreground">
-                {client.lastService}
+                {display.subtitle ?? client.lastService}
               </p>
             </div>
           </div>
@@ -833,23 +835,29 @@ function ClientIdentity({
   client: ClientSummary;
   compact?: boolean;
 }) {
+  const display = getClientDisplayInfo(client);
+
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-2">
         <ClientAvatar
-          name={client.name}
+          name={display.name}
           avatarUrl={client.avatarUrl}
           className={compact ? "size-8 text-[11px]" : "size-9 text-xs"}
         />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <p className={compact ? "break-words text-sm font-semibold" : "break-words font-medium"}>
-              {client.name}
+            <p className={compact ? "truncate text-sm font-semibold" : "truncate font-medium"}>
+              {display.name}
             </p>
             {client.bookingStatus !== "active" && <StatusDot status={client.bookingStatus} />}
           </div>
           <ClientBadges badges={client.badges} compact={compact} />
-          {!compact && <p className="break-words text-xs text-muted-foreground">{client.lastService}</p>}
+          {!compact && (
+            <p className="truncate text-xs text-muted-foreground">
+              {display.subtitle ?? client.lastService}
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -878,6 +886,27 @@ function ClientBadge({ badge, compact = false }: { badge: ClientBadge; compact?:
     >
       {badge.label}
     </span>
+  );
+}
+
+function getClientDisplayInfo(client: ClientSummary) {
+  const rawName = String(client.name ?? "").trim();
+  if (isCounterClientName(rawName)) {
+    return {
+      name: "Cliente balcão",
+      subtitle: "Cadastro realizado no balcão",
+    };
+  }
+
+  return {
+    name: rawName || "Cliente",
+    subtitle: null,
+  };
+}
+
+function isCounterClientName(name: string) {
+  return /^cliente\s+balc(?:a|ã)o(?:\s*(?:-|–|—|#)?\s*balcao-[a-z0-9-]{6,}|\s+[a-z0-9]{10,}|\s*)$/i.test(
+    name,
   );
 }
 
@@ -958,7 +987,7 @@ function ClientDetails({
   const [primaryBadge, ...secondaryBadges] = client.badges;
   const mainAppointmentMetrics = [
     { label: "Total", value: String(client.totalAppointments) },
-    { label: "ConcluÃ­das", value: String(client.completedAppointments) },
+    { label: "Concluídas", value: String(client.completedAppointments) },
     { label: "Futuras", value: String(client.futureAppointments) },
     { label: "Faltas", value: String(client.noShowAppointments) },
     { label: "Canceladas", value: String(client.cancelledAppointments) },
@@ -972,21 +1001,27 @@ function ClientDetails({
     (metric) => metric.label !== "Outras" || client.otherAppointments > 0,
   );
   const statusLabel = getBookingStatusLabel(status);
+  const display = getClientDisplayInfo(client);
 
   return (
     <section className="max-w-5xl overflow-hidden rounded-2xl border border-border bg-card p-3 shadow-sm md:p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <ClientAvatar name={client.name} avatarUrl={client.avatarUrl} size="lg" />
+          <ClientAvatar name={display.name} avatarUrl={client.avatarUrl} size="lg" />
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
               Ficha do cliente
             </p>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight">{client.name || "Cliente"}</h2>
+              <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight">{display.name}</h2>
               {primaryBadge && <ClientBadge badge={primaryBadge} compact />}
             </div>
-            <p className="mt-1 truncate text-sm text-muted-foreground">{client.phone}</p>
+            <p className="mt-1 truncate text-sm text-muted-foreground">
+              {display.subtitle ?? client.phone}
+            </p>
+            {display.subtitle && (
+              <p className="mt-0.5 truncate text-sm text-muted-foreground">{client.phone}</p>
+            )}
           </div>
         </div>
         <button
@@ -1001,7 +1036,7 @@ function ClientDetails({
 
       <div className="mt-4 rounded-2xl border border-border/70 bg-background/55 p-3">
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-semibold">Resumo das marcaÃ§Ãµes</p>
+          <p className="text-sm font-semibold">Resumo das marcações</p>
           <button
             type="button"
             onClick={() => setShowAppointmentDetails((open) => !open)}
@@ -1078,7 +1113,7 @@ function ClientDetails({
         </div>
         {secondaryBadges.length > 0 && (
           <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            TambÃ©m: {secondaryBadges.map((badge) => badge.label).join(", ")}
+            Também: {secondaryBadges.map((badge) => badge.label).join(", ")}
           </p>
         )}
 
@@ -1088,12 +1123,12 @@ function ClientDetails({
               <div className="min-w-0">
                 <p className="text-sm font-semibold leading-snug">
                   {returnDelayDays > 0
-                    ? `Retorno atrasado hÃ¡ ${returnDelayDays} dia${returnDelayDays === 1 ? "" : "s"}`
+                    ? `Retorno atrasado há ${returnDelayDays} dia${returnDelayDays === 1 ? "" : "s"}`
                     : relationshipInsight}
                 </p>
                 {returnDelayDays > 0 && (
                   <p className="mt-0.5 text-xs leading-snug text-amber-800/75 dark:text-amber-200/75">
-                    O cliente jÃ¡ ultrapassou a previsÃ£o de retorno.
+                    O cliente já ultrapassou a previsão de retorno.
                   </p>
                 )}
               </div>
