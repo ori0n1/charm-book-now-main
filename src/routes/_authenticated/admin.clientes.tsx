@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CalendarDays,
+  ChevronDown,
   Eye,
   MessageCircle,
   MoreHorizontal,
@@ -11,6 +12,7 @@ import {
   ShieldAlert,
   TrendingUp,
   UserRound,
+  X,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
@@ -246,6 +248,7 @@ function ClientsPage() {
         <ClientDetails
           client={selectedClient}
           studioId={studio.id}
+          studioName={studio.name}
           onClose={() => setSelectedClientId(null)}
           onSaved={() => queryClient.invalidateQueries({ queryKey: ["admin-clients", studio.id] })}
         />
@@ -858,27 +861,36 @@ function ClientBadges({ badges, compact = false }: { badges: ClientBadge[]; comp
   return (
     <div className={`mt-1 flex flex-wrap gap-1 ${compact ? "max-w-[14rem] justify-end" : ""}`}>
       {badges.map((badge) => (
-        <span
-          key={badge.label}
-          className={`rounded-full border border-current/10 leading-tight ${compact ? "px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.06em] opacity-80" : "px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em]"} ${badgeToneClass(
-            badge.tone,
-          )}`}
-        >
-          {badge.label}
-        </span>
+        <ClientBadge key={badge.label} badge={badge} compact={compact} />
       ))}
     </div>
+  );
+}
+
+function ClientBadge({ badge, compact = false }: { badge: ClientBadge; compact?: boolean }) {
+  return (
+    <span
+      className={`rounded-full border border-current/10 leading-tight ${
+        compact
+          ? "px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.06em] opacity-80"
+          : "px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.08em]"
+      } ${badgeToneClass(badge.tone)}`}
+    >
+      {badge.label}
+    </span>
   );
 }
 
 function ClientDetails({
   client,
   studioId,
+  studioName,
   onClose,
   onSaved,
 }: {
   client: ClientSummary;
   studioId: string;
+  studioName: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -886,6 +898,8 @@ function ClientDetails({
   const [until, setUntil] = useState(client.suspendedUntil ?? "");
   const [reason, setReason] = useState(client.blockReason ?? "");
   const [saving, setSaving] = useState(false);
+  const [showAppointmentDetails, setShowAppointmentDetails] = useState(false);
+  const [statusPanelOpen, setStatusPanelOpen] = useState(false);
 
   async function saveStatus() {
     if (status === "suspended" && !until) return;
@@ -902,6 +916,7 @@ function ClientDetails({
       .eq("studio_id", studioId);
     setSaving(false);
     if (!error) {
+      setStatusPanelOpen(false);
       onSaved();
     }
   }
@@ -917,6 +932,7 @@ function ClientDetails({
     client.otherAppointments;
   const birthdayToday = isBirthdayToday(client.dateOfBirth);
   const relationshipInsight = getClientRelationshipInsight(client);
+  const returnDelayDays = getClientReturnDelayDays(client);
   const automationEvents = getClientAutomationEvents(client);
   const keyContextMetrics = [
     {
@@ -939,38 +955,77 @@ function ClientDetails({
     { label: "Serviço favorito", value: client.favoriteServices[0] ?? "A aprender" },
   ];
 
+  const [primaryBadge, ...secondaryBadges] = client.badges;
+  const mainAppointmentMetrics = [
+    { label: "Total", value: String(client.totalAppointments) },
+    { label: "ConcluÃ­das", value: String(client.completedAppointments) },
+    { label: "Futuras", value: String(client.futureAppointments) },
+    { label: "Faltas", value: String(client.noShowAppointments) },
+    { label: "Canceladas", value: String(client.cancelledAppointments) },
+  ];
+  const secondaryAppointmentMetrics = [
+    { label: "Pendentes", value: String(client.pendingAppointments) },
+    { label: "Reagendadas", value: String(client.rescheduledAppointments) },
+    { label: "Outras", value: String(client.otherAppointments) },
+  ];
+  const visibleSecondaryMetrics = secondaryAppointmentMetrics.filter(
+    (metric) => metric.label !== "Outras" || client.otherAppointments > 0,
+  );
+  const statusLabel = getBookingStatusLabel(status);
+
   return (
-    <section className="overflow-hidden rounded-3xl border border-border bg-card p-4 shadow-sm md:p-5 max-w-full">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+    <section className="max-w-5xl overflow-hidden rounded-2xl border border-border bg-card p-3 shadow-sm md:p-4">
+      <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <ClientAvatar name={client.name} avatarUrl={client.avatarUrl} size="lg" />
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
               Ficha do cliente
             </p>
-            <h2 className="mt-1 truncate text-xl font-semibold tracking-tight">{client.name}</h2>
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+              <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight">{client.name || "Cliente"}</h2>
+              {primaryBadge && <ClientBadge badge={primaryBadge} compact />}
+            </div>
             <p className="mt-1 truncate text-sm text-muted-foreground">{client.phone}</p>
           </div>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="h-10 rounded-2xl border border-border px-4 text-xs font-bold uppercase tracking-wide transition hover:bg-muted"
+          aria-label="Fechar ficha do cliente"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
         >
-          Fechar
+          <X className="h-4 w-4" />
         </button>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-        <MiniMetric label="Marcações" value={String(client.totalAppointments)} />
-        <MiniMetric label="Concluídas" value={String(client.completedAppointments)} />
-        <MiniMetric label="Canceladas" value={String(client.cancelledAppointments)} />
-        <MiniMetric label="Faltas" value={String(client.noShowAppointments)} />
-        <MiniMetric label="Futuras" value={String(client.futureAppointments)} />
-        <MiniMetric label="Pendentes" value={String(client.pendingAppointments)} />
-        <MiniMetric label="Reagendadas" value={String(client.rescheduledAppointments)} />
-        {client.otherAppointments > 0 && (
-          <MiniMetric label="Outras" value={String(client.otherAppointments)} />
+      <div className="mt-4 rounded-2xl border border-border/70 bg-background/55 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold">Resumo das marcaÃ§Ãµes</p>
+          <button
+            type="button"
+            onClick={() => setShowAppointmentDetails((open) => !open)}
+            className="inline-flex h-8 items-center gap-1 rounded-full border border-border/70 px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            {showAppointmentDetails ? "Ocultar" : "Ver detalhes"}
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition ${showAppointmentDetails ? "rotate-180" : ""}`}
+            />
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 min-[430px]:grid-cols-5">
+          {mainAppointmentMetrics.map((metric) => (
+            <CompactStat key={metric.label} label={metric.label} value={metric.value} />
+          ))}
+        </div>
+        {showAppointmentDetails && (
+          <div className="mt-3 border-t border-border/60 pt-3">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-[430px]:grid-cols-3">
+              {visibleSecondaryMetrics.map((metric) => (
+                <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -1019,20 +1074,31 @@ function ClientDetails({
               Contexto do cliente
             </p>
           </div>
-          <ClientBadges badges={client.badges} compact />
+          {primaryBadge && <ClientBadge badge={primaryBadge} compact />}
         </div>
+        {secondaryBadges.length > 0 && (
+          <p className="mt-1 text-xs leading-snug text-muted-foreground">
+            TambÃ©m: {secondaryBadges.map((badge) => badge.label).join(", ")}
+          </p>
+        )}
 
         {relationshipInsight && (
           <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2.5 text-amber-900 dark:text-amber-100">
             <div className="flex flex-col gap-2 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">
               <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-800/75 dark:text-amber-200/75">
-                  Insight principal
+                <p className="text-sm font-semibold leading-snug">
+                  {returnDelayDays > 0
+                    ? `Retorno atrasado hÃ¡ ${returnDelayDays} dia${returnDelayDays === 1 ? "" : "s"}`
+                    : relationshipInsight}
                 </p>
-                <p className="mt-1 text-sm font-semibold leading-snug">{relationshipInsight}</p>
+                {returnDelayDays > 0 && (
+                  <p className="mt-0.5 text-xs leading-snug text-amber-800/75 dark:text-amber-200/75">
+                    O cliente jÃ¡ ultrapassou a previsÃ£o de retorno.
+                  </p>
+                )}
               </div>
               <a
-                href={whatsAppUrl(client)}
+                href={whatsAppUrl(client, studioName)}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-amber-600/20 bg-background/70 px-3 text-[11px] font-semibold text-foreground transition hover:bg-background"
@@ -1074,11 +1140,23 @@ function ClientDetails({
         )}
       </div>
 
-      <div className="mt-4 overflow-x-hidden rounded-3xl border border-border bg-background/60 p-4 min-w-0 max-w-full">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4 text-muted-foreground" />
-          <p className="text-sm font-semibold">Status do cliente</p>
+      <div className="mt-4 min-w-0 max-w-full overflow-x-hidden rounded-2xl border border-border/70 bg-background/55 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <ShieldAlert className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <p className="truncate text-sm font-semibold">Status: {statusLabel}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStatusPanelOpen((open) => !open)}
+            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/70 px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          >
+            {statusPanelOpen ? "Fechar" : "Alterar"}
+            <ChevronDown className={`h-3.5 w-3.5 transition ${statusPanelOpen ? "rotate-180" : ""}`} />
+          </button>
         </div>
+        {statusPanelOpen && (
+          <>
         <div className="mt-3 grid min-w-0 grid-cols-1 gap-2 min-[430px]:grid-cols-2 md:grid-cols-3 auto-rows-fr">
           <StatusOption
             active={status === "active"}
@@ -1143,6 +1221,8 @@ function ClientDetails({
         >
           {saving ? "A guardar..." : "Guardar status"}
         </button>
+          </>
+        )}
       </div>
     </section>
   );
@@ -1242,6 +1322,25 @@ function MiniMetric({
   );
 }
 
+function CompactStat({
+  label,
+  value,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="truncate text-[11px] text-muted-foreground">{label}</p>
+      <p className={`mt-0.5 truncate text-sm font-semibold ${muted ? "text-muted-foreground" : "text-foreground"}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
 function ContextMetric({
   label,
   value,
@@ -1317,11 +1416,29 @@ function MoneyText({ value, className = "" }: { value: number; className?: strin
   );
 }
 
-function whatsAppUrl(client: ClientSummary) {
-  const text = `Olá, ${client.name}. A sua marcação está confirmada para ${formatDate(
-    client.lastAppointmentAt,
-  )} às ${formatTime(client.lastAppointmentAt)}, com o serviço ${client.lastService}. Qualquer dúvida, estamos à disposição.`;
+function whatsAppUrl(client: ClientSummary, studioName?: string | null) {
+  const text = buildClientWhatsAppMessage(client, studioName);
   return `https://wa.me/${phoneForWhatsApp(client.phone)}?text=${encodeURIComponent(text)}`;
+}
+
+function buildClientWhatsAppMessage(client: ClientSummary, studioName?: string | null) {
+  const greeting = buildClientGreeting(client.name);
+  const delayDays = getClientReturnDelayDays(client);
+  if (delayDays > 0) {
+    const quantityText =
+      delayDays === 1
+        ? "já passou 1 dia da sua previsão de retorno"
+        : `já se passaram ${delayDays} dias da sua previsão de retorno`;
+    const studioText = studioName?.trim() ? ` ao ${studioName.trim()}` : " conosco";
+    return `${greeting} Tudo bem? 😊\nPercebemos que ${quantityText}${studioText}. Gostaríamos de saber se está tudo bem e se deseja marcar um novo horário conosco.`;
+  }
+
+  return `${greeting} Tudo bem? 😊 Sentimos a sua falta e gostaríamos de saber se deseja marcar um novo horário conosco.`;
+}
+
+function buildClientGreeting(name: string | null | undefined) {
+  const cleanName = String(name ?? "").trim();
+  return cleanName ? `Olá, ${cleanName}!` : "Olá!";
 }
 
 function cleanPhone(phone: string) {
@@ -1416,6 +1533,21 @@ function getClientRelationshipInsight(client: ClientSummary) {
     return "Cliente está na época habitual de retornar.";
   }
   return null;
+}
+
+function getClientReturnDelayDays(client: ClientSummary) {
+  if (!client.suggestedReturnAt || client.futureAppointments > 0) return 0;
+  const expectedReturn = new Date(client.suggestedReturnAt);
+  if (!Number.isFinite(expectedReturn.getTime())) return 0;
+  const today = startOfLocalDay(new Date()).getTime();
+  const expectedDay = startOfLocalDay(expectedReturn).getTime();
+  return Math.max(0, Math.floor((today - expectedDay) / 86400000));
+}
+
+function getBookingStatusLabel(status: ClientBookingStatus) {
+  if (status === "blocked") return "Bloqueado definitivamente";
+  if (status === "suspended") return "Suspenso temporariamente";
+  return "Ativo";
 }
 
 function getClientContextMetrics(client: ClientSummary) {
