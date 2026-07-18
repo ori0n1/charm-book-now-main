@@ -305,8 +305,8 @@ function WhatsAppPage() {
         </div>
       </header>
 
-      <section className="overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm">
-        <div className="grid gap-3 border-b border-border/70 bg-muted/15 p-3.5 md:grid-cols-[minmax(0,1fr)_17rem] md:p-4">
+      <section className="overflow-hidden rounded-[1.35rem] bg-card shadow-sm ring-1 ring-border/60">
+        <div className="grid gap-4 bg-muted/10 p-4 md:p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
           <div className="flex items-start gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-sky-600/10 text-sky-700 dark:text-sky-300">
               <Users className="h-5 w-5" />
@@ -321,15 +321,15 @@ function WhatsAppPage() {
               </p>
             </div>
           </div>
-          <div className="rounded-2xl border border-border/80 bg-background/75 p-3 text-xs leading-relaxed text-muted-foreground">
-            <BellRing className="mb-1.5 h-4 w-4 text-foreground" />
+          <div className="min-w-0 rounded-2xl bg-background/55 p-3 text-xs leading-relaxed text-muted-foreground ring-1 ring-border/45">
+            <BellRing className="mb-1.5 h-4 w-4 text-foreground/80" />
             Promoções, horários vagos, vagas liberadas, novos serviços e horários disponíveis.
           </div>
         </div>
 
-        <div className="grid gap-3 p-3.5 md:p-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
-          <div className="grid gap-3">
-            <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(8.75rem,1fr))] gap-2">
+        <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[minmax(0,1fr)_21rem]">
+          <div className="grid min-w-0 gap-4">
+            <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-2.5">
               {communityCampaigns.map((item) => {
                 const Icon = item.icon;
                 const active = communityKind === item.kind;
@@ -342,15 +342,15 @@ function WhatsAppPage() {
                       setCommunityTitle(item.title);
                       setCommunityBody(item.body);
                     }}
-                    className={`group flex h-full min-h-[4.25rem] w-full min-w-0 items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left transition ${
+                    className={`group flex h-full min-h-[3.9rem] w-full min-w-0 items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left ring-1 transition ${
                       active
-                        ? "border-foreground/70 bg-foreground text-background shadow-sm"
-                        : "border-border/80 bg-background/70 text-foreground hover:border-foreground/20 hover:bg-background"
+                        ? "bg-muted/45 text-foreground shadow-sm shadow-black/5 ring-foreground/20"
+                        : "bg-muted/15 text-foreground ring-border/45 hover:bg-muted/25 hover:ring-foreground/15"
                     }`}
                   >
                     <span
                       className={`grid size-9 shrink-0 place-items-center rounded-xl ${
-                        active ? "bg-background/15 text-background" : item.tone
+                        active ? `${item.tone} ring-1 ring-current/10` : item.tone
                       }`}
                     >
                       <Icon className="h-4 w-4" />
@@ -358,12 +358,12 @@ function WhatsAppPage() {
                     <span className="min-w-0 flex-1">
                       <span
                         className={`block overflow-hidden text-[10px] font-bold uppercase tracking-[0.14em] ${
-                          active ? "text-background/70" : "text-muted-foreground"
+                          active ? "text-muted-foreground" : "text-muted-foreground"
                         }`}
                       >
                         {item.eyebrow}
                       </span>
-                      <span className="mt-0.5 block whitespace-normal break-words text-[13px] font-semibold leading-snug md:text-sm">
+                      <span className="mt-0.5 block min-w-0 whitespace-normal break-normal text-[13px] font-semibold leading-snug hyphens-none md:text-sm">
                         {item.label}
                       </span>
                     </span>
@@ -372,8 +372,8 @@ function WhatsAppPage() {
               })}
             </div>
 
-            <div className="grid gap-3 rounded-2xl border border-border/80 bg-background/55 p-3 md:grid-cols-[minmax(0,15rem)_1fr]">
-              <label className="block">
+            <div className="grid min-w-0 gap-3 rounded-2xl bg-background/45 p-3.5 ring-1 ring-border/45 md:grid-cols-[minmax(12rem,16rem)_minmax(0,1fr)] md:p-4">
+              <label className="block min-w-0">
                 <span className="mb-1.5 block text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
                   Título
                 </span>
@@ -381,10 +381,10 @@ function WhatsAppPage() {
                   value={communityTitle}
                   maxLength={80}
                   onChange={(event) => setCommunityTitle(event.target.value)}
-                  className="box-border h-10 w-full min-w-0 rounded-2xl border border-border bg-background/90 px-3.5 text-sm shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
+                  className="box-border h-11 w-full min-w-0 rounded-xl border border-border/70 bg-card/90 px-3.5 text-sm outline-none transition placeholder:text-muted-foreground/70 focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
                 />
               </label>
-              <label className="block">
+              <label className="block min-w-0">
                 <span className="mb-1.5 flex items-center justify-between gap-3 text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
                   <span>Mensagem</span>
                   <span className="tracking-normal">{communityBody.length}/220</span>
@@ -399,38 +399,38 @@ function WhatsAppPage() {
                     resizeTextarea(event.currentTarget);
                   }}
                   placeholder="Escreva como se fosse uma conversa curta com a cliente."
-                  className="box-border min-h-[7rem] w-full min-w-0 resize-none rounded-2xl border border-border bg-background/90 px-3.5 py-3 text-sm leading-relaxed shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
+                  className="box-border min-h-[7rem] w-full min-w-0 resize-none rounded-xl border border-border/70 bg-card/90 px-3.5 py-3 text-sm leading-relaxed outline-none transition placeholder:text-muted-foreground/70 focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
                 />
               </label>
             </div>
 
-            <div className="flex flex-col gap-2 rounded-2xl border border-dashed border-border/80 bg-muted/15 p-2.5 text-xs leading-relaxed text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-              <span>
+            <div className="flex flex-col gap-2 rounded-2xl bg-muted/10 p-3 text-xs leading-relaxed text-muted-foreground ring-1 ring-border/35 sm:flex-row sm:items-center sm:justify-between">
+              <span className="min-w-0">
                 Para evitar spam, avisos repetidos do mesmo tipo ficam limitados por um curto intervalo.
               </span>
-              <span className="shrink-0 rounded-full bg-background px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+              <span className="w-fit shrink-0 rounded-full bg-background/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 Envio com consentimento
               </span>
             </div>
           </div>
 
-          <aside className="flex flex-col justify-between rounded-[1.15rem] border border-border/80 bg-background/80 p-3.5 shadow-sm">
-            <div>
+          <aside className="flex min-w-0 flex-col justify-between rounded-[1.15rem] bg-background/60 p-4 ring-1 ring-border/50">
+            <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Pré-visualização</p>
-              <div className="mt-2.5 rounded-2xl border border-border/80 bg-card p-3 shadow-sm">
+              <div className="mt-2.5 rounded-[1.15rem] bg-card p-3.5 shadow-sm ring-1 ring-border/45">
                 <div className="flex items-start gap-3">
                   <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${selectedCommunityKind.tone}`}>
                     <SelectedCommunityIcon className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="line-clamp-2 text-sm font-semibold leading-snug">{communityTitle || selectedCommunityKind.title}</p>
+                    <p className="line-clamp-2 break-normal text-sm font-semibold leading-snug hyphens-none">{communityTitle || selectedCommunityKind.title}</p>
                     <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
                       {communityBody || selectedCommunityKind.body}
                     </p>
                   </div>
                 </div>
               </div>
-              <p className="mt-2.5 text-xs leading-relaxed text-muted-foreground">
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground/85">
                 O aviso aparece na central do cliente e, quando permitido pelo navegador, também chega como push no PWA.
               </p>
             </div>
@@ -439,7 +439,7 @@ function WhatsAppPage() {
               type="button"
               onClick={sendCommunityNotification}
               disabled={communityBusy || communityTitle.trim().length < 3 || communityBody.trim().length < 8}
-              className="mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background shadow-lg shadow-black/10 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-bold uppercase tracking-[0.08em] text-background shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Send className="h-4 w-4" />
               {communityBusy ? "A enviar..." : "Enviar aviso"}
