@@ -160,7 +160,7 @@ function AdminLoyaltyPage() {
             </InfoStrip>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))]">
             <NumberField
               label="Por reserva"
               value={draft.stampsPerCompletedBooking}
@@ -376,7 +376,9 @@ function NumberField({
 }) {
   return (
     <div className="min-w-0 space-y-1.5">
-      <Label className="block truncate text-xs font-bold">{label}</Label>
+      <Label className="block min-h-[2rem] whitespace-normal break-normal text-xs font-bold leading-tight hyphens-none">
+        {label}
+      </Label>
       <Input
         type="number"
         min={min}
