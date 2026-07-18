@@ -113,6 +113,10 @@ type ClientBadge = {
   label: string;
   tone: "emerald" | "amber" | "blue" | "rose" | "violet";
 };
+type ClientPrimaryStatusInfo = {
+  label: string;
+  tone: ClientBadge["tone"] | "slate";
+};
 type ClientAccumulator = ClientSummary & {
   serviceCounts: Map<string, number>;
   completedDates: string[];
@@ -641,7 +645,7 @@ function ClientCompactCard({
         >
           <MoneyText value={client.totalPaid} className="block text-sm" />
           <span className="mt-0.5 block whitespace-nowrap text-[11px] text-muted-foreground">
-            {client.totalAppointments} marcações
+            {formatAppointmentCount(client.totalAppointments)}
           </span>
         </button>
         <ClientActions client={client} onDetails={onDetails} />
@@ -736,9 +740,12 @@ function ClientDesktopCard({ client, onDetails }: { client: ClientSummary; onDet
                 <p className="min-w-0 truncate text-sm font-semibold leading-tight">{display.name}</p>
                 {client.bookingStatus !== "active" && <StatusDot status={client.bookingStatus} />}
               </div>
-              <p className="mt-0.5 text-xs leading-tight text-muted-foreground">
-                {display.subtitle ?? client.lastService}
-              </p>
+              <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                <ClientPrimaryStatus client={client} compact />
+                <span className="min-w-0 truncate text-xs leading-tight text-muted-foreground">
+                  {display.subtitle ?? client.lastService}
+                </span>
+              </div>
             </div>
           </div>
           <a
@@ -852,16 +859,68 @@ function ClientIdentity({
             </p>
             {client.bookingStatus !== "active" && <StatusDot status={client.bookingStatus} />}
           </div>
-          <ClientBadges badges={client.badges} compact={compact} />
-          {!compact && (
-            <p className="truncate text-xs text-muted-foreground">
-              {display.subtitle ?? client.lastService}
-            </p>
-          )}
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+            <ClientPrimaryStatus client={client} compact={compact} />
+            {!compact && (
+              <span className="min-w-0 truncate text-xs text-muted-foreground">
+                {display.subtitle ?? client.lastService}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+function ClientPrimaryStatus({ client, compact = false }: { client: ClientSummary; compact?: boolean }) {
+  const status = getClientPrimaryStatus(client);
+  if (!status) return null;
+
+  return (
+    <span
+      className={`inline-flex max-w-full shrink-0 items-center truncate rounded-md border leading-none ${
+        compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-[11px]"
+      } ${primaryStatusToneClass(status.tone)}`}
+    >
+      {status.label}
+    </span>
+  );
+}
+
+function getClientPrimaryStatus(client: ClientSummary): ClientPrimaryStatusInfo | null {
+  const badgesByLabel = new Map(client.badges.map((badge) => [badge.label, badge]));
+  const priority: Array<{ badgeLabel: string; label: string }> = [
+    { badgeLabel: "Cliente em risco", label: "Em risco" },
+    { badgeLabel: "Em época de retorno", label: "Época de retorno" },
+    { badgeLabel: "Cliente VIP", label: "VIP" },
+    { badgeLabel: "Cliente frequente", label: "Frequente" },
+  ];
+
+  for (const item of priority) {
+    const badge = badgesByLabel.get(item.badgeLabel);
+    if (badge) {
+      return { label: item.label, tone: badge.tone };
+    }
+  }
+
+  if (client.totalAppointments <= 1) {
+    return { label: "Novo cliente", tone: "slate" };
+  }
+
+  return null;
+}
+
+function primaryStatusToneClass(tone: ClientPrimaryStatusInfo["tone"]) {
+  const classes: Record<ClientPrimaryStatusInfo["tone"], string> = {
+    emerald: "border-emerald-700/15 bg-emerald-600/[0.07] text-emerald-700 dark:text-emerald-300",
+    amber: "border-amber-700/15 bg-amber-500/[0.08] text-amber-700 dark:text-amber-300",
+    blue: "border-sky-700/15 bg-sky-500/[0.08] text-sky-700 dark:text-sky-300",
+    rose: "border-rose-700/15 bg-rose-500/[0.08] text-rose-700 dark:text-rose-300",
+    violet: "border-violet-700/15 bg-violet-500/[0.08] text-violet-700 dark:text-violet-300",
+    slate: "border-border/70 bg-muted/35 text-muted-foreground",
+  };
+  return classes[tone];
 }
 
 function ClientBadges({ badges, compact = false }: { badges: ClientBadge[]; compact?: boolean }) {
@@ -1449,6 +1508,10 @@ function MoneyText({ value, className = "" }: { value: number; className?: strin
       {formatEUR(value)}
     </span>
   );
+}
+
+function formatAppointmentCount(count: number) {
+  return `${count} ${count === 1 ? "marcação" : "marcações"}`;
 }
 
 function whatsAppUrl(client: ClientSummary, studioName?: string | null) {
