@@ -436,22 +436,20 @@ function HoursPage() {
               />
             ))}
           </div>
-          <div data-allow-viewport-bleed className="hidden overflow-x-auto overscroll-x-contain p-2.5 md:block lg:p-3">
-            <div className="grid min-w-[80rem] grid-cols-7 gap-2">
-              {WEEKDAYS.map((label, weekday) => (
-                <DayColumn
-                  key={weekday}
-                  weekday={weekday}
-                  label={label}
-                  labelShort={WEEKDAYS_SHORT[weekday]!}
-                  slots={slotsByDay(weekday)}
-                  isDayOff={isStaffOnDayOff}
-                  onAddSlot={() => addSlot(weekday)}
-                  onUpdateSlot={updateSlot}
-                  onRemoveSlot={removeSlot}
-                />
-              ))}
-            </div>
+          <div className="hidden p-2.5 md:grid md:grid-cols-1 md:gap-2.5 lg:grid-cols-2 lg:p-3 2xl:grid-cols-3">
+            {WEEKDAYS.map((label, weekday) => (
+              <DayColumn
+                key={weekday}
+                weekday={weekday}
+                label={label}
+                labelShort={WEEKDAYS_SHORT[weekday]!}
+                slots={slotsByDay(weekday)}
+                isDayOff={isStaffOnDayOff}
+                onAddSlot={() => addSlot(weekday)}
+                onUpdateSlot={updateSlot}
+                onRemoveSlot={removeSlot}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -689,7 +687,7 @@ function DayColumn({
   const isToday = new Date().getDay() === weekday;
 
   return (
-    <div className={`group flex min-h-[10rem] flex-col rounded-xl border px-2 py-2 transition-colors ${
+    <div className={`group overflow-hidden rounded-xl border transition-colors ${
       isDayOff
         ? "border-amber-500/15 bg-amber-500/[0.045]"
         : isToday
@@ -698,66 +696,96 @@ function DayColumn({
             ? "border-border/35 bg-background/35"
             : "border-dashed border-border/30 bg-muted/[0.06]"
     }`}>
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{labelShort}</p>
-          <p className="whitespace-nowrap text-[13px] font-semibold leading-tight text-foreground">{isToday ? `Hoje · ${label}` : label}</p>
-        </div>
-        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-          isDayOff
-            ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-            : hasSlots
-              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-              : "bg-muted text-muted-foreground"
-        }`}>
-          {isDayOff ? "Folga" : hasSlots ? "Ativo" : "Inativo"}
-        </span>
-      </div>
-
-      <div className="flex flex-1 flex-col gap-2">
-        {slots.length === 0 ? (
-          <div className="grid min-h-16 flex-1 place-items-center rounded-lg bg-background/20 px-2 text-center text-sm text-muted-foreground">
-            {isDayOff ? "Folga ativa" : "Sem atendimento"}
+      <div className="grid gap-3 p-3 xl:grid-cols-[8.75rem_minmax(0,1fr)]">
+        <div className="flex min-w-0 items-center gap-2.5 xl:items-start">
+          <span className={`grid h-9 w-11 shrink-0 place-items-center rounded-lg text-[11px] font-semibold ${
+            isDayOff
+              ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              : hasSlots
+                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                : "bg-muted/70 text-muted-foreground"
+          }`}>
+            {labelShort}
+          </span>
+          <div className="min-w-0">
+            <p className="whitespace-nowrap text-sm font-semibold leading-tight text-foreground">
+              {isToday ? `Hoje · ${label}` : label}
+            </p>
+            <span className={`mt-1 inline-flex w-fit rounded-full px-2 py-0.5 text-[10px] font-medium ${
+              isDayOff
+                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                : hasSlots
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  : "bg-muted/70 text-muted-foreground"
+            }`}>
+              {isDayOff ? "Folga" : hasSlots ? "Ativo" : "Inativo"}
+            </span>
           </div>
-        ) : (
-          slots.map((slot) => (
-            <div key={slot.id} className="rounded-lg bg-card/55 p-2 ring-1 ring-border/30">
-              <p className="mb-1.5 whitespace-nowrap text-sm font-semibold tabular-nums text-foreground">
-                {slot.start_time.slice(0, 5)} — {slot.end_time.slice(0, 5)}
-              </p>
-              <div className="grid grid-cols-2 gap-1.5">
-                <TimeInput
-                  label="Início"
-                  value={slot.start_time.slice(0, 5)}
-                  onChange={(value) => onUpdateSlot(slot.id, "start_time", value)}
-                />
-                <TimeInput
-                  label="Fim"
-                  value={slot.end_time.slice(0, 5)}
-                  onChange={(value) => onUpdateSlot(slot.id, "end_time", value)}
-                />
-              </div>
+        </div>
+
+        <div className="min-w-0 space-y-2">
+          {slots.length === 0 ? (
+            <div className="flex min-h-12 items-center justify-between gap-3 rounded-lg bg-background/22 px-3 py-2 text-sm text-muted-foreground">
+              <span className="min-w-0 truncate">{isDayOff ? "Folga ativa" : "Sem atendimento"}</span>
               <button
                 type="button"
-                onClick={() => onRemoveSlot(slot.id)}
-                className="mt-1.5 flex h-7 w-full items-center justify-center gap-1.5 rounded-md text-[11px] font-semibold text-muted-foreground opacity-70 transition hover:bg-red-500/10 hover:text-red-600 hover:opacity-100 focus-visible:bg-red-500/10 focus-visible:text-red-600 focus-visible:opacity-100"
+                onClick={onAddSlot}
+                className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/45 px-2.5 text-xs font-semibold text-muted-foreground transition hover:border-primary/35 hover:bg-background/60 hover:text-foreground focus-visible:border-primary/35 focus-visible:bg-background/60 focus-visible:text-foreground"
               >
-                <Trash2 className="h-3.5 w-3.5" />
-                Remover
+                <Plus className="h-3.5 w-3.5" />
+                Adicionar
               </button>
             </div>
-          ))
-        )}
+          ) : (
+            <>
+              <ExpandableList
+                items={slots}
+                initialCount={3}
+                className="space-y-2"
+                getKey={(slot) => slot.id}
+                moreLabel={(hidden) => `Ver mais ${hidden} turno${hidden !== 1 ? "s" : ""}`}
+                renderItem={(slot) => (
+                  <div key={slot.id} className="rounded-lg bg-card/55 p-2 ring-1 ring-border/30">
+                    <div className="grid items-end gap-2 xl:grid-cols-[7.25rem_minmax(0,1fr)_2.25rem]">
+                      <p className="whitespace-nowrap pb-2 text-sm font-semibold tabular-nums text-foreground">
+                        {slot.start_time.slice(0, 5)} — {slot.end_time.slice(0, 5)}
+                      </p>
+                      <div className="grid min-w-0 grid-cols-2 gap-1.5">
+                        <TimeInput
+                          label="Início"
+                          value={slot.start_time.slice(0, 5)}
+                          onChange={(value) => onUpdateSlot(slot.id, "start_time", value)}
+                        />
+                        <TimeInput
+                          label="Fim"
+                          value={slot.end_time.slice(0, 5)}
+                          onChange={(value) => onUpdateSlot(slot.id, "end_time", value)}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onRemoveSlot(slot.id)}
+                        aria-label="Remover turno"
+                        className="grid size-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition hover:bg-red-500/10 hover:text-red-600 focus-visible:bg-red-500/10 focus-visible:text-red-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              />
+              <button
+                type="button"
+                onClick={onAddSlot}
+                className="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/40 px-2 text-xs font-semibold text-muted-foreground transition hover:border-primary/35 hover:bg-background/55 hover:text-foreground focus-visible:border-primary/35 focus-visible:bg-background/55 focus-visible:text-foreground"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Adicionar turno
+              </button>
+            </>
+          )}
+        </div>
       </div>
-
-      <button
-        type="button"
-        onClick={onAddSlot}
-        className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/40 px-2 text-xs font-semibold text-muted-foreground transition hover:border-primary/35 hover:bg-background/55 hover:text-foreground focus-visible:border-primary/35 focus-visible:bg-background/55 focus-visible:text-foreground"
-      >
-        <Plus className="h-3.5 w-3.5" />
-        Adicionar
-      </button>
     </div>
   );
 }
