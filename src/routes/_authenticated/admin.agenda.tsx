@@ -1483,9 +1483,8 @@ function AppointmentCard({
                 <FinancialLine key={item.label} label={item.label} value={formatEUR(item.value)} emphasis={item.emphasis} />
               ))}
             </div>
-            <div className="flex items-center justify-between gap-2 md:justify-end">
-              <FinancialStatusChip summary={financialSummary} size="lg" />
-              {canShowSplit && (
+            {canShowSplit && (
+              <div className="flex items-center justify-between gap-2 md:justify-end">
                 <button
                   type="button"
                   onClick={() => setShowDepositSplit(!showDepositSplit)}
@@ -1493,8 +1492,8 @@ function AppointmentCard({
                 >
                   {showDepositSplit ? "Ocultar repartição" : "Ver repartição"}
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           {showDepositSplit && canShowSplit && (
