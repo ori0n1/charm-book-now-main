@@ -35,6 +35,7 @@ type PushSubscriptionRow = {
 };
 
 type NotificationLogRow = {
+  studio_id: string | null;
   recipient: string;
   status: string;
   payload: Record<string, unknown> | null;
@@ -97,10 +98,12 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
   if (rows.length === 0) return { sent: 0, failed: 0, skipped: 0 };
 
   const notificationIds = new Set(rows.map((item) => item.id));
+  const studioIds = Array.from(new Set(rows.map((item) => item.studio_id).filter(Boolean)));
   const { data: existingLogs, error: logsError } = await (sb as any)
     .from("notifications_log")
-    .select("recipient,status,payload")
+    .select("studio_id,recipient,status,payload")
     .eq("channel", "push_studio")
+    .in("studio_id", studioIds)
     .gte("created_at", cutoff)
     .order("created_at", { ascending: false })
     .limit(1000);
@@ -110,6 +113,8 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
   for (const log of ((existingLogs ?? []) as NotificationLogRow[])) {
     const notificationId = readPayloadString(log.payload, "studio_notification_id");
     if (!notificationId || !notificationIds.has(notificationId)) continue;
+    const notification = rows.find((item) => item.id === notificationId);
+    if (!notification || log.studio_id !== notification.studio_id) continue;
     if (log.status === "skipped" && log.recipient.startsWith("studio:")) {
       dispatchedKeys.add(studioPushNoTargetKey(notificationId, log.recipient.replace(/^studio:/, "")));
       continue;
@@ -129,6 +134,30 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
       notification_id: notification.id,
       kind: notification.kind,
     });
+    const scope = await validateStudioNotificationScope(sb, notification);
+    if (!scope.ok) {
+      const key = studioPushNoTargetKey(notification.id, notification.studio_id);
+      if (!dispatchedKeys.has(key)) {
+        await insertNotificationLog(sb, {
+          studioId: notification.studio_id,
+          channel: "push_studio",
+          kind: notification.kind,
+          recipient: `studio:${notification.studio_id}`,
+          status: "skipped",
+          error: scope.reason,
+          payload: {
+            studio_notification_id: notification.id,
+            event: "studio_notification_scope_guard",
+            appointment_id: readPayloadString(notification.payload, "appointment_id"),
+            booking_request_id: readPayloadString(notification.payload, "booking_request_id"),
+          },
+        });
+        dispatchedKeys.add(key);
+      }
+      skipped += 1;
+      continue;
+    }
+
     const targets = await loadStudioPushTargets(sb, notification, dispatchedKeys);
 
     if (targets.length === 0) {
@@ -163,7 +192,7 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
         const result = await sendWebPush(subscription, {
           title: "Bellza",
           body: formatPushBody(title, body),
-          url: "/admin",
+          url: "/admin/agenda",
           icon: "/pwa-icon.svg",
           badge: "/pwa-icon.svg",
           tag: `studio-${notification.id}`,
@@ -302,6 +331,46 @@ async function loadStudioPushTargets(
   });
 
   return Array.from(byEndpoint.values());
+}
+
+async function validateStudioNotificationScope(sb: any, notification: StudioNotificationRow) {
+  const payloadStudioId = readPayloadString(notification.payload, "studio_id");
+  if (payloadStudioId && payloadStudioId !== notification.studio_id) {
+    return { ok: false as const, reason: "payload_studio_mismatch" };
+  }
+
+  const appointmentId = readPayloadString(notification.payload, "appointment_id");
+  if (appointmentId) {
+    const { data, error } = await sb
+      .from("appointments")
+      .select("id,studio_id")
+      .eq("id", appointmentId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data?.id) return { ok: false as const, reason: "appointment_missing" };
+    if (data.studio_id !== notification.studio_id) {
+      return { ok: false as const, reason: "appointment_studio_mismatch" };
+    }
+  }
+
+  const bookingRequestId = readPayloadString(notification.payload, "booking_request_id");
+  if (bookingRequestId) {
+    const { data, error } = await sb
+      .from("booking_payment_requests")
+      .select("id,studio_id,appointment_id")
+      .eq("id", bookingRequestId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data?.id) return { ok: false as const, reason: "booking_request_missing" };
+    if (data.studio_id !== notification.studio_id) {
+      return { ok: false as const, reason: "booking_request_studio_mismatch" };
+    }
+    if (appointmentId && data.appointment_id && data.appointment_id !== appointmentId) {
+      return { ok: false as const, reason: "booking_request_appointment_mismatch" };
+    }
+  }
+
+  return { ok: true as const };
 }
 
 function studioPushDeliveryKey(notificationId: string, endpoint: string) {

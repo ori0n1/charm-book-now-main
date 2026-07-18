@@ -1415,7 +1415,7 @@ async function dispatchClientCenterPush(
     .maybeSingle();
   const { data: subscriptions, error } = await (sb as any)
     .from("push_subscriptions")
-    .select("id,user_id,endpoint,p256dh,auth")
+    .select("id,user_id,studio_id,audience,endpoint,p256dh,auth")
     .eq("studio_id", studioId)
     .eq("user_id", userId)
     .in("audience", ["client", "both"])
@@ -1423,7 +1423,22 @@ async function dispatchClientCenterPush(
     .limit(8);
   if (error) throw new Error(error.message);
 
-  if (!subscriptions?.length) {
+  const isolatedSubscriptions = ((subscriptions ?? []) as Array<{
+    id: string;
+    user_id: string;
+    studio_id: string | null;
+    audience: string | null;
+    endpoint: string;
+    p256dh: string;
+    auth: string;
+  }>).filter(
+    (subscription) =>
+      subscription.studio_id === studioId &&
+      subscription.user_id === userId &&
+      (subscription.audience === "client" || subscription.audience === "both"),
+  );
+
+  if (!isolatedSubscriptions.length) {
     await insertNotificationLog(sb, {
       studioId,
       channel: "push_client",
@@ -1450,7 +1465,7 @@ async function dispatchClientCenterPush(
       data: { studioId, kind: row.kind, key, notificationId: row.id },
     };
 
-    for (const subscription of subscriptions) {
+    for (const subscription of isolatedSubscriptions) {
       const result = await sendWebPush(subscription, payload);
       if (result.ok) {
         await insertNotificationLog(sb, {
@@ -1463,6 +1478,7 @@ async function dispatchClientCenterPush(
             event: "client_center_push",
             key,
             client_center_id: row.id ?? null,
+            subscription_id: subscription.id,
             endpoint: maskEndpoint(subscription.endpoint),
           },
         });
@@ -1478,6 +1494,7 @@ async function dispatchClientCenterPush(
             event: "client_center_push",
             key,
             client_center_id: row.id ?? null,
+            subscription_id: subscription.id,
             endpoint: maskEndpoint(subscription.endpoint),
           },
         });

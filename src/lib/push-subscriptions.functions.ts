@@ -43,6 +43,13 @@ export const savePushSubscription = createServerFn({ method: "POST" })
     const clientId =
       data.audience === "client" ? await resolveClientId(sb, userId, studioId, claims) : null;
 
+    await revokeCrossStudioEndpointSubscriptions(sb, {
+      userId,
+      studioId,
+      endpoint: data.subscription.endpoint,
+      audience: data.audience,
+    });
+
     const { data: existing, error: existingError } = await (sb as any)
       .from("push_subscriptions")
       .select("audience,client_id,studio_id")
@@ -106,7 +113,7 @@ export const sendTestPushNotification = createServerFn({ method: "POST" })
     const audiences = data.audience === "client" ? ["client", "both"] : ["studio", "both"];
     const { data: primarySubscriptions, error } = await (sb as any)
       .from("push_subscriptions")
-      .select("id,user_id,endpoint,p256dh,auth")
+      .select("id,user_id,studio_id,audience,endpoint,p256dh,auth")
       .eq("user_id", userId)
       .eq("studio_id", studioId)
       .in("audience", audiences)
@@ -115,7 +122,19 @@ export const sendTestPushNotification = createServerFn({ method: "POST" })
       .limit(3);
     if (error) throw new Error(error.message);
 
-    const subscriptions = primarySubscriptions ?? [];
+    const subscriptions = ((primarySubscriptions ?? []) as Array<{
+      id: string;
+      user_id: string;
+      studio_id: string | null;
+      audience: string | null;
+      endpoint: string;
+      p256dh: string;
+      auth: string;
+    }>).filter(
+      (subscription) =>
+        subscription.studio_id === studioId &&
+        (subscription.audience === data.audience || subscription.audience === "both"),
+    );
 
     if (!subscriptions?.length) {
       await insertNotificationLog(sb, {
@@ -224,6 +243,37 @@ async function resolveClientId(
     .maybeSingle());
   if (error) throw new Error(error.message);
   return (data?.id as string | undefined) ?? null;
+}
+
+async function revokeCrossStudioEndpointSubscriptions(
+  sb: any,
+  input: {
+    userId: string;
+    studioId: string;
+    endpoint: string;
+    audience: "client" | "studio";
+  },
+) {
+  const audiences = input.audience === "client" ? ["client", "both"] : ["studio", "both"];
+  const now = new Date().toISOString();
+  const { error } = await (sb as any)
+    .from("push_subscriptions")
+    .update({ revoked_at: now, updated_at: now })
+    .eq("endpoint", input.endpoint)
+    .eq("user_id", input.userId)
+    .neq("studio_id", input.studioId)
+    .in("audience", audiences)
+    .is("revoked_at", null);
+
+  if (error) {
+    console.error("[push] cross_studio_subscription_revoke_failed", {
+      studio_id: input.studioId,
+      user_id: input.userId,
+      audience: input.audience,
+      reason: error.message,
+    });
+    throw new Error(error.message);
+  }
 }
 
 async function insertNotificationLog(
