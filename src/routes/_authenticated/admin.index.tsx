@@ -1,8 +1,8 @@
 ﻿import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import type { InputHTMLAttributes, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import type { InputHTMLAttributes, ReactNode, RefObject } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Calendar,
@@ -67,6 +67,16 @@ type PaidRow = {
   appointment_id: string | null;
   amount_cents: number;
   status: string;
+};
+
+type DailyChartDay = {
+  key: string;
+  day: string;
+  fullDate: string;
+  total: number;
+  confirmed: number;
+  received: number;
+  appointments: number;
 };
 
 type StaffMetrics = {
@@ -769,20 +779,7 @@ function ProfessionalOverview({
               ))}
             </div>
           </div>
-          <div className="mt-3 grid h-44 grid-flow-col auto-cols-fr items-end gap-1.5 rounded-2xl border border-border/70 bg-background/45 px-3 pb-3 pt-4">
-            {chartData.map((day) => (
-              <div key={day.key} className="flex h-full min-w-0 flex-col justify-end gap-2">
-                <div className="flex flex-1 items-end justify-center rounded-xl bg-muted/30 px-1.5">
-                  <div
-                    className="w-full max-w-5 rounded-t-lg bg-emerald-600 shadow-[0_0_18px_rgba(16,185,129,0.16)]"
-                    style={{ height: `${day.total > 0 ? Math.max(5, (day.total / maxDayTotal) * 100) : 0}%` }}
-                    title={`${day.fullDate}: ${formatEUR(day.total)}`}
-                  />
-                </div>
-                <span className="text-center text-[9px] leading-none text-muted-foreground">{day.day}</span>
-              </div>
-            ))}
-          </div>
+          <ProfessionalEvolutionChart data={chartData} maxTotal={maxDayTotal} />
         </div>
 
         <div className="space-y-3">
@@ -905,6 +902,115 @@ function ProfessionalMetric({
       <p className="mt-auto pt-1 text-xs leading-snug text-muted-foreground">{detail}</p>
     </div>
   );
+}
+
+function ProfessionalEvolutionChart({ data, maxTotal }: { data: DailyChartDay[]; maxTotal: number }) {
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const width = useElementWidth(chartRef);
+  const labelStep = useMemo(() => getEvolutionLabelStep(data.length, width), [data.length, width]);
+
+  if (data.length === 0) {
+    return (
+      <div className="mt-3 flex h-52 items-center justify-center rounded-2xl border border-border/70 bg-background/45 px-4 text-center text-sm text-muted-foreground">
+        Sem dados financeiros neste período.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={chartRef}
+      className="mt-3 rounded-2xl border border-border/70 bg-background/45 px-3 pb-3 pt-4 sm:px-4"
+    >
+      <div
+        className="grid h-40 items-end gap-1 sm:gap-1.5"
+        style={{ gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))` }}
+      >
+        {data.map((day, index) => {
+          const height = day.total > 0 ? Math.max(5, (day.total / maxTotal) * 100) : 0;
+          const tooltipAlign =
+            index === 0 ? "left-0 translate-x-0" : index === data.length - 1 ? "right-0 translate-x-0" : "left-1/2 -translate-x-1/2";
+          return (
+            <button
+              key={day.key}
+              type="button"
+              className="group relative flex h-full min-w-0 cursor-default flex-col justify-end rounded-xl bg-muted/25 px-0.5 outline-none ring-0 transition hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-emerald-500/45 sm:px-1"
+              aria-label={`${day.fullDate}: ${formatEUR(day.total)}`}
+              title={`${day.fullDate}: ${formatEUR(day.total)}`}
+            >
+              <span
+                className={`pointer-events-none absolute bottom-[calc(100%+0.5rem)] z-20 hidden w-max max-w-[10.5rem] rounded-xl border border-border bg-popover px-2.5 py-2 text-left text-[11px] leading-snug text-popover-foreground opacity-0 shadow-lg transition group-hover:block group-hover:opacity-100 group-focus:block group-focus:opacity-100 ${tooltipAlign}`}
+              >
+                <span className="block font-semibold">{day.fullDate}</span>
+                <span className="block text-muted-foreground">{formatEUR(day.total)}</span>
+              </span>
+              <span
+                className="mx-auto block w-full max-w-5 rounded-t-lg bg-emerald-600 shadow-[0_0_18px_rgba(16,185,129,0.16)] transition-[height,background-color] duration-200 group-hover:bg-emerald-500"
+                style={{ height: `${height}%` }}
+              />
+            </button>
+          );
+        })}
+      </div>
+      <div
+        className="mt-2 grid gap-1 text-center text-[10px] leading-none text-muted-foreground sm:text-[11px]"
+        style={{ gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))` }}
+      >
+        {data.map((day, index) => {
+          const show = shouldShowEvolutionLabel(index, data.length, labelStep);
+          return (
+            <span
+              key={day.key}
+              className={`min-w-0 overflow-hidden text-ellipsis whitespace-nowrap tabular-nums ${
+                show ? "visible" : "invisible"
+              }`}
+              aria-hidden={!show}
+            >
+              {day.day}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function useElementWidth(ref: RefObject<HTMLElement | null>) {
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+
+    const updateWidth = () => setWidth(Math.round(element.getBoundingClientRect().width));
+    updateWidth();
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      setWidth(Math.round(entry.contentRect.width));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return width;
+}
+
+function getEvolutionLabelStep(totalDays: number, width: number) {
+  if (totalDays <= 1) return 1;
+  if (!width) {
+    if (totalDays <= 7) return 1;
+    if (totalDays <= 15) return 3;
+    return 5;
+  }
+  const minimumLabelWidth = width < 380 ? 54 : 62;
+  const maxLabels = Math.max(2, Math.floor(width / minimumLabelWidth));
+  return Math.max(1, Math.ceil(totalDays / maxLabels));
+}
+
+function shouldShowEvolutionLabel(index: number, totalDays: number, step: number) {
+  if (index === 0 || index === totalDays - 1) return true;
+  if (totalDays - 1 - index < Math.max(1, Math.floor(step / 2))) return false;
+  return index % step === 0;
 }
 
 function MobileOverview({
