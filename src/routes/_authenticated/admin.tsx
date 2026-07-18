@@ -1218,36 +1218,36 @@ function TrialPremiumBanner({ billing }: { billing: BillingSummary }) {
     remaining === null ? 35 : Math.min(100, Math.max(6, ((14 - remaining) / 14) * 100));
   return (
     <section
-      className={`mb-4 overflow-hidden rounded-[1.35rem] border p-4 shadow-lg md:mb-5 md:rounded-[1.6rem] md:p-5 ${
+      className={`mb-3 overflow-hidden rounded-2xl border px-4 py-3 shadow-[0_1px_0_rgba(15,23,42,0.04)] md:mb-4 ${
         urgent
-          ? "border-amber-500/35 bg-[linear-gradient(135deg,rgba(245,158,11,0.16),rgba(255,255,255,0.02)_48%,rgba(16,185,129,0.08))] shadow-amber-950/10"
-          : "border-emerald-700/25 bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_48%,rgba(16,185,129,0.05))] shadow-black/10"
+          ? "border-amber-500/25 bg-amber-500/10"
+          : "border-emerald-700/20 bg-emerald-500/10"
       }`}
     >
-      <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-        <div>
+      <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
             <Sparkles className="h-4 w-4" />
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em]">
               Teste gratuito ativo
             </p>
           </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-xl font-light tracking-tight md:text-2xl">
+          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold tracking-tight md:text-lg">
                 {remaining === 1
                   ? "Resta 1 dia do teste gratuito"
                   : `Restam ${remaining ?? "--"} dias do teste gratuito`}
               </h2>
-              <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              <p className="mt-0.5 max-w-2xl text-xs leading-relaxed text-muted-foreground">
                 Após o fim do teste será necessário ativar uma assinatura Premium para continuar a utilizar o painel.
               </p>
             </div>
-            <span className="w-fit rounded-full bg-background/80 px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm">
+            <span className="w-fit shrink-0 rounded-full bg-background/70 px-3 py-1 text-xs font-semibold text-foreground ring-1 ring-border/50">
               {dateLabel}
             </span>
           </div>
-          <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-background/75 ring-1 ring-border/60">
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-background/70 ring-1 ring-border/50">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
                 urgent ? "bg-amber-500" : "bg-emerald-600"
@@ -1257,17 +1257,17 @@ function TrialPremiumBanner({ billing }: { billing: BillingSummary }) {
           </div>
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2 lg:w-72 lg:grid-cols-1">
+        <div className="grid gap-2 sm:grid-cols-2 lg:w-64 lg:grid-cols-1">
           <Link
             to="/admin/premium"
-            className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90"
+            className="flex h-10 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90"
           >
             Ativar Premium
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
           <Link
             to="/admin/premium"
-            className="flex h-11 items-center justify-center rounded-2xl border border-border bg-background/70 px-4 text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="flex h-10 items-center justify-center rounded-xl border border-border/70 bg-background/60 px-4 text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
           >
             Ver planos
           </Link>

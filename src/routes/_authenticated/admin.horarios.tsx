@@ -273,28 +273,28 @@ function HoursPage() {
     <div className="mx-auto w-full max-w-[1180px] space-y-4 pb-6 lg:space-y-5">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header className="flex flex-col gap-3 overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
-        <div className="grid gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)] lg:items-center lg:px-6">
+      <header className="overflow-hidden rounded-2xl border border-border/60 bg-card/80 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+        <div className="grid gap-3 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)] lg:items-start lg:px-6">
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               Disponibilidade
             </p>
-            <h1 className="mt-0.5 truncate text-xl font-semibold tracking-tight lg:text-2xl">
-              Horários e Bloqueios
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">
+              Horários e disponibilidade
             </h1>
-            <p className="mt-1 max-w-xl text-xs leading-relaxed text-muted-foreground">
-              Configure a agenda semanal, bloqueios e disponibilidade do profissional.
+            <p className="mt-1 max-w-xl text-sm leading-relaxed text-muted-foreground">
+              Defina a semana de trabalho, bloqueios e pausas sem perder clareza no dia a dia.
             </p>
           </div>
 
           {/* Staff selector — only if multiple */}
-          <div className="rounded-2xl border border-border/70 bg-background/55 p-2.5">
-            <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          <div className="min-w-0 lg:justify-self-end">
+            <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               Profissional
             </p>
           {staff.length > 1 ? (
             <Select value={staffId} onValueChange={setStaffId}>
-              <SelectTrigger className="h-10 w-full rounded-xl border-border/80 bg-card px-3 text-sm shadow-none focus:ring-2 focus:ring-foreground/10">
+              <SelectTrigger className="h-11 w-full rounded-xl border-border/70 bg-background/65 px-3 text-sm shadow-none focus:ring-2 focus:ring-ring lg:w-[22rem]">
                 <SelectValue placeholder={`Selecionar ${labels.professional}`} />
               </SelectTrigger>
               <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
@@ -306,7 +306,7 @@ function HoursPage() {
               </SelectContent>
             </Select>
           ) : (
-            <div className="inline-flex h-10 w-full items-center gap-2 rounded-xl border border-border/80 bg-card px-3 text-sm font-medium text-foreground">
+            <div className="inline-flex h-11 w-full items-center gap-2 rounded-xl border border-border/70 bg-background/65 px-3 text-sm font-medium text-foreground lg:w-[22rem]">
               <UserRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate">{selectedStaff?.name}</span>
             </div>
@@ -316,18 +316,18 @@ function HoursPage() {
 
         {/* ── Status selector ────────────────────────────────────────────── */}
         {selectedStaff && (
-          <div className="border-t border-border/60 bg-muted/10 px-4 py-3 sm:px-5 lg:px-6">
+          <div className="border-t border-border/50 bg-muted/10 px-4 py-3 sm:px-5 lg:px-6">
             {/* Header row — wraps on very narrow screens */}
-            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 Estado da agenda
               </p>
-              <span className="rounded-full bg-background/75 px-2.5 py-1 text-[10px] font-semibold text-muted-foreground ring-1 ring-border/60">
+              <span className="rounded-full bg-background/65 px-2.5 py-1 text-[11px] font-medium text-muted-foreground ring-1 ring-border/50">
                 {selectedStatusCopy.label}
               </span>
             </div>
             {/* 1 col on 320–429 px, 2 cols on 430–639 px, 4 cols on 640 px+ */}
-            <div className="grid auto-rows-fr grid-cols-2 gap-2 rounded-[1.35rem] border border-border/70 bg-background/70 p-1.5 sm:gap-2.5 sm:p-2">
+            <div className="grid grid-cols-2 gap-1.5 rounded-2xl bg-background/45 p-1.5">
               {STATUS_OPTIONS.map((opt) => {
                 const isCurrent = visibleStatus === opt.value;
                 const Icon = opt.icon === "available" ? CalendarCheck : CalendarOff;
@@ -341,25 +341,19 @@ function HoursPage() {
                     type="button"
                     onClick={() => void saveStatus(opt.value)}
                     className={[
-                      "flex min-h-[5.35rem] flex-col justify-between rounded-2xl border p-2.5 text-left transition-all duration-200 active:scale-[0.98] sm:min-h-[5.75rem] sm:p-3",
+                      "flex min-h-11 items-center gap-2 rounded-xl px-2.5 py-2 text-left transition-all duration-200 active:scale-[0.99] sm:min-h-12 sm:px-3",
                       isCurrent
-                        ? "border-foreground/15 bg-foreground text-background shadow-sm ring-1 ring-foreground/10"
-                        : "border-transparent bg-card/60 text-muted-foreground hover:bg-muted/70 hover:text-foreground",
+                        ? "bg-foreground text-background shadow-sm"
+                        : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                     ].join(" ")}
                   >
                     {/* Dot — vertically centered with the label */}
-                    <span className="flex items-start justify-between gap-2">
-                      <span className={`grid size-8 shrink-0 place-items-center rounded-xl ${isCurrent ? "bg-background/15 text-background" : iconClass}`}>
-                        <Icon className="h-4 w-4" />
-                      </span>
-                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold leading-none ${isCurrent ? "bg-background/15 text-background/80" : "bg-background/75 text-muted-foreground ring-1 ring-border/55"}`}>
-                        {opt.desc}
-                      </span>
+                    <span className={`grid size-8 shrink-0 place-items-center rounded-lg ${isCurrent ? "bg-background/15 text-background" : iconClass}`}>
+                      <Icon className="h-4 w-4" />
                     </span>
-                    <span className="min-w-0 pt-2">
-                      <span className="block text-[13px] font-semibold leading-tight sm:text-sm">
-                        {opt.label}
-                      </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold leading-tight">{opt.label}</span>
+                      <span className={`mt-0.5 block text-xs leading-tight ${isCurrent ? "text-background/75" : "text-muted-foreground"}`}>{opt.desc}</span>
                     </span>
                   </button>
                 );
@@ -371,7 +365,7 @@ function HoursPage() {
 
       {/* ── Summary bar ────────────────────────────────────────────────── */}
       {isStaffOnDayOff && (
-        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 shadow-sm dark:text-amber-200 lg:px-5">
+        <div className="rounded-2xl border border-amber-500/15 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 shadow-[0_1px_0_rgba(15,23,42,0.04)] dark:text-amber-200 lg:px-5">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <p className="font-semibold">Em folga</p>
             <p className="text-xs leading-relaxed text-amber-800/80 dark:text-amber-100/80">
@@ -381,38 +375,19 @@ function HoursPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3 lg:gap-3">
-        <SummaryChip
-          icon={<CalendarDays className="h-4 w-4" />}
-          label="Dias ativos"
-          value={`${activeDays}/7`}
-          color={activeDays > 0 ? "emerald" : "muted"}
-        />
-        <SummaryChip
-          icon={<Clock className="h-4 w-4" />}
-          label="Horas/semana"
-          value={hoursLabel}
-          color="blue"
-        />
-        <SummaryChip
-          icon={<CalendarOff className="h-4 w-4" />}
-          label="Bloqueios"
-          value={String(upcomingBlocks)}
-          color={upcomingBlocks > 0 ? "amber" : "muted"}
-        />
-      </div>
+      <SummaryBar activeDays={activeDays} hoursLabel={hoursLabel} upcomingBlocks={upcomingBlocks} />
 
       {/* ── Tab bar ────────────────────────────────────────────────────── */}
-      <div className="rounded-[1.35rem] border border-border/80 bg-card/95 p-2 shadow-sm lg:mx-auto lg:w-full lg:max-w-3xl lg:p-2.5">
-        <div className="grid grid-cols-3 gap-1.5 lg:gap-2">
+      <div className="rounded-2xl border border-border/60 bg-card/70 p-1.5 shadow-[0_1px_0_rgba(15,23,42,0.04)] lg:mx-auto lg:w-full lg:max-w-2xl">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(0,1fr))] gap-1">
           {visibleTabs.map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActiveTab(tab)}
-              className={`h-10 rounded-2xl text-xs font-semibold transition-all duration-200 lg:h-12 lg:text-sm ${
+              className={`relative h-10 rounded-xl text-sm font-semibold transition-all duration-200 ${
                 activeTab === tab
-                  ? "bg-foreground text-background shadow-sm ring-1 ring-foreground/10"
+                  ? "bg-background text-foreground shadow-sm ring-1 ring-border/60"
                   : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
               }`}
             >
@@ -424,8 +399,8 @@ function HoursPage() {
 
       {/* ══ TAB: Agenda ═══════════════════════════════════════════════════ */}
       {activeTab === "agenda" && (
-        <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
-          <div className="flex items-center justify-between border-b border-border/70 bg-muted/20 px-4 py-3 lg:px-5">
+        <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/75 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+          <div className="flex items-center justify-between border-b border-border/50 bg-muted/10 px-4 py-3 lg:px-5">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 Semana de
@@ -461,7 +436,7 @@ function HoursPage() {
               />
             ))}
           </div>
-          <div className="hidden grid-cols-7 gap-2.5 p-3 md:grid lg:gap-3 lg:p-4">
+          <div className="hidden gap-2.5 p-3 md:grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 lg:gap-3 lg:p-4">
             {WEEKDAYS.map((label, weekday) => (
               <DayColumn
                 key={weekday}
@@ -483,11 +458,11 @@ function HoursPage() {
       {activeTab === "bloqueios" && (
         <div className="space-y-3">
           {/* Section header + CTA */}
-          <div className="grid gap-3 rounded-2xl border border-border/80 bg-card/95 px-4 py-3 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center lg:px-5">
+          <div className="grid gap-3 rounded-2xl border border-border/60 bg-card/75 px-4 py-3 shadow-[0_1px_0_rgba(15,23,42,0.04)] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center lg:px-5">
             <div>
               <p className="text-sm font-semibold">Bloqueios e folgas</p>
               <p className="text-xs text-muted-foreground">
-                {selectedStaff?.name} · {upcomingBlocks} activo{upcomingBlocks !== 1 ? "s" : ""}
+                {selectedStaff?.name} · {upcomingBlocks} ativo{upcomingBlocks !== 1 ? "s" : ""}
               </p>
             </div>
             <button
@@ -504,8 +479,8 @@ function HoursPage() {
           <BlockCalendar timeOff={staffTimeOff} />
 
           {/* Block list */}
-          <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
-            <div className="border-b border-border/70 bg-muted/20 px-4 py-3">
+          <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/75 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+            <div className="border-b border-border/50 bg-muted/10 px-4 py-3">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 Todos os bloqueios
               </p>
@@ -577,8 +552,8 @@ function HoursPage() {
 
       {/* ══ TAB: Regras ═══════════════════════════════════════════════════ */}
       {activeTab === "regras" && (
-        <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
-          <div className="flex items-center gap-3 border-b border-border/70 bg-muted/20 px-4 py-3">
+        <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/75 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
+          <div className="flex items-center gap-3 border-b border-border/50 bg-muted/10 px-4 py-3">
             <div className="grid size-8 place-items-center rounded-xl bg-muted">
               <ShieldCheck className="h-4 w-4 text-muted-foreground" />
             </div>
@@ -625,7 +600,7 @@ function HoursPage() {
             </div>
 
             <div className="rounded-xl border border-border/50 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-              Actualmente:{" "}
+              Atualmente:{" "}
               <span className="font-semibold text-foreground">{formatNotice(minBookingNoticeMin)}</span>{" "}
               de antecedência obrigatória para novas marcações online.
             </div>
@@ -650,25 +625,49 @@ function HoursPage() {
 
 // ─── Summary Chip ─────────────────────────────────────────────────────────────
 
-function SummaryChip({
-  icon, label, value, color,
+function SummaryBar({
+  activeDays,
+  hoursLabel,
+  upcomingBlocks,
 }: {
-  icon: React.ReactNode; label: string; value: string;
-  color: "emerald" | "blue" | "amber" | "muted";
+  activeDays: number;
+  hoursLabel: string;
+  upcomingBlocks: number;
 }) {
-  const iconCls: Record<string, string> = {
-    emerald: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-    blue:    "bg-blue-500/10 text-blue-700 dark:text-blue-400",
-    amber:   "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-    muted:   "bg-muted text-muted-foreground",
-  };
+  const items = [
+    {
+      icon: <CalendarDays className="h-4 w-4" />,
+      label: "Dias ativos",
+      value: `${activeDays}/7`,
+      tone: activeDays > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground",
+    },
+    {
+      icon: <Clock className="h-4 w-4" />,
+      label: "Horas semanais",
+      value: hoursLabel,
+      tone: "text-blue-700 dark:text-blue-400",
+    },
+    {
+      icon: <CalendarOff className="h-4 w-4" />,
+      label: "Bloqueios",
+      value: String(upcomingBlocks),
+      tone: upcomingBlocks > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
+    },
+  ];
+
   return (
-    <div className="flex min-h-[4.5rem] items-center gap-3 rounded-2xl border border-border/80 bg-card/95 px-3 py-2.5 text-left shadow-sm lg:min-h-0 lg:px-4">
-      <span className={`grid size-8 shrink-0 place-items-center rounded-xl ${iconCls[color]}`}>{icon}</span>
-      <div className="min-w-0">
-        <p className="text-base font-semibold tabular-nums leading-none">{value}</p>
-        <p className="mt-1 truncate text-[10px] font-medium leading-tight text-muted-foreground">{label}</p>
-      </div>
+    <div className="grid gap-1.5 rounded-2xl border border-border/60 bg-card/75 p-1.5 shadow-[0_1px_0_rgba(15,23,42,0.04)] sm:grid-cols-3">
+      {items.map((item) => (
+        <div key={item.label} className="flex min-h-14 items-center gap-3 rounded-xl px-3 py-2">
+          <span className={`grid size-8 shrink-0 place-items-center rounded-lg bg-muted/55 ${item.tone}`}>
+            {item.icon}
+          </span>
+          <div className="min-w-0">
+            <p className="text-lg font-semibold tabular-nums leading-none text-foreground">{item.value}</p>
+            <p className="mt-1 truncate text-xs font-medium leading-tight text-muted-foreground">{item.label}</p>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -688,39 +687,42 @@ function DayColumn({
   const isToday = new Date().getDay() === weekday;
 
   return (
-    <div className={`flex min-h-[13rem] flex-col rounded-2xl border px-2.5 py-2.5 transition-colors ${
+    <div className={`group flex min-h-[12.5rem] flex-col rounded-2xl border px-2.5 py-2.5 transition-colors ${
       isDayOff
-        ? "border-amber-500/25 bg-amber-500/[0.07] ring-1 ring-amber-500/10"
+        ? "border-amber-500/20 bg-amber-500/[0.06]"
         : isToday
-          ? "border-foreground/30 bg-foreground/[0.03] ring-1 ring-foreground/10"
+          ? "border-primary/35 bg-primary/[0.05]"
           : hasSlots
-            ? "border-border/80 bg-background/60"
-            : "border-dashed border-border/60 bg-muted/20"
+            ? "border-border/60 bg-background/45"
+            : "border-dashed border-border/45 bg-muted/10"
     }`}>
       <div className="mb-2.5 flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{labelShort}</p>
-          <p className="truncate text-sm font-semibold">{isToday ? "Hoje" : label}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{labelShort}</p>
+          <p className="truncate text-sm font-semibold text-foreground">{isToday ? `Hoje · ${label}` : label}</p>
         </div>
-        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
           isDayOff
             ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
             : hasSlots
               ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
               : "bg-muted text-muted-foreground"
         }`}>
-          {isDayOff ? "Folga" : slots.length}
+          {isDayOff ? "Folga" : hasSlots ? "Ativo" : "Inativo"}
         </span>
       </div>
 
       <div className="flex flex-1 flex-col gap-2">
         {slots.length === 0 ? (
-          <div className="grid flex-1 place-items-center rounded-xl bg-background/45 px-2 text-center text-xs text-muted-foreground">
+          <div className="grid flex-1 place-items-center rounded-xl bg-background/25 px-2 text-center text-sm text-muted-foreground">
             {isDayOff ? "Folga ativa" : "Sem atendimento"}
           </div>
         ) : (
           slots.map((slot) => (
-            <div key={slot.id} className="rounded-xl border border-border/70 bg-card/90 p-2 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+            <div key={slot.id} className="rounded-xl bg-card/70 p-2 ring-1 ring-border/50">
+              <p className="mb-2 truncate text-sm font-semibold tabular-nums text-foreground">
+                {slot.start_time.slice(0, 5)} — {slot.end_time.slice(0, 5)}
+              </p>
               <div className="grid gap-1.5">
                 <TimeInput
                   label="Início"
@@ -736,7 +738,7 @@ function DayColumn({
               <button
                 type="button"
                 onClick={() => onRemoveSlot(slot.id)}
-                className="mt-2 flex h-7 w-full items-center justify-center gap-1.5 rounded-lg border border-border/70 text-[11px] font-semibold text-muted-foreground transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-600"
+                className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg text-xs font-semibold text-muted-foreground opacity-80 transition hover:bg-red-500/10 hover:text-red-600 hover:opacity-100 focus-visible:bg-red-500/10 focus-visible:text-red-600 focus-visible:opacity-100"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Remover
@@ -749,7 +751,7 @@ function DayColumn({
       <button
         type="button"
         onClick={onAddSlot}
-        className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/80 px-2 text-xs font-semibold text-muted-foreground transition hover:border-foreground/20 hover:bg-background hover:text-foreground"
+        className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/55 px-2 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:bg-background/70 hover:text-foreground focus-visible:border-primary/40 focus-visible:bg-background/70 focus-visible:text-foreground"
       >
         <Plus className="h-3.5 w-3.5" />
         Adicionar
@@ -772,7 +774,7 @@ function DayRow({
 }) {
   const hasSlots = slots.length > 0;
   const summary  = hasSlots
-    ? slots.map((s) => `${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}`).join(", ")
+    ? slots.map((s) => `${s.start_time.slice(0, 5)} — ${s.end_time.slice(0, 5)}`).join(", ")
     : null;
 
   return (
@@ -784,7 +786,7 @@ function DayRow({
         onClick={onToggle}
         onKeyDown={(e) => e.key === "Enter" && onToggle()}
         className={`flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/25 ${
-          isDayOff ? "bg-amber-500/[0.06]" : hasSlots ? "" : "opacity-55"
+          isDayOff ? "bg-amber-500/[0.06]" : hasSlots ? "" : "bg-muted/10"
         }`}
       >
         {/* Day badge */}
@@ -802,7 +804,7 @@ function DayRow({
 
         {/* Info */}
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-tight">{label}</p>
+          <p className="text-sm font-semibold leading-tight text-foreground">{label}</p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {isDayOff ? "Em folga · horários suspensos" : summary ?? "Sem atendimento"}
           </p>
@@ -849,7 +851,7 @@ function DayRow({
                   value={s.start_time.slice(0, 5)}
                   onChange={(v) => onUpdateSlot(s.id, "start_time", v)}
                 />
-                <span className="mb-2.5 shrink-0 text-xs text-muted-foreground">→</span>
+                <span className="mb-2.5 shrink-0 text-xs text-muted-foreground">—</span>
                 <TimeInput
                   label="Fim"
                   value={s.end_time.slice(0, 5)}
@@ -859,7 +861,7 @@ function DayRow({
                   type="button"
                   onClick={() => onRemoveSlot(s.id)}
                   aria-label="Remover turno"
-                  className="mb-0 grid size-10 shrink-0 place-items-center rounded-xl border border-border text-muted-foreground transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-600"
+                  className="mb-0 grid size-11 shrink-0 place-items-center rounded-xl text-muted-foreground transition hover:bg-red-500/10 hover:text-red-600 focus-visible:bg-red-500/10 focus-visible:text-red-600"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -870,7 +872,7 @@ function DayRow({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onAddSlot(); }}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:border-border hover:bg-background hover:text-foreground"
+              className="flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-border/60 px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:bg-background/70 hover:text-foreground focus-visible:border-primary/40 focus-visible:bg-background/70 focus-visible:text-foreground"
             >
               <Plus className="h-3.5 w-3.5" />
               Adicionar turno
@@ -1007,9 +1009,9 @@ function BlockCalendar({ timeOff }: { timeOff: TimeOff[] }) {
   while (cells.length % 7 !== 0) cells.push(null);
 
   return (
-    <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
+    <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/75 shadow-[0_1px_0_rgba(15,23,42,0.04)]">
       {/* Calendar nav */}
-      <div className="flex items-center justify-between border-b border-border/70 bg-muted/20 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-border/50 bg-muted/10 px-4 py-3">
         <p className="text-sm font-semibold">
           {MONTHS_PT[calMonth]} {calYear}
         </p>
