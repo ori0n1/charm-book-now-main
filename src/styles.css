@@ -693,9 +693,40 @@
     overflow-x: hidden;
   }
 
+  .public-booking-premium {
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in oklch, var(--accent) 7%, var(--background)) 0%,
+        var(--background) 24%,
+        var(--background) 100%
+      );
+  }
+
+  .public-studio-hero > div {
+    box-shadow: 0 20px 58px oklch(0 0 0 / 0.2);
+  }
+
+  .public-studio-hero-overlay {
+    background:
+      linear-gradient(180deg, rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.06) 38%, rgba(0, 0, 0, 0.9)),
+      linear-gradient(90deg, rgba(0, 0, 0, 0.26), transparent 48%);
+  }
+
+  .public-studio-identity {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: linear-gradient(115deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.1) 58%, rgba(255, 255, 255, 0.04));
+    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.22);
+  }
+
+  .public-studio-meta > div > :where(a, div) {
+    border-color: color-mix(in oklch, var(--accent) 12%, var(--border));
+    background: color-mix(in oklch, var(--card) 92%, var(--background));
+  }
+
   /* ── Public marketing & auth surfaces (Bellza) ── */
   .public-shell {
-    --background: oklch(0.985 0.012 82);
+    --background: oklch(0.987 0.009 82);
     --foreground: oklch(0.18 0.012 70);
     --card: oklch(1 0 0);
     --muted: oklch(0.94 0.012 82);
@@ -703,7 +734,9 @@
     --border: oklch(0.86 0.018 78);
     --accent: oklch(0.66 0.13 76);
     --accent-foreground: oklch(0.14 0.012 70);
-    background-color: var(--color-background);
+    background:
+      linear-gradient(180deg, color-mix(in oklch, var(--accent) 7%, var(--background)) 0%, var(--background) 32rem),
+      var(--color-background);
     color: var(--color-foreground);
   }
 
@@ -734,8 +767,8 @@
     top: 0;
     z-index: 50;
     border-bottom: 1px solid color-mix(in oklch, var(--border) 80%, transparent);
-    background: color-mix(in oklch, var(--background) 78%, transparent);
-    backdrop-filter: blur(16px);
+    background: color-mix(in oklch, var(--background) 84%, transparent);
+    backdrop-filter: blur(18px);
   }
 
   .public-section-label {
@@ -747,10 +780,39 @@
   }
 
   .public-card {
-    border: 1px solid color-mix(in oklch, var(--border) 85%, transparent);
+    border: 1px solid color-mix(in oklch, var(--border) 72%, transparent);
+    border-radius: 1rem;
+    background: color-mix(in oklch, var(--card) 96%, var(--background));
+    box-shadow: 0 10px 30px oklch(0 0 0 / 0.045);
+  }
+
+  .public-hero-section {
+    isolation: isolate;
+  }
+
+  .public-product-preview {
     border-radius: 1.25rem;
-    background: color-mix(in oklch, var(--card) 92%, var(--background));
-    box-shadow: 0 1px 2px oklch(0 0 0 / 0.03);
+    border: 1px solid color-mix(in oklch, var(--border) 68%, transparent);
+    background:
+      linear-gradient(135deg, color-mix(in oklch, var(--card) 95%, var(--background)), color-mix(in oklch, var(--accent) 8%, var(--card)));
+    padding: 0.75rem;
+    box-shadow: 0 20px 54px oklch(0 0 0 / 0.075);
+  }
+
+  .public-hero-benefit {
+    box-shadow: none;
+  }
+
+  .public-auth-surface {
+    background:
+      linear-gradient(135deg, color-mix(in oklch, var(--accent) 8%, var(--background)), transparent 38rem),
+      linear-gradient(180deg, var(--background), color-mix(in oklch, var(--muted) 32%, var(--background)));
+  }
+
+  .public-auth-card {
+    border-color: color-mix(in oklch, var(--border) 64%, transparent);
+    background: color-mix(in oklch, var(--card) 97%, var(--background));
+    box-shadow: 0 22px 70px oklch(0 0 0 / 0.085);
   }
 
   .public-btn-primary {
@@ -824,9 +886,9 @@
   .public-input {
     min-height: 2.625rem;
     padding: 0.64rem 0.9rem;
-    border-radius: 0.85rem;
+    border-radius: 0.75rem;
     border: 1px solid color-mix(in oklch, var(--border) 90%, transparent);
-    background: color-mix(in oklch, var(--background) 92%, var(--card));
+    background: color-mix(in oklch, var(--background) 88%, var(--card));
     font-size: 0.9375rem;
     transition:
       border-color 0.15s ease,
@@ -843,13 +905,17 @@
 
   .public-feature-card {
     border: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
-    border-radius: 1.25rem;
+    border-radius: 1rem;
     background: color-mix(in oklch, var(--card) 94%, var(--background));
     padding: 1.5rem;
-    transition: border-color 0.2s ease;
+    box-shadow: 0 8px 22px oklch(0 0 0 / 0.035);
+    transition:
+      border-color 0.2s ease,
+      transform 0.2s ease;
   }
   .public-feature-card:hover {
     border-color: color-mix(in oklch, var(--accent) 28%, var(--border));
+    transform: translateY(-1px);
   }
 
   .public-prose {

@@ -202,9 +202,9 @@ function LandingPage() {
       <LandingHeader />
 
       <main>
-        <section className="relative mx-auto grid max-w-7xl items-center gap-7 px-4 pb-10 pt-6 sm:px-6 sm:pb-12 lg:grid-cols-[0.95fr_1.05fr] lg:gap-10 lg:pt-8">
+        <section className="public-hero-section relative mx-auto grid max-w-7xl items-center gap-7 px-4 pb-10 pt-6 sm:px-6 sm:pb-12 lg:grid-cols-[0.95fr_1.05fr] lg:gap-10 lg:pt-8">
           <div className="max-w-2xl text-center lg:text-left">
-            <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/82 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm lg:mx-0">
+            <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/90 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm lg:mx-0">
               <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
               Aplicativo próprio para salões, estética e barbearias
             </div>
@@ -233,13 +233,13 @@ function LandingPage() {
             </ul>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:gap-4">
+          <div className="public-product-preview grid gap-3 sm:grid-cols-2 lg:gap-4">
             {HERO_BENEFITS.map((item, index) => {
               const Icon = featureIcons[index] ?? BadgeCheck;
 
               return (
-                <article key={item.title} className="public-card p-4 sm:p-5">
-                  <div className="mb-4 inline-flex size-9 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                <article key={item.title} className="public-card public-hero-benefit p-4 sm:p-5">
+                  <div className="mb-4 inline-flex size-9 items-center justify-center rounded-lg bg-accent/10 text-accent">
                     <Icon className="size-4" aria-hidden="true" />
                   </div>
                   <h2 className="text-base font-semibold tracking-tight">{item.title}</h2>

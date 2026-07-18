@@ -23,7 +23,7 @@ export function AuthPageLayout({
   const isLogin = variant === "login";
 
   return (
-    <div className={cn("public-shell min-h-dvh", isLogin && "lg:min-h-svh lg:overflow-hidden")}>
+    <div className={cn("public-shell public-auth-surface min-h-dvh", isLogin && "lg:min-h-svh lg:overflow-hidden")}>
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-30" aria-hidden="true" />
       <div
         className={cn(
@@ -47,7 +47,7 @@ export function AuthPageLayout({
 
           <div
             className={cn(
-              "public-card mx-auto w-full p-5 shadow-[0_18px_60px_oklch(0_0_0/0.08)] sm:p-6",
+              "public-card public-auth-card mx-auto w-full p-5 shadow-[0_18px_60px_oklch(0_0_0/0.08)] sm:p-6",
               isLogin
                 ? "max-w-[23.5rem] rounded-[1.35rem] lg:mx-auto lg:max-w-[21.5rem] lg:p-4"
                 : "max-w-md lg:mx-0 lg:max-w-[26rem]",
@@ -103,7 +103,7 @@ function DefaultAside() {
 function LoginAside() {
   return (
     <div className="relative max-w-[22rem]">
-      <div className="absolute -inset-5 rounded-[2rem] bg-[radial-gradient(circle_at_30%_20%,color-mix(in_oklch,var(--accent)_12%,transparent),transparent_44%)] blur-2xl" />
+      <div className="absolute -inset-5 rounded-[2rem] bg-accent/5 blur-2xl" />
       <div className="relative space-y-4">
         <BellzaLogo variant="navbar" />
         <div className="space-y-2">

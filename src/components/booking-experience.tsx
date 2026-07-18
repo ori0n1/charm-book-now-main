@@ -976,7 +976,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
 
   const continueWithSelectedServices = () => {
     if (selectedServices.length === 0) {
-      toast.error("Escolha pelo menos um serviÃ§o para continuar.");
+      toast.error("Escolha pelo menos um serviço para continuar.");
       return;
     }
     const requiredIds = selectedServices.map((item) => item.id);
@@ -1619,10 +1619,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   }
 
   return (
-    <div className="public-booking flex min-h-screen flex-col bg-background" style={brandStyle}>
+    <div className="public-booking public-booking-premium flex min-h-screen flex-col bg-background" style={brandStyle}>
       <div className="mx-auto w-full max-w-[560px] flex-1 pb-4 md:max-w-6xl md:px-6 md:pb-6">
         {/* Hero */}
-        <header className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden bg-black md:left-auto md:w-auto md:translate-x-0 md:bg-transparent md:pt-6">
+        <header className="public-studio-hero relative left-1/2 w-screen -translate-x-1/2 overflow-hidden bg-black md:left-auto md:w-auto md:translate-x-0 md:bg-transparent md:pt-6">
           <div
             className="group relative isolate h-[18.5rem] w-screen touch-pan-y overflow-hidden rounded-b-[1.5rem] bg-black shadow-[0_18px_54px_rgba(0,0,0,0.18)] [backface-visibility:hidden] [clip-path:inset(0_round_0_0_1.5rem_1.5rem)] [transform:translateZ(0)] md:h-[34rem] md:w-full md:rounded-[2.25rem] md:[clip-path:inset(0_round_2.25rem)] md:shadow-[0_32px_90px_rgba(0,0,0,0.24)] md:ring-1 md:ring-white/10"
             style={{
@@ -1662,7 +1662,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                 />
               ))}
             </div>
-            <div className="absolute -inset-px z-10 bg-[linear-gradient(180deg,rgba(0,0,0,0.38),rgba(0,0,0,0.08)_36%,rgba(0,0,0,0.94))]" />
+            <div className="public-studio-hero-overlay absolute -inset-px z-10 bg-[linear-gradient(180deg,rgba(0,0,0,0.38),rgba(0,0,0,0.08)_36%,rgba(0,0,0,0.94))]" />
             <div className="absolute -inset-px z-10 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.12),transparent_36%)]" />
             <div className="absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-3 px-4 pt-[calc(env(safe-area-inset-top,0px)+0.85rem)] md:px-7 md:pt-7">
               {step > 0 ? (
@@ -1761,7 +1761,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               </>
             )}
             <div className="absolute bottom-3 left-3 right-3 z-20 md:bottom-8 md:left-8 md:right-8">
-              <div className="flex max-w-[min(100%,30rem)] items-center gap-2.5 rounded-[1.25rem] border border-white/[0.08] bg-[linear-gradient(115deg,rgba(0,0,0,0.18),rgba(0,0,0,0.08)_58%,rgba(255,255,255,0.025))] p-2 pr-3 ring-1 ring-black/10 shadow-[0_18px_54px_rgba(0,0,0,0.22)] backdrop-blur-[3px] md:min-h-[7rem] md:w-full md:max-w-none md:gap-4 md:rounded-[1.9rem] md:bg-[linear-gradient(115deg,rgba(0,0,0,0.14),rgba(0,0,0,0.055)_62%,rgba(255,255,255,0.024))] md:p-3 md:pr-6">
+              <div className="public-studio-identity flex max-w-[min(100%,30rem)] items-center gap-2.5 rounded-[1.25rem] border border-white/[0.08] bg-[linear-gradient(115deg,rgba(0,0,0,0.18),rgba(0,0,0,0.08)_58%,rgba(255,255,255,0.025))] p-2 pr-3 ring-1 ring-black/10 shadow-[0_18px_54px_rgba(0,0,0,0.22)] backdrop-blur-[3px] md:min-h-[7rem] md:w-full md:max-w-none md:gap-4 md:rounded-[1.9rem] md:bg-[linear-gradient(115deg,rgba(0,0,0,0.14),rgba(0,0,0,0.055)_62%,rgba(255,255,255,0.024))] md:p-3 md:pr-6">
                 {logoSrc && (
                   <button
                     type="button"
@@ -1819,7 +1819,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
         </header>
 
         {/* Premium stats bar */}
-        <div className="px-4 pt-3 md:px-0">
+        <div className="public-studio-meta px-4 pt-3 md:px-0">
           <div className="flex items-center gap-2 overflow-x-auto pb-0.5 scrollbar-none">
             <div className="flex shrink-0 items-center gap-1.5 rounded-full bg-card/90 px-3 py-1.5 text-xs font-semibold shadow-sm ring-1 ring-border">
               <BookmarkCheck className="size-3.5 text-accent" />
@@ -4960,7 +4960,7 @@ function ReviewStep({
         <div className="mt-3 space-y-px overflow-hidden rounded-2xl bg-card ring-1 ring-border">
           <Row label="Serviço" value={service.name} />
           {services.slice(1).map((item, index) => (
-            <Row key={item.id} label={`ServiÃ§o ${index + 2}`} value={item.name} />
+            <Row key={item.id} label={`Serviço ${index + 2}`} value={item.name} />
           ))}
           <Row label="Profissional" value={proLabel} />
           <Row label="Data" value={formatDate(date)} />
@@ -5307,7 +5307,7 @@ function ReviewStepPremium({
 
       {services.length > 1 && (
         <div>
-          <SectionTitle>ServiÃ§os escolhidos</SectionTitle>
+          <SectionTitle>Serviços escolhidos</SectionTitle>
           <div className="mt-3 space-y-2 rounded-2xl border border-border bg-card p-3 shadow-sm">
             {services.map((item, index) => (
               <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl bg-background/70 px-3 py-2">
@@ -6099,7 +6099,7 @@ function ClientAccountArea({
             </span>
           </div>
           <p className="mt-1 break-words text-sm font-extrabold leading-snug text-foreground">
-            {appointment.services[0]?.name ?? "ServiÃ§o"}
+            {appointment.services[0]?.name ?? "Serviço"}
           </p>
           {appointment.staffName && (
             <p className="mt-0.5 break-words text-xs leading-snug text-muted-foreground">
