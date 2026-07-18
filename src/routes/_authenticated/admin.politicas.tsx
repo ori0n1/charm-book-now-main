@@ -30,6 +30,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ExpandableList } from "@/components/ui/expandable-list";
@@ -478,19 +479,18 @@ function ManageabilityPolicyPanel({
         />
 
         <div className="rounded-lg bg-muted/30 p-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <h3 className="text-sm font-semibold text-foreground">Política de reembolso</h3>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
                 Escolha o que acontece quando a cliente cancela dentro do prazo permitido.
               </p>
             </div>
-            <ToggleRow
+            <RefundPolicySwitch
               checked={draft.refund_requests_enabled}
               onCheckedChange={(checked) =>
                 onChange(updatePolicySetting({ ...draft, refund_requests_enabled: checked }, "refund", { active: checked }))
               }
-              text="Ativo"
             />
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -951,6 +951,33 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
     <div className="space-y-2">
       <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</Label>
       {children}
+    </div>
+  );
+}
+
+function RefundPolicySwitch({
+  checked,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-1">
+      <span
+        className={cn(
+          "text-xs font-semibold leading-none transition-colors",
+          checked ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {checked ? "Política ativa" : "Política inativa"}
+      </span>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        aria-label={checked ? "Desativar política de reembolso" : "Ativar política de reembolso"}
+        className="relative h-6 w-11 border-0 bg-muted shadow-none after:absolute after:-inset-2.5 after:content-[''] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30 [&>span]:h-5 [&>span]:w-5 [&>span]:bg-background [&>span]:shadow-sm [&>span]:data-[state=checked]:translate-x-5"
+      />
     </div>
   );
 }
