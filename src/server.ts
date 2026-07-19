@@ -92,12 +92,15 @@ function withPwaUpdateHeaders(request: Request, response: Response): Response {
   const url = new URL(request.url);
   const headers = new Headers(response.headers);
   const contentType = headers.get("content-type") ?? "";
+  const isVersionedAsset = url.pathname.startsWith("/assets/");
   const isPwaMetadata =
     url.pathname === "/sw.js" ||
     url.pathname === "/manifest.webmanifest" ||
     url.pathname.startsWith("/api/public/studio-manifest/");
 
-  if (isPwaMetadata) {
+  if (isVersionedAsset) {
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  } else if (isPwaMetadata) {
     headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     headers.set("Pragma", "no-cache");
     headers.set("Expires", "0");

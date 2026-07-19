@@ -1777,7 +1777,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                   </button>
                 )}
                 <div className="min-w-0 flex-1 text-left md:max-w-[58rem]">
-                  <h1 className="line-clamp-2 max-w-[18rem] text-[1.24rem] font-extrabold leading-[1.14] tracking-tight text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] md:max-w-[52rem] md:text-[2.55rem] md:leading-[0.98]">
+                  <h1 className="max-w-[18rem] text-balance text-[1.24rem] font-extrabold leading-[1.14] tracking-tight text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] md:max-w-[52rem] md:text-[2.55rem] md:leading-[1.02]">
                     {studio.name}
                   </h1>
                   {/* Rating prominently below the name */}

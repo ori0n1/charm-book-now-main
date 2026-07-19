@@ -13,13 +13,9 @@ import {
   UsersRound,
   WalletCards,
 } from "lucide-react";
-import { CookieBanner } from "@/components/cookie-banner";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingHeader } from "@/components/landing/landing-header";
-import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND, LANDING_SEO } from "@/lib/app-brand";
-import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
-import { isPublicCustomerUser } from "@/lib/auth-context";
 import {
   DIFFERENTIATORS,
   FEATURE_BLOCKS,
@@ -31,7 +27,6 @@ import {
   SECURITY_POINTS,
   TRUST_PILLARS,
 } from "@/lib/landing-content";
-import { toast } from "sonner";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -101,8 +96,13 @@ function LandingPage() {
 
   useEffect(() => {
     let cancelled = false;
+    let cancelIdle: () => void = () => undefined;
+
     async function redirectAuthenticatedVisitor() {
       try {
+        const [{ resolveAuthLanding, settleSessionFromCurrentUrl }, { isPublicCustomerUser }] =
+          await Promise.all([import("@/lib/auth-landing"), import("@/lib/auth-context")]);
+        if (cancelled) return;
         const session = await settleSessionFromCurrentUrl("/");
         if (cancelled || !session?.user?.id) return;
         const landing = await resolveAuthLanding(session.user.id);
@@ -112,15 +112,35 @@ function LandingPage() {
         // Keep the public landing usable if an old or partial OAuth URL cannot be settled.
       }
     }
-    void redirectAuthenticatedVisitor();
+
+    const run = () => void redirectAuthenticatedVisitor();
+    const idle = window as Window & {
+      requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    if (idle.requestIdleCallback) {
+      const id = idle.requestIdleCallback(run, { timeout: 1600 });
+      cancelIdle = () => idle.cancelIdleCallback?.(id);
+    } else {
+      const id = window.setTimeout(run, 800);
+      cancelIdle = () => window.clearTimeout(id);
+    }
+
     return () => {
       cancelled = true;
+      cancelIdle();
     };
   }, [navigate]);
 
   async function startPlanCheckout(plan: "monthly" | "yearly") {
     setCheckoutPlan(plan);
+    let showError: ((message: string) => void) | undefined;
     try {
+      const [{ supabase }, { toast }] = await Promise.all([
+        import("@/integrations/supabase/client"),
+        import("sonner"),
+      ]);
+      showError = toast.error;
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
       if (!token) {
@@ -150,7 +170,10 @@ function LandingPage() {
       }
       window.location.href = payload.url;
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível abrir o checkout seguro.");
+      if (!showError) {
+        showError = (await import("sonner")).toast.error;
+      }
+      showError(error instanceof Error ? error.message : "Não foi possível abrir o checkout seguro.");
       setCheckoutPlan(null);
     }
   }
@@ -535,7 +558,6 @@ function LandingPage() {
       </main>
 
       <LandingFooter />
-      <CookieBanner />
     </div>
   );
 }

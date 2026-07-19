@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import {
   Outlet,
   Link,
@@ -11,8 +11,6 @@ import {
 
 import { Toaster } from "sonner";
 
-import { supabase } from "@/integrations/supabase/client";
-import { CookieBanner } from "@/components/cookie-banner";
 import { ThemeProvider } from "@/components/theme-provider";
 import { APP_BRAND } from "@/lib/app-brand";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
@@ -20,11 +18,56 @@ import appCss from "../styles.css?url";
 
 const SERVICE_WORKER_VERSION = "20260707-pwa-safe-update";
 const META_PIXEL_ID = "2079568283438502";
-const META_PIXEL_SCRIPT = `
-!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '${META_PIXEL_ID}');
-fbq('track', 'PageView');
-`;
+
+const LazyCookieBanner = lazy(() =>
+  import("@/components/cookie-banner").then((mod) => ({ default: mod.CookieBanner })),
+);
+
+type MetaPixelQueue = {
+  (...args: unknown[]): void;
+  callMethod?: (...args: unknown[]) => void;
+  queue?: unknown[];
+  loaded?: boolean;
+  version?: string;
+};
+
+function scheduleIdleTask(task: () => void, timeout = 1800) {
+  if (typeof window === "undefined") return () => undefined;
+  const idle = (window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number; cancelIdleCallback?: (id: number) => void });
+  if (idle.requestIdleCallback) {
+    const id = idle.requestIdleCallback(task, { timeout });
+    return () => idle.cancelIdleCallback?.(id);
+  }
+  const id = window.setTimeout(task, timeout);
+  return () => window.clearTimeout(id);
+}
+
+function loadMetaPixel() {
+  const win = window as Window & {
+    _fbq?: unknown;
+    fbq?: MetaPixelQueue;
+  };
+  if (win.fbq) return;
+
+  const fbq: MetaPixelQueue = function (...args: unknown[]) {
+    if (fbq.callMethod) fbq.callMethod(...args);
+    else fbq.queue?.push(args);
+  };
+  fbq.queue = [] as unknown[];
+  fbq.loaded = true;
+  fbq.version = "2.0";
+  win.fbq = fbq;
+  win._fbq = fbq;
+
+  const script = document.createElement("script");
+  script.async = true;
+  script.src = "https://connect.facebook.net/en_US/fbevents.js";
+  const firstScript = document.getElementsByTagName("script")[0];
+  firstScript?.parentNode?.insertBefore(script, firstScript);
+
+  win.fbq("init", META_PIXEL_ID);
+  win.fbq("track", "PageView");
+}
 
 function NotFoundComponent() {
   return (
@@ -134,7 +177,6 @@ function RootShell({ children }: { children: React.ReactNode }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <HeadContent />
-        <script dangerouslySetInnerHTML={{ __html: META_PIXEL_SCRIPT }} />
       </head>
       <body>
         <noscript>
@@ -156,6 +198,8 @@ function RootShell({ children }: { children: React.ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
+
+  useEffect(() => scheduleIdleTask(loadMetaPixel, 1800), []);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
@@ -185,34 +229,55 @@ function RootComponent() {
 
   useEffect(() => {
     if (typeof document === "undefined") return;
+    let active = true;
+    let cleanup: (() => void) | undefined;
 
-    const refreshSession = () => {
-      if (document.visibilityState === "hidden") return;
-      void supabase.auth.getSession();
-    };
+    void import("@/integrations/supabase/client").then(({ supabase }) => {
+      if (!active) return;
+      const refreshSession = () => {
+        if (document.visibilityState === "hidden") return;
+        void supabase.auth.getSession();
+      };
 
-    refreshSession();
-    window.addEventListener("focus", refreshSession);
-    document.addEventListener("visibilitychange", refreshSession);
+      refreshSession();
+      window.addEventListener("focus", refreshSession);
+      document.addEventListener("visibilitychange", refreshSession);
+      cleanup = () => {
+        window.removeEventListener("focus", refreshSession);
+        document.removeEventListener("visibilitychange", refreshSession);
+      };
+    });
+
     return () => {
-      window.removeEventListener("focus", refreshSession);
-      document.removeEventListener("visibilitychange", refreshSession);
+      active = false;
+      cleanup?.();
     };
   }, []);
 
   useEffect(() => {
     let lastUserId: string | null | undefined;
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event !== "SIGNED_IN" && event !== "SIGNED_OUT") return;
-      const uid = session?.user?.id ?? null;
-      if (uid === lastUserId) return;
-      lastUserId = uid;
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
 
-      void queryClient.invalidateQueries();
+    void import("@/integrations/supabase/client").then(({ supabase }) => {
+      if (!active) return;
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((event, session) => {
+        if (event !== "SIGNED_IN" && event !== "SIGNED_OUT") return;
+        const uid = session?.user?.id ?? null;
+        if (uid === lastUserId) return;
+        lastUserId = uid;
+
+        void queryClient.invalidateQueries();
+      });
+      unsubscribe = () => subscription.unsubscribe();
     });
-    return () => subscription.unsubscribe();
+
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
   }, [queryClient, router]);
 
   return (
@@ -230,7 +295,9 @@ function RootComponent() {
             },
           }}
         />
-        <CookieBanner />
+        <Suspense fallback={null}>
+          <LazyCookieBanner />
+        </Suspense>
       </QueryClientProvider>
     </ThemeProvider>
   );
