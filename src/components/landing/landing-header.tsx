@@ -84,7 +84,7 @@ export function LandingHeader() {
             to="/signup"
             search={{ ref: undefined }}
             onClick={() => setMobileOpen(false)}
-            className="mt-2 inline-flex min-h-11 items-center justify-center rounded-xl bg-foreground px-3 py-2.5 text-sm font-semibold text-background"
+            className="public-btn-primary mt-2 min-h-11 rounded-xl px-3 py-2.5 text-sm"
           >
             Começar 14 dias grátis
           </Link>

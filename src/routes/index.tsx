@@ -196,7 +196,7 @@ function LandingPage() {
   };
 
   return (
-    <div className="public-shell min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareSchema) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }} />
@@ -471,10 +471,9 @@ function PublicPhonePreview() {
               className="h-full w-full object-cover"
               loading="lazy"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-black/68 via-black/12 to-transparent" />
-            <div className="absolute bottom-4 left-4 right-4 text-white">
-              <p className="text-xs opacity-85">{PREVIEW_STUDIO.domain}</p>
-              <h2 className="text-xl font-semibold leading-tight">{PREVIEW_STUDIO.name}</h2>
+            <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-border bg-card/95 px-3 py-2 shadow-[0_8px_20px_rgba(24,24,27,0.08)]">
+              <p className="text-xs text-muted-foreground">{PREVIEW_STUDIO.domain}</p>
+              <h2 className="text-xl font-semibold leading-tight text-foreground">{PREVIEW_STUDIO.name}</h2>
             </div>
           </div>
           <div className="space-y-3 p-4">

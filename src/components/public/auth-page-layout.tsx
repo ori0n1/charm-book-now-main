@@ -23,7 +23,7 @@ export function AuthPageLayout({
   const isLogin = variant === "login";
 
   return (
-    <div className="public-shell public-auth-surface min-h-dvh overflow-x-hidden">
+    <div className="public-shell public-site-theme public-auth-surface min-h-dvh overflow-x-hidden">
       <div
         className={cn(
           "relative mx-auto grid min-h-dvh w-full max-w-7xl gap-8 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_0.92fr] lg:items-center lg:py-10",

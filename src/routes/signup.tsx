@@ -88,7 +88,7 @@ function SignupPage() {
       }
     >
       {refCode && (
-        <div className="mb-4 rounded-xl border border-emerald-200/60 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-700 dark:border-emerald-800/30 dark:bg-emerald-900/10 dark:text-emerald-300">
+        <div className="mb-4 rounded-xl border border-success/25 bg-success-soft px-4 py-3 text-xs text-success">
           <span className="font-semibold">Indicação ativa.</span>{" "}
           Quem te indicou ganha crédito Bellza quando a tua conta ficar ativa.
         </div>

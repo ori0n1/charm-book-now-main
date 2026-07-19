@@ -7,9 +7,9 @@ export function ProductDemo() {
     <div className="public-product-demo" aria-label="Demonstração visual clara da Bellza">
       <div className="public-demo-desktop">
         <div className="flex items-center gap-2 border-b border-border/70 bg-muted/35 px-4 py-3">
-          <span className="size-2.5 rounded-full bg-[#EF4444]" aria-hidden="true" />
-          <span className="size-2.5 rounded-full bg-[#F59E0B]" aria-hidden="true" />
-          <span className="size-2.5 rounded-full bg-[#22C55E]" aria-hidden="true" />
+          <span className="size-2.5 rounded-full bg-danger-soft ring-1 ring-danger/20" aria-hidden="true" />
+          <span className="size-2.5 rounded-full bg-warning-soft ring-1 ring-warning/20" aria-hidden="true" />
+          <span className="size-2.5 rounded-full bg-success-soft ring-1 ring-success/20" aria-hidden="true" />
           <span className="ml-3 rounded-full border border-border/70 bg-card px-3 py-1 text-[11px] font-semibold text-muted-foreground">
             painel.bellza.pt/agenda
           </span>
@@ -64,10 +64,9 @@ export function ProductDemo() {
                 className="h-full w-full object-cover"
                 loading="eager"
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/68 to-transparent" />
-              <div className="absolute bottom-3 left-3 right-3 text-white">
-                <p className="text-[11px] font-medium opacity-80">{PREVIEW_STUDIO.domain}</p>
-                <h3 className="text-lg font-semibold leading-tight">{PREVIEW_STUDIO.name}</h3>
+              <div className="absolute bottom-3 left-3 right-3 rounded-xl border border-border bg-card/95 px-3 py-2 shadow-[0_8px_20px_rgba(24,24,27,0.08)]">
+                <p className="text-[11px] font-medium text-muted-foreground">{PREVIEW_STUDIO.domain}</p>
+                <h3 className="text-lg font-semibold leading-tight text-foreground">{PREVIEW_STUDIO.name}</h3>
               </div>
             </div>
             <div className="space-y-3 p-3">

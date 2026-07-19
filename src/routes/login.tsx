@@ -16,7 +16,7 @@ export const Route = createFileRoute("/login")({
     meta: [
       { title: `Entrar - ${APP_BRAND.name}` },
       { name: "robots", content: "noindex,nofollow,noarchive" },
-      { name: "theme-color", content: "#f7f3ed" },
+      { name: "theme-color", content: "#FAFAF8" },
     ],
   }),
   component: LoginPage,
