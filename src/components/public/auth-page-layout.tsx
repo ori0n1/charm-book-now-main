@@ -76,7 +76,7 @@ function DefaultAside() {
       <div className="space-y-3">
         <p className="public-section-label">{APP_BRAND.name}</p>
         <h2 className="text-balance text-4xl font-semibold leading-tight tracking-tight">
-          Aplicativo próprio e gestão premium para estúdios.
+          Aplicativo próprio e gestão simples para estúdios.
         </h2>
         <p className="text-base leading-relaxed text-muted-foreground">{APP_BRAND.description}</p>
       </div>
@@ -93,7 +93,7 @@ function LoginAside() {
         <div className="mt-8 max-w-md space-y-3">
           <p className="public-section-label">Painel Bellza</p>
           <h2 className="text-balance text-4xl font-semibold leading-tight tracking-tight">
-            Entre no painel do seu estúdio com uma experiência mais limpa.
+            Entre no painel do seu estúdio com uma experiência clara.
           </h2>
           <p className="text-base leading-relaxed text-muted-foreground">
             Agenda, clientes, pagamentos e app próprio num ambiente leve, seguro e preparado para mobile.

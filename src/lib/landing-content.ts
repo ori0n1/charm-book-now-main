@@ -43,19 +43,19 @@ export const TRUST_PILLARS = [
 
 export const DIFFERENTIATORS = [
   {
-    title: "Não é marketplace",
+    title: "Sem marketplace",
     description:
-      "O cliente entra diretamente no ambiente do seu estúdio, sem concorrentes, anúncios ou distrações.",
+      "O cliente marca diretamente no ambiente do seu estúdio, sem comparar concorrentes ou ver anúncios.",
   },
   {
-    title: "App próprio",
+    title: "Marca própria",
     description:
-      "A página pública pode ser guardada no telemóvel como PWA, com nome, identidade e experiência focados na sua marca.",
+      "A página pública, o link e a experiência de reserva mantêm a identidade do seu negócio em primeiro plano.",
   },
   {
-    title: "Operação organizada",
+    title: "App instalável",
     description:
-      "Reservas, equipa, clientes, pagamentos e notificações ficam no mesmo painel, com leitura simples no dia a dia.",
+      "A página pode ser guardada no ecrã inicial do telemóvel como PWA, sem depender de loja de aplicações.",
   },
 ] as const;
 
@@ -75,26 +75,14 @@ export const FEATURE_BLOCKS = [
   {
     title: "Clientes",
     description:
-      "Acompanhe histórico, preferências, presença, ticket médio e contexto de relacionamento.",
+      "Acompanhe histórico, preferências, presença e contexto de relacionamento num só lugar.",
     points: ["Ficha do cliente", "Histórico", "Preferências"],
   },
   {
-    title: "Pagamentos",
+    title: "Pagamentos e avisos",
     description:
-      "Acompanhe sinais, pagamentos online, caixa, comissões e indicadores financeiros.",
-    points: ["Sinais online", "Caixa", "Relatórios"],
-  },
-  {
-    title: "Lembretes e avisos",
-    description:
-      "Envie confirmações, lembretes, alterações e avisos pelos canais configurados no sistema.",
-    points: ["WhatsApp", "E-mail", "Push/PWA"],
-  },
-  {
-    title: "Marca própria",
-    description:
-      "Cada estúdio mantém a sua identidade, os seus clientes e a sua experiência de reserva.",
-    points: ["Sem concorrência", "Cores do estúdio", "Página própria"],
+      "Acompanhe sinais, pagamentos, caixa, lembretes e notificações importantes da operação.",
+    points: ["Sinais online", "Caixa", "Notificações"],
   },
 ] as const;
 

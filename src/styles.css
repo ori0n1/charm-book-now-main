@@ -33,6 +33,8 @@
   --color-ring: var(--ring);
   --color-surface: var(--surface);
   --color-surface-strong: var(--surface-strong);
+  --color-surface-muted: var(--surface-muted);
+  --color-accent-soft: var(--accent-soft);
 
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
@@ -1165,6 +1167,125 @@
     .public-shell :where(input, textarea, button, [role="button"]) {
       min-height: 2.75rem;
     }
+  }
+
+  .public-shell {
+    --background: #faf9f6;
+    --foreground: #18181b;
+    --card: #ffffff;
+    --muted: #f4f2ee;
+    --surface: #ffffff;
+    --surface-muted: #f4f2ee;
+    --muted-foreground: #66666f;
+    --border: #e8e5df;
+    --accent: #b78a43;
+    --accent-hover: #9e7435;
+    --accent-soft: #f4eadb;
+    --accent-foreground: #ffffff;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .public-shell {
+      --background: #faf9f6;
+      --foreground: #18181b;
+      --card: #ffffff;
+      --muted: #f4f2ee;
+      --surface: #ffffff;
+      --surface-muted: #f4f2ee;
+      --muted-foreground: #66666f;
+      --border: #e8e5df;
+      --accent: #b78a43;
+      --accent-hover: #9e7435;
+      --accent-soft: #f4eadb;
+      --accent-foreground: #ffffff;
+    }
+  }
+
+  .public-nav {
+    border-bottom-color: var(--color-border);
+    background: color-mix(in srgb, var(--background) 92%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .public-card,
+  .public-auth-card,
+  .public-auth-preview,
+  .public-feature-card,
+  .public-step-card,
+  .public-product-demo,
+  .public-demo-desktop {
+    border-color: var(--color-border);
+    background: var(--color-card);
+    box-shadow: 0 12px 32px rgba(24, 24, 27, 0.055);
+  }
+
+  .public-auth-surface {
+    background:
+      radial-gradient(circle at 12% 10%, color-mix(in srgb, var(--accent-soft) 58%, transparent), transparent 28rem),
+      linear-gradient(180deg, var(--background), var(--surface-muted));
+  }
+
+  .public-auth-preview {
+    background: linear-gradient(135deg, var(--card), color-mix(in srgb, var(--accent-soft) 34%, var(--card)));
+  }
+
+  .public-btn-primary {
+    background: var(--color-accent);
+    color: var(--color-accent-foreground);
+    box-shadow: 0 10px 22px rgba(183, 138, 67, 0.18);
+  }
+
+  .public-btn-primary:hover {
+    background: var(--accent-hover);
+    box-shadow: 0 12px 26px rgba(158, 116, 53, 0.2);
+  }
+
+  .public-btn-secondary {
+    border-color: var(--color-border);
+    background: var(--color-card);
+    color: var(--color-foreground);
+  }
+
+  .public-feature-card,
+  .public-step-card {
+    padding: 1.2rem;
+  }
+
+  .public-product-demo {
+    background:
+      linear-gradient(135deg, var(--card), color-mix(in srgb, var(--accent-soft) 42%, var(--card)));
+    padding: 0.85rem;
+    box-shadow: 0 22px 55px rgba(24, 24, 27, 0.075);
+  }
+
+  .public-demo-desktop {
+    border-radius: 1rem;
+  }
+
+  .public-demo-row {
+    background: var(--color-card);
+    box-shadow: inset 0 0 0 1px var(--color-border);
+  }
+
+  .public-demo-time {
+    width: 4.8rem;
+    flex: 0 0 auto;
+  }
+
+  .public-demo-chip,
+  .public-demo-badge {
+    border-color: var(--color-border);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    box-shadow: 0 12px 30px rgba(24, 24, 27, 0.08);
+  }
+
+  .public-demo-calendar {
+    color: var(--color-accent);
+    opacity: 0.16;
   }
 
   .public-prose {
