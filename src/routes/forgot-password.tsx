@@ -9,7 +9,7 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/forgot-password")({
   head: () => ({
     meta: [
-      { title: `Recuperar palavra-passe — ${APP_BRAND.name}` },
+      { title: `Recuperar palavra-passe - ${APP_BRAND.name}` },
       { name: "robots", content: "noindex,nofollow,noarchive" },
     ],
   }),
@@ -113,7 +113,7 @@ function ForgotPasswordPage() {
             onChange={(e) => setEmail(e.target.value)}
           />
           <AuthPrimaryButton disabled={disabled}>
-            {loading ? "A enviar…" : remaining > 0 ? `Aguarde ${remaining}s` : "Enviar link"}
+            {loading ? "A enviar..." : remaining > 0 ? `Aguarde ${remaining}s` : "Enviar link"}
           </AuthPrimaryButton>
         </form>
       )}

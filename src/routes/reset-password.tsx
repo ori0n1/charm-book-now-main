@@ -10,7 +10,7 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/reset-password")({
   head: () => ({
     meta: [
-      { title: `Nova palavra-passe — ${APP_BRAND.name}` },
+      { title: `Nova palavra-passe - ${APP_BRAND.name}` },
       { name: "robots", content: "noindex,nofollow,noarchive" },
     ],
   }),
@@ -82,7 +82,7 @@ function ResetPasswordPage() {
   if (checking) {
     return (
       <AuthPageLayout title="A verificar link" description="Aguarde um momento.">
-        <p className="text-sm text-muted-foreground">A validar o seu acesso…</p>
+        <p className="text-sm text-muted-foreground">A validar o seu acesso...</p>
       </AuthPageLayout>
     );
   }
@@ -93,7 +93,7 @@ function ResetPasswordPage() {
         title="Link inválido"
         description={errorMessage || "O link expirou ou já foi utilizado."}
         footer={
-          <Link to="/forgot-password" className="block text-center text-sm font-medium underline-offset-2 hover:underline">
+          <Link to="/forgot-password" className="block min-h-11 text-center text-sm font-medium underline-offset-2 hover:underline">
             Solicitar novo link
           </Link>
         }
@@ -132,7 +132,7 @@ function ResetPasswordPage() {
           onChange={(e) => setConfirm(e.target.value)}
         />
         <AuthPrimaryButton disabled={loading}>
-          {loading ? "A guardar…" : "Guardar palavra-passe"}
+          {loading ? "A guardar..." : "Guardar palavra-passe"}
         </AuthPrimaryButton>
       </form>
     </AuthPageLayout>

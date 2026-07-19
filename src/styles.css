@@ -815,6 +815,15 @@
     box-shadow: 0 22px 70px oklch(0 0 0 / 0.085);
   }
 
+  .public-auth-preview {
+    border-radius: 1.5rem;
+    border: 1px solid color-mix(in oklch, var(--border) 58%, transparent);
+    background:
+      linear-gradient(135deg, color-mix(in oklch, var(--card) 96%, var(--background)), color-mix(in oklch, var(--accent) 5%, var(--card)));
+    padding: 2rem;
+    box-shadow: 0 22px 70px oklch(0 0 0 / 0.06);
+  }
+
   .public-btn-primary {
     display: inline-flex;
     align-items: center;
@@ -916,6 +925,246 @@
   .public-feature-card:hover {
     border-color: color-mix(in oklch, var(--accent) 28%, var(--border));
     transform: translateY(-1px);
+  }
+
+  .public-shell {
+    --background: oklch(0.985 0.007 78);
+    --foreground: oklch(0.19 0.012 72);
+    --card: oklch(1 0 0);
+    --muted: oklch(0.94 0.01 78);
+    --muted-foreground: oklch(0.45 0.016 72);
+    --border: oklch(0.86 0.014 76);
+    --accent: oklch(0.64 0.12 70);
+    --accent-foreground: oklch(0.14 0.012 70);
+    background:
+      linear-gradient(180deg, color-mix(in oklch, var(--accent) 5%, var(--background)) 0%, var(--background) 34rem),
+      var(--color-background);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .public-shell {
+      --background: oklch(0.22 0.01 72);
+      --foreground: oklch(0.95 0.01 78);
+      --card: oklch(0.28 0.011 72);
+      --muted: oklch(0.35 0.011 72);
+      --muted-foreground: oklch(0.75 0.014 78);
+      --border: oklch(0.43 0.014 72);
+      --accent: oklch(0.72 0.12 70);
+      --accent-foreground: oklch(0.16 0.014 70);
+    }
+  }
+
+  .public-nav {
+    background: color-mix(in oklch, var(--background) 88%, transparent);
+    backdrop-filter: blur(16px);
+  }
+
+  .public-card {
+    border-color: color-mix(in oklch, var(--border) 66%, transparent);
+    background: color-mix(in oklch, var(--card) 97%, var(--background));
+    box-shadow: 0 8px 24px oklch(0 0 0 / 0.035);
+  }
+
+  .public-btn-primary:hover {
+    box-shadow: 0 10px 24px oklch(0 0 0 / 0.1);
+  }
+
+  .public-auth-surface {
+    background:
+      linear-gradient(135deg, color-mix(in oklch, var(--accent) 5%, var(--background)), transparent 38rem),
+      linear-gradient(180deg, var(--background), color-mix(in oklch, var(--muted) 32%, var(--background)));
+  }
+
+  .public-feature-card {
+    border-color: color-mix(in oklch, var(--border) 68%, transparent);
+    background: color-mix(in oklch, var(--card) 96%, var(--background));
+    padding: 1.25rem;
+    box-shadow: 0 8px 22px oklch(0 0 0 / 0.03);
+  }
+
+  .public-step-card {
+    border-radius: 1rem;
+    background: color-mix(in oklch, var(--card) 94%, var(--background));
+    padding: 1.25rem;
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--border) 55%, transparent);
+  }
+
+  .public-product-demo {
+    position: relative;
+    min-width: 0;
+    border-radius: 1.35rem;
+    border: 1px solid color-mix(in oklch, var(--border) 62%, transparent);
+    background:
+      linear-gradient(135deg, color-mix(in oklch, var(--card) 98%, var(--background)), color-mix(in oklch, var(--accent) 6%, var(--card)));
+    padding: 0.75rem;
+    box-shadow: 0 22px 70px oklch(0 0 0 / 0.08);
+  }
+
+  .public-demo-desktop {
+    min-width: 0;
+    overflow: hidden;
+    border-radius: 1rem;
+    border: 1px solid color-mix(in oklch, var(--border) 68%, transparent);
+    background: color-mix(in oklch, var(--card) 98%, var(--background));
+  }
+
+  .public-demo-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.75rem;
+    border-radius: 0.9rem;
+    background: color-mix(in oklch, var(--background) 74%, var(--card));
+    padding: 0.75rem;
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--border) 48%, transparent);
+  }
+
+  .public-demo-service {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .public-demo-phone {
+    position: absolute;
+    right: -0.35rem;
+    bottom: -1.5rem;
+    width: min(14.5rem, 43vw);
+  }
+
+  .public-demo-chip,
+  .public-demo-badge {
+    position: absolute;
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
+    border-radius: 999px;
+    background: color-mix(in oklch, var(--card) 96%, var(--background));
+    color: var(--color-foreground);
+    font-size: 0.75rem;
+    font-weight: 650;
+    box-shadow: 0 12px 34px oklch(0 0 0 / 0.08);
+  }
+
+  .public-demo-chip {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .public-demo-chip-top {
+    left: 1.2rem;
+    top: -0.85rem;
+  }
+
+  .public-demo-chip-bottom {
+    right: 1.4rem;
+    top: 45%;
+  }
+
+  .public-demo-badge {
+    left: 1.1rem;
+    bottom: -1rem;
+    max-width: min(24rem, calc(100% - 2.2rem));
+    padding: 0.65rem 0.85rem;
+  }
+
+  .public-demo-badge span,
+  .public-demo-chip span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .public-demo-check,
+  .public-demo-calendar {
+    position: absolute;
+    color: color-mix(in oklch, var(--accent) 78%, var(--foreground));
+    opacity: 0.22;
+  }
+
+  .public-demo-check {
+    right: 23%;
+    top: 1.35rem;
+    width: 3rem;
+    height: 3rem;
+  }
+
+  .public-demo-calendar {
+    left: 44%;
+    bottom: 1.25rem;
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  @media (max-width: 767px) {
+    .public-product-demo {
+      padding-bottom: 10.5rem;
+    }
+
+    .public-demo-row {
+      display: grid;
+      grid-template-columns: 3.2rem minmax(0, 1fr);
+    }
+
+    .public-demo-row > span {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+
+    .public-demo-service {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+    }
+
+    .public-demo-phone {
+      right: 50%;
+      bottom: -0.75rem;
+      width: min(14rem, 76vw);
+      transform: translateX(50%);
+    }
+
+    .public-demo-chip-bottom,
+    .public-demo-check,
+    .public-demo-calendar {
+      display: none;
+    }
+
+    .public-demo-chip-top {
+      left: 0.75rem;
+      right: 0.75rem;
+      justify-content: center;
+    }
+
+    .public-demo-badge {
+      left: 0.75rem;
+      right: 0.75rem;
+      bottom: auto;
+      top: calc(100% - 3.5rem);
+      justify-content: center;
+    }
+  }
+
+  @media (min-width: 768px) {
+    .public-product-demo {
+      padding-right: min(13rem, 28vw);
+      padding-bottom: 3.5rem;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .public-shell :where(h1, h2, h3, p, span, button, a, input, textarea) {
+      overflow-wrap: normal;
+      word-break: normal;
+      hyphens: manual;
+    }
+
+    .public-shell :where(input, textarea, button, [role="button"]) {
+      min-height: 2.75rem;
+    }
   }
 
   .public-prose {

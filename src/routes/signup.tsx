@@ -13,7 +13,7 @@ const REF_CODE_KEY = "bellza_ref_code";
 export const Route = createFileRoute("/signup")({
   head: () => ({
     meta: [
-      { title: `Criar conta — ${APP_BRAND.name}` },
+      { title: `Criar conta - ${APP_BRAND.name}` },
       { name: "robots", content: "noindex,nofollow,noarchive" },
     ],
   }),
@@ -34,13 +34,13 @@ function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
-  // Persist ref code to localStorage so it survives email confirmation redirect
+  // Persist ref code to localStorage so it survives email confirmation redirect.
   useEffect(() => {
     if (refCode) {
       try {
         localStorage.setItem(REF_CODE_KEY, refCode);
       } catch {
-        // localStorage unavailable — ignore
+        // localStorage unavailable - ignore
       }
     }
   }, [refCode]);
@@ -49,7 +49,7 @@ function SignupPage() {
     e.preventDefault();
     setLoading(true);
 
-    // Persist ref code in user_metadata so the server can access it after email verification
+    // Persist ref code in user_metadata so the server can access it after email verification.
     const storedRef = refCode ?? (() => {
       try { return localStorage.getItem(REF_CODE_KEY) ?? undefined; } catch { return undefined; }
     })();
@@ -90,7 +90,7 @@ function SignupPage() {
       {refCode && (
         <div className="mb-4 rounded-xl border border-emerald-200/60 bg-emerald-50/60 px-4 py-3 text-xs text-emerald-700 dark:border-emerald-800/30 dark:bg-emerald-900/10 dark:text-emerald-300">
           <span className="font-semibold">Indicação ativa.</span>{" "}
-          Quem te indicou ganha crédito Bellza quando a tua conta ficar ativa. 🎉
+          Quem te indicou ganha crédito Bellza quando a tua conta ficar ativa.
         </div>
       )}
       {submitted ? (
@@ -99,7 +99,7 @@ function SignupPage() {
           <p className="mt-2 text-muted-foreground">
             Enviámos um link para <strong className="text-foreground">{email}</strong>. Clique para ativar a conta.
           </p>
-          <Link to="/login" className="mt-4 inline-block text-sm font-medium underline-offset-2 hover:underline">
+          <Link to="/login" className="mt-4 inline-block min-h-11 text-sm font-medium underline-offset-2 hover:underline">
             Ir para entrar
           </Link>
         </div>

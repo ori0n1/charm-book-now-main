@@ -3,11 +3,15 @@ import { useEffect, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
+  BellRing,
+  CalendarCheck,
   Check,
-  Gift,
+  CreditCard,
   Link2,
   LockKeyhole,
+  MessageCircle,
   MonitorSmartphone,
+  Scissors,
   ShieldCheck,
   Sparkles,
   UsersRound,
@@ -15,6 +19,7 @@ import {
 } from "lucide-react";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingHeader } from "@/components/landing/landing-header";
+import { ProductDemo } from "@/components/landing/product-demo";
 import { APP_BRAND, LANDING_SEO } from "@/lib/app-brand";
 import {
   DIFFERENTIATORS,
@@ -59,34 +64,18 @@ export const Route = createFileRoute("/")({
   component: LandingPage,
 });
 
-const featureIcons = [MonitorSmartphone, BadgeCheck, UsersRound, WalletCards, Sparkles, ShieldCheck];
+const featureIcons = [MonitorSmartphone, CalendarCheck, UsersRound, WalletCards, BellRing, ShieldCheck];
 
-const HERO_BENEFITS = [
-  {
-    title: "App próprio",
-    text: "O cliente guarda o estúdio no telemóvel como PWA.",
-  },
-  {
-    title: "Página personalizada",
-    text: "Logo, cores, serviços e link exclusivo da sua marca.",
-  },
-  {
-    title: "Agenda online",
-    text: "Reservas diretas, disponibilidade real e menos mensagens manuais.",
-  },
-  {
-    title: "Fase de lançamento",
-    text: "Funcionalidades atuais incluídas nas condições desta fase.",
-  },
+const PROBLEMS = [
+  ["Mensagens a mais", "Reservas, alterações e confirmações deixam de depender só do WhatsApp."],
+  ["Agenda espalhada", "Horários, equipa, bloqueios e reservas ficam organizados num único painel."],
+  ["Marca pouco visível", "O cliente marca no link do seu estúdio, com a sua identidade em destaque."],
 ] as const;
 
-const FAST_BENEFITS = [
-  "14 dias grátis",
-  "Sem fidelização",
-  "Cancelar quando quiser",
-  "Link próprio",
-  "PWA instalável",
-  "Programa de indicação",
+const HOW_IT_WORKS = [
+  ["Configure", "Adicione serviços, equipa, horários, políticas e identidade do estúdio."],
+  ["Partilhe", "Divulgue o link próprio da página pública ou peça ao cliente para guardar como app."],
+  ["Acompanhe", "Veja reservas, clientes, pagamentos e notificações no painel da Bellza."],
 ] as const;
 
 function LandingPage() {
@@ -225,79 +214,56 @@ function LandingPage() {
       <LandingHeader />
 
       <main>
-        <section className="public-hero-section relative mx-auto grid max-w-7xl items-center gap-7 px-4 pb-10 pt-6 sm:px-6 sm:pb-12 lg:grid-cols-[0.95fr_1.05fr] lg:gap-10 lg:pt-8">
+        <section className="public-hero-section relative mx-auto grid max-w-7xl items-center gap-10 px-4 pb-14 pt-8 sm:px-6 lg:grid-cols-[0.92fr_1.08fr] lg:gap-12 lg:pb-18 lg:pt-12">
           <div className="max-w-2xl text-center lg:text-left">
-            <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-border/70 bg-card/90 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm lg:mx-0">
-              <Sparkles className="size-3.5 text-accent" aria-hidden="true" />
-              Aplicativo próprio para salões, estética e barbearias
+            <div className="mx-auto inline-flex max-w-full items-center gap-2 rounded-full border border-border/70 bg-card/88 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm lg:mx-0">
+              <Sparkles className="size-3.5 shrink-0 text-accent" aria-hidden="true" />
+              <span className="truncate">Sistema de agendamento para salões e estúdios</span>
             </div>
-            <h1 className="mx-auto mt-5 max-w-[38rem] text-balance text-4xl font-semibold leading-[1.04] tracking-tight sm:text-5xl lg:mx-0 lg:text-[clamp(2.75rem,4vw,3.25rem)]">
-              O seu estúdio com página própria, app própria e agenda online.
+            <h1 className="mx-auto mt-5 max-w-[42rem] text-balance text-[clamp(2.25rem,9vw,3.35rem)] font-semibold leading-[1.04] tracking-tight lg:mx-0 lg:text-[clamp(2.85rem,4.2vw,4.15rem)]">
+              Mais marcações. Menos mensagens. O seu estúdio sempre organizado.
             </h1>
-            <p className="mx-auto mt-4 max-w-[36rem] text-pretty text-base leading-relaxed text-muted-foreground lg:mx-0">
-              A Bellza ajuda o seu negócio a sair da dependência de marketplaces: cada estúdio tem o seu link, a sua identidade, a sua experiência de reserva e um painel completo para gerir tudo.
+            <p className="mx-auto mt-5 max-w-[38rem] text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg lg:mx-0">
+              Receba reservas online, organize a equipa, envie lembretes e acompanhe os pagamentos num único lugar.
             </p>
-            <div className="mt-6 flex flex-col items-center gap-3 sm:flex-row lg:justify-start">
+            <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row lg:justify-start">
               <Link to="/signup" search={{ ref: undefined }} className="public-btn-primary h-12 w-full px-6 sm:w-auto">
-                Começar teste grátis
+                Começar 14 dias grátis
                 <ArrowRight className="size-4" aria-hidden="true" />
               </Link>
-              <a href="#aplicativo" className="public-btn-secondary h-12 w-full px-6 sm:w-auto">
+              <a href="#como-funciona" className="public-btn-secondary h-12 w-full px-6 sm:w-auto">
                 Ver como funciona
               </a>
             </div>
-            <ul className="mt-5 grid grid-cols-2 gap-2 text-left text-[11px] font-semibold text-muted-foreground sm:flex sm:flex-wrap sm:justify-center sm:text-xs lg:justify-start">
-              {FAST_BENEFITS.map((item) => (
-                <li key={item} className="flex items-center gap-1.5">
-                  <Check className="size-3.5 text-accent" aria-hidden="true" />
-                  {item}
-                </li>
-              ))}
-            </ul>
+            <p className="mt-5 text-sm font-medium text-muted-foreground">
+              Sem cartão · Sem fidelização · Cancele quando quiser
+            </p>
           </div>
 
-          <div className="public-product-preview grid gap-3 sm:grid-cols-2 lg:gap-4">
-            {HERO_BENEFITS.map((item, index) => {
-              const Icon = featureIcons[index] ?? BadgeCheck;
-
-              return (
-                <article key={item.title} className="public-card public-hero-benefit p-4 sm:p-5">
-                  <div className="mb-4 inline-flex size-9 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                    <Icon className="size-4" aria-hidden="true" />
-                  </div>
-                  <h2 className="text-base font-semibold tracking-tight">{item.title}</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.text}</p>
-                </article>
-              );
-            })}
-          </div>
+          <ProductDemo />
         </section>
 
-        <section className="border-y border-border/70 bg-card/35 py-6" aria-label="Indicadores da Bellza">
-          <div className="mx-auto grid max-w-7xl grid-cols-2 gap-3 px-4 sm:px-6 md:grid-cols-4">
+        <section className="border-y border-border/60 bg-card/32 py-5" aria-label="Indicadores da Bellza">
+          <div className="mx-auto grid max-w-7xl grid-cols-2 gap-2 px-4 sm:px-6 md:grid-cols-4">
             {TRUST_PILLARS.map((item) => (
-              <div key={item.label} className="rounded-xl border border-border/60 bg-background/62 p-4">
-                <p className="text-2xl font-semibold tracking-tight">{item.value}</p>
-                <p className="mt-1 text-xs font-semibold text-muted-foreground">{item.label}</p>
+              <div key={item.label} className="rounded-xl bg-background/70 p-4 ring-1 ring-border/50">
+                <p className="text-xl font-semibold tracking-tight sm:text-2xl">{item.value}</p>
+                <p className="mt-1 text-xs font-medium leading-snug text-muted-foreground">{item.label}</p>
               </div>
             ))}
           </div>
         </section>
 
-        <section id="aplicativo" className="mx-auto grid max-w-7xl scroll-mt-28 gap-8 px-4 py-14 sm:px-6 md:py-18 lg:grid-cols-[0.9fr_1.1fr]">
+        <section className="mx-auto max-w-7xl px-4 py-14 sm:px-6 sm:py-18">
           <SectionIntro
-            label="App próprio"
-            title="O cliente guarda o seu estúdio no telemóvel."
-            description="A Bellza cria uma experiência PWA: abre no navegador, pode ser adicionada ao ecrã inicial e mantém a identidade do seu estúdio em primeiro plano."
+            label="Problemas que resolve"
+            title="Menos improviso na agenda, mais controlo no crescimento."
+            description="A Bellza organiza os pontos mais sensíveis da rotina de salões, barbearias, manicures e estúdios de estética."
           />
-          <div className="grid gap-3 sm:grid-cols-3">
-            {[
-              ["Página exclusiva", "Uma experiência pública só para o seu estúdio."],
-              ["Instalável", "O cliente guarda no iPhone ou Android como app."],
-              ["Reserva direta", "Sem concorrentes, sem anúncios, sem distração."],
-            ].map(([title, text]) => (
-              <article key={title} className="public-card p-4">
-                <MonitorSmartphone className="size-5 text-accent" />
+          <div className="mt-8 grid gap-3 md:grid-cols-3">
+            {PROBLEMS.map(([title, text]) => (
+              <article key={title} className="public-card p-5">
+                <Scissors className="size-5 text-accent" aria-hidden="true" />
                 <h2 className="mt-4 text-lg font-semibold">{title}</h2>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{text}</p>
               </article>
@@ -305,31 +271,33 @@ function LandingPage() {
           </div>
         </section>
 
-        <section id="diferenciais" className="border-y border-border/70 bg-card/30 py-14 sm:py-16">
+        <section id="como-funciona" className="scroll-mt-28 border-y border-border/60 bg-card/30 py-14 sm:py-18">
           <div className="mx-auto max-w-7xl px-4 sm:px-6">
             <SectionIntro
-              label="Por que Bellza"
-              title="Independência digital sem perder simplicidade."
-              description="A plataforma conecta vários estúdios, mas a experiência do cliente continua focada no estúdio que ele escolheu."
+              label="Como funciona"
+              title="Do link público ao painel, tudo conectado."
+              description="O cliente marca sozinho e a equipa acompanha a operação no painel, sem perder a identidade do estúdio."
               centered
             />
             <div className="mt-8 grid gap-3 md:grid-cols-3">
-              {DIFFERENTIATORS.map((item) => (
-                <article key={item.title} className="public-card p-5">
-                  <BadgeCheck className="size-5 text-accent" />
-                  <h2 className="mt-4 text-xl font-semibold">{item.title}</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+              {HOW_IT_WORKS.map(([title, text], index) => (
+                <article key={title} className="public-step-card">
+                  <span className="grid size-8 place-items-center rounded-full bg-foreground text-sm font-semibold text-background">
+                    {index + 1}
+                  </span>
+                  <h2 className="mt-4 text-lg font-semibold">{title}</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{text}</p>
                 </article>
               ))}
             </div>
           </div>
         </section>
 
-        <section id="funcionalidades" className="mx-auto max-w-7xl scroll-mt-28 px-4 py-14 sm:px-6 md:py-18">
+        <section id="funcionalidades" className="mx-auto max-w-7xl scroll-mt-28 px-4 py-14 sm:px-6 sm:py-18">
           <SectionIntro
-            label="Sistema completo"
-            title="Tudo incluído para gerir e crescer."
-            description="O investimento é no sistema completo, não em limites artificiais de equipa, clientes ou mensagens."
+            label="Funcionalidades"
+            title="O essencial para reservas, equipa, clientes e pagamentos."
+            description="A comunicação fica mais curta, a agenda fica clara e cada estúdio mantém a sua presença digital própria."
           />
           <div className="mt-8 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {FEATURE_BLOCKS.map((feature, index) => {
@@ -344,8 +312,8 @@ function LandingPage() {
                   <ul className="mt-4 grid gap-2">
                     {feature.points.map((point) => (
                       <li key={point} className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
-                        <Check className="size-3.5 text-accent" />
-                        {point}
+                        <Check className="size-3.5 shrink-0 text-accent" aria-hidden="true" />
+                        <span>{point}</span>
                       </li>
                     ))}
                   </ul>
@@ -355,49 +323,106 @@ function LandingPage() {
           </div>
         </section>
 
-        <section id="modulos" className="mx-auto grid max-w-7xl scroll-mt-28 gap-8 px-4 py-14 sm:px-6 sm:py-16 lg:grid-cols-[0.85fr_1.15fr]">
+        <section id="produto" className="mx-auto grid max-w-7xl scroll-mt-28 gap-8 px-4 py-14 sm:px-6 sm:py-18 lg:grid-cols-[0.85fr_1.15fr] lg:items-center">
           <SectionIntro
-            label="Modulos"
-            title="Da primeira reserva ao controlo financeiro."
-            description="Agenda, página pública, app PWA, equipa, clientes, pagamentos e comunicação vivem numa base única."
+            label="Produto"
+            title="A sua marca, o seu link, os seus clientes."
+            description="A Bellza oferece a infraestrutura. O cliente continua a ver o estúdio como protagonista, da página pública à confirmação da reserva."
           />
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {MODULES.map((module) => (
-              <div key={module} className="rounded-xl border border-border/70 bg-card/70 p-4">
-                <BadgeCheck className="size-4 text-accent" aria-hidden="true" />
-                <h3 className="mt-3 text-sm font-semibold">{module}</h3>
+          <div className="public-card overflow-hidden p-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl bg-foreground p-4 text-background">
+                <Link2 className="size-5 text-accent" aria-hidden="true" />
+                <h2 className="mt-4 text-xl font-semibold">Página própria</h2>
+                <p className="mt-2 text-sm leading-relaxed text-background/66">
+                  Link direto para reservas, sem concorrentes e com a identidade do estúdio em primeiro plano.
+                </p>
               </div>
+              <div className="rounded-2xl bg-muted/48 p-4">
+                <MonitorSmartphone className="size-5 text-accent" aria-hidden="true" />
+                <h2 className="mt-4 text-xl font-semibold">App instalável</h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                  O cliente pode guardar a página no ecrã inicial do telemóvel como PWA.
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {MODULES.map((module) => (
+                <div key={module} className="rounded-xl bg-background/70 p-3 text-sm font-semibold ring-1 ring-border/45">
+                  {module}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-y border-border/60 bg-card/30 py-14 sm:py-18">
+          <div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
+            <div>
+              <SectionIntro
+                label="Gestão diária"
+                title="Agenda, pagamentos e notificações com leitura rápida."
+                description="A equipa acompanha reservas confirmadas, pagamentos presenciais ou online, mensagens e estados importantes sem perder tempo a procurar informação."
+              />
+              <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                {[
+                  [CalendarCheck, "Agenda clara"],
+                  [CreditCard, "Pagamentos acompanhados"],
+                  [MessageCircle, "Lembretes e avisos"],
+                ].map(([Icon, title]) => {
+                  const TypedIcon = Icon as typeof CalendarCheck;
+                  return (
+                    <div key={title as string} className="rounded-xl bg-background/70 p-4 ring-1 ring-border/50">
+                      <TypedIcon className="size-5 text-accent" aria-hidden="true" />
+                      <p className="mt-3 text-sm font-semibold">{title as string}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="public-card p-5">
+              <p className="public-section-label">Segurança</p>
+              <div className="mt-4 grid gap-3">
+                {SECURITY_POINTS.map((point) => (
+                  <div key={point} className="flex items-start gap-3 rounded-xl bg-background/68 p-3 ring-1 ring-border/45">
+                    <LockKeyhole className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden="true" />
+                    <p className="text-sm leading-relaxed text-muted-foreground">{point}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="diferenciais" className="mx-auto max-w-7xl scroll-mt-28 px-4 py-14 sm:px-6 sm:py-18">
+          <SectionIntro
+            label="Por que Bellza"
+            title="Premium sem parecer complicado."
+            description="Uma experiência neutra e profissional para salões femininos, barbearias, estúdios mistos e profissionais independentes."
+            centered
+          />
+          <div className="mt-8 grid gap-3 md:grid-cols-3">
+            {DIFFERENTIATORS.map((item) => (
+              <article key={item.title} className="public-card p-5">
+                <BadgeCheck className="size-5 text-accent" aria-hidden="true" />
+                <h2 className="mt-4 text-xl font-semibold">{item.title}</h2>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.description}</p>
+              </article>
             ))}
           </div>
         </section>
 
-        <section id="indicacao" className="scroll-mt-28 border-y border-border/70 bg-card/35 py-14 sm:py-16">
+        <section id="indicacao" className="scroll-mt-28 border-y border-border/60 bg-card/30 py-14 sm:py-18">
           <div className="mx-auto grid max-w-7xl gap-7 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-            <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-border/75 bg-background/75 px-3 py-1.5 text-xs font-semibold text-muted-foreground">
-                <Gift className="size-3.5 text-accent" />
-                Programa de indicação
-              </div>
-              <h2 className="mt-4 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-                Indique outros estúdios e reduza o custo da Bellza.
-              </h2>
-              <p className="mt-3 text-sm leading-relaxed text-muted-foreground sm:text-base">
-                Cada estúdio recebe um link exclusivo. Quando uma indicação se torna assinante por pelo menos 30 dias, o estúdio que indicou recebe crédito equivalente ao valor mensal do seu plano.
-              </p>
-            </div>
+            <SectionIntro
+              label="Programa de indicação"
+              title="Indique outros estúdios e reduza o custo da Bellza."
+              description="Cada estúdio recebe um link exclusivo. Quando uma indicação se torna assinante por pelo menos 30 dias, o estúdio que indicou recebe crédito equivalente ao valor mensal do plano."
+            />
             <div className="public-card p-5">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="grid size-11 place-items-center rounded-xl bg-accent/12 text-accent">
-                  <Link2 className="size-5" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold">Quanto mais indica, menos paga.</p>
-                  <p className="text-xs text-muted-foreground">Crédito aplicado automaticamente quando as regras são cumpridas.</p>
-                </div>
-              </div>
               <ol className="grid gap-2">
                 {REFERRAL_STEPS.map((step, index) => (
-                  <li key={step} className="flex gap-3 rounded-xl border border-border/60 bg-background/62 p-3 text-sm">
+                  <li key={step} className="flex gap-3 rounded-xl bg-background/66 p-3 text-sm ring-1 ring-border/45">
                     <span className="grid size-6 shrink-0 place-items-center rounded-full bg-foreground text-[11px] font-semibold text-background">
                       {index + 1}
                     </span>
@@ -409,18 +434,14 @@ function LandingPage() {
           </div>
         </section>
 
-        <section id="planos" className="scroll-mt-28 bg-foreground py-14 text-background sm:py-16">
+        <section id="planos" className="scroll-mt-28 bg-foreground py-14 text-background sm:py-18">
           <div className="mx-auto max-w-7xl px-4 sm:px-6">
-            <div className="mb-4 flex justify-center">
-              <span className="rounded-full border border-background/15 bg-background/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-background/78">
-                Oferta de Lançamento
-              </span>
-            </div>
             <SectionIntro
               label="Planos"
               title="Preço simples para entrar cedo na Bellza."
               description="Teste gratuito de 14 dias, condições especiais de lançamento e funcionalidades atuais incluídas nesta fase da plataforma."
               inverted
+              centered
             />
             <div className="mt-8 grid gap-4 lg:grid-cols-[0.82fr_1.18fr]">
               <div className="rounded-2xl border border-background/10 bg-background/[0.04] p-5">
@@ -428,8 +449,8 @@ function LandingPage() {
                 <ul className="mt-4 grid gap-2">
                   {PLAN_FEATURES.map((item) => (
                     <li key={item} className="flex items-start gap-2 text-sm text-background/74">
-                      <Check className="mt-0.5 size-4 shrink-0 text-accent" />
-                      {item}
+                      <Check className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden="true" />
+                      <span>{item}</span>
                     </li>
                   ))}
                 </ul>
@@ -440,7 +461,7 @@ function LandingPage() {
                     key={plan.name}
                     className={`relative rounded-2xl border p-6 ${
                       plan.highlighted
-                        ? "border-accent bg-background text-foreground shadow-[0_24px_80px_oklch(0_0_0/0.28)]"
+                        ? "border-accent bg-background text-foreground shadow-[0_24px_80px_oklch(0_0_0/0.22)]"
                         : "border-background/12 bg-background/[0.04] text-background"
                     }`}
                   >
@@ -484,7 +505,7 @@ function LandingPage() {
                 ))}
               </div>
             </div>
-            <p className="mx-auto mt-6 max-w-3xl text-center text-xs leading-relaxed text-background/48">
+            <p className="mx-auto mt-6 max-w-3xl text-center text-xs leading-relaxed text-background/50">
               A Bellza encontra-se em evolução contínua. No futuro poderão ser disponibilizados novos planos,
               funcionalidades e condições comerciais. As alterações não afetam retroativamente aquilo que for
               contratado, salvo comunicação prévia e nos termos aplicáveis.
@@ -492,23 +513,7 @@ function LandingPage() {
           </div>
         </section>
 
-        <section id="seguranca" className="mx-auto grid max-w-7xl scroll-mt-28 gap-8 px-4 py-14 sm:px-6 sm:py-16 lg:grid-cols-[0.9fr_1.1fr]">
-          <SectionIntro
-            label="Segurança"
-            title="Privacidade, políticas e auditoria desde o primeiro agendamento."
-            description="A Bellza foi pensada para operações reais, com links seguros, registos de ações e comunicação transparente."
-          />
-          <div className="grid gap-3">
-            {SECURITY_POINTS.map((point) => (
-              <div key={point} className="public-card flex items-start gap-3 p-4">
-                <LockKeyhole className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden="true" />
-                <p className="text-sm font-medium leading-relaxed">{point}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="faq" className="mx-auto max-w-3xl scroll-mt-28 px-4 py-14 sm:px-6 sm:py-16">
+        <section id="faq" className="mx-auto max-w-3xl scroll-mt-28 px-4 py-14 sm:px-6 sm:py-18">
           <SectionIntro label="FAQ" title="Perguntas frequentes" centered />
           <div className="mt-8 space-y-2">
             {LANDING_FAQS.map((faq, idx) => {
@@ -519,13 +524,13 @@ function LandingPage() {
                     type="button"
                     aria-expanded={isOpen}
                     onClick={() => setOpenFaq(isOpen ? null : idx)}
-                    className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left text-sm font-semibold"
+                    className="flex min-h-12 w-full items-center justify-between gap-4 px-5 py-4 text-left text-sm font-semibold"
                   >
                     <span>{faq.question}</span>
                     <ArrowRight className={`size-4 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
                   </button>
                   {isOpen && (
-                    <div className="border-t border-border/70 px-5 pb-4 pt-1 text-sm leading-relaxed text-muted-foreground">
+                    <div className="border-t border-border/60 px-5 pb-4 pt-1 text-sm leading-relaxed text-muted-foreground">
                       <p className="pt-3">{faq.answer}</p>
                     </div>
                   )}
@@ -536,20 +541,20 @@ function LandingPage() {
         </section>
 
         <section className="px-4 pb-16 sm:px-6">
-          <div className="mx-auto max-w-5xl overflow-hidden rounded-2xl border border-border/80 bg-foreground p-7 text-center text-background shadow-[0_24px_80px_oklch(0_0_0/0.16)] sm:p-10">
-            <p className="text-xs font-semibold uppercase text-background/45">Bellza para negócios de beleza</p>
+          <div className="mx-auto max-w-5xl overflow-hidden rounded-2xl border border-border/75 bg-card p-7 text-center shadow-[0_20px_70px_oklch(0_0_0/0.08)] sm:p-10">
+            <p className="public-section-label">Bellza para negócios de beleza</p>
             <h2 className="mx-auto mt-3 max-w-3xl text-balance text-3xl font-semibold tracking-tight sm:text-5xl">
               Dê ao seu estúdio uma presença digital própria.
             </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-background/62">
+            <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground">
               Comece com página pública, aplicativo PWA, agenda online, clientes, pagamentos e notificações num painel premium.
             </p>
             <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
-              <Link to="/signup" search={{ ref: undefined }} className="public-btn-primary bg-background text-foreground">
+              <Link to="/signup" search={{ ref: undefined }} className="public-btn-primary">
                 Criar conta Bellza
-                <ArrowRight className="size-4" />
+                <ArrowRight className="size-4" aria-hidden="true" />
               </Link>
-              <Link to="/login" className="public-btn-secondary border-background/15 bg-transparent text-background">
+              <Link to="/login" className="public-btn-secondary">
                 Entrar no painel
               </Link>
             </div>
@@ -577,12 +582,12 @@ function SectionIntro({
 }) {
   return (
     <div className={centered ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}>
-      <p className={`public-section-label ${inverted ? "text-background/45" : ""}`}>{label}</p>
+      <p className={`public-section-label ${inverted ? "text-background/48" : ""}`}>{label}</p>
       <h2 className={`mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl ${inverted ? "text-background" : ""}`}>
         {title}
       </h2>
       {description && (
-        <p className={`mt-3 text-sm leading-relaxed sm:text-base ${inverted ? "text-background/62" : "text-muted-foreground"}`}>
+        <p className={`mt-3 text-sm leading-relaxed sm:text-base ${inverted ? "text-background/64" : "text-muted-foreground"}`}>
           {description}
         </p>
       )}

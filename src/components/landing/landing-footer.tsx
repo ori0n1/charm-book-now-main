@@ -7,18 +7,17 @@ export function LandingFooter() {
   const year = new Date().getFullYear();
 
   return (
-    <footer className="border-t border-border/80 bg-foreground text-background">
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 md:grid-cols-[1.35fr_1fr_1fr_1fr]">
+    <footer className="border-t border-border/70 bg-foreground text-background">
+      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-[1.35fr_1fr_1fr_1fr]">
         <div className="space-y-4">
           <BellzaLogo variant="footer" href={null} className="text-background" />
-          <p className="max-w-sm text-sm leading-relaxed text-background/62">{APP_BRAND.description}</p>
+          <p className="max-w-sm text-sm leading-relaxed text-background/64">{APP_BRAND.description}</p>
         </div>
 
         <FooterCol title="Produto">
-          <FooterLink href="/#aplicativo">Aplicativo próprio</FooterLink>
-          <FooterLink href="/#diferenciais">Diferenciais</FooterLink>
+          <FooterLink href="/#produto">Produto</FooterLink>
+          <FooterLink href="/#como-funciona">Como funciona</FooterLink>
           <FooterLink href="/#funcionalidades">Funcionalidades</FooterLink>
-          <FooterLink href="/#indicacao">Indicação</FooterLink>
           <FooterLink href="/#planos">Planos</FooterLink>
           <FooterLink href="/blog">Blog</FooterLink>
         </FooterCol>
@@ -39,7 +38,7 @@ export function LandingFooter() {
         </FooterCol>
       </div>
 
-      <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 border-t border-background/10 px-4 py-6 text-center text-xs text-background/45 sm:px-6">
+      <div className="mx-auto flex max-w-7xl flex-col items-center gap-2 border-t border-background/10 px-4 py-5 text-center text-xs text-background/46 sm:px-6">
         <p>© {year} {APP_BRAND.name}. Todos os direitos reservados.</p>
         <p>Portugal - RGPD - SSL - Pagamentos online através de fornecedores certificados</p>
       </div>
@@ -50,14 +49,14 @@ export function LandingFooter() {
 function FooterCol({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="space-y-3">
-      <h2 className="text-xs font-semibold uppercase text-background/45">{title}</h2>
+      <h2 className="text-xs font-semibold uppercase text-background/46">{title}</h2>
       <ul className="grid gap-2 text-sm">{children}</ul>
     </div>
   );
 }
 
 function FooterLink({ href, to, children }: { href?: string; to?: string; children: React.ReactNode }) {
-  const className = "footer-link text-background/62 transition hover:text-background";
+  const className = "footer-link text-background/64 transition hover:text-background";
   if (to) {
     return (
       <li>

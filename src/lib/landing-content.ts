@@ -35,71 +35,71 @@ export const PLAN_FEATURES = [
 ] as const;
 
 export const TRUST_PILLARS = [
-  { value: "PWA", label: "Aplicativo próprio para cada estúdio" },
-  { value: "Completo", label: "Equipa, clientes, serviços e avisos" },
   { value: "14 dias", label: "Teste Premium gratuito" },
-  { value: "Sem loja", label: "Instalável no iPhone e Android" },
+  { value: "PWA", label: "App instalável para o seu estúdio" },
+  { value: "1 link", label: "Reservas diretas na sua marca" },
+  { value: "Tudo junto", label: "Agenda, equipa, clientes e pagamentos" },
 ] as const;
 
 export const DIFFERENTIATORS = [
   {
     title: "Não é marketplace",
     description:
-      "O cliente entra diretamente no ambiente do seu estúdio, sem ver concorrentes, anúncios ou outros negócios a disputar a atenção.",
+      "O cliente entra diretamente no ambiente do seu estúdio, sem concorrentes, anúncios ou distrações.",
   },
   {
-    title: "Aplicativo próprio",
+    title: "App próprio",
     description:
-      "A página pública pode ser guardada no telemóvel como app, com nome, identidade e experiência focados na sua marca.",
+      "A página pública pode ser guardada no telemóvel como PWA, com nome, identidade e experiência focados na sua marca.",
   },
   {
-    title: "Marca independente",
+    title: "Operação organizada",
     description:
-      "Cada estúdio tem link próprio, página própria, agenda própria e comunicação própria dentro da infraestrutura Bellza.",
+      "Reservas, equipa, clientes, pagamentos e notificações ficam no mesmo painel, com leitura simples no dia a dia.",
   },
 ] as const;
 
 export const FEATURE_BLOCKS = [
   {
-    title: "Presença digital do estúdio",
+    title: "Reservas online",
     description:
-      "Crie uma página exclusiva para reservas e transforme essa experiência num aplicativo próprio para clientes recorrentes.",
-    points: ["Link próprio", "Página pública", "PWA instalável"],
+      "O cliente escolhe serviço, profissional, data e horário na página pública do seu estúdio.",
+    points: ["Disponibilidade real", "Link próprio", "Resumo da reserva"],
   },
   {
-    title: "Agenda online completa",
+    title: "Agenda e equipa",
     description:
-      "Organize profissionais, serviços, horários, folgas e disponibilidade real sem obrigar a equipa a confirmar tudo manualmente.",
-    points: ["Reservas online", "Disponibilidade real", "Sem conflitos"],
+      "Organize profissionais, horários, folgas, bloqueios e reservas sem depender de conversas soltas.",
+    points: ["Profissionais", "Horários", "Bloqueios"],
   },
   {
-    title: "Gestão completa",
+    title: "Clientes",
     description:
-      "Nesta fase de lançamento, as funcionalidades atuais ajudam o estúdio a gerir equipa, clientes, serviços e comunicação num só lugar.",
-    points: ["Múltiplos profissionais", "Base de clientes organizada", "Avisos e notificações"],
+      "Acompanhe histórico, preferências, presença, ticket médio e contexto de relacionamento.",
+    points: ["Ficha do cliente", "Histórico", "Preferências"],
   },
   {
-    title: "Gestão financeira",
+    title: "Pagamentos",
     description:
-      "Acompanhe sinais, pagamentos online, caixa, comissões e indicadores importantes num painel pensado para leitura rápida.",
+      "Acompanhe sinais, pagamentos online, caixa, comissões e indicadores financeiros.",
     points: ["Sinais online", "Caixa", "Relatórios"],
   },
   {
-    title: "Comunicação automática",
+    title: "Lembretes e avisos",
     description:
-      "Confirmações, lembretes, alterações e cancelamentos chegam pelos canais configurados, com logs separados por envio.",
+      "Envie confirmações, lembretes, alterações e avisos pelos canais configurados no sistema.",
     points: ["WhatsApp", "E-mail", "Push/PWA"],
   },
   {
-    title: "Operação independente",
+    title: "Marca própria",
     description:
-      "A Bellza liga vários estúdios numa plataforma robusta, mas cada negócio continua com a sua identidade e os seus clientes.",
-    points: ["Sem concorrência na página", "Dados do estúdio", "Experiência premium"],
+      "Cada estúdio mantém a sua identidade, os seus clientes e a sua experiência de reserva.",
+    points: ["Sem concorrência", "Cores do estúdio", "Página própria"],
   },
 ] as const;
 
 export const MODULES = [
-  "Aplicativo PWA",
+  "App PWA",
   "Página pública",
   "Agenda",
   "Clientes",
@@ -156,15 +156,15 @@ export const LANDING_FAQS = [
 ] as const;
 
 export const PREVIEW_STUDIO = {
-  name: "Estúdio Demo",
-  slug: "estudio-demo",
-  domain: "bellza.pt/estudio-demo",
+  name: "Studio Bellza",
+  slug: "bellza",
+  domain: "bellza.pt/s/bellza",
 } as const;
 
 export const PREVIEW_AGENDA = [
-  { time: "09:00", service: "Design de sobrancelhas", client: "Cliente A.", professional: "Profissional 1", status: "Confirmada" },
-  { time: "10:30", service: "Manicure gel", client: "Cliente B.", professional: "Profissional 2", status: "Pago online" },
-  { time: "14:00", service: "Corte + barba", client: "Cliente C.", professional: "Profissional 3", status: "Lembrete enviado" },
+  { time: "09:00", service: "Design de sobrancelhas", client: "Cliente A.", professional: "Ana", status: "Confirmada" },
+  { time: "10:30", service: "Manicure gel", client: "Cliente B.", professional: "Sofia", status: "Pago online" },
+  { time: "14:00", service: "Corte + barba", client: "Cliente C.", professional: "Marcello", status: "Lembrete enviado" },
 ] as const;
 
 export const PREVIEW_CLIENTS = [

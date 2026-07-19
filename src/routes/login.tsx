@@ -108,7 +108,7 @@ function LoginPage() {
   return (
     <AuthPageLayout
       variant="login"
-      title="Entrar na Bellza"
+      title="Bem-vindo de volta"
       description="Aceda ao painel, à página pública e ao aplicativo do seu estúdio."
       footer={
         <p className="text-center text-xs text-muted-foreground">
@@ -125,7 +125,7 @@ function LoginPage() {
     >
       <GoogleAuthButton
         mode="login"
-        className="h-10 rounded-xl bg-card/70 font-semibold shadow-sm backdrop-blur hover:-translate-y-0.5"
+        className="h-11 rounded-xl bg-card/70 font-semibold shadow-sm backdrop-blur hover:-translate-y-0.5"
       />
       <div className="my-4 flex items-center gap-3 text-[10px] font-semibold uppercase text-muted-foreground">
         <span className="h-px flex-1 bg-border" />
@@ -140,7 +140,7 @@ function LoginPage() {
       <form onSubmit={onSubmit} className="space-y-3">
         <AuthField
           label="Email ou WhatsApp"
-          labelClassName="text-[11px] font-semibold uppercase"
+          labelClassName="text-[11px] uppercase"
           name="identifier"
           required
           placeholder="nome@estudio.pt"
@@ -150,22 +150,22 @@ function LoginPage() {
         />
         <AuthField
           label="Palavra-passe"
-          labelClassName="text-[11px] font-semibold uppercase"
+          labelClassName="text-[11px] uppercase"
           name="password"
           type="password"
           required
           minLength={6}
-          placeholder="********"
+          placeholder="Mínimo 6 caracteres"
           className="font-medium placeholder:font-normal"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
         <div className="flex justify-end pt-0.5">
-          <Link to="/forgot-password" className="text-xs font-semibold text-muted-foreground hover:text-foreground">
+          <Link to="/forgot-password" className="min-h-11 text-xs font-semibold text-muted-foreground hover:text-foreground">
             Esqueceu-se da palavra-passe?
           </Link>
         </div>
-        <AuthPrimaryButton disabled={loading} className="mt-1 h-10 rounded-xl font-semibold">
+        <AuthPrimaryButton disabled={loading} className="mt-1 h-11 rounded-xl font-semibold">
           {loading ? "A entrar..." : "Entrar"}
         </AuthPrimaryButton>
       </form>
@@ -177,7 +177,7 @@ function LoginPage() {
             type="button"
             onClick={resendConfirmation}
             disabled={resending}
-            className="mt-2 font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
+            className="mt-2 min-h-11 font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
           >
             {resending ? "A enviar..." : "Reenviar confirmação"}
           </button>
