@@ -19,7 +19,7 @@ export const LANDING_SEO = {
     "Crie uma página exclusiva e um aplicativo PWA próprio para salão de beleza, estúdio de estética ou barbearia, com agenda online, reservas, clientes, pagamentos e notificações automáticas.",
   keywords:
     "criar aplicativo para salão de beleza, aplicativo para estúdio de estética, aplicativo para barbearia, software para salão, sistema para salão de beleza, agenda online, reservas online, software para estética, aplicativo para agendamento, gestão para estúdios, aplicativo próprio para salão, sistema completo para beleza, Bellza",
-  themeColor: "#FAFAF8",
+  themeColor: "#FAF8F4",
   locale: "pt_PT",
   url: `${CANONICAL_ORIGIN}/`,
 } as const;

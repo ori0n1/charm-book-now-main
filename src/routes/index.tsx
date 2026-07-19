@@ -232,7 +232,7 @@ function LandingPage() {
           <ProductDemo />
         </section>
 
-        <section className="border-y border-border bg-surface-muted/65 py-5" aria-label="Indicadores da Bellza">
+        <section className="public-section-alt py-5" aria-label="Indicadores da Bellza">
           <div className="mx-auto grid max-w-7xl grid-cols-2 gap-2 px-4 sm:px-6 md:grid-cols-4">
             {TRUST_PILLARS.map((item) => (
               <div key={item.label} className="rounded-xl bg-card p-4 ring-1 ring-border">
@@ -263,7 +263,7 @@ function LandingPage() {
           </div>
         </section>
 
-        <section id="agenda" className="bg-surface-muted/65 py-14 sm:py-18">
+        <section id="agenda" className="public-section-alt py-14 sm:py-18">
           <div className="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
             <SectionIntro
               label="Agenda"
@@ -283,7 +283,7 @@ function LandingPage() {
           />
         </section>
 
-        <section id="funcionalidades" className="bg-surface-muted/65 py-14 sm:py-18">
+        <section id="funcionalidades" className="public-section-alt py-14 sm:py-18">
           <div className="mx-auto max-w-7xl px-4 sm:px-6">
             <SectionIntro
               label="Funcionalidades"
@@ -335,7 +335,7 @@ function LandingPage() {
           </div>
         </section>
 
-        <section id="planos" className="scroll-mt-28 bg-surface-muted/65 py-14 sm:py-18">
+        <section id="planos" className="public-section-alt scroll-mt-28 py-14 sm:py-18">
           <div className="mx-auto max-w-7xl px-4 sm:px-6">
             <SectionIntro
               label="Planos"
@@ -433,7 +433,7 @@ function LandingPage() {
         </section>
 
         <section className="px-4 pb-16 sm:px-6">
-          <div className="mx-auto max-w-5xl overflow-hidden rounded-2xl border border-border bg-card p-7 text-center shadow-[0_16px_45px_rgba(24,24,27,0.05)] sm:p-10">
+          <div className="public-final-cta mx-auto max-w-5xl overflow-hidden rounded-2xl border border-border p-7 text-center sm:p-10">
             <p className="public-section-label">Bellza para negócios de beleza</p>
             <h2 className="mx-auto mt-3 max-w-3xl text-balance text-3xl font-semibold tracking-tight sm:text-5xl">
               Dê ao seu estúdio uma presença digital própria.
