@@ -26,7 +26,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -1135,14 +1134,35 @@ function ToggleRow({
   onCheckedChange?: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
-      <Checkbox
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={(value) => onCheckedChange?.(value === true)}
-      />
-      {text}
-    </label>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={text}
+      disabled={disabled}
+      onClick={() => onCheckedChange?.(!checked)}
+      className={cn(
+        "flex min-h-14 w-full min-w-0 items-center gap-3 overflow-hidden rounded-xl border border-border bg-background px-3 py-2 text-left text-sm font-medium shadow-none transition hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60",
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative block h-6 w-11 flex-[0_0_44px] shrink-0 rounded-full transition-colors duration-200",
+          checked ? "bg-primary" : "bg-muted-foreground/25",
+        )}
+      >
+        <span
+          className={cn(
+            "absolute left-0.5 top-0.5 h-5 w-5 aspect-square rounded-full bg-background shadow-sm transition-transform duration-200",
+            checked && "translate-x-5",
+          )}
+        />
+      </span>
+      <span className="min-w-0 max-w-full whitespace-normal leading-snug [overflow-wrap:anywhere]">
+        {text}
+      </span>
+    </button>
   );
 }
 
