@@ -6,6 +6,7 @@ import { LandingHeader } from "@/components/landing/landing-header";
 import { APP_BRAND } from "@/lib/app-brand";
 import {
   BLOG_BASE_URL,
+  getArticleFAQSchema,
   formatBlogDate,
   getArticleSchema,
   getBlogArticle,
@@ -25,13 +26,16 @@ export const Route = createFileRoute("/blog/$slug")({
       };
     }
 
+    const seoTitle = article.seoTitle ?? `${article.title} | Blog Bellza`;
+    const seoDescription = article.seoDescription ?? article.description;
+
     return {
       meta: [
-        { title: `${article.title} | Blog Bellza` },
-        { name: "description", content: article.description },
+        { title: seoTitle },
+        { name: "description", content: seoDescription },
         { name: "keywords", content: article.keywords.join(", ") },
-        { property: "og:title", content: article.title },
-        { property: "og:description", content: article.description },
+        { property: "og:title", content: seoTitle },
+        { property: "og:description", content: seoDescription },
         { property: "og:type", content: "article" },
         { property: "og:site_name", content: APP_BRAND.name },
         { property: "og:url", content: article.absoluteUrl },
@@ -77,6 +81,7 @@ function BlogArticlePage() {
   }
 
   const related = getRelatedBlogArticles(article);
+  const faqSchema = getArticleFAQSchema(article);
 
   return (
     <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
@@ -89,6 +94,12 @@ function BlogArticlePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(getBreadcrumbSchema(article)) }}
       />
+      {faqSchema && (
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+        />
+      )}
       <LandingHeader />
 
       <main>
@@ -199,6 +210,30 @@ function BlogArticlePage() {
                           ))}
                         </ul>
                       )}
+                      {section.subsections?.map((subsection) => (
+                        <section key={subsection.id} id={subsection.id} className="mt-6 scroll-mt-28">
+                          <h3 className="text-xl font-semibold tracking-tight">
+                            {subsection.heading}
+                          </h3>
+                          <div className="mt-3 space-y-3 text-base leading-relaxed text-muted-foreground">
+                            {subsection.paragraphs.map((paragraph) => (
+                              <p key={paragraph}>{paragraph}</p>
+                            ))}
+                          </div>
+                          {subsection.bullets && (
+                            <ul className="mt-4 grid gap-2">
+                              {subsection.bullets.map((item) => (
+                                <li
+                                  key={item}
+                                  className="rounded-xl border border-border bg-muted/35 px-4 py-2.5 text-sm font-semibold text-foreground"
+                                >
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </section>
+                      ))}
                     </section>
                   ))}
                 </div>
@@ -211,6 +246,21 @@ function BlogArticlePage() {
                     ))}
                   </div>
                 </section>
+
+                {article.faq?.length ? (
+                  <section className="mt-8 rounded-2xl border border-border bg-muted/45 p-5">
+                    <p className="public-section-label">Perguntas frequentes</p>
+                    <h2 className="mt-2 text-2xl font-semibold tracking-tight">FAQ</h2>
+                    <div className="mt-5 grid gap-4">
+                      {article.faq.map((item) => (
+                        <div key={item.question} className="rounded-xl border border-border bg-card/70 p-4">
+                          <h3 className="text-base font-semibold tracking-tight">{item.question}</h3>
+                          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.answer}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
 
                 <section className="public-card public-final-cta mt-8 p-5 sm:p-6">
                   <h2 className="text-2xl font-semibold tracking-tight">{article.cta.title}</h2>

@@ -4,12 +4,20 @@ export type BlogSection = {
   eyebrow?: string;
   paragraphs: string[];
   bullets?: string[];
+  subsections?: {
+    id: string;
+    heading: string;
+    paragraphs: string[];
+    bullets?: string[];
+  }[];
 };
 
 export type BlogArticle = {
   slug: string;
   title: string;
+  seoTitle?: string;
   description: string;
+  seoDescription?: string;
   excerpt: string;
   category: string;
   keywords: string[];
@@ -27,5 +35,9 @@ export type BlogArticle = {
     label: string;
     href: string;
   };
+  faq?: {
+    question: string;
+    answer: string;
+  }[];
   relatedSlugs: string[];
 };

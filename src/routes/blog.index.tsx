@@ -58,10 +58,25 @@ function BlogIndexPage() {
       const matchesCategory = category === "Todos" || article.category === category;
       const searchable = [
         article.title,
+        article.seoTitle ?? "",
         article.description,
+        article.seoDescription ?? "",
         article.excerpt,
         article.category,
         article.keywords.join(" "),
+        article.sections
+          .flatMap((section) => [
+            section.heading,
+            ...section.paragraphs,
+            ...(section.bullets ?? []),
+            ...(section.subsections ?? []).flatMap((subsection) => [
+              subsection.heading,
+              ...subsection.paragraphs,
+              ...(subsection.bullets ?? []),
+            ]),
+          ])
+          .join(" "),
+        article.faq?.flatMap((item) => [item.question, item.answer]).join(" ") ?? "",
       ]
         .join(" ")
         .toLowerCase();

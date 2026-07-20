@@ -49,14 +49,22 @@ export function getRelatedBlogArticles(article: NormalizedBlogArticle, limit = 3
 export function getBlogArticleText(article: BlogArticle) {
   return [
     article.title,
+    article.seoTitle ?? "",
     article.description,
+    article.seoDescription ?? "",
     article.excerpt,
     ...article.sections.flatMap((section) => [
       section.heading,
       ...section.paragraphs,
       ...(section.bullets ?? []),
+      ...(section.subsections ?? []).flatMap((subsection) => [
+        subsection.heading,
+        ...subsection.paragraphs,
+        ...(subsection.bullets ?? []),
+      ]),
     ]),
     ...article.conclusion,
+    ...(article.faq ?? []).flatMap((item) => [item.question, item.answer]),
     article.cta.title,
     article.cta.body,
   ].join(" ");
@@ -80,7 +88,7 @@ export function getArticleSchema(article: NormalizedBlogArticle) {
     "@context": "https://schema.org",
     "@type": "Article",
     headline: article.title,
-    description: article.description,
+    description: article.seoDescription ?? article.description,
     image: `${BLOG_BASE_URL}${article.coverImage}`,
     datePublished: article.publishedAt,
     dateModified: article.updatedAt,
@@ -100,6 +108,22 @@ export function getArticleSchema(article: NormalizedBlogArticle) {
       "@type": "WebPage",
       "@id": article.absoluteUrl,
     },
+  };
+}
+
+export function getArticleFAQSchema(article: NormalizedBlogArticle) {
+  if (!article.faq?.length) return null;
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: article.faq.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: {
+        "@type": "Answer",
+        text: item.answer,
+      },
+    })),
   };
 }
 
