@@ -13,7 +13,6 @@ import {
   Sparkles,
   UsersRound,
 } from "lucide-react";
-import studioHeroImg from "@/assets/studio-hero.jpg";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingHeader } from "@/components/landing/landing-header";
 import { ProductDemo } from "@/components/landing/product-demo";
@@ -24,9 +23,9 @@ import {
   LANDING_FAQS,
   PLAN_FEATURES,
   PRICING_PLANS,
-  PREVIEW_STUDIO,
   TRUST_PILLARS,
 } from "@/lib/landing-content";
+import publicMobilePreviewImg from "@/assets/landing-publica-mobile.jpg";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -229,7 +228,7 @@ function LandingPage() {
             </p>
           </div>
 
-          <ProductDemo />
+          <ProductDemo loading="eager" />
         </section>
 
         <section className="public-section-alt py-5" aria-label="Indicadores da Bellza">
@@ -270,7 +269,7 @@ function LandingPage() {
               title="Veja o seu dia num instante."
               description="Reservas, horários e profissionais organizados numa visão clara, com estados importantes à vista."
             />
-            <ProductDemo />
+            <ProductDemo variant="agenda" />
           </div>
         </section>
 
@@ -462,39 +461,17 @@ function LandingPage() {
 function PublicPhonePreview() {
   return (
     <div className="mx-auto w-full max-w-sm lg:max-w-md">
-      <div className="public-card mx-auto max-w-[18rem] p-2 sm:max-w-[20rem]">
-        <div className="overflow-hidden rounded-[1.4rem] bg-background">
-          <div className="relative h-44">
-            <img
-              src={studioHeroImg}
-              alt="Página pública do Studio Bellza no telemóvel"
-              className="h-full w-full object-cover"
-              loading="lazy"
-            />
-            <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-border bg-card/95 px-3 py-2 shadow-[0_8px_20px_rgba(24,24,27,0.08)]">
-              <p className="text-xs text-muted-foreground">{PREVIEW_STUDIO.domain}</p>
-              <h2 className="text-xl font-semibold leading-tight text-foreground">{PREVIEW_STUDIO.name}</h2>
-            </div>
-          </div>
-          <div className="space-y-3 p-4">
-            <div className="rounded-xl bg-muted/65 p-3">
-              <p className="text-sm font-semibold">Escolha o serviço</p>
-              <p className="mt-1 text-xs text-muted-foreground">Manicure gel · 45 min · 18 €</p>
-            </div>
-            <div className="grid grid-cols-3 gap-2 text-center text-xs font-semibold">
-              {["09:00", "10:30", "14:00"].map((time, index) => (
-                <span
-                  key={time}
-                  className={index === 1 ? "rounded-lg bg-accent px-2 py-2 text-accent-foreground" : "rounded-lg bg-card px-2 py-2 ring-1 ring-border"}
-                >
-                  {time}
-                </span>
-              ))}
-            </div>
-            <div className="rounded-xl bg-accent px-3 py-2.5 text-center text-xs font-semibold text-accent-foreground">
-              Confirmar reserva
-            </div>
-          </div>
+      <div className="public-card mx-auto max-w-[18rem] p-2">
+        <div className="aspect-[390/844] overflow-hidden rounded-[1.4rem] bg-background">
+          <img
+            src={publicMobilePreviewImg}
+            alt="Página pública real do estúdio demo Bellza com serviços, profissionais e botão de reserva"
+            width={780}
+            height={1688}
+            className="h-full w-full object-cover object-top"
+            loading="eager"
+            decoding="async"
+          />
         </div>
       </div>
     </div>
