@@ -29,7 +29,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -43,7 +49,16 @@ type RefundStatus = StudioRefundRequestListItem["status"];
 type RefundView = "pending" | "approved" | "rejected";
 type PeriodFilter = "all" | "today" | "7d" | "30d";
 type MainTab = "policies" | "refunds";
-type PolicyKey = "cancellation" | "reschedule" | "deposit" | "refund" | "late" | "no_show" | "general" | "privacy" | "terms";
+type PolicyKey =
+  | "cancellation"
+  | "reschedule"
+  | "deposit"
+  | "refund"
+  | "late"
+  | "no_show"
+  | "general"
+  | "privacy"
+  | "terms";
 
 const PAGE_SIZE = 8;
 
@@ -201,7 +216,11 @@ function AdminPoliciesPage() {
         } as any)
         .eq("id", studio.id);
       if (error) throw error;
-      const updated = { ...draft, legal_policy_version: version, updated_at: new Date().toISOString() };
+      const updated = {
+        ...draft,
+        legal_policy_version: version,
+        updated_at: new Date().toISOString(),
+      };
       const normalized = normalizePolicy(updated);
       setPolicies(normalized);
       setDraft(normalized);
@@ -232,7 +251,11 @@ function AdminPoliciesPage() {
           status: action === "approve" ? "approved" : "rejected",
         },
       });
-      toast.success(action === "approve" ? "Reembolso aprovado e saldo atualizado." : "Pedido recusado e cliente notificado.");
+      toast.success(
+        action === "approve"
+          ? "Reembolso aprovado e saldo atualizado."
+          : "Pedido recusado e cliente notificado.",
+      );
       await refreshRefunds();
     } catch (error) {
       console.error("Erro ao processar reembolso", error);
@@ -264,10 +287,30 @@ function AdminPoliciesPage() {
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[640px] xl:min-w-[700px]">
-          <Metric label="Pendentes" value={summary.pending} icon={<TimerReset className="h-4 w-4" />} tone="amber" />
-          <Metric label="Aprovados" value={summary.approvedThisMonth} icon={<CheckCircle2 className="h-4 w-4" />} tone="emerald" />
-          <Metric label="Recusados" value={summary.rejectedThisMonth} icon={<XCircle className="h-4 w-4" />} tone="rose" />
-          <Metric label="Valor reembolsado" value={formatMoney(summary.totalRefundedCents)} icon={<Wallet className="h-4 w-4" />} tone="sky" />
+          <Metric
+            label="Pendentes"
+            value={summary.pending}
+            icon={<TimerReset className="h-4 w-4" />}
+            tone="amber"
+          />
+          <Metric
+            label="Aprovados"
+            value={summary.approvedThisMonth}
+            icon={<CheckCircle2 className="h-4 w-4" />}
+            tone="emerald"
+          />
+          <Metric
+            label="Recusados"
+            value={summary.rejectedThisMonth}
+            icon={<XCircle className="h-4 w-4" />}
+            tone="rose"
+          />
+          <Metric
+            label="Valor reembolsado"
+            value={formatMoney(summary.totalRefundedCents)}
+            icon={<Wallet className="h-4 w-4" />}
+            tone="sky"
+          />
         </div>
       </div>
 
@@ -295,28 +338,28 @@ function AdminPoliciesPage() {
             onSave={savePolicy}
             onDiscard={discardDraft}
           />
-        <section className="rounded-xl border border-border/70 bg-card shadow-sm">
-          <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">Políticas do Estúdio</h2>
-              <p className="text-xs text-muted-foreground">Edite cada regra no painel lateral.</p>
+          <section className="rounded-xl border border-border/70 bg-card shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-foreground">Políticas do Estúdio</h2>
+                <p className="text-xs text-muted-foreground">Edite cada regra no painel lateral.</p>
+              </div>
+              <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                {policyRows.length} políticas
+              </span>
             </div>
-            <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-              {policyRows.length} políticas
-            </span>
-          </div>
 
-          <ExpandableList
-            items={policyRows}
-            initialCount={5}
-            className="divide-y divide-border/60"
-            getKey={(policy) => policy.key}
-            moreLabel={(hidden) => `Ver mais ${hidden} política${hidden !== 1 ? "s" : ""}`}
-            renderItem={(policy) => (
-              <PolicyRow policy={policy} onEdit={() => setEditingPolicy(policy.key)} />
-            )}
-          />
-        </section>
+            <ExpandableList
+              items={policyRows}
+              initialCount={5}
+              className="divide-y divide-border/60"
+              getKey={(policy) => policy.key}
+              moreLabel={(hidden) => `Ver mais ${hidden} política${hidden !== 1 ? "s" : ""}`}
+              renderItem={(policy) => (
+                <PolicyRow policy={policy} onEdit={() => setEditingPolicy(policy.key)} />
+              )}
+            />
+          </section>
         </div>
       ) : (
         <section className="rounded-xl border border-border/70 bg-card shadow-sm">
@@ -332,7 +375,10 @@ function AdminPoliciesPage() {
             </div>
 
             <div className="flex gap-2 overflow-x-auto">
-              <CompactSelect value={refundView} onChange={(value) => setRefundView(value as RefundView)}>
+              <CompactSelect
+                value={refundView}
+                onChange={(value) => setRefundView(value as RefundView)}
+              >
                 <SelectItem value="pending">Pendentes</SelectItem>
                 <SelectItem value="approved">Aprovados</SelectItem>
                 <SelectItem value="rejected">Recusados</SelectItem>
@@ -369,7 +415,9 @@ function AdminPoliciesPage() {
                 <ChevronLeft className="h-4 w-4" />
                 Anterior
               </Button>
-              <span className="min-w-14 text-center">Página {page + 1}/{totalPages}</span>
+              <span className="min-w-14 text-center">
+                Página {page + 1}/{totalPages}
+              </span>
               <Button
                 variant="outline"
                 size="sm"
@@ -420,11 +468,10 @@ function ManageabilityPolicyPanel({
 
   function updateCancellationHours(hours: number) {
     onChange(
-      updatePolicySetting(
-        { ...draft, cancellation_min_notice_hours: hours },
-        "cancellation",
-        { active: true, notice_hours: hours },
-      ),
+      updatePolicySetting({ ...draft, cancellation_min_notice_hours: hours }, "cancellation", {
+        active: true,
+        notice_hours: hours,
+      }),
     );
   }
 
@@ -433,22 +480,23 @@ function ManageabilityPolicyPanel({
   }
 
   return (
-    <section className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+    <section className="rounded-xl border border-border/60 bg-card p-3 shadow-sm sm:p-4">
       <div>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0 max-w-3xl">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               <CalendarClock className="h-4 w-4" />
               Cancelamentos e Reembolsos
             </div>
-            <h2 className="mt-2 text-xl font-semibold tracking-tight text-foreground">
+            <h2 className="mt-1 text-lg font-semibold tracking-tight text-foreground sm:text-xl">
               Regras de cancelamento, remarcação e reembolso
             </h2>
             <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Defina aqui as regras que explicam quando uma cliente pode alterar uma marcação e quando pode pedir reembolso.
+              Defina aqui as regras que explicam quando uma cliente pode alterar uma marcação e
+              quando pode pedir reembolso.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-2">
             <Button variant="outline" size="sm" onClick={onDiscard} disabled={saving}>
               Repor
             </Button>
@@ -459,84 +507,113 @@ function ManageabilityPolicyPanel({
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        <PolicyRuleCard
-          title="Prazo mínimo para cancelar"
-          description="Quando este prazo passa, o botão Cancelar fica bloqueado para a cliente."
-          value={cancellationHours}
-          onChange={updateCancellationHours}
-          exampleTitle="Exemplo de cancelamento"
-          actionLabel="cancelar"
-        />
+      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)]">
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
+          <PolicyRuleCard
+            title="Prazo mínimo para cancelar"
+            description="Quando este prazo passa, o botão Cancelar fica bloqueado para a cliente."
+            value={cancellationHours}
+            onChange={updateCancellationHours}
+            exampleTitle="Exemplo de cancelamento"
+            actionLabel="cancelar"
+          />
 
-        <PolicyRuleCard
-          title="Prazo mínimo para remarcar"
-          description="Quando este prazo passa, o botão Remarcar fica bloqueado para a cliente."
-          value={rescheduleHours}
-          onChange={updateRescheduleHours}
-          exampleTitle="Exemplo de remarcação"
-          actionLabel="remarcar"
-        />
+          <PolicyRuleCard
+            title="Prazo mínimo para remarcar"
+            description="Quando este prazo passa, o botão Remarcar fica bloqueado para a cliente."
+            value={rescheduleHours}
+            onChange={updateRescheduleHours}
+            exampleTitle="Exemplo de remarcação"
+            actionLabel="remarcar"
+          />
+        </div>
 
-        <div className="rounded-lg bg-muted/30 p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-foreground">Política de reembolso</h3>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                Escolha o que acontece quando a cliente cancela dentro do prazo permitido.
-              </p>
+        <div className="grid gap-3">
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-foreground">Política de reembolso</h3>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground sm:text-sm">
+                  Escolha o que acontece quando a cliente cancela dentro do prazo permitido.
+                </p>
+              </div>
+              <RefundPolicySwitch
+                checked={draft.refund_requests_enabled}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    updatePolicySetting({ ...draft, refund_requests_enabled: checked }, "refund", {
+                      active: checked,
+                    }),
+                  )
+                }
+              />
             </div>
-            <RefundPolicySwitch
-              checked={draft.refund_requests_enabled}
-              onCheckedChange={(checked) =>
-                onChange(updatePolicySetting({ ...draft, refund_requests_enabled: checked }, "refund", { active: checked }))
+            <div className="mt-3 grid gap-1.5 rounded-xl bg-background/50 p-1 sm:grid-cols-3">
+              {[
+                [
+                  "refund_allowed",
+                  "Permitir reembolso",
+                  "A cliente pode pedir reembolso quando cancelar dentro do prazo.",
+                ],
+                [
+                  "reschedule_only",
+                  "Apenas remarcação",
+                  "O valor fica válido para remarcar, sem pedido de devolução.",
+                ],
+                [
+                  "non_refundable",
+                  "Sem reembolso",
+                  "O pagamento ou sinal não gera pedido de reembolso automático.",
+                ],
+              ].map(([value, label, description]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() =>
+                    onChange(
+                      updatePolicySetting(
+                        { ...draft, cancellation_after_deadline_policy: value as RefundPolicy },
+                        "refund",
+                        { text: refundPolicyLabel(value as RefundPolicy) },
+                      ),
+                    )
+                  }
+                  className={cn(
+                    "min-h-11 rounded-lg border px-3 py-2 text-center text-xs font-semibold transition hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring",
+                    draft.cancellation_after_deadline_policy === value
+                      ? "border-foreground/40 bg-card text-foreground shadow-sm ring-1 ring-foreground/10"
+                      : "border-transparent bg-transparent text-foreground",
+                  )}
+                >
+                  <span className="block leading-tight">{label}</span>
+                  <span className="mt-0.5 block text-[11px] font-medium leading-snug text-muted-foreground">
+                    {description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+            <h3 className="text-sm font-semibold text-foreground">Texto visível para clientes</h3>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              Este texto aparece na experiência pública para explicar as regras do estúdio em
+              linguagem simples.
+            </p>
+            <div className="mt-2 flex justify-end text-[11px] text-muted-foreground">
+              {(draft.cancellation_policy_text ?? "").length} caracteres
+            </div>
+            <Textarea
+              className="mt-2 min-h-20 resize-y text-sm leading-relaxed"
+              value={draft.cancellation_policy_text ?? ""}
+              onChange={(event) =>
+                onChange({
+                  ...updatePolicySetting(draft, "cancellation", { text: event.target.value }),
+                  cancellation_policy_text: event.target.value,
+                })
               }
             />
           </div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            {[
-              ["refund_allowed", "Permitir pedido de reembolso", "A cliente pode pedir reembolso quando cancelar dentro do prazo."],
-              ["reschedule_only", "Apenas remarcação", "O valor fica válido para remarcar, sem pedido de devolução."],
-              ["non_refundable", "Sem reembolso", "O pagamento ou sinal não gera pedido de reembolso automático."],
-            ].map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() =>
-                  onChange(
-                    updatePolicySetting(
-                      { ...draft, cancellation_after_deadline_policy: value as RefundPolicy },
-                      "refund",
-                      { text: refundPolicyLabel(value as RefundPolicy) },
-                    ),
-                  )
-                }
-                className={cn(
-                  "min-h-10 rounded-lg border px-3 py-2 text-center text-sm font-semibold transition hover:bg-muted/60",
-                  draft.cancellation_after_deadline_policy === value ? "border-foreground bg-foreground text-background" : "border-border bg-card",
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-lg bg-muted/30 p-3">
-          <h3 className="text-sm font-semibold text-foreground">Texto visível para clientes</h3>
-          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-            Este texto aparece na experiência pública para explicar as regras do estúdio em linguagem simples.
-          </p>
-          <Textarea
-            className="mt-3 min-h-28 resize-y"
-            value={draft.cancellation_policy_text ?? ""}
-            onChange={(event) =>
-              onChange({
-                ...updatePolicySetting(draft, "cancellation", { text: event.target.value }),
-                cancellation_policy_text: event.target.value,
-              })
-            }
-          />
         </div>
       </div>
     </section>
@@ -560,16 +637,18 @@ function PolicyRuleCard({
 }) {
   const exampleDeadline = value === 24 ? "02/07 às 16:00" : `${value} horas antes da reserva`;
   return (
-    <div className="rounded-lg bg-muted/30 p-3">
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px]">
+    <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_104px]">
         <div>
           <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{description}</p>
         </div>
         <div>
-          <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Horas</Label>
+          <Label className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+            Horas
+          </Label>
           <Input
-            className="mt-1.5 h-10 text-base font-semibold"
+            className="mt-1 h-9 text-base font-semibold"
             type="number"
             min={0}
             value={value}
@@ -578,18 +657,22 @@ function PolicyRuleCard({
         </div>
       </div>
 
-      <div className="mt-3 rounded-lg bg-card px-3 py-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{exampleTitle}</p>
-        <div className="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+      <div className="mt-2 rounded-lg bg-card/80 px-3 py-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+          {exampleTitle}
+        </p>
+        <div className="mt-2 grid gap-1.5 text-sm sm:grid-cols-3">
           <ExampleItem label="Reserva" value="03/07 às 16:00" />
           <ExampleItem label={`Pode ${actionLabel} até`} value={exampleDeadline} />
           <ExampleItem label="Depois disso" value="O botão fica bloqueado" />
         </div>
-        <div className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium leading-relaxed text-amber-800">
-          {value} horas significa exatamente {value} horas antes do horário da reserva, e não apenas no dia anterior.
+        <div className="mt-2 rounded-md bg-amber-50/80 px-2.5 py-1.5 text-[11px] font-medium leading-snug text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">
+          {value} horas significa exatamente {value} horas antes do horário da reserva, e não apenas
+          no dia anterior.
         </div>
         <div className="hidden">
-          Outro exemplo: reserva em 10/08 às 09:00. Último momento para {actionLabel}: 09/08 às 09:00 quando o prazo é 24 horas.
+          Outro exemplo: reserva em 10/08 às 09:00. Último momento para {actionLabel}: 09/08 às
+          09:00 quando o prazo é 24 horas.
         </div>
       </div>
     </div>
@@ -598,9 +681,11 @@ function PolicyRuleCard({
 
 function ExampleItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-md bg-background px-2.5 py-2">
-      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">{label}</div>
-      <div className="mt-1 break-words text-sm font-semibold text-foreground">{value}</div>
+    <div className="min-w-0 rounded-md bg-background/80 px-2.5 py-1.5">
+      <div className="truncate text-[10px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-0.5 break-words text-xs font-semibold text-foreground">{value}</div>
     </div>
   );
 }
@@ -625,7 +710,11 @@ function Metric({
 
   return (
     <div className="flex min-h-14 items-center gap-3 rounded-xl border border-border/60 bg-card px-3 py-2 shadow-sm">
-      <span className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass)}>{icon}</span>
+      <span
+        className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", toneClass)}
+      >
+        {icon}
+      </span>
       <div className="min-w-0">
         <div className="truncate text-[11px] font-medium text-muted-foreground">{label}</div>
         <div className="truncate text-base font-semibold text-foreground">{value}</div>
@@ -649,7 +738,9 @@ function TabButton({
       onClick={onClick}
       className={cn(
         "h-9 rounded-md px-4 text-sm font-medium transition",
-        active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+        active
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
       )}
     >
       {children}
@@ -731,8 +822,12 @@ function PolicyDrawer({
       <aside className="absolute right-0 top-0 flex h-full w-full max-w-lg flex-col border-l border-border bg-background shadow-2xl">
         <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
           <div className="min-w-0">
-            <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Editar política</div>
-            <h2 className="truncate text-lg font-semibold text-foreground">{policyTitles[policyKey]}</h2>
+            <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+              Editar política
+            </div>
+            <h2 className="truncate text-lg font-semibold text-foreground">
+              {policyTitles[policyKey]}
+            </h2>
           </div>
           <Button variant="ghost" size="icon" className="h-9 w-9" onClick={onClose}>
             <X className="h-4 w-4" />
@@ -766,7 +861,8 @@ function PolicyEditor({
   onChange: (policy: StudioCompliancePolicies) => void;
 }) {
   const setting = draft.studio_policy_settings[policyKey] ?? {};
-  const setSetting = (patch: Partial<PolicySetting>) => onChange(updatePolicySetting(draft, policyKey, patch));
+  const setSetting = (patch: Partial<PolicySetting>) =>
+    onChange(updatePolicySetting(draft, policyKey, patch));
 
   if (policyKey === "cancellation") {
     return (
@@ -785,7 +881,13 @@ function PolicyEditor({
             value={draft.cancellation_min_notice_hours}
             onChange={(event) => {
               const hours = Math.max(0, Number(event.target.value) || 0);
-              onChange(updatePolicySetting({ ...draft, cancellation_min_notice_hours: hours }, "cancellation", { notice_hours: hours }));
+              onChange(
+                updatePolicySetting(
+                  { ...draft, cancellation_min_notice_hours: hours },
+                  "cancellation",
+                  { notice_hours: hours },
+                ),
+              );
             }}
           />
         </Field>
@@ -812,7 +914,11 @@ function PolicyEditor({
           <ToggleRow
             checked={draft.refund_requests_enabled}
             onCheckedChange={(checked) =>
-              onChange(updatePolicySetting({ ...draft, refund_requests_enabled: checked }, "refund", { active: checked }))
+              onChange(
+                updatePolicySetting({ ...draft, refund_requests_enabled: checked }, "refund", {
+                  active: checked,
+                }),
+              )
             }
             text="Pedidos de reembolso ativos"
           />
@@ -838,7 +944,9 @@ function PolicyEditor({
                 }
                 className={cn(
                   "rounded-lg border px-3 py-2 text-left text-sm transition hover:bg-muted/60",
-                  draft.cancellation_after_deadline_policy === value ? "border-foreground bg-foreground text-background" : "border-border bg-background",
+                  draft.cancellation_after_deadline_policy === value
+                    ? "border-foreground bg-foreground text-background"
+                    : "border-border bg-background",
                 )}
               >
                 {label}
@@ -865,7 +973,9 @@ function PolicyEditor({
             type="number"
             min={0}
             value={getRescheduleNoticeHoursFromSettings(draft)}
-            onChange={(event) => setSetting({ notice_hours: Math.max(0, Number(event.target.value) || 0) })}
+            onChange={(event) =>
+              setSetting({ notice_hours: Math.max(0, Number(event.target.value) || 0) })
+            }
           />
         </Field>
         <Field label="Resumo">
@@ -906,11 +1016,9 @@ function PolicyEditor({
             onChange={(event) => {
               const depositPercent = Math.min(100, Math.max(1, Number(event.target.value) || 1));
               onChange(
-                updatePolicySetting(
-                  { ...draft, deposit_percent: depositPercent },
-                  "deposit",
-                  { text: `Sinal de ${depositPercent}% para confirmar reservas online.` },
-                ),
+                updatePolicySetting({ ...draft, deposit_percent: depositPercent }, "deposit", {
+                  text: `Sinal de ${depositPercent}% para confirmar reservas online.`,
+                }),
               );
             }}
           />
@@ -949,7 +1057,9 @@ function PolicyEditor({
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-2">
-      <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{label}</Label>
+      <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </Label>
       {children}
     </div>
   );
@@ -976,7 +1086,7 @@ function RefundPolicySwitch({
         checked={checked}
         onCheckedChange={onCheckedChange}
         aria-label={checked ? "Desativar política de reembolso" : "Ativar política de reembolso"}
-        className="relative h-6 w-11 border-0 bg-muted shadow-none after:absolute after:-inset-2.5 after:content-[''] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30 [&>span]:h-5 [&>span]:w-5 [&>span]:bg-background [&>span]:shadow-sm [&>span]:data-[state=checked]:translate-x-5"
+        className="relative !h-6 !w-11 !shrink-0 !rounded-full border-2 border-transparent bg-muted p-0 shadow-none after:absolute after:-inset-2.5 after:content-[''] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30 [&>span]:!h-5 [&>span]:!w-5 [&>span]:!rounded-full [&>span]:bg-background [&>span]:shadow-sm [&>span]:data-[state=checked]:!translate-x-5 [&>span]:data-[state=unchecked]:!translate-x-0"
       />
     </div>
   );
@@ -995,7 +1105,11 @@ function ToggleRow({
 }) {
   return (
     <label className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 text-sm">
-      <Checkbox checked={checked} disabled={disabled} onCheckedChange={(value) => onCheckedChange?.(value === true)} />
+      <Checkbox
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(value) => onCheckedChange?.(value === true)}
+      />
       {text}
     </label>
   );
@@ -1039,7 +1153,9 @@ function RefundTable({
       <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 text-center">
         <SlidersHorizontal className="h-6 w-6 text-muted-foreground" />
         <p className="text-sm font-medium text-foreground">Nenhum pedido nesta seleção</p>
-        <p className="text-xs text-muted-foreground">A pesquisa e os filtros ajudam a localizar rapidamente.</p>
+        <p className="text-xs text-muted-foreground">
+          A pesquisa e os filtros ajudam a localizar rapidamente.
+        </p>
       </div>
     );
   }
@@ -1060,7 +1176,12 @@ function RefundTable({
           </thead>
           <tbody className="divide-y divide-border/60">
             {visibleRefunds.map((refund) => (
-              <RefundTableRow key={refund.id} refund={refund} busy={busyRefundId === refund.id} onAction={onAction} />
+              <RefundTableRow
+                key={refund.id}
+                refund={refund}
+                busy={busyRefundId === refund.id}
+                onAction={onAction}
+              />
             ))}
           </tbody>
         </table>
@@ -1068,7 +1189,12 @@ function RefundTable({
 
       <div className="divide-y divide-border/60 md:hidden">
         {visibleRefunds.map((refund) => (
-          <RefundMobileRow key={refund.id} refund={refund} busy={busyRefundId === refund.id} onAction={onAction} />
+          <RefundMobileRow
+            key={refund.id}
+            refund={refund}
+            busy={busyRefundId === refund.id}
+            onAction={onAction}
+          />
         ))}
       </div>
 
@@ -1079,7 +1205,9 @@ function RefundTable({
             onClick={() => setExpanded((current) => !current)}
             className="mx-auto flex min-h-10 w-full max-w-sm items-center justify-center rounded-xl border border-border/70 bg-background/70 px-3 py-2 text-xs font-semibold text-muted-foreground shadow-sm transition hover:border-foreground/15 hover:bg-muted hover:text-foreground active:scale-[0.99]"
           >
-            {expanded ? "Ver menos" : `Ver mais ${refunds.length - limit} pedido${refunds.length - limit !== 1 ? "s" : ""}`}
+            {expanded
+              ? "Ver menos"
+              : `Ver mais ${refunds.length - limit} pedido${refunds.length - limit !== 1 ? "s" : ""}`}
           </button>
         </div>
       )}
@@ -1101,12 +1229,20 @@ function RefundTableRow({
   return (
     <tr className="h-14 transition hover:bg-muted/30">
       <td className="min-w-0 px-4 py-2">
-        <div className="truncate text-sm font-medium text-foreground">{refund.client_name || "Cliente"}</div>
-        <div className="truncate text-xs text-muted-foreground">{refund.reason || "Pedido de reembolso"}</div>
+        <div className="truncate text-sm font-medium text-foreground">
+          {refund.client_name || "Cliente"}
+        </div>
+        <div className="truncate text-xs text-muted-foreground">
+          {refund.reason || "Pedido de reembolso"}
+        </div>
       </td>
       <td className="truncate px-4 py-2 text-sm text-foreground">{serviceLabel(refund)}</td>
-      <td className="px-4 py-2 text-sm font-semibold text-foreground">{formatMoney(refundAmountCents(refund))}</td>
-      <td className="px-4 py-2 text-sm text-muted-foreground">{formatBookingDate(refundDate(refund))}</td>
+      <td className="px-4 py-2 text-sm font-semibold text-foreground">
+        {formatMoney(refundAmountCents(refund))}
+      </td>
+      <td className="px-4 py-2 text-sm text-muted-foreground">
+        {formatBookingDate(refundDate(refund))}
+      </td>
       <td className="px-4 py-2">
         <RefundStatusBadge status={refund.status} />
       </td>
@@ -1114,10 +1250,21 @@ function RefundTableRow({
         <div className="flex justify-end gap-2">
           {canProcess ? (
             <>
-              <Button size="sm" className="h-8 px-2.5" disabled={busy} onClick={() => onAction(refund.id, "approve")}>
+              <Button
+                size="sm"
+                className="h-8 px-2.5"
+                disabled={busy}
+                onClick={() => onAction(refund.id, "approve")}
+              >
                 Aprovar
               </Button>
-              <Button variant="outline" size="sm" className="h-8 px-2.5" disabled={busy} onClick={() => onAction(refund.id, "reject")}>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5"
+                disabled={busy}
+                onClick={() => onAction(refund.id, "reject")}
+              >
                 Recusar
               </Button>
             </>
@@ -1145,21 +1292,38 @@ function RefundMobileRow({
     <div className="space-y-2 px-4 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-foreground">{refund.client_name || "Cliente"}</div>
-          <div className="truncate text-xs text-muted-foreground">{serviceLabel(refund)} · {formatBookingDate(refundDate(refund))}</div>
+          <div className="truncate text-sm font-medium text-foreground">
+            {refund.client_name || "Cliente"}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">
+            {serviceLabel(refund)} · {formatBookingDate(refundDate(refund))}
+          </div>
         </div>
         <div className="text-right">
-          <div className="text-sm font-semibold text-foreground">{formatMoney(refundAmountCents(refund))}</div>
+          <div className="text-sm font-semibold text-foreground">
+            {formatMoney(refundAmountCents(refund))}
+          </div>
           <RefundStatusBadge status={refund.status} />
         </div>
       </div>
 
       {canProcess ? (
         <div className="grid grid-cols-2 gap-2">
-          <Button size="sm" className="h-8" disabled={busy} onClick={() => onAction(refund.id, "approve")}>
+          <Button
+            size="sm"
+            className="h-8"
+            disabled={busy}
+            onClick={() => onAction(refund.id, "approve")}
+          >
             Aprovar
           </Button>
-          <Button variant="outline" size="sm" className="h-8" disabled={busy} onClick={() => onAction(refund.id, "reject")}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8"
+            disabled={busy}
+            onClick={() => onAction(refund.id, "reject")}
+          >
             Recusar
           </Button>
         </div>
@@ -1169,14 +1333,23 @@ function RefundMobileRow({
 }
 
 function RefundStatusBadge({ status }: { status: RefundStatus }) {
-  const view = status === "approved" || status === "refunded" ? "approved" : status === "rejected" ? "rejected" : "pending";
+  const view =
+    status === "approved" || status === "refunded"
+      ? "approved"
+      : status === "rejected"
+        ? "rejected"
+        : "pending";
   const classes = {
     pending: "bg-amber-50 text-amber-700",
     approved: "bg-emerald-50 text-emerald-700",
     rejected: "bg-rose-50 text-rose-700",
   }[view];
 
-  return <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-medium", classes)}>{statusCopy[status]}</span>;
+  return (
+    <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-medium", classes)}>
+      {statusCopy[status]}
+    </span>
+  );
 }
 
 async function loadPolicy(studioId: string): Promise<StudioCompliancePolicies> {
@@ -1214,7 +1387,8 @@ function normalizePolicy(policy: StudioCompliancePolicies): StudioCompliancePoli
       policy.cancellation_policy_text ||
       "O sinal garante a reserva. Cancelamentos fora do prazo podem não ser elegíveis para reembolso.",
     cancellation_min_notice_hours: policy.cancellation_min_notice_hours ?? 24,
-    cancellation_after_deadline_policy: policy.cancellation_after_deadline_policy ?? "non_refundable",
+    cancellation_after_deadline_policy:
+      policy.cancellation_after_deadline_policy ?? "non_refundable",
     refund_requests_enabled: policy.refund_requests_enabled ?? false,
     studio_policy_settings: settings,
   };
@@ -1236,7 +1410,11 @@ function buildPolicyRows(policy: StudioCompliancePolicies) {
     icon,
   });
   return [
-    row("deposit", <CircleDollarSign className="h-4 w-4" />, policy.payment_policy === "pre_payment"),
+    row(
+      "deposit",
+      <CircleDollarSign className="h-4 w-4" />,
+      policy.payment_policy === "pre_payment",
+    ),
     row("late", <TimerReset className="h-4 w-4" />, Boolean(settings.late?.active)),
     row("no_show", <Ban className="h-4 w-4" />, Boolean(settings.no_show?.active)),
     row("general", <FileText className="h-4 w-4" />, Boolean(settings.general?.active)),
@@ -1245,25 +1423,34 @@ function buildPolicyRows(policy: StudioCompliancePolicies) {
   ];
 }
 
-function normalizePolicySettings(value: unknown, policy: StudioCompliancePolicies): StudioPolicySettings {
+function normalizePolicySettings(
+  value: unknown,
+  policy: StudioCompliancePolicies,
+): StudioPolicySettings {
   const raw = isPolicySettings(value) ? value : {};
   const now = policy.updated_at ?? null;
   return {
     cancellation: {
       active: raw.cancellation?.active ?? true,
       text: raw.cancellation?.text ?? policy.cancellation_policy_text,
-      notice_hours: raw.cancellation?.notice_hours ?? Number(policy.cancellation_min_notice_hours ?? 24),
+      notice_hours:
+        raw.cancellation?.notice_hours ?? Number(policy.cancellation_min_notice_hours ?? 24),
       updated_at: raw.cancellation?.updated_at ?? now,
     },
     reschedule: {
       active: raw.reschedule?.active ?? true,
-      text: raw.reschedule?.text ?? `Clientes podem remarcar até ${Number(policy.cancellation_min_notice_hours ?? 24)} horas antes da reserva.`,
-      notice_hours: raw.reschedule?.notice_hours ?? Number(policy.cancellation_min_notice_hours ?? 24),
+      text:
+        raw.reschedule?.text ??
+        `Clientes podem remarcar até ${Number(policy.cancellation_min_notice_hours ?? 24)} horas antes da reserva.`,
+      notice_hours:
+        raw.reschedule?.notice_hours ?? Number(policy.cancellation_min_notice_hours ?? 24),
       updated_at: raw.reschedule?.updated_at ?? now,
     },
     deposit: {
       active: policy.payment_policy === "pre_payment",
-      text: raw.deposit?.text ?? `Sinal de ${Number(policy.deposit_percent ?? 30)}% para confirmar reservas online.`,
+      text:
+        raw.deposit?.text ??
+        `Sinal de ${Number(policy.deposit_percent ?? 30)}% para confirmar reservas online.`,
       updated_at: raw.deposit?.updated_at ?? now,
     },
     refund: {
@@ -1273,7 +1460,9 @@ function normalizePolicySettings(value: unknown, policy: StudioCompliancePolicie
     },
     late: {
       active: raw.late?.active ?? false,
-      text: raw.late?.text ?? "Atrasos podem reduzir a duração do serviço para não prejudicar reservas seguintes.",
+      text:
+        raw.late?.text ??
+        "Atrasos podem reduzir a duração do serviço para não prejudicar reservas seguintes.",
       updated_at: raw.late?.updated_at ?? now,
     },
     no_show: {
@@ -1283,17 +1472,23 @@ function normalizePolicySettings(value: unknown, policy: StudioCompliancePolicie
     },
     general: {
       active: raw.general?.active ?? true,
-      text: raw.general?.text ?? "As regras gerais ajudam a manter reservas claras, pontuais e confirmadas.",
+      text:
+        raw.general?.text ??
+        "As regras gerais ajudam a manter reservas claras, pontuais e confirmadas.",
       updated_at: raw.general?.updated_at ?? now,
     },
     privacy: {
       active: raw.privacy?.active ?? true,
-      text: raw.privacy?.text ?? "Os dados dos clientes são utilizados apenas para marcações, comunicação e gestão do serviço.",
+      text:
+        raw.privacy?.text ??
+        "Os dados dos clientes são utilizados apenas para marcações, comunicação e gestão do serviço.",
       updated_at: raw.privacy?.updated_at ?? now,
     },
     terms: {
       active: raw.terms?.active ?? true,
-      text: raw.terms?.text ?? "Ao marcar, o cliente aceita as condições do estúdio apresentadas no fluxo de reserva.",
+      text:
+        raw.terms?.text ??
+        "Ao marcar, o cliente aceita as condições do estúdio apresentadas no fluxo de reserva.",
       updated_at: raw.terms?.updated_at ?? now,
     },
   };
@@ -1324,7 +1519,8 @@ function updatePolicySetting(
 
 function refundPolicyLabel(value: RefundPolicy) {
   if (value === "refund_allowed") return "Reembolso permitido dentro das regras do estúdio.";
-  if (value === "reschedule_only") return "Cancelamentos fora do prazo permitem apenas reagendamento.";
+  if (value === "reschedule_only")
+    return "Cancelamentos fora do prazo permitem apenas reagendamento.";
   return "O sinal não é reembolsável após o prazo definido.";
 }
 
@@ -1335,12 +1531,20 @@ function buildSummary(refunds: StudioRefundRequestListItem[]) {
 
   return refunds.reduce(
     (summary, refund) => {
-      const decidedAt = refund.resolved_at || refund.reviewed_at ? new Date(refund.resolved_at || refund.reviewed_at || "") : null;
+      const decidedAt =
+        refund.resolved_at || refund.reviewed_at
+          ? new Date(refund.resolved_at || refund.reviewed_at || "")
+          : null;
       if (refund.status === "pending" || refund.status === "in_review") summary.pending += 1;
-      if ((refund.status === "approved" || refund.status === "refunded") && decidedAt && decidedAt >= startOfMonth) {
+      if (
+        (refund.status === "approved" || refund.status === "refunded") &&
+        decidedAt &&
+        decidedAt >= startOfMonth
+      ) {
         summary.approvedThisMonth += 1;
       }
-      if (refund.status === "rejected" && decidedAt && decidedAt >= startOfMonth) summary.rejectedThisMonth += 1;
+      if (refund.status === "rejected" && decidedAt && decidedAt >= startOfMonth)
+        summary.rejectedThisMonth += 1;
       if (refund.status === "approved" || refund.status === "refunded") {
         summary.totalRefundedCents += refundAmountCents(refund);
       }
@@ -1396,11 +1600,17 @@ function periodCutoff(period: PeriodFilter) {
 }
 
 function refundAmountCents(refund: StudioRefundRequestListItem) {
-  return refund.refund_amount_cents || refund.deposit_amount_cents || refund.payment_intents?.amount_cents || 0;
+  return (
+    refund.refund_amount_cents ||
+    refund.deposit_amount_cents ||
+    refund.payment_intents?.amount_cents ||
+    0
+  );
 }
 
 function serviceLabel(refund: StudioRefundRequestListItem) {
-  if (refund.service_name || refund.custom_service_name) return refund.service_name || refund.custom_service_name || "Serviço";
+  if (refund.service_name || refund.custom_service_name)
+    return refund.service_name || refund.custom_service_name || "Serviço";
   const names = refund.appointments?.appointment_services
     ?.map((line) => line.services?.name)
     .filter(Boolean);
@@ -1413,12 +1623,18 @@ function refundDate(refund: StudioRefundRequestListItem) {
 
 function formatDate(value?: string | null) {
   if (!value) return "Sem data";
-  return new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat("pt-PT", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(value));
 }
 
 function formatBookingDate(value?: string | null) {
   if (!value) return "Sem data";
-  return new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "short" }).format(new Date(value));
+  return new Intl.DateTimeFormat("pt-PT", { day: "2-digit", month: "short" }).format(
+    new Date(value),
+  );
 }
 
 function formatMoney(cents: number) {
