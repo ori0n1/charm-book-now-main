@@ -178,12 +178,12 @@ const STAFF_AGENDA_VISIBILITY_OPTIONS: Array<{
   {
     value: "team_busy",
     title: "Agenda compartilhada",
-    description: "A equipa vê horários ocupados dos outros profissionais, sem dados da cliente.",
+    description: "Mostra somente os horários ocupados da equipa.",
   },
   {
     value: "team_basic",
-    title: "Ver detalhes básicos",
-    description: "Mostra serviço, horário, duração e profissional responsável.",
+    title: "Detalhes básicos",
+    description: "Mostra serviço, horário e profissional responsável.",
   },
 ];
 
@@ -766,47 +766,41 @@ function TeamPage() {
   if (loading) return <p className="text-sm text-muted-foreground">A carregar...</p>;
 
   return (
-    <div className="space-y-8">
-      <header className="grid gap-3 rounded-[1.25rem] border border-border/80 bg-card/95 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Equipa</p>
-          <h2 className="mt-1 text-2xl font-light tracking-tight">
+    <div className="space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:space-y-5 lg:pb-6">
+      <header className="rounded-xl border border-border/75 bg-card/90 px-4 py-3 shadow-sm">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Equipa</p>
+            <h2 className="mt-0.5 truncate text-xl font-semibold tracking-tight sm:text-2xl">
             {staff.length} {labels.professionalPlural}
-          </h2>
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="bellza-panel-action bellza-panel-action-primary min-h-11 w-full sm:w-auto"
+          >
+            <Plus className="h-4 w-4" /> Nova profissional
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="bellza-panel-action bellza-panel-action-primary"
-        >
-          <Plus className="h-4 w-4" /> Nova profissional
-        </button>
       </header>
 
-      <section className="rounded-2xl border border-border bg-card/80 p-4 shadow-sm">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div className="max-w-2xl">
-            <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
-              Acessos da equipa
-            </p>
-            <h3 className="mt-1 text-base font-semibold">Convites ligados a cada profissional</h3>
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Abra o card de uma profissional para convidar, reenviar convite, alterar permissao ou
-              remover acesso ao painel.
-            </p>
-          </div>
-        </div>
+      <section className="rounded-xl border border-border/75 bg-card/80 px-4 py-3 shadow-sm">
+        <h3 className="text-sm font-semibold">Acessos da equipa</h3>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground sm:text-sm">
+          Abra uma profissional para gerir convite, permissões e acesso ao painel.
+        </p>
       </section>
 
-      <section className="overflow-hidden rounded-2xl border border-border bg-card/80 p-4 shadow-sm">
-        <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-center">
+      <section className="overflow-hidden rounded-xl border border-border/75 bg-card/80 p-3 shadow-sm sm:p-4">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)] lg:items-center">
           <div className="min-w-0">
-            <p className="break-words text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+            <p className="break-words text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               Agenda da equipa
             </p>
             <h3 className="mt-1 break-words text-base font-semibold">Visibilidade entre profissionais</h3>
-            <p className="mt-1 max-w-xl break-words text-sm leading-relaxed text-muted-foreground">
-              Defina o que um profissional pode ver quando abre a agenda do estúdio.
+            <p className="mt-1 max-w-xl break-words text-xs leading-relaxed text-muted-foreground sm:text-sm">
+              Escolha o nível de informação partilhada na agenda.
             </p>
           </div>
           <div className="grid min-w-0 auto-rows-fr grid-cols-1 gap-2 sm:grid-cols-3">
@@ -818,16 +812,19 @@ function TeamPage() {
                   type="button"
                   disabled={savingAgendaVisibility}
                   onClick={() => void saveAgendaVisibility(option.value)}
-                  className={`flex min-h-[6.5rem] w-full min-w-0 flex-col justify-center rounded-2xl border px-3.5 py-3.5 text-left transition ${
+                  className={`flex min-h-[4.75rem] w-full min-w-0 flex-col rounded-xl border p-3 text-left transition ${
                     active
-                      ? "border-foreground bg-foreground text-background shadow-sm"
-                      : "border-border bg-background/60 text-foreground hover:border-foreground/20 hover:bg-background"
+                      ? "border-foreground/35 bg-muted/70 text-foreground ring-1 ring-foreground/10"
+                      : "border-border bg-background/45 text-foreground hover:border-foreground/20 hover:bg-background/70"
                   } disabled:cursor-wait disabled:opacity-70`}
                 >
-                  <span className="block min-w-0 max-w-full whitespace-normal break-words text-xs font-semibold leading-snug [overflow-wrap:anywhere]">
-                    {option.title}
+                  <span className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="block min-w-0 max-w-full whitespace-normal break-words text-xs font-semibold leading-snug [overflow-wrap:anywhere]">
+                      {option.title}
+                    </span>
+                    {active ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" /> : null}
                   </span>
-                  <span className={`mt-1.5 block min-w-0 max-w-full whitespace-normal break-words text-[11px] leading-snug [overflow-wrap:anywhere] ${active ? "text-background/75" : "text-muted-foreground"}`}>
+                  <span className="mt-1 block min-w-0 max-w-full whitespace-normal break-words text-[11px] leading-snug text-muted-foreground [overflow-wrap:anywhere]">
                     {option.description}
                   </span>
                 </button>
@@ -870,14 +867,14 @@ function TeamPage() {
       </section>
 
       {staff.length === 0 ? (
-        <p className="rounded-lg border border-border px-4 py-10 text-center text-sm text-muted-foreground">
+        <p className="rounded-xl border border-border/75 px-4 py-8 text-center text-sm text-muted-foreground">
           {labels.emptyProfessionals}
         </p>
       ) : (
         <ExpandableList
           items={staff}
           initialCount={5}
-          className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3"
+          className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-3"
           itemClassName="min-w-0"
           buttonWrapClassName="sm:col-span-2 lg:col-span-3"
           getKey={(member) => member.id}
@@ -891,18 +888,18 @@ function TeamPage() {
             return (
             <article
               key={m.id}
-              className={`rounded-2xl border bg-card p-2.5 shadow-sm transition hover:border-foreground/15 hover:shadow-md ${m.is_active ? "border-border" : "border-border/50 opacity-70"}`}
+              className={`rounded-xl border bg-card p-2 shadow-sm transition hover:border-foreground/15 hover:shadow-md ${m.is_active ? "border-border/80" : "border-border/50 opacity-70"}`}
             >
-              <div className="flex min-h-[4.25rem] items-center gap-2">
+              <div className="flex min-h-14 items-center gap-2">
                 <button
                   type="button"
                   onClick={() =>
                     setExpandedStaff((current) => ({ ...current, [m.id]: !current[m.id] }))
                   }
                   aria-expanded={expanded}
-                  className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-muted/45 focus:outline-none focus:ring-2 focus:ring-foreground/15"
+                  className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg px-1.5 py-1 text-left transition hover:bg-muted/45 focus:outline-none focus:ring-2 focus:ring-foreground/15"
                 >
-                  <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full bg-muted">
+                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-muted">
                     {m.photo_url ? (
                       <img src={m.photo_url} alt={m.name} className="h-full w-full object-cover" />
                     ) : (
@@ -913,14 +910,14 @@ function TeamPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 items-center gap-2">
-                      <h3 className="min-w-0 break-words text-sm font-semibold leading-tight">{m.name}</h3>
+                      <h3 className="min-w-0 truncate text-sm font-semibold leading-tight">{m.name}</h3>
                       <span className={`h-2 w-2 shrink-0 rounded-full ${accessState.dot}`} />
                     </div>
                     <div className="mt-1 flex min-w-0 items-center gap-2">
                       <span
                         className={`inline-flex max-w-full min-w-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${accessState.badge}`}
                       >
-                        <span className="min-w-0 whitespace-normal break-words leading-tight">{accessState.label}</span>
+                        <span className="min-w-0 truncate leading-tight">{accessState.label}</span>
                       </span>
                       {m.rating !== null && (
                         <span className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
@@ -940,18 +937,18 @@ function TeamPage() {
                   <button
                     type="button"
                     onClick={() => setEditing(m)}
-                    className="rounded-lg border border-border p-1.5 text-muted-foreground transition hover:text-foreground"
-                    aria-label="Editar"
+                    className="grid h-11 w-11 place-items-center rounded-xl border border-border/75 text-muted-foreground transition hover:border-foreground/20 hover:bg-muted/45 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-foreground/15"
+                    aria-label={`Editar ${m.name}`}
                   >
-                    <Pencil className="h-3.5 w-3.5" />
+                    <Pencil className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => remove(m.id)}
-                    className="rounded-lg border border-border p-1.5 text-muted-foreground transition hover:text-foreground"
-                    aria-label="Eliminar"
+                    className="grid h-11 w-11 place-items-center rounded-xl border border-border/75 text-muted-foreground transition hover:border-foreground/20 hover:bg-muted/45 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-foreground/15"
+                    aria-label={`Eliminar ${m.name}`}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               </div>
