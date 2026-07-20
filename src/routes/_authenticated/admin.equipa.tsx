@@ -920,8 +920,9 @@ function TeamPage() {
                         <span className="min-w-0 truncate leading-tight">{accessState.label}</span>
                       </span>
                       {m.rating !== null && (
-                        <span className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
-                          <Star className="h-3 w-3 fill-foreground" /> {Number(m.rating).toFixed(1)}
+                        <span className="hidden min-w-fit shrink-0 items-center gap-1 whitespace-nowrap text-[11px] leading-none text-muted-foreground sm:inline-flex">
+                          <Star className="h-3 w-3 shrink-0 fill-foreground" />
+                          <span>{Number(m.rating).toFixed(1)}</span>
                           {m.reviews_count ? <span>· {m.reviews_count}</span> : null}
                         </span>
                       )}
