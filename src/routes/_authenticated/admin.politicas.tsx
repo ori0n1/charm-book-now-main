@@ -36,7 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { ExpandableList } from "@/components/ui/expandable-list";
@@ -274,7 +273,7 @@ function AdminPoliciesPage() {
   }
 
   return (
-    <div className="w-full max-w-none space-y-3 px-3 pb-24 pt-3 md:px-5 md:pb-4 md:pt-4">
+    <div className="w-full max-w-full space-y-3 overflow-x-hidden px-3 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-3 md:px-5 md:pb-4 md:pt-4">
       <div className="flex flex-col gap-3 border-b border-border/60 pb-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -528,12 +527,12 @@ function ManageabilityPolicyPanel({
           />
         </div>
 
-        <div className="grid gap-3">
-          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
+        <div className="min-w-0">
+          <div className="min-w-0 rounded-xl border border-border/60 bg-muted/20 p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-foreground">Política de reembolso</h3>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground sm:text-sm">
+                <p className="mt-1 max-w-full whitespace-normal text-xs leading-snug text-muted-foreground [overflow-wrap:anywhere]">
                   Escolha o que acontece quando a cliente cancela dentro do prazo permitido.
                 </p>
               </div>
@@ -548,22 +547,22 @@ function ManageabilityPolicyPanel({
                 }
               />
             </div>
-            <div className="mt-3 grid gap-1.5 rounded-xl bg-background/50 p-1 sm:grid-cols-3">
+            <div className="mt-3 min-w-0 overflow-hidden rounded-xl border border-border/60 bg-background/50 sm:grid sm:auto-rows-fr sm:grid-cols-3 sm:divide-x sm:divide-y-0 sm:divide-border/60">
               {[
                 [
                   "refund_allowed",
                   "Permitir reembolso",
-                  "A cliente pode pedir reembolso quando cancelar dentro do prazo.",
+                  "Cliente pode solicitar a devolução.",
                 ],
                 [
                   "reschedule_only",
                   "Apenas remarcação",
-                  "O valor fica válido para remarcar, sem pedido de devolução.",
+                  "Valor disponível apenas para remarcar.",
                 ],
                 [
                   "non_refundable",
                   "Sem reembolso",
-                  "O pagamento ou sinal não gera pedido de reembolso automático.",
+                  "Não permite pedido de devolução.",
                 ],
               ].map(([value, label, description]) => (
                 <button
@@ -579,40 +578,53 @@ function ManageabilityPolicyPanel({
                     )
                   }
                   className={cn(
-                    "min-h-11 rounded-lg border px-3 py-2 text-center text-xs font-semibold transition hover:bg-muted/60 focus:outline-none focus:ring-2 focus:ring-ring",
+                    "grid min-h-[3.5rem] w-full min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-b border-border/60 px-3 py-2 text-left transition last:border-b-0 hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring sm:min-h-[4.75rem] sm:grid-cols-1 sm:justify-items-center sm:border-b-0 sm:px-2.5 sm:text-center",
                     draft.cancellation_after_deadline_policy === value
-                      ? "border-foreground/40 bg-card text-foreground shadow-sm ring-1 ring-foreground/10"
-                      : "border-transparent bg-transparent text-foreground",
+                      ? "bg-primary/10 text-foreground ring-1 ring-inset ring-primary/35"
+                      : "bg-transparent text-foreground",
                   )}
                 >
-                  <span className="block leading-tight">{label}</span>
-                  <span className="mt-0.5 block text-[11px] font-medium leading-snug text-muted-foreground">
-                    {description}
+                  <span
+                    className={cn(
+                      "h-2.5 w-2.5 rounded-full border border-muted-foreground/50 sm:mt-0.5",
+                      draft.cancellation_after_deadline_policy === value && "border-primary bg-primary",
+                    )}
+                  />
+                  <span className="min-w-0 max-w-full">
+                    <span className="block max-w-full whitespace-normal text-xs font-semibold leading-tight [overflow-wrap:anywhere]">
+                      {label}
+                    </span>
+                    <span className="mt-0.5 block max-w-full whitespace-normal text-[11px] font-medium leading-snug text-muted-foreground [overflow-wrap:anywhere]">
+                      {description}
+                    </span>
                   </span>
                 </button>
               ))}
             </div>
-          </div>
 
-          <div className="rounded-xl border border-border/60 bg-muted/20 p-3">
-            <h3 className="text-sm font-semibold text-foreground">Texto visível para clientes</h3>
-            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              Este texto aparece na experiência pública para explicar as regras do estúdio em
-              linguagem simples.
-            </p>
-            <div className="mt-2 flex justify-end text-[11px] text-muted-foreground">
-              {(draft.cancellation_policy_text ?? "").length} caracteres
+            <div className="mt-3 border-t border-border/60 pt-3">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold text-foreground">Texto visível para clientes</h3>
+                  <p className="mt-0.5 max-w-full whitespace-normal text-xs leading-snug text-muted-foreground [overflow-wrap:anywhere]">
+                    Mensagem apresentada ao cliente.
+                  </p>
+                </div>
+                <span className="shrink-0 text-[11px] text-muted-foreground">
+                  {(draft.cancellation_policy_text ?? "").length}/160
+                </span>
+              </div>
+              <Textarea
+                className="mt-2 min-h-[4.5rem] resize-y text-sm leading-relaxed"
+                value={draft.cancellation_policy_text ?? ""}
+                onChange={(event) =>
+                  onChange({
+                    ...updatePolicySetting(draft, "cancellation", { text: event.target.value }),
+                    cancellation_policy_text: event.target.value,
+                  })
+                }
+              />
             </div>
-            <Textarea
-              className="mt-2 min-h-20 resize-y text-sm leading-relaxed"
-              value={draft.cancellation_policy_text ?? ""}
-              onChange={(event) =>
-                onChange({
-                  ...updatePolicySetting(draft, "cancellation", { text: event.target.value }),
-                  cancellation_policy_text: event.target.value,
-                })
-              }
-            />
           </div>
         </div>
       </div>
@@ -657,10 +669,11 @@ function PolicyRuleCard({
         </div>
       </div>
 
-      <div className="mt-2 rounded-lg bg-card/80 px-3 py-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-          {exampleTitle}
-        </p>
+      <details className="mt-2 rounded-lg bg-card/70 px-3 py-2">
+        <summary className="cursor-pointer list-none text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          <span className="sr-only">{exampleTitle}. </span>
+          Como funciona o prazo de 24 horas?
+        </summary>
         <div className="mt-2 grid gap-1.5 text-sm sm:grid-cols-3">
           <ExampleItem label="Reserva" value="03/07 às 16:00" />
           <ExampleItem label={`Pode ${actionLabel} até`} value={exampleDeadline} />
@@ -674,7 +687,7 @@ function PolicyRuleCard({
           Outro exemplo: reserva em 10/08 às 09:00. Último momento para {actionLabel}: 09/08 às
           09:00 quando o prazo é 24 horas.
         </div>
-      </div>
+      </details>
     </div>
   );
 }
@@ -1073,21 +1086,39 @@ function RefundPolicySwitch({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex min-h-11 shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-1">
+    <div className="flex min-h-11 shrink-0 items-center gap-2">
       <span
         className={cn(
-          "text-xs font-semibold leading-none transition-colors",
+          "whitespace-nowrap text-xs font-semibold leading-none transition-colors",
           checked ? "text-foreground" : "text-muted-foreground",
         )}
       >
         {checked ? "Política ativa" : "Política inativa"}
       </span>
-      <Switch
-        checked={checked}
-        onCheckedChange={onCheckedChange}
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
         aria-label={checked ? "Desativar política de reembolso" : "Ativar política de reembolso"}
-        className="relative !h-6 !w-11 !shrink-0 !rounded-full border-2 border-transparent bg-muted p-0 shadow-none after:absolute after:-inset-2.5 after:content-[''] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 data-[state=checked]:bg-primary data-[state=unchecked]:bg-muted-foreground/30 [&>span]:!h-5 [&>span]:!w-5 [&>span]:!rounded-full [&>span]:bg-background [&>span]:shadow-sm [&>span]:data-[state=checked]:!translate-x-5 [&>span]:data-[state=unchecked]:!translate-x-0"
-      />
+        onClick={() => onCheckedChange(!checked)}
+        className="relative grid h-11 w-12 shrink-0 place-items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      >
+        <span
+          aria-hidden="true"
+          className={cn(
+            "relative block h-6 w-11 rounded-full transition-colors duration-200",
+            checked ? "bg-primary" : "bg-muted-foreground/30",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-background shadow-sm transition-transform duration-200",
+              checked && "translate-x-5",
+            )}
+          />
+        </span>
+        <span className="sr-only">{checked ? "Política ativa" : "Política inativa"}</span>
+      </button>
     </div>
   );
 }
