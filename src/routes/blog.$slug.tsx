@@ -62,7 +62,7 @@ function BlogArticlePage() {
 
   if (!article) {
     return (
-      <div className="public-shell min-h-screen">
+      <div className="public-shell public-site-theme min-h-screen">
         <LandingHeader />
         <main className="mx-auto max-w-3xl px-4 py-20 text-center sm:px-6">
           <h1 className="text-3xl font-semibold tracking-tight">Artigo não encontrado</h1>
@@ -79,7 +79,7 @@ function BlogArticlePage() {
   const related = getRelatedBlogArticles(article);
 
   return (
-    <div className="public-shell min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
       <script
         type="application/ld+json"
@@ -109,7 +109,7 @@ function BlogArticlePage() {
 
             <div className="grid gap-8 lg:grid-cols-[minmax(0,0.95fr)_minmax(24rem,0.72fr)] lg:items-center">
               <div className="min-w-0">
-                <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/70 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur">
+                <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/90 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur">
                   {article.category}
                 </div>
                 <h1 className="mt-5 text-balance text-4xl font-semibold leading-tight tracking-tight sm:text-6xl">
@@ -133,7 +133,7 @@ function BlogArticlePage() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-[1.65rem] border border-border/80 bg-muted shadow-xl shadow-black/10">
+              <div className="public-card overflow-hidden">
                 <img
                   src={article.coverImage}
                   alt={article.coverAlt}
@@ -149,8 +149,8 @@ function BlogArticlePage() {
 
           <section className="mx-auto grid max-w-7xl gap-8 px-4 pb-14 sm:px-6 lg:grid-cols-[16rem_minmax(0,44rem)_16rem] lg:items-start">
             <aside className="lg:sticky lg:top-24">
-              <div className="rounded-[1.35rem] border border-border/80 bg-card/74 p-4 shadow-sm shadow-black/5">
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">
+              <div className="public-card p-4">
+                <p className="public-section-label">
                   Índice
                 </p>
                 <ol className="mt-4 grid gap-2 text-sm font-semibold text-muted-foreground">
@@ -166,7 +166,7 @@ function BlogArticlePage() {
             </aside>
 
             <div className="min-w-0">
-              <div className="rounded-[1.55rem] border border-border/80 bg-card/82 p-5 shadow-sm shadow-black/5 sm:p-8">
+              <div className="public-card p-5 sm:p-8">
                 <p className="text-lg font-medium leading-relaxed text-foreground/85">
                   {article.excerpt}
                 </p>
@@ -175,7 +175,7 @@ function BlogArticlePage() {
                   {article.sections.map((section) => (
                     <section key={section.id} id={section.id} className="scroll-mt-28">
                       {section.eyebrow && (
-                        <p className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">
+                        <p className="public-section-label">
                           {section.eyebrow}
                         </p>
                       )}
@@ -192,7 +192,7 @@ function BlogArticlePage() {
                           {section.bullets.map((item) => (
                             <li
                               key={item}
-                              className="rounded-2xl border border-border/80 bg-background/70 px-4 py-3 text-sm font-semibold text-foreground"
+                              className="rounded-2xl border border-border bg-muted/45 px-4 py-3 text-sm font-semibold text-foreground"
                             >
                               {item}
                             </li>
@@ -203,7 +203,7 @@ function BlogArticlePage() {
                   ))}
                 </div>
 
-                <section className="mt-10 rounded-[1.35rem] border border-border/80 bg-background/72 p-5">
+                <section className="mt-10 rounded-2xl border border-border bg-muted/45 p-5">
                   <h2 className="text-2xl font-semibold tracking-tight">Conclusão</h2>
                   <div className="mt-4 space-y-4 text-base leading-relaxed text-muted-foreground">
                     {article.conclusion.map((paragraph) => (
@@ -212,12 +212,12 @@ function BlogArticlePage() {
                   </div>
                 </section>
 
-                <section className="mt-8 rounded-[1.45rem] bg-foreground p-5 text-background shadow-xl shadow-black/10 sm:p-6">
+                <section className="public-card public-final-cta mt-8 p-5 sm:p-6">
                   <h2 className="text-2xl font-semibold tracking-tight">{article.cta.title}</h2>
-                  <p className="mt-2 text-sm leading-relaxed text-background/68">{article.cta.body}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{article.cta.body}</p>
                   <a
                     href={article.cta.href}
-                    className="mt-5 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-background px-5 text-sm font-bold text-foreground transition hover:-translate-y-0.5"
+                    className="public-btn-primary mt-5"
                   >
                     {article.cta.label}
                     <ArrowRight className="size-4" />
@@ -227,15 +227,15 @@ function BlogArticlePage() {
             </div>
 
             <aside className="hidden lg:block lg:sticky lg:top-24">
-              <div className="rounded-[1.35rem] border border-border/80 bg-card/74 p-4 shadow-sm shadow-black/5">
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-muted-foreground">
+              <div className="public-card p-4">
+                <p className="public-section-label">
                   Palavras-chave
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   {article.keywords.map((keyword) => (
                     <span
                       key={keyword}
-                      className="rounded-full border border-border/80 bg-background/70 px-3 py-1 text-[11px] font-semibold text-muted-foreground"
+                      className="rounded-full border border-border bg-muted/45 px-3 py-1 text-[11px] font-semibold text-muted-foreground"
                     >
                       {keyword}
                     </span>
@@ -249,7 +249,7 @@ function BlogArticlePage() {
         {related.length > 0 && (
           <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
             <div className="mb-5">
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Leia também</p>
+              <p className="public-section-label">Leia também</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">Artigos relacionados</h2>
             </div>
             <div className="grid gap-5 md:grid-cols-3">

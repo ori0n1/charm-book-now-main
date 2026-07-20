@@ -10,7 +10,7 @@ export function BlogCard({
   compact?: boolean;
 }) {
   return (
-    <article className="group overflow-hidden rounded-[1.45rem] border border-border/80 bg-card/74 shadow-sm shadow-black/5 transition duration-200 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-xl hover:shadow-black/10">
+    <article className="public-card group overflow-hidden transition duration-200 hover:-translate-y-1 hover:border-accent/40 hover:shadow-lg">
       <Link to="/blog/$slug" params={{ slug: article.slug }} className="block">
         <div className="relative aspect-[16/9] overflow-hidden bg-muted">
           <img
@@ -22,7 +22,7 @@ export function BlogCard({
             height={675}
             className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.035]"
           />
-          <div className="absolute left-3 top-3 rounded-full border border-white/45 bg-background/86 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-foreground shadow-sm backdrop-blur">
+          <div className="absolute left-3 top-3 rounded-full border border-border bg-card/90 px-3 py-1 text-[10px] font-semibold text-foreground shadow-sm backdrop-blur">
             {article.category}
           </div>
         </div>
@@ -41,7 +41,7 @@ export function BlogCard({
           <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-muted-foreground">
             {article.excerpt}
           </p>
-          <span className="mt-5 inline-flex items-center gap-2 text-sm font-bold text-foreground">
+          <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-accent">
             Ler artigo
             <ArrowUpRight className="size-4 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
           </span>

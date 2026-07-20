@@ -1,8 +1,6 @@
 import type { ReactNode } from "react";
-import { Link } from "@tanstack/react-router";
-import { BellzaLogo } from "@/components/bellza-logo";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { LandingFooter } from "@/components/landing/landing-footer";
+import { LandingHeader } from "@/components/landing/landing-header";
 import { APP_BRAND } from "@/lib/app-brand";
 
 type LegalPageLayoutProps = {
@@ -14,26 +12,18 @@ type LegalPageLayoutProps = {
 
 export function LegalPageLayout({ title, updatedAt, description, children }: LegalPageLayoutProps) {
   return (
-    <div className="public-shell min-h-screen">
+    <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
-      <header className="public-nav">
-        <div className="mx-auto flex max-w-3xl items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
-          <BellzaLogo variant="navbar" />
-          <div className="flex items-center gap-2">
-            <Link to="/" className="public-btn-ghost hidden sm:inline-flex">
-              Início
-            </Link>
-            <ThemeToggle className="size-9" />
-          </div>
-        </div>
-      </header>
+      <LandingHeader />
 
-      <main className="relative mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
-        <p className="public-section-label">{APP_BRAND.name}</p>
-        <h1 className="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h1>
-        {description && <p className="mt-3 max-w-2xl text-sm text-muted-foreground">{description}</p>}
-        <p className="mt-2 text-xs text-muted-foreground">Última atualização: {updatedAt}</p>
-        <div className="public-prose mt-10">{children}</div>
+      <main className="relative mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
+        <header className="public-card p-6 sm:p-8">
+          <p className="public-section-label">{APP_BRAND.name}</p>
+          <h1 className="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">{title}</h1>
+          {description && <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted-foreground">{description}</p>}
+          <p className="mt-3 text-xs text-muted-foreground">{"\u00daltima atualiza\u00e7\u00e3o"}: {updatedAt}</p>
+        </header>
+        <div className="public-card public-prose mt-5 p-6 sm:p-8">{children}</div>
       </main>
 
       <LandingFooter />

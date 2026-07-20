@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { CalendarCheck, CheckCircle2, CreditCard, ShieldCheck } from "lucide-react";
 import { BellzaLogo } from "@/components/bellza-logo";
+import { LandingFooter } from "@/components/landing/landing-footer";
+import { LandingHeader } from "@/components/landing/landing-header";
 import { APP_BRAND } from "@/lib/app-brand";
 import { cn } from "@/lib/utils";
 
@@ -23,10 +25,12 @@ export function AuthPageLayout({
   const isLogin = variant === "login";
 
   return (
-    <div className="public-shell public-site-theme public-auth-surface min-h-dvh overflow-x-hidden">
+    <div className="public-shell public-site-theme public-auth-surface min-h-screen overflow-x-hidden">
+      <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
+      <LandingHeader />
       <div
         className={cn(
-          "relative mx-auto grid min-h-dvh w-full max-w-7xl gap-8 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_0.92fr] lg:items-center lg:py-10",
+          "relative mx-auto grid w-full max-w-7xl gap-8 px-4 py-8 sm:px-6 sm:py-10 lg:grid-cols-[1fr_0.92fr] lg:items-center lg:py-14",
           !isLogin && "lg:grid-cols-[0.9fr_0.9fr]",
         )}
       >
@@ -35,10 +39,6 @@ export function AuthPageLayout({
         </aside>
 
         <main className="flex min-w-0 flex-col justify-center">
-          <div className="mb-7 flex items-center justify-center lg:hidden">
-            <BellzaLogo variant="mobile" />
-          </div>
-
           <div className="public-card public-auth-card mx-auto w-full max-w-[28rem] p-5 sm:p-6 lg:p-7">
             <Link
               to="/"
@@ -65,6 +65,7 @@ export function AuthPageLayout({
           </div>
         </main>
       </div>
+      <LandingFooter />
     </div>
   );
 }

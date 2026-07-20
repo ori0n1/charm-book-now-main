@@ -1,8 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Check, Loader2, LockKeyhole, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
+import { LandingFooter } from "@/components/landing/landing-footer";
+import { LandingHeader } from "@/components/landing/landing-header";
 import { supabase } from "@/integrations/supabase/client";
 import { acceptStaffInviteLink, getStaffInviteLink } from "@/lib/access.functions";
 import { APP_BRAND } from "@/lib/app-brand";
@@ -81,48 +83,48 @@ function TeamInvitePage() {
 
   if (checking) {
     return (
-      <main className="grid min-h-screen place-items-center bg-background px-6">
+      <InviteShell>
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </main>
+      </InviteShell>
     );
   }
 
   if (!invite || ["cancelled", "expired"].includes(invite.status)) {
     return (
-      <main className="grid min-h-screen place-items-center bg-background px-6 py-12">
+      <InviteShell>
         <div className="w-full max-w-sm text-center">
-          <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+          <p className="public-section-label">
             Convite indisponivel
           </p>
-          <h1 className="mt-3 text-2xl font-light tracking-tight">Solicite um novo link</h1>
+          <h1 className="mt-3 text-2xl font-semibold tracking-tight">Solicite um novo link</h1>
           <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             Este convite foi cancelado ou expirou.
           </p>
-          <Link to="/login" className="mt-6 inline-flex text-sm font-medium underline">
+          <Link to="/login" className="public-btn-primary mt-6">
             Ir para login
           </Link>
         </div>
-      </main>
+      </InviteShell>
     );
   }
 
   if (invite.status === "active" || invite.status === "password_created") {
     return (
-      <main className="grid min-h-screen place-items-center bg-background px-6 py-12">
+      <InviteShell>
         <div className="w-full max-w-sm text-center">
-          <Check className="mx-auto h-8 w-8" />
-          <h1 className="mt-4 text-2xl font-light tracking-tight">Conta ja ativada</h1>
-          <Link to="/login" className="mt-6 inline-flex text-sm font-medium underline">
+          <Check className="mx-auto h-8 w-8 text-accent" />
+          <h1 className="mt-4 text-2xl font-semibold tracking-tight">Conta ja ativada</h1>
+          <Link to="/login" className="public-btn-primary mt-6">
             Entrar no painel
           </Link>
         </div>
-      </main>
+      </InviteShell>
     );
   }
 
   return (
-    <main className="min-h-screen bg-background px-4 py-6 sm:grid sm:place-items-center sm:px-6">
-      <div className="mx-auto w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl shadow-black/10">
+    <InviteShell>
+      <div className="public-card mx-auto w-full max-w-md p-5 sm:p-6">
         <div className="flex items-center gap-3">
           <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-full bg-muted">
             {invite.photoUrl ? (
@@ -132,10 +134,10 @@ function TeamInvitePage() {
             )}
           </div>
           <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
+            <p className="public-section-label">
               Convite para acesso
             </p>
-            <h1 className="truncate text-xl font-light tracking-tight">{invite.studioName}</h1>
+            <h1 className="truncate text-xl font-semibold tracking-tight">{invite.studioName}</h1>
             <p className="truncate text-sm text-muted-foreground">
               {invite.staffName}
               {invite.staffRole ? ` · ${invite.staffRole}` : ""}
@@ -151,7 +153,7 @@ function TeamInvitePage() {
                 value={code}
                 onChange={(event) => setCode(event.target.value.toUpperCase())}
                 placeholder="Ex.: A1B2C3"
-                className="mt-1 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-foreground/40"
+                className="public-input mt-1 w-full"
               />
             </label>
           )}
@@ -164,7 +166,7 @@ function TeamInvitePage() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder="Minimo 6 caracteres"
-              className="mt-1 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-foreground/40"
+              className="public-input mt-1 w-full"
             />
           </label>
           <label className="block text-xs">
@@ -176,19 +178,30 @@ function TeamInvitePage() {
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
               placeholder="Repita a palavra-passe"
-              className="mt-1 h-11 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-foreground/40"
+              className="public-input mt-1 w-full"
             />
           </label>
           <button
             type="submit"
             disabled={saving}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-foreground text-sm font-semibold text-background transition hover:opacity-90 disabled:opacity-60"
+            className="public-btn-primary w-full"
           >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
             Ativar acesso
           </button>
         </form>
       </div>
-    </main>
+    </InviteShell>
+  );
+}
+
+function InviteShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="public-shell public-site-theme public-auth-surface min-h-screen overflow-x-hidden">
+      <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
+      <LandingHeader />
+      <main className="relative grid min-h-[60vh] place-items-center px-4 py-10 sm:px-6 sm:py-14">{children}</main>
+      <LandingFooter />
+    </div>
   );
 }

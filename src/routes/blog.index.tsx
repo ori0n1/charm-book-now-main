@@ -72,7 +72,7 @@ function BlogIndexPage() {
   const visibleArticles = filteredArticles.slice(0, visible);
 
   return (
-    <div className="public-shell min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
       <script
         type="application/ld+json"
@@ -83,7 +83,7 @@ function BlogIndexPage() {
       <main>
         <section className="relative mx-auto max-w-7xl px-4 pb-10 pt-10 sm:px-6 sm:pb-14 sm:pt-16">
           <div className="mx-auto max-w-3xl text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-card/70 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur">
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card/90 px-3 py-1.5 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur">
               <BookOpenText className="size-3.5 text-accent" aria-hidden="true" />
               Blog Bellza
             </div>
@@ -95,7 +95,7 @@ function BlogIndexPage() {
             </p>
           </div>
 
-          <div className="mt-9 rounded-[1.45rem] border border-border/80 bg-card/74 p-3 shadow-sm shadow-black/5 backdrop-blur sm:p-4">
+          <div className="public-card mt-9 p-3 backdrop-blur sm:p-4">
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
               <label className="relative block">
                 <span className="sr-only">Pesquisar artigos</span>
@@ -107,10 +107,10 @@ function BlogIndexPage() {
                     setVisible(6);
                   }}
                   placeholder="Pesquisar por agenda, clientes, marketing..."
-                  className="h-12 w-full rounded-2xl border border-border/80 bg-background/80 pl-11 pr-4 text-sm font-medium outline-none transition focus:border-foreground/35 focus:ring-2 focus:ring-foreground/10"
+                  className="public-input h-12 w-full pl-11 pr-4 text-sm font-medium"
                 />
               </label>
-              <div className="flex max-w-full gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex max-w-full flex-wrap gap-2">
                 {["Todos", ...blogCategories].map((item) => (
                   <button
                     key={item}
@@ -119,10 +119,10 @@ function BlogIndexPage() {
                       setCategory(item);
                       setVisible(6);
                     }}
-                    className={`h-11 shrink-0 rounded-2xl border px-4 text-xs font-bold uppercase tracking-[0.13em] transition ${
+                    className={`shrink-0 px-4 text-xs transition ${
                       category === item
-                        ? "border-foreground bg-foreground text-background shadow-lg shadow-black/15"
-                        : "border-border/80 bg-background/60 text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+                        ? "public-btn-primary min-h-11"
+                        : "public-btn-secondary min-h-11 text-muted-foreground"
                     }`}
                   >
                     {item}
@@ -137,7 +137,7 @@ function BlogIndexPage() {
           <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
             <div className="mb-5 flex items-end justify-between gap-4">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Destaques</p>
+                <p className="public-section-label">Destaques</p>
                 <h2 className="mt-2 text-2xl font-semibold tracking-tight">Comece por aqui</h2>
               </div>
               <Sparkles className="hidden size-5 text-accent sm:block" />
@@ -153,7 +153,7 @@ function BlogIndexPage() {
         <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:pb-16">
           <div className="mb-5 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.22em] text-muted-foreground">Artigos recentes</p>
+              <p className="public-section-label">Artigos recentes</p>
               <h2 className="mt-2 text-2xl font-semibold tracking-tight">Estratégias para o dia a dia</h2>
             </div>
             <p className="text-sm text-muted-foreground">
@@ -182,7 +182,7 @@ function BlogIndexPage() {
               )}
             </>
           ) : (
-            <div className="rounded-[1.45rem] border border-dashed border-border bg-card/60 p-8 text-center">
+            <div className="public-card border-dashed p-8 text-center">
               <h2 className="text-xl font-semibold">Nenhum artigo encontrado</h2>
               <p className="mt-2 text-sm text-muted-foreground">
                 Experimente pesquisar por agenda online, clientes ou gestão de salão.
@@ -192,18 +192,18 @@ function BlogIndexPage() {
         </section>
 
         <section className="mx-auto max-w-7xl px-4 pb-16 sm:px-6">
-          <div className="rounded-[1.65rem] border border-border/80 bg-foreground p-6 text-background shadow-xl shadow-black/10 sm:p-8 md:flex md:items-center md:justify-between md:gap-8">
+          <div className="public-card public-final-cta p-6 sm:p-8 md:flex md:items-center md:justify-between md:gap-8">
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-background/50">Bellza</p>
+              <p className="public-section-label">Bellza</p>
               <h2 className="mt-3 text-2xl font-semibold tracking-tight">Transforme leitura em ação.</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-background/68">
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
                 Use a Bellza para organizar agenda, clientes, profissionais e comunicação num painel simples e premium.
               </p>
             </div>
             <Link
               to="/signup"
               search={{ ref: undefined }}
-              className="mt-5 inline-flex h-12 items-center justify-center rounded-full bg-background px-6 text-sm font-bold text-foreground transition hover:-translate-y-0.5 md:mt-0"
+              className="public-btn-primary mt-5 md:mt-0"
             >
               Criar conta
             </Link>
