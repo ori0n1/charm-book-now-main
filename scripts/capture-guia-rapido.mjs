@@ -5,6 +5,7 @@ import { join } from "node:path";
 const origin = process.env.BELLZA_CAPTURE_ORIGIN ?? "http://127.0.0.1:4178";
 const email = process.env.BELLZA_CAPTURE_EMAIL;
 const password = process.env.BELLZA_CAPTURE_PASSWORD;
+const tourStudioId = process.env.BELLZA_CAPTURE_TOUR_STUDIO_ID ?? "a8f52b91-4e2f-4f77-9e64-9be7ad8dd901";
 const outputDir = join(process.cwd(), "public", "docs", "guia-bellza", "prints");
 
 const desktopViewport = { width: 1440, height: 960 };
@@ -19,7 +20,7 @@ const captures = [
   { path: "/admin/agenda", file: "agenda-desktop.png", waitFor: "Agenda" },
   { path: "/admin/balcao", file: "balcao-desktop.png", waitFor: "Balcão" },
   { path: "/admin/clientes", file: "clientes-desktop.png", waitFor: "Clientes" },
-  { path: "/s/bellza", file: "publica-desktop.png", waitFor: "Bellza", public: true },
+  { path: "/s/bellza-studio-demo", file: "publica-desktop.png", waitFor: "Bellza Studio", public: true },
 ];
 
 if (!email || !password) {
@@ -33,6 +34,7 @@ await mkdir(outputDir, { recursive: true });
 const browser = await chromium.launch();
 try {
   const context = await browser.newContext({ viewport: desktopViewport, deviceScaleFactor: 2 });
+  await disableCaptureInterruptions(context);
   const page = await context.newPage();
   await login(page);
 
@@ -43,15 +45,24 @@ try {
   await context.close();
 
   const mobileContext = await browser.newContext(mobileDevice);
+  await disableCaptureInterruptions(mobileContext);
   const mobilePage = await mobileContext.newPage();
   await login(mobilePage);
-  await capturePage(mobilePage, { path: "/admin", file: "inicio-mobile.png", waitFor: "Início" }, {
+  await capturePage(mobilePage, { path: "/admin", file: "inicio-mobile.png", waitFor: "Boa noite" }, {
     width: mobileDevice.viewport.width,
     height: mobileDevice.viewport.height,
   });
   await mobileContext.close();
 } finally {
   await browser.close();
+}
+
+async function disableCaptureInterruptions(context) {
+  await context.addInitScript((studioId) => {
+    for (const role of ["studio_owner", "manager", "staff", "desk_staff", "saas_owner"]) {
+      window.localStorage.setItem(`bellza:admin-quick-tour:${studioId}:${role}`, "skipped");
+    }
+  }, tourStudioId);
 }
 
 async function login(page) {
@@ -64,7 +75,7 @@ async function login(page) {
   if (page.url().includes("/admin")) return;
 
   await page.getByLabel("Email ou WhatsApp").fill(email);
-  await page.getByLabel("Palavra-passe").fill(password);
+  await page.locator('input[name="password"]').fill(password);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
   await page.waitForURL(/\/admin(\/.*)?$/, { timeout: 30000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => undefined);
@@ -85,6 +96,11 @@ async function capturePage(page, capture, viewport) {
   } else {
     try {
       await page.locator(".admin-content").waitFor({ state: "visible", timeout: 30000 });
+      await page.getByText(capture.waitFor, { exact: false }).first().waitFor({ state: "visible", timeout: 30000 });
+      const currentPath = new URL(page.url()).pathname;
+      if (currentPath !== capture.path && !currentPath.startsWith(`${capture.path}/`)) {
+        throw new Error(`Rota inesperada: esperado ${capture.path}, obtido ${currentPath}`);
+      }
     } catch (error) {
       await page.screenshot({ path: join(outputDir, `debug-${capture.file}`), fullPage: true });
       const text = await page.locator("body").innerText().catch(() => "");
@@ -105,7 +121,7 @@ async function capturePage(page, capture, viewport) {
         [data-guide-hidden="true"] { display: none !important; }
         .fixed:not([data-keep-guide-fixed]) { display: none !important; }
         main { margin: 0 !important; }
-        .admin-content { max-width: 1180px !important; margin-inline: auto !important; padding: 24px !important; }
+        .admin-content { max-width: 1320px !important; margin-inline: auto !important; padding: 24px !important; }
         body { background: var(--color-background) !important; }
       `,
     });
