@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bellza-pwa-v20260707-safe-update";
+const CACHE_VERSION = "bellza-pwa-v20260724-visual-update";
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const STATIC_ASSETS = [
   "/bellza-logo.png",
@@ -10,7 +10,8 @@ self.addEventListener("install", (event) => {
     caches
       .open(APP_CACHE)
       .then((cache) => cache.addAll(STATIC_ASSETS))
-      .catch(() => undefined),
+      .catch(() => undefined)
+      .then(() => self.skipWaiting()),
   );
 });
 

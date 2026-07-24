@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-test("PWA update strategy does not force reload or unsafe activation", async ({ page }) => {
+test("PWA updates activate without forcing a page reload", async ({ page }) => {
   const swResponse = await page.request.get("/sw.js");
   expect(swResponse.ok()).toBeTruthy();
   const sw = await swResponse.text();
 
-  expect(sw).not.toContain("skipWaiting(");
+  expect(sw).toContain("self.skipWaiting()");
   expect(sw).not.toContain("BELLZA_SW_SKIP_WAITING");
   expect(sw).not.toContain("location.reload");
   expect(sw).toContain("pushsubscriptionchange");
