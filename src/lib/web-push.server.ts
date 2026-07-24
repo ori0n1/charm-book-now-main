@@ -54,7 +54,7 @@ export async function sendWebPush(subscription: PushSubscriptionRow, payload: Pu
             "Content-Encoding": "aes128gcm",
             "Content-Type": "application/octet-stream",
             TTL: "3600",
-            Urgency: "normal",
+            Urgency: "high",
           },
           body,
           signal: controller.signal,

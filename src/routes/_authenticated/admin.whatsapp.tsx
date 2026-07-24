@@ -220,8 +220,12 @@ function WhatsAppPage() {
     if (!studio) return;
     setBusy(true);
     try {
-      await testMessage({ data: { studioId: studio.id, phone: testPhone } });
-      toast.success("Mensagem de teste enviada.");
+      const result = await testMessage({ data: { studioId: studio.id, phone: testPhone } });
+      if (result.delivered) {
+        toast.success("Mensagem de teste entregue no WhatsApp.");
+      } else {
+        toast.info("Mensagem aceite pela operadora. A aguardar confirmação de entrega.");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha no teste.");
     } finally {
@@ -242,11 +246,15 @@ function WhatsAppPage() {
         },
       });
       if ((result as any)?.skipped === "cooldown") {
-        toast.info("Já foi enviado um aviso deste tipo há pouco tempo. Tente novamente mais tarde.");
+        toast.info(
+          "Já foi enviado um aviso deste tipo há pouco tempo. Tente novamente mais tarde.",
+        );
       } else if ((result as any)?.skipped === "no_followers") {
         toast.info("Ainda não existem clientes seguidores para este estúdio.");
       } else if ((result as any)?.sent === 0) {
-        toast.success("Aviso guardado na central dos seguidores. Ative as permissões push para receber fora do app.");
+        toast.success(
+          "Aviso guardado na central dos seguidores. Ative as permissões push para receber fora do app.",
+        );
       } else {
         toast.success("Aviso enviado à comunidade do estúdio.");
       }
@@ -283,21 +291,29 @@ function WhatsAppPage() {
         <p className="px-4 pt-4 text-[10px] font-bold uppercase tracking-[0.24em] text-muted-foreground md:px-5 md:pt-5">
           Configurações
         </p>
-        <h1 className="mt-1.5 px-4 text-2xl font-semibold tracking-tight md:px-5 md:text-3xl">Comunicação</h1>
+        <h1 className="mt-1.5 px-4 text-2xl font-semibold tracking-tight md:px-5 md:text-3xl">
+          Comunicação
+        </h1>
         <p className="max-w-2xl px-4 pb-4 pt-2 text-sm leading-relaxed text-muted-foreground md:px-5 md:pb-5">
           Envie avisos para seguidores do app do estúdio e mantenha as confirmações por WhatsApp.
         </p>
         <div className="grid grid-cols-3 gap-2 border-t border-border/70 bg-muted/20 p-3 md:p-4">
           <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Canais</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+              Canais
+            </p>
             <p className="mt-1 text-lg font-semibold leading-none">2</p>
           </div>
           <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Avisos</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+              Avisos
+            </p>
             <p className="mt-1 text-lg font-semibold leading-none">{communityCampaigns.length}</p>
           </div>
           <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">WhatsApp</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+              WhatsApp
+            </p>
             <p className="mt-1 text-sm font-semibold leading-none">
               {currentSettings.autoSendEnabled ? "Ativo" : "Pausado"}
             </p>
@@ -315,9 +331,12 @@ function WhatsAppPage() {
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
                 Notificações inteligentes
               </p>
-              <h2 className="mt-1 text-base font-semibold tracking-tight md:text-lg">Comunidade privada do estúdio</h2>
+              <h2 className="mt-1 text-base font-semibold tracking-tight md:text-lg">
+                Comunidade privada do estúdio
+              </h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground md:text-sm">
-                Envie avisos relevantes para clientes seguidores, com histórico no app e push apenas para quem autorizou.
+                Envie avisos relevantes para clientes seguidores, com histórico no app e push apenas
+                para quem autorizou.
               </p>
             </div>
           </div>
@@ -406,7 +425,8 @@ function WhatsAppPage() {
 
             <div className="flex flex-col gap-2 rounded-2xl bg-muted/10 p-3 text-xs leading-relaxed text-muted-foreground ring-1 ring-border/35 sm:flex-row sm:items-center sm:justify-between">
               <span className="min-w-0">
-                Para evitar spam, avisos repetidos do mesmo tipo ficam limitados por um curto intervalo.
+                Para evitar spam, avisos repetidos do mesmo tipo ficam limitados por um curto
+                intervalo.
               </span>
               <span className="w-fit shrink-0 rounded-full bg-background/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 Envio com consentimento
@@ -416,14 +436,20 @@ function WhatsAppPage() {
 
           <aside className="flex min-w-0 flex-col justify-between rounded-[1.15rem] bg-background/60 p-4 ring-1 ring-border/50">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Pré-visualização</p>
+              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                Pré-visualização
+              </p>
               <div className="mt-2.5 rounded-[1.15rem] bg-card p-3.5 shadow-sm ring-1 ring-border/45">
                 <div className="flex items-start gap-3">
-                  <span className={`grid size-9 shrink-0 place-items-center rounded-xl ${selectedCommunityKind.tone}`}>
+                  <span
+                    className={`grid size-9 shrink-0 place-items-center rounded-xl ${selectedCommunityKind.tone}`}
+                  >
                     <SelectedCommunityIcon className="h-4 w-4" />
                   </span>
                   <div className="min-w-0">
-                    <p className="line-clamp-2 break-normal text-sm font-semibold leading-snug hyphens-none">{communityTitle || selectedCommunityKind.title}</p>
+                    <p className="line-clamp-2 break-normal text-sm font-semibold leading-snug hyphens-none">
+                      {communityTitle || selectedCommunityKind.title}
+                    </p>
                     <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
                       {communityBody || selectedCommunityKind.body}
                     </p>
@@ -431,14 +457,17 @@ function WhatsAppPage() {
                 </div>
               </div>
               <p className="mt-3 text-xs leading-relaxed text-muted-foreground/85">
-                O aviso aparece na central do cliente e, quando permitido pelo navegador, também chega como push no PWA.
+                O aviso aparece na central do cliente e, quando permitido pelo navegador, também
+                chega como push no PWA.
               </p>
             </div>
 
             <button
               type="button"
               onClick={sendCommunityNotification}
-              disabled={communityBusy || communityTitle.trim().length < 3 || communityBody.trim().length < 8}
+              disabled={
+                communityBusy || communityTitle.trim().length < 3 || communityBody.trim().length < 8
+              }
               className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-bold uppercase tracking-[0.08em] text-background shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Send className="h-4 w-4" />
@@ -457,8 +486,8 @@ function WhatsAppPage() {
             <div className="min-w-0">
               <p className="text-sm font-semibold">Envio por WhatsApp</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Número de envio: {currentSettings.fromNumber || "Send.dm"}. Use esta área para afinar a
-                mensagem antes de ativar o envio automático.
+                Canal de envio gerido pela Send.dm. Use esta área para afinar a mensagem antes de
+                ativar o envio automático.
               </p>
             </div>
           </div>
@@ -484,45 +513,45 @@ function WhatsAppPage() {
 
       {showWhatsAppDetails && (
         <section className="rounded-[1.35rem] border border-border/80 bg-card p-3.5 shadow-sm md:p-4">
-        <label className="block">
-          <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-            Mensagem padrão
-          </span>
-          <textarea
-            value={currentSettings.messageTemplate}
-            rows={4}
-            onChange={(event) =>
-              setSettings((current) =>
-                current ? { ...current, messageTemplate: event.target.value } : current,
-              )
-            }
-            onBlur={(event) => save({ messageTemplate: event.target.value || DEFAULT_TEMPLATE })}
-            className="box-border w-full min-w-0 resize-y rounded-2xl border border-border bg-background/85 px-3.5 py-2.5 text-sm leading-relaxed shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
-          />
-        </label>
-
-        <div className="mt-3 grid gap-3 rounded-2xl border border-border/80 bg-background/55 p-3 md:grid-cols-[1fr_auto] md:items-end">
           <label className="block">
             <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-              Testar envio
+              Mensagem padrão
             </span>
-            <input
-              value={testPhone}
-              onChange={(event) => setTestPhone(event.target.value)}
-              placeholder="+351912345678"
-              className="box-border h-10 w-full min-w-0 rounded-2xl border border-border bg-background/85 px-3.5 text-sm shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
+            <textarea
+              value={currentSettings.messageTemplate}
+              rows={4}
+              onChange={(event) =>
+                setSettings((current) =>
+                  current ? { ...current, messageTemplate: event.target.value } : current,
+                )
+              }
+              onBlur={(event) => save({ messageTemplate: event.target.value || DEFAULT_TEMPLATE })}
+              className="box-border w-full min-w-0 resize-y rounded-2xl border border-border bg-background/85 px-3.5 py-2.5 text-sm leading-relaxed shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
             />
           </label>
-          <button
-            type="button"
-            onClick={sendTest}
-            disabled={busy || !testPhone.trim()}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Send className="h-4 w-4" />
-            Testar
-          </button>
-        </div>
+
+          <div className="mt-3 grid gap-3 rounded-2xl border border-border/80 bg-background/55 p-3 md:grid-cols-[1fr_auto] md:items-end">
+            <label className="block">
+              <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                Testar envio
+              </span>
+              <input
+                value={testPhone}
+                onChange={(event) => setTestPhone(event.target.value)}
+                placeholder="+351912345678"
+                className="box-border h-10 w-full min-w-0 rounded-2xl border border-border bg-background/85 px-3.5 text-sm shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={sendTest}
+              disabled={busy || !testPhone.trim()}
+              className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Send className="h-4 w-4" />
+              Testar
+            </button>
+          </div>
         </section>
       )}
     </div>
@@ -533,12 +562,10 @@ function emptySettings(studioId: string): WhatsAppSettings {
   return {
     studioId,
     autoSendEnabled: false,
-    messageTemplate:
-      DEFAULT_TEMPLATE,
+    messageTemplate: DEFAULT_TEMPLATE,
     provider: "senddm_whatsapp",
     fromNumber: "Send.dm",
     lastError: null,
-
   };
 }
 

@@ -12,17 +12,19 @@ let serverEntryPromise: Promise<ServerEntry> | undefined;
 async function getServerEntry(): Promise<ServerEntry> {
   if (!serverEntryPromise) {
     serverEntryPromise = import("@tanstack/react-start/server-entry").then(
-      (m) => ((m as { default?: ServerEntry }).default ?? (m as unknown as ServerEntry)),
+      (m) => (m as { default?: ServerEntry }).default ?? (m as unknown as ServerEntry),
     );
   }
   return serverEntryPromise;
 }
 
 function brandedErrorResponse(): Response {
-  return withSecurityHeaders(new Response(renderErrorPage(), {
-    status: 500,
-    headers: { "content-type": "text/html; charset=utf-8" },
-  }));
+  return withSecurityHeaders(
+    new Response(renderErrorPage(), {
+      status: 500,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
+  );
 }
 
 function withSecurityHeaders(response: Response): Response {
@@ -176,14 +178,21 @@ export default {
       const response = await handler.fetch(request, env, ctx);
       return withPwaUpdateHeaders(
         request,
-        withSeoHeaders(request, withSecurityHeaders(await normalizeCatastrophicSsrResponse(response))),
+        withSeoHeaders(
+          request,
+          withSecurityHeaders(await normalizeCatastrophicSsrResponse(response)),
+        ),
       );
     } catch (error) {
       console.error(error);
       return brandedErrorResponse();
     }
   },
-  async scheduled(_event: unknown, _env: unknown, ctx: { waitUntil: (promise: Promise<unknown>) => void }) {
+  async scheduled(
+    _event: unknown,
+    _env: unknown,
+    ctx: { waitUntil: (promise: Promise<unknown>) => void },
+  ) {
     ctx.waitUntil(
       Promise.all([
         import("./lib/notification-dispatcher.server")
@@ -197,6 +206,12 @@ export default {
             ]),
           )
           .catch((error) => console.error("client_push_dispatch_failed", error)),
+        import("./lib/whatsapp.functions")
+          .then(async (module) => {
+            await module.dispatchMissingAppointmentWhatsAppConfirmations();
+            return module.reconcilePendingWhatsAppMessages();
+          })
+          .catch((error) => console.error("whatsapp_reconciliation_failed", error)),
       ]),
     );
   },

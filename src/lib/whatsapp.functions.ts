@@ -7,6 +7,18 @@ import {
   rateLimitOrThrow,
 } from "@/lib/server-security";
 import { getPublicReservationCode } from "@/lib/reservation-code";
+import {
+  SENDDM_BOOKING_CONFIRMATION_PARAMETERS,
+  buildSendDmWhatsAppPayload,
+  classifySendDmWhatsAppDelivery,
+  readSendDmChannel,
+  readSendDmError,
+  readSendDmMessageId,
+  readSendDmStatus,
+  readUnresolvedSendDmButtonVariable,
+  validateSendDmTemplateParameters,
+  type SendDmTemplateParameters,
+} from "@/lib/senddm-whatsapp";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { formatStudioDate, formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
 
@@ -18,14 +30,6 @@ const SENDDM_TEMPLATE_INTERNAL_NAME = "Marca\u00e7\u00e3o";
 const SENDDM_TEMPLATE_MODEL_ID = "aca219e7-63cb-4eea-a8fd-9aee187e8676";
 const SENDDM_TEMPLATE_APPROVED_NAME = "new_template__hkmlmqkyap";
 const SENDDM_WHATSAPP_TEMPLATE_ID = "1772571720773309";
-const SENDDM_BOOKING_CONFIRMATION_PARAMETERS = [
-  "nomeCliente",
-  "data",
-  "hora",
-  "servico",
-  "profissional",
-  "orderId",
-] as const;
 const EMAIL_PROVIDER = "resend_email";
 type WhatsAppSendInput = {
   to: string;
@@ -35,6 +39,7 @@ type WhatsAppSendInput = {
   appointmentId?: string | null;
   templateVariables: WhatsAppTemplateVariables;
   messageKind?: ConfirmationContext["messageKind"];
+  idempotencyKey: string;
 };
 
 type WhatsAppSendResult = {
@@ -191,8 +196,14 @@ export const testWhatsAppMessage = createServerFn({ method: "POST" })
       reservationUrl: ctx.bookingUrl,
       orderId: publicOrderIdFromUrl(ctx.bookingUrl),
       templateVariables,
+      idempotencyKey: `senddm-whatsapp-test-${data.studioId}-${Date.now()}`,
     });
-    return { ok: true, messageId: result.messageId ?? null };
+    return {
+      ok: true,
+      messageId: result.messageId ?? null,
+      deliveryStatus: result.deliveryStatus,
+      delivered: String(result.deliveryStatus || "").toUpperCase() === "DELIVERED",
+    };
   });
 
 export async function sendAppointmentConfirmationMessage(
@@ -216,7 +227,11 @@ export const sendAppointmentConfirmationForAppointment = createServerFn({ method
     });
     const ctx = await loadAppointmentConfirmationContext(sb, data.appointmentId);
     if (!ctx) return null;
-    return sendConfirmationFromContext(sb, ctx, `senddm-whatsapp-appointment-${data.appointmentId}`);
+    return sendConfirmationFromContext(
+      sb,
+      ctx,
+      `senddm-whatsapp-appointment-${data.appointmentId}`,
+    );
   });
 
 export const sendPublicAppointmentConfirmationForAppointment = createServerFn({ method: "POST" })
@@ -245,7 +260,11 @@ export const sendPublicAppointmentConfirmationForAppointment = createServerFn({ 
       ctx,
       `senddm-whatsapp-public-appointment-${data.appointmentId}`,
     );
-    return { ok: Boolean(result), status: result?.status ?? null, messageId: result?.provider_message_id ?? null };
+    return {
+      ok: Boolean(result),
+      status: result?.status ?? null,
+      messageId: result?.provider_message_id ?? null,
+    };
   });
 
 export async function sendAppointmentLifecycleMessage(
@@ -266,8 +285,13 @@ export async function sendAppointmentLifecycleMessage(
   );
 }
 
-async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, idempotencyKey: string) {
-  const existing = (await findExistingLog(sb, idempotencyKey)) ?? (await findExistingConfirmationLog(sb, ctx));
+async function sendConfirmationFromContext(
+  sb: any,
+  ctx: ConfirmationContext,
+  idempotencyKey: string,
+) {
+  const existing =
+    (await findExistingLog(sb, idempotencyKey)) ?? (await findExistingConfirmationLog(sb, ctx));
   const rendered = renderMessage(ctx.template || DEFAULT_TEMPLATE, ctx);
   const emailPromise = sendEmailConfirmationFromContext(
     sb,
@@ -283,7 +307,10 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
     });
     return null;
   });
-  if (existing?.status === "sent" || (existing?.status === "pending" && !isStalePendingWhatsAppLog(existing))) {
+  if (
+    existing?.status === "sent" ||
+    (existing?.status === "pending" && !isStalePendingWhatsAppLog(existing))
+  ) {
     await emailPromise;
     return existing;
   }
@@ -299,7 +326,10 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
   const recipient = normalizeWhatsAppPhone(ctx.clientPhone);
 
   if (!ctx.autoEnabled) {
-    console.warn("[whatsapp] skipped — auto_send_disabled", { studio_id: ctx.studioId, appointment_id: ctx.appointmentId });
+    console.warn("[whatsapp] skipped — auto_send_disabled", {
+      studio_id: ctx.studioId,
+      appointment_id: ctx.appointmentId,
+    });
     const log = await insertLog(sb, ctx, idempotencyKey, {
       status: "skipped",
       reason: "auto_send_disabled",
@@ -367,6 +397,8 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
       appointmentId: ctx.appointmentId,
       templateVariables: buildTemplateVariables(ctx),
       messageKind: ctx.messageKind ?? "confirmation",
+      idempotencyKey:
+        existing?.status === "failed" ? `${idempotencyKey}-retry-${Date.now()}` : idempotencyKey,
     });
     console.info("[whatsapp] sent", {
       studio_id: ctx.studioId,
@@ -375,9 +407,12 @@ async function sendConfirmationFromContext(sb: any, ctx: ConfirmationContext, id
       delivery_status: sent.deliveryStatus,
       to: recipient,
     });
+    const delivered = String(sent.deliveryStatus || "").toUpperCase() === "DELIVERED";
     const log = await updateLog(sb, pending.id, {
-      status: "sent",
-      reason: null,
+      status: delivered ? "sent" : "pending",
+      reason: delivered
+        ? null
+        : `senddm_awaiting_delivery:${String(sent.deliveryStatus || "UNKNOWN").toUpperCase()}`,
       provider: sent.provider,
       provider_message_id: sent.messageId,
       payload: sent.payload,
@@ -419,10 +454,13 @@ class SendDmService implements WhatsAppProvider {
   async sendText(input: WhatsAppSendInput): Promise<WhatsAppSendResult> {
     const apiKey = await getServerEnv("SENDDM_API_KEY");
     const modelId = (await getServerEnv("SENDDM_MODEL_ID")) || SENDDM_TEMPLATE_MODEL_ID;
-    const whatsappTemplateId = (await getServerEnv("SENDDM_WHATSAPP_TEMPLATE_ID")) || SENDDM_WHATSAPP_TEMPLATE_ID;
-    const baseUrl = ((await getServerEnv("SENDDM_API_BASE_URL")) || "https://api.sent.dm").replace(/\/$/, "");
+    const whatsappTemplateId =
+      (await getServerEnv("SENDDM_WHATSAPP_TEMPLATE_ID")) || SENDDM_WHATSAPP_TEMPLATE_ID;
+    const baseUrl = ((await getServerEnv("SENDDM_API_BASE_URL")) || "https://api.sent.dm").replace(
+      /\/$/,
+      "",
+    );
     const language = (await getServerEnv("SENDDM_WHATSAPP_TEMPLATE_LANGUAGE")) || "pt_BR";
-    const senderId = await getServerEnv("SENDDM_WHATSAPP_SENDER_ID");
     const templateName =
       (await getServerEnv("SENDDM_WHATSAPP_TEMPLATE_NAME")) || SENDDM_TEMPLATE_APPROVED_NAME;
     const internalTemplate =
@@ -436,14 +474,10 @@ class SendDmService implements WhatsAppProvider {
       SENDDM_BOOKING_CONFIRMATION_PARAMETERS,
       templateParameters,
     );
-    const payload = {
-      to: [input.to],
-      channel: ["whatsapp"],
-      ...(senderId ? { from: senderId } : {}),
-      template: {
-        name: internalTemplate,
-        parameters: templateParameters,
-      },
+    const payload = buildSendDmWhatsAppPayload({
+      to: input.to,
+      templateId: modelId,
+      parameters: templateParameters,
       metadata: {
         source: "bellza",
         modelId,
@@ -456,7 +490,7 @@ class SendDmService implements WhatsAppProvider {
         reservationCode: getPublicReservationCode(input.orderId),
         reservationUrl: input.reservationUrl,
       },
-    };
+    });
     const requestLogPayload = sanitizeSendDmRequestPayload(payload);
     const templateAudit = {
       template_id: modelId,
@@ -507,6 +541,7 @@ class SendDmService implements WhatsAppProvider {
         method: "POST",
         headers: {
           "x-api-key": apiKey,
+          "Idempotency-Key": input.idempotencyKey,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
@@ -522,15 +557,16 @@ class SendDmService implements WhatsAppProvider {
         recipient: maskPhoneForLog(input.to),
         appointment_id: input.appointmentId ?? null,
         order_id: input.orderId,
-        message_id: readProviderMessageId(responsePayload),
-        delivery_status: readProviderStatus(responsePayload),
-        error: response.ok ? null : readProviderError(responsePayload),
+        message_id: readSendDmMessageId(responsePayload),
+        delivery_status: readSendDmStatus(responsePayload),
+        delivery_channel: readSendDmChannel(responsePayload),
+        error: response.ok ? null : readSendDmError(responsePayload),
       });
       if (!response.ok) {
-        const detail = readProviderError(responsePayload) || response.statusText;
+        const detail = readSendDmError(responsePayload) || response.statusText;
         throw new WhatsAppDeliveryError({
           message: `senddm_http_${response.status}: ${detail}`,
-          messageId: readProviderMessageId(responsePayload),
+          messageId: readSendDmMessageId(responsePayload),
           payload: {
             request: requestLogPayload,
             response: responsePayload ?? { status: response.status, detail },
@@ -539,17 +575,41 @@ class SendDmService implements WhatsAppProvider {
         });
       }
 
-      const messageId = readProviderMessageId(responsePayload);
-      const finalPayload = messageId ? await refreshSendDmMessageStatus(baseUrl, apiKey, messageId, responsePayload) : responsePayload;
-      const finalStatus = readProviderStatus(finalPayload);
-      const finalChannel = readProviderChannel(finalPayload);
-      const channelMismatch = finalChannel && finalChannel !== "whatsapp"
-        ? `senddm_channel_mismatch: expected_whatsapp_received_${finalChannel}`
-        : null;
-      const unresolvedButtonVariable = readUnresolvedSendDmButtonVariable(finalPayload);
-      const contactDiagnostics = isFailedSendDmStatus(finalStatus) || channelMismatch
-        ? await loadSendDmContactDiagnostics(baseUrl, apiKey, finalPayload)
-        : null;
+      const acceptedChannel = readSendDmChannel(responsePayload);
+      if (acceptedChannel && acceptedChannel !== "whatsapp") {
+        throw new WhatsAppDeliveryError({
+          message: `senddm_channel_mismatch: expected_whatsapp_received_${acceptedChannel}`,
+          messageId: readSendDmMessageId(responsePayload),
+          payload: {
+            request: requestLogPayload,
+            response: responsePayload,
+          },
+          retryable: false,
+        });
+      }
+
+      const messageId = readSendDmMessageId(responsePayload);
+      if (!messageId) {
+        throw new WhatsAppDeliveryError({
+          message: "senddm_response_missing_message_id",
+          messageId: null,
+          payload: {
+            request: requestLogPayload,
+            response: responsePayload,
+          },
+          retryable: false,
+        });
+      }
+      const finalPayload = messageId
+        ? await refreshSendDmMessageStatus(baseUrl, apiKey, messageId, responsePayload)
+        : responsePayload;
+      const classification = classifySendDmWhatsAppDelivery(finalPayload);
+      const finalStatus = classification.status;
+      const finalChannel = classification.channel;
+      const contactDiagnostics =
+        classification.state === "failed"
+          ? await loadSendDmContactDiagnostics(baseUrl, apiKey, finalPayload)
+          : null;
       console.info("[whatsapp] senddm_final_status", {
         template_name: internalTemplate,
         approved_template: templateName,
@@ -560,22 +620,18 @@ class SendDmService implements WhatsAppProvider {
         message_id: messageId,
         delivery_status: finalStatus,
         delivery_channel: finalChannel,
-        error:
-          channelMismatch ||
-          readSendDmWhatsAppChannelError(contactDiagnostics) ||
-          readProviderError(finalPayload) ||
-          unresolvedButtonVariable ||
-          null,
+        error: classification.reason || readSendDmWhatsAppChannelError(contactDiagnostics) || null,
         contact: contactDiagnostics,
         payload: {
           request: requestLogPayload,
           response: finalPayload,
         },
       });
-      if (isFailedSendDmStatus(finalStatus)) {
+      if (classification.state === "failed") {
         const channelError = readSendDmWhatsAppChannelError(contactDiagnostics);
         throw new WhatsAppDeliveryError({
-          message: channelError || `senddm_delivery_failed: ${readProviderError(finalPayload) || "provider_failed"}`,
+          message:
+            channelError || classification.reason || "senddm_delivery_failed: provider_failed",
           messageId,
           payload: {
             request: requestLogPayload,
@@ -583,32 +639,6 @@ class SendDmService implements WhatsAppProvider {
             contact: contactDiagnostics,
           },
           retryable: false,
-        });
-      }
-      if (channelMismatch) {
-        const channelError = readSendDmWhatsAppChannelError(contactDiagnostics);
-        throw new WhatsAppDeliveryError({
-          message: channelError || channelMismatch,
-          messageId,
-          payload: {
-            request: requestLogPayload,
-            response: finalPayload,
-            contact: contactDiagnostics,
-          },
-          retryable: false,
-        });
-      }
-      if (unresolvedButtonVariable) {
-        console.warn("[whatsapp] senddm_button_parameter_unresolved", {
-          template_name: internalTemplate,
-          approved_template: templateName,
-          recipient: maskPhoneForLog(input.to),
-          appointment_id: input.appointmentId ?? null,
-          order_id: input.orderId,
-          message_id: messageId,
-          delivery_status: finalStatus,
-          delivery_channel: finalChannel,
-          reason: unresolvedButtonVariable,
         });
       }
 
@@ -630,7 +660,12 @@ class EmailDeliveryError extends Error {
   payload: unknown;
   retryable: boolean;
 
-  constructor(input: { message: string; messageId: string | null; payload: unknown; retryable?: boolean }) {
+  constructor(input: {
+    message: string;
+    messageId: string | null;
+    payload: unknown;
+    retryable?: boolean;
+  }) {
     super(input.message);
     this.name = "EmailDeliveryError";
     this.messageId = input.messageId;
@@ -645,7 +680,9 @@ class ResendEmailService implements EmailProvider {
   async send(input: EmailSendInput): Promise<EmailSendResult> {
     const apiKey = await getServerEnv("RESEND_API_KEY");
     const from = (await getServerEnv("EMAIL_FROM")) || "Bellza <notificacoes@bellza.pt>";
-    const baseUrl = ((await getServerEnv("RESEND_API_BASE_URL")) || "https://api.resend.com").replace(/\/$/, "");
+    const baseUrl = (
+      (await getServerEnv("RESEND_API_BASE_URL")) || "https://api.resend.com"
+    ).replace(/\/$/, "");
     if (!apiKey) throw new Error("RESEND_API_KEY em falta.");
 
     const payload = {
@@ -725,7 +762,12 @@ class WhatsAppDeliveryError extends Error {
   payload: unknown;
   retryable: boolean;
 
-  constructor(input: { message: string; messageId: string | null; payload: unknown; retryable?: boolean }) {
+  constructor(input: {
+    message: string;
+    messageId: string | null;
+    payload: unknown;
+    retryable?: boolean;
+  }) {
     super(input.message);
     this.name = "WhatsAppDeliveryError";
     this.messageId = input.messageId;
@@ -867,7 +909,12 @@ async function sendEmailConfirmationFromContext(
   }
 }
 
-async function refreshSendDmMessageStatus(baseUrl: string, apiKey: string, messageId: string, fallback: unknown) {
+async function refreshSendDmMessageStatus(
+  baseUrl: string,
+  apiKey: string,
+  messageId: string,
+  fallback: unknown,
+) {
   let lastPayload = fallback;
   const delays = [1200, 1500, 2000, 2500];
 
@@ -882,7 +929,7 @@ async function refreshSendDmMessageStatus(baseUrl: string, apiKey: string, messa
       });
       if (!response.ok) continue;
       lastPayload = await response.json().catch(() => lastPayload);
-      const status = String(readProviderStatus(lastPayload) || "").toUpperCase();
+      const status = String(readSendDmStatus(lastPayload) || "").toUpperCase();
       if (["DELIVERED", "FAILED", "UNDELIVERED", "CANCELLED", "CANCELED"].includes(status)) {
         return lastPayload;
       }
@@ -894,46 +941,171 @@ async function refreshSendDmMessageStatus(baseUrl: string, apiKey: string, messa
   return lastPayload;
 }
 
+export async function reconcilePendingWhatsAppMessages(options?: { studioId?: string }) {
+  const sb = admin();
+  const apiKey = await getServerEnv("SENDDM_API_KEY");
+  if (!apiKey) {
+    console.warn("[whatsapp] reconciliation skipped - provider_not_configured");
+    return { checked: 0, delivered: 0, pending: 0, failed: 0 };
+  }
+
+  const baseUrl = ((await getServerEnv("SENDDM_API_BASE_URL")) || "https://api.sent.dm").replace(
+    /\/$/,
+    "",
+  );
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  let query = sb
+    .from("whatsapp_message_logs")
+    .select("id,studio_id,status,reason,provider_message_id,payload,created_at,updated_at")
+    .eq("provider", WHATSAPP_PROVIDER)
+    .or("status.eq.pending,and(status.eq.failed,reason.like.senddm_button_parameter_unresolved*)")
+    .gte("created_at", since)
+    .order("created_at", { ascending: true })
+    .limit(8);
+  if (options?.studioId) query = query.eq("studio_id", options.studioId);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as any[];
+  const totals = { checked: rows.length, delivered: 0, pending: 0, failed: 0 };
+
+  for (const row of rows) {
+    const messageId = String(row.provider_message_id || "").trim();
+    if (!messageId) {
+      const createdAt = Date.parse(String(row.created_at || ""));
+      if (!Number.isFinite(createdAt) || Date.now() - createdAt > 5 * 60 * 1000) {
+        totals.failed += 1;
+        await updateLog(sb, row.id, {
+          status: "failed",
+          reason: "senddm_stale_pending_without_message_id",
+        });
+      } else {
+        totals.pending += 1;
+      }
+      continue;
+    }
+
+    try {
+      const response = await fetch(`${baseUrl}/v3/messages/${encodeURIComponent(messageId)}`, {
+        headers: {
+          "x-api-key": apiKey,
+          Accept: "application/json",
+        },
+      });
+      if (!response.ok) {
+        const detail = (await response.text().catch(() => "")).slice(0, 300);
+        totals.pending += 1;
+        console.warn("[whatsapp] reconciliation provider lookup failed", {
+          message_id: messageId,
+          status: response.status,
+          detail,
+        });
+        continue;
+      }
+
+      const responsePayload = await response.json().catch(() => null);
+      const classification = classifySendDmWhatsAppDelivery(responsePayload);
+      const nextStatus =
+        classification.state === "delivered"
+          ? "sent"
+          : classification.state === "failed"
+            ? "failed"
+            : "pending";
+      totals[classification.state === "delivered" ? "delivered" : classification.state] += 1;
+      await updateLog(sb, row.id, {
+        status: nextStatus,
+        reason: classification.reason,
+        payload: {
+          ...(row.payload && typeof row.payload === "object" ? row.payload : {}),
+          response: responsePayload,
+          reconciliation: {
+            checked_at: new Date().toISOString(),
+            delivery_status: classification.status,
+            delivery_channel: classification.channel,
+          },
+        },
+      });
+    } catch (lookupError) {
+      totals.pending += 1;
+      console.warn("[whatsapp] reconciliation lookup error", {
+        message_id: messageId,
+        reason: lookupError instanceof Error ? lookupError.message : String(lookupError),
+      });
+    }
+  }
+
+  console.info("[whatsapp] reconciliation complete", totals);
+  return totals;
+}
+
+export async function dispatchMissingAppointmentWhatsAppConfirmations(options?: {
+  studioId?: string;
+}) {
+  const sb = admin();
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  let query = sb
+    .from("appointments")
+    .select("id,studio_id")
+    .eq("status", "confirmed")
+    .gte("created_at", since)
+    .order("created_at", { ascending: true })
+    .limit(20);
+  if (options?.studioId) query = query.eq("studio_id", options.studioId);
+
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  const appointments = (data ?? []) as Array<{ id: string; studio_id: string }>;
+  if (appointments.length === 0) return { checked: 0, dispatched: 0 };
+
+  const appointmentIds = appointments.map((appointment) => appointment.id);
+  const { data: existingLogs, error: logsError } = await sb
+    .from("whatsapp_message_logs")
+    .select("appointment_id")
+    .in("appointment_id", appointmentIds);
+  if (logsError) throw new Error(logsError.message);
+  const loggedAppointmentIds = new Set(
+    ((existingLogs ?? []) as Array<{ appointment_id: string | null }>)
+      .map((row) => row.appointment_id)
+      .filter(Boolean),
+  );
+  const missing = appointments.filter((appointment) => !loggedAppointmentIds.has(appointment.id));
+
+  let dispatched = 0;
+  for (const appointment of missing) {
+    const ctx = await loadAppointmentConfirmationContext(sb, appointment.id);
+    if (!ctx?.autoEnabled) continue;
+    await sendConfirmationFromContext(
+      sb,
+      ctx,
+      `senddm-whatsapp-public-appointment-${appointment.id}`,
+    );
+    dispatched += 1;
+  }
+
+  const result = { checked: appointments.length, dispatched };
+  console.info("[whatsapp] missing confirmation dispatch complete", result);
+  return result;
+}
+
 async function loadSendDmContactDiagnostics(baseUrl: string, apiKey: string, payload: any) {
   const contactId = payload?.data?.contact_id;
   if (!contactId) return null;
   try {
-    const response = await fetch(`${baseUrl}/v3/contacts/${encodeURIComponent(String(contactId))}`, {
-      headers: {
-        "x-api-key": apiKey,
-        Accept: "application/json",
+    const response = await fetch(
+      `${baseUrl}/v3/contacts/${encodeURIComponent(String(contactId))}`,
+      {
+        headers: {
+          "x-api-key": apiKey,
+          Accept: "application/json",
+        },
       },
-    });
+    );
     if (!response.ok) return { contact_id: String(contactId), lookup_status: response.status };
     const contact = await response.json().catch(() => null);
     return sanitizeSendDmContactPayload(contact);
   } catch {
     return { contact_id: String(contactId), lookup_status: "failed" };
   }
-}
-
-function readProviderMessageId(payload: any) {
-  return (
-    payload?.id ??
-    payload?.message_id ??
-    payload?.messageId ??
-    payload?.data?.id ??
-    payload?.data?.recipients?.[0]?.message_id ??
-    null
-  );
-}
-
-function readProviderStatus(payload: any) {
-  return payload?.status ?? payload?.message_status ?? payload?.data?.status ?? null;
-}
-
-function readProviderChannel(payload: any) {
-  const channel = payload?.channel ?? payload?.data?.channel ?? null;
-  return typeof channel === "string" ? channel.trim().toLowerCase() : null;
-}
-
-function isFailedSendDmStatus(status: unknown) {
-  return ["FAILED", "UNDELIVERED", "CANCELLED", "CANCELED"].includes(String(status || "").toUpperCase());
 }
 
 function readSendDmWhatsAppChannelError(contactDiagnostics: any) {
@@ -947,38 +1119,14 @@ function readSendDmWhatsAppChannelError(contactDiagnostics: any) {
   return "";
 }
 
-function readUnresolvedSendDmButtonVariable(payload: any) {
-  const buttons = payload?.data?.message_body?.buttons;
-  if (!Array.isArray(buttons)) return "";
-  const unresolved = buttons
-    .map((button: any) => String(button?.value ?? ""))
-    .find((value: string) => /\{\{[^}]+\}\}/.test(value));
-  return unresolved ? `button_url_contains_unresolved_variable:${unresolved}` : "";
-}
-
-function readProviderError(payload: any) {
-  const failedEvent = payload?.data?.events?.find?.((event: any) =>
-    String(event?.status ?? event?.type ?? "").toUpperCase().includes("FAILED"),
-  );
-  return (
-    payload?.message ??
-    payload?.error?.message ??
-    payload?.error ??
-    payload?.error_message ??
-    payload?.data?.error ??
-    failedEvent?.description ??
-    failedEvent?.message ??
-    failedEvent?.reason ??
-    ""
-  );
-}
-
 function readEmailProviderMessageId(payload: any) {
   return payload?.id ?? payload?.data?.id ?? payload?.message_id ?? payload?.messageId ?? null;
 }
 
 function readEmailProviderError(payload: any) {
-  return payload?.message ?? payload?.error?.message ?? payload?.error ?? payload?.error_message ?? "";
+  return (
+    payload?.message ?? payload?.error?.message ?? payload?.error ?? payload?.error_message ?? ""
+  );
 }
 
 async function isEmailNotificationsEnabled() {
@@ -1006,7 +1154,9 @@ function buildBookingConfirmationEmail(ctx: ConfirmationContext, renderedMessage
   const staffName = escapeHtml(ctx.staffName || "Profissional");
   const date = escapeHtml(variables.data);
   const time = escapeHtml(variables.hora);
-  const reservationCode = escapeHtml(getPublicReservationCode(publicOrderIdFromUrl(ctx.bookingUrl) || ctx.appointmentId));
+  const reservationCode = escapeHtml(
+    getPublicReservationCode(publicOrderIdFromUrl(ctx.bookingUrl) || ctx.appointmentId),
+  );
   const actionBaseUrl = ctx.bookingUrl || getPublicOrigin();
   const bookingUrl = escapeHtml(actionBaseUrl);
   const rescheduleUrl = escapeHtml(`${actionBaseUrl}?acao=remarcar`);
@@ -1032,7 +1182,9 @@ function buildBookingConfirmationEmail(ctx: ConfirmationContext, renderedMessage
     ctx.bookingUrl ? `Ver reserva: ${ctx.bookingUrl}` : "",
     "",
     `Obrigado, ${rawStudioName}.`,
-  ].filter(Boolean).join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const html = `<!doctype html>
 <html lang="pt">
@@ -1199,7 +1351,9 @@ function maskEmail(value: string) {
 }
 
 function normalizeEmail(value?: string | null) {
-  const email = String(value ?? "").trim().toLowerCase();
+  const email = String(value ?? "")
+    .trim()
+    .toLowerCase();
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
   return email;
 }
@@ -1235,7 +1389,9 @@ async function loadConfirmationContext(
   if (!appointmentId && payment.booking_request_id) {
     const { data } = await sb
       .from("booking_payment_requests")
-      .select("id,appointment_id,client_name,client_phone,client_email,starts_at,service_ids,staff_id")
+      .select(
+        "id,appointment_id,client_name,client_phone,client_email,starts_at,service_ids,staff_id",
+      )
       .eq("id", payment.booking_request_id)
       .maybeSingle();
     bookingRequest = data;
@@ -1271,7 +1427,10 @@ async function loadConfirmationContext(
       .from("services")
       .select("name")
       .in("id", bookingRequest.service_ids);
-    serviceName = (services ?? []).map((service: any) => service.name).filter(Boolean).join(", ");
+    serviceName = (services ?? [])
+      .map((service: any) => service.name)
+      .filter(Boolean)
+      .join(", ");
     const { data: staff } = await sb
       .from("staff")
       .select("name")
@@ -1301,7 +1460,10 @@ async function loadConfirmationContext(
   };
 }
 
-async function loadAppointmentConfirmationContext(sb: any, appointmentId: string): Promise<ConfirmationContext | null> {
+async function loadAppointmentConfirmationContext(
+  sb: any,
+  appointmentId: string,
+): Promise<ConfirmationContext | null> {
   const { data: appt, error } = await sb
     .from("appointments")
     .select(
@@ -1347,7 +1509,9 @@ async function loadStudioWhatsApp(sb: any, studioId: string) {
 
   const missingWhatsAppColumns =
     isMissingWhatsAppSchema(full.error) ||
-    String(full.error?.message ?? "").toLowerCase().includes("whatsapp_");
+    String(full.error?.message ?? "")
+      .toLowerCase()
+      .includes("whatsapp_");
 
   if (full.error && !missingWhatsAppColumns) {
     throw new Error(full.error.message);
@@ -1373,7 +1537,7 @@ function normalizeWhatsAppStudio(studio: any) {
     autoSendEnabled: Boolean(studio.whatsapp_auto_send_enabled),
     messageTemplate: (studio.whatsapp_default_message as string) ?? DEFAULT_TEMPLATE,
     provider: WHATSAPP_PROVIDER,
-    fromNumber: process.env.SENDDM_WHATSAPP_SENDER_ID || "",
+    fromNumber: "",
     lastError: null,
   };
 }
@@ -1382,16 +1546,20 @@ function renderMessage(template: string, ctx: ConfirmationContext) {
   const variables = buildTemplateVariables(ctx);
   const legacyVariables: Record<string, string> = {
     nome_cliente: variables.nomeCliente,
-    "serviço": variables.servico,
+    serviço: variables.servico,
     valor_sinal: formatMoney(ctx.paidAmount, ctx.currency),
     nome_estudio: ctx.studioName,
-    "nome_estúdio": ctx.studioName,
+    nome_estúdio: ctx.studioName,
     link_agendamento: ctx.bookingUrl,
     reservationToken: ctx.bookingUrl,
   };
   return template.replace(/\{([^}]+)\}/g, (_, key: string) => {
     const normalizedKey = key.trim();
-    return variables[normalizedKey as keyof WhatsAppTemplateVariables] ?? legacyVariables[normalizedKey] ?? "";
+    return (
+      variables[normalizedKey as keyof WhatsAppTemplateVariables] ??
+      legacyVariables[normalizedKey] ??
+      ""
+    );
   });
 }
 
@@ -1401,7 +1569,10 @@ function buildTemplateVariables(ctx: ConfirmationContext): WhatsAppTemplateVaria
     data: formatStudioDate(ctx.startsAt, ctx.studioTimezone),
     hora: formatStudioTime(ctx.startsAt, ctx.studioTimezone),
     servico: toSendDmTemplateText(ctx.serviceName, "Servico"),
-    profissional: toSendDmTemplateText(ctx.staffName || ctx.studioName, ctx.studioName || "Estudio"),
+    profissional: toSendDmTemplateText(
+      ctx.staffName || ctx.studioName,
+      ctx.studioName || "Estudio",
+    ),
     orderId: toSendDmTemplateText(publicOrderIdFromUrl(ctx.bookingUrl), "reserva"),
   };
 }
@@ -1409,53 +1580,7 @@ function buildTemplateVariables(ctx: ConfirmationContext): WhatsAppTemplateVaria
 function buildSendDmTemplateParameterObject(variables: WhatsAppTemplateVariables) {
   return Object.fromEntries(
     SENDDM_BOOKING_CONFIRMATION_PARAMETERS.map((name) => [name, variables[name]]),
-  ) as Record<(typeof SENDDM_BOOKING_CONFIRMATION_PARAMETERS)[number], string>;
-}
-
-function validateSendDmTemplateParameters(
-  expectedParameters: readonly string[],
-  sentParameters: Record<string, unknown>,
-) {
-  const sentKeys = Object.keys(sentParameters);
-  const parameterState = expectedParameters.map((name, index) => {
-    const value = sentParameters[name];
-    return {
-      index: index + 1,
-      name,
-      hasValue: typeof value === "string" && value.trim().length > 0,
-      length: typeof value === "string" ? value.trim().length : 0,
-    };
-  });
-
-  if (sentKeys.length !== expectedParameters.length) {
-    return {
-      ok: false,
-      reason: `expected_${expectedParameters.length}_parameters_received_${sentKeys.length}`,
-      parameterState,
-    };
-  }
-
-  const expectedSet = new Set(expectedParameters);
-  const extra = sentKeys.filter((key) => !expectedSet.has(key));
-  const missingKeys = expectedParameters.filter((key) => !Object.prototype.hasOwnProperty.call(sentParameters, key));
-  if (extra.length > 0 || missingKeys.length > 0) {
-    return {
-      ok: false,
-      reason: `parameter_keys_mismatch_missing_${missingKeys.join(",") || "none"}_extra_${extra.join(",") || "none"}`,
-      parameterState,
-    };
-  }
-
-  const missing = parameterState.filter((param) => !param.hasValue);
-  if (missing.length > 0) {
-    return {
-      ok: false,
-      reason: `empty_parameters_${missing.map((param) => `${param.index}:${param.name}`).join(",")}`,
-      parameterState,
-    };
-  }
-
-  return { ok: true, reason: null, parameterState };
+  ) as SendDmTemplateParameters;
 }
 
 function toSendDmTemplateText(value: string | null | undefined, fallback: string) {
@@ -1532,7 +1657,9 @@ async function loadLatestAppointmentPublicUrlForStudio(sb: any, studioId: string
     return normalizeWhatsAppPhone(client?.phone) === normalizedTarget;
   });
   if (!appointment?.id) {
-    throw new Error("Para testar o botão, use o WhatsApp de uma cliente que já tenha uma marcação neste estúdio.");
+    throw new Error(
+      "Para testar o botão, use o WhatsApp de uma cliente que já tenha uma marcação neste estúdio.",
+    );
   }
   return ensureAppointmentPublicUrl(sb, appointment.id);
 }
@@ -1576,7 +1703,11 @@ async function findExistingLog(sb: any, idempotencyKey: string) {
 }
 
 async function findExistingConfirmationLog(sb: any, ctx: ConfirmationContext) {
-  if (ctx.paymentRowId && ctx.paymentRowId !== "test" && !ctx.paymentRowId.startsWith("appointment-")) {
+  if (
+    ctx.paymentRowId &&
+    ctx.paymentRowId !== "test" &&
+    !ctx.paymentRowId.startsWith("appointment-")
+  ) {
     const { data } = await sb
       .from("whatsapp_message_logs")
       .select("*")
@@ -1641,7 +1772,10 @@ async function insertLog(
     .insert({
       studio_id: ctx.studioId,
       appointment_id: ctx.appointmentId,
-      payment_intent_id: ctx.paymentRowId === "test" || ctx.paymentRowId.startsWith("appointment-") ? null : ctx.paymentRowId,
+      payment_intent_id:
+        ctx.paymentRowId === "test" || ctx.paymentRowId.startsWith("appointment-")
+          ? null
+          : ctx.paymentRowId,
       idempotency_key: idempotencyKey,
       provider: input.provider,
       recipient_phone: input.recipientPhone,
@@ -1681,7 +1815,10 @@ async function insertEmailLog(
     .insert({
       studio_id: ctx.studioId,
       appointment_id: ctx.appointmentId,
-      payment_intent_id: ctx.paymentRowId === "test" || ctx.paymentRowId.startsWith("appointment-") ? null : ctx.paymentRowId,
+      payment_intent_id:
+        ctx.paymentRowId === "test" || ctx.paymentRowId.startsWith("appointment-")
+          ? null
+          : ctx.paymentRowId,
       idempotency_key: idempotencyKey,
       provider: input.provider,
       recipient_email: input.recipientEmail,

@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { supabase } from "@/integrations/supabase/client";
 import { reconcileStudioBookingPayments } from "@/lib/payments.functions";
 import { savePushSubscription, sendTestPushNotification } from "@/lib/push-subscriptions.functions";
-import { requestPushSubscription, shouldRefreshStoredPushSubscription } from "@/lib/pwa-push";
+import { requestPushSubscription } from "@/lib/pwa-push";
 import { syncStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 import { ClientAvatar } from "@/components/client-avatar";
 import { ExpandableList } from "@/components/ui/expandable-list";
@@ -55,7 +55,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (Notification.permission !== "granted" || !studioId) return;
     let cancelled = false;
-    requestPushSubscription({ forceRenew: shouldRefreshStoredPushSubscription(`studio:${studioId}`) })
+    requestPushSubscription()
       .then((result) => {
         if (cancelled || result.permission !== "granted" || !result.subscription) return;
         return persistPushSubscription({

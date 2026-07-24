@@ -38,6 +38,7 @@ type NotificationLogRow = {
   studio_id: string | null;
   recipient: string;
   status: string;
+  error: string | null;
   payload: Record<string, unknown> | null;
 };
 
@@ -101,7 +102,7 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
   const studioIds = Array.from(new Set(rows.map((item) => item.studio_id).filter(Boolean)));
   const { data: existingLogs, error: logsError } = await (sb as any)
     .from("notifications_log")
-    .select("studio_id,recipient,status,payload")
+    .select("studio_id,recipient,status,error,payload")
     .eq("channel", "push_studio")
     .in("studio_id", studioIds)
     .gte("created_at", cutoff)
@@ -110,13 +111,19 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
   if (logsError) throw new Error(logsError.message);
 
   const dispatchedKeys = new Set<string>();
+  const loggedNoTargetKeys = new Set<string>();
   for (const log of ((existingLogs ?? []) as NotificationLogRow[])) {
     const notificationId = readPayloadString(log.payload, "studio_notification_id");
     if (!notificationId || !notificationIds.has(notificationId)) continue;
     const notification = rows.find((item) => item.id === notificationId);
     if (!notification || log.studio_id !== notification.studio_id) continue;
     if (log.status === "skipped" && log.recipient.startsWith("studio:")) {
-      dispatchedKeys.add(studioPushNoTargetKey(notificationId, log.recipient.replace(/^studio:/, "")));
+      const key = studioPushNoTargetKey(notificationId, log.recipient.replace(/^studio:/, ""));
+      if (log.error === "no_studio_push_subscription") {
+        loggedNoTargetKeys.add(key);
+      } else {
+        dispatchedKeys.add(key);
+      }
       continue;
     }
     if (log.status !== "sent") continue;
@@ -162,7 +169,7 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
 
     if (targets.length === 0) {
       const key = studioPushNoTargetKey(notification.id, notification.studio_id);
-      if (!dispatchedKeys.has(key)) {
+      if (!dispatchedKeys.has(key) && !loggedNoTargetKeys.has(key)) {
         await insertNotificationLog(sb, {
           studioId: notification.studio_id,
           channel: "push_studio",
@@ -175,7 +182,7 @@ export async function dispatchPendingStudioPushNotifications(options?: { studioI
             event: "studio_notification_push",
           },
         });
-        dispatchedKeys.add(key);
+        loggedNoTargetKeys.add(key);
       }
       skipped += 1;
       continue;

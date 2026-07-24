@@ -1,0 +1,17 @@
+name: agents-full-audit-correction-deploy-bellza
+
+bees:
+  Dev:
+    command: "npm run dev"
+    auto_start: true
+
+  Codex:
+    command: "codex"
+    type: agent
+    auto_rename: true
+
+  Claude:
+    command: "claude"
+    type: agent
+    auto_rename: true
+

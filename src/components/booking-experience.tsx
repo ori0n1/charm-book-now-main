@@ -91,7 +91,7 @@ import {
 import { dispatchRecentStudioAppointmentPushNotification } from "@/lib/notification-dispatcher.server";
 import { sendPublicAppointmentConfirmationForAppointment } from "@/lib/whatsapp.functions";
 import { savePushSubscription, sendTestPushNotification } from "@/lib/push-subscriptions.functions";
-import { requestPushSubscription, shouldRefreshStoredPushSubscription } from "@/lib/pwa-push";
+import { requestPushSubscription } from "@/lib/pwa-push";
 import {
   createGoogleNoncePair,
   getGoogleIdentity,
@@ -837,7 +837,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
     let cancelled = false;
-    requestPushSubscription({ forceRenew: shouldRefreshStoredPushSubscription(`client:${studio.id}`) })
+    requestPushSubscription()
       .then((result) => {
         if (cancelled || result.permission !== "granted" || !result.subscription) return;
         setNotificationsConsent("granted");

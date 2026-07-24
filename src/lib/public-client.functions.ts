@@ -1420,6 +1420,7 @@ async function dispatchClientCenterPush(
     .eq("user_id", userId)
     .in("audience", ["client", "both"])
     .is("revoked_at", null)
+    .order("updated_at", { ascending: false })
     .limit(8);
   if (error) throw new Error(error.message);
 

@@ -45,9 +45,7 @@ import {
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
-import {
-  sortAppointmentsChronologically as sortAppointmentsChronologicallyShared,
-} from "@/lib/appointment-ordering";
+import { sortAppointmentsChronologically as sortAppointmentsChronologicallyShared } from "@/lib/appointment-ordering";
 import { getPublicReservationCode } from "@/lib/reservation-code";
 import {
   computeAttendanceRevenue,
@@ -58,6 +56,11 @@ import {
   type FinancialRuleSource,
 } from "@/lib/utils";
 import { sendAppointmentConfirmationForAppointment } from "@/lib/whatsapp.functions";
+import {
+  buildPastAppointmentWhatsAppMessage,
+  buildWhatsAppComposeUrl,
+  isPastAppointment,
+} from "@/lib/appointment-whatsapp-message";
 import {
   createInPersonMbWayPayment,
   getInPersonMbWaySettings,
@@ -78,7 +81,12 @@ type Appt = {
   total_price: number;
   total_duration_min?: number | null;
   notes: string | null;
-  clients: { name: string; phone: string; avatar_url?: string | null; date_of_birth?: string | null } | null;
+  clients: {
+    name: string;
+    phone: string;
+    avatar_url?: string | null;
+    date_of_birth?: string | null;
+  } | null;
   staff: ({ id: string; name: string } & FinancialRuleSource) | null;
   appointment_services?: {
     price: number;
@@ -108,14 +116,21 @@ type AgendaFilters = {
 };
 
 type StudioService = { id: string; name: string; price: number; duration_min: number };
-type StudioStaff   = { id: string; name: string };
-type StudioClient  = { id: string; name: string; phone: string };
+type StudioStaff = { id: string; name: string };
+type StudioClient = { id: string; name: string; phone: string };
 type StudioPaymentMethod = "cash" | "card" | "mb_way" | "other";
 type StaffAgendaVisibility = "private" | "team_busy" | "team_basic";
 
 const EMPTY_FILTERS: AgendaFilters = {
-  dateMode: "all", date: "", staffId: "all", service: "all", status: "all",
-  client: "", payment: "all", confirmation: "all", attendance: "all",
+  dateMode: "all",
+  date: "",
+  staffId: "all",
+  service: "all",
+  status: "all",
+  client: "",
+  payment: "all",
+  confirmation: "all",
+  attendance: "all",
 };
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -127,32 +142,32 @@ function AgendaPage() {
   const createMbWayCharge = useServerFn(createInPersonMbWayPayment);
   const exportBtnRef = useRef<HTMLButtonElement>(null);
 
-  const [appts, setAppts]               = useState<Appt[]>([]);
-  const [paidRows, setPaidRows]         = useState<PaidRow[]>([]);
+  const [appts, setAppts] = useState<Appt[]>([]);
+  const [paidRows, setPaidRows] = useState<PaidRow[]>([]);
   const [cashPaymentRows, setCashPaymentRows] = useState<CashPaymentRow[]>([]);
-  const [messageLogs, setMessageLogs]   = useState<MessageLog[]>([]);
-  const [loading, setLoading]           = useState(true);
-  const [expandedId, setExpandedId]     = useState<string | null>(null);
+  const [messageLogs, setMessageLogs] = useState<MessageLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set(["Passados"]));
-  const [savingPresenceId, setSavingPresenceId]   = useState<string | null>(null);
+  const [savingPresenceId, setSavingPresenceId] = useState<string | null>(null);
   const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const [receivingPaymentId, setReceivingPaymentId] = useState<string | null>(null);
   const [paymentDialogAppt, setPaymentDialogAppt] = useState<Appt | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
-  const [filters, setFilters]           = useState<AgendaFilters>(EMPTY_FILTERS);
-  const [filtersOpen, setFiltersOpen]   = useState(false);
+  const [filters, setFilters] = useState<AgendaFilters>(EMPTY_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [showDepositSplit, setShowDepositSplit] = useState(false);
-  const [menuOpenId, setMenuOpenId]     = useState<string | null>(null);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
-  const [searchQuery, setSearchQuery]   = useState("");
-  const [agendaScope, setAgendaScope]   = useState<"mine" | "team">("mine");
-  const [newApptOpen, setNewApptOpen]   = useState(false);
-  const [editApptId, setEditApptId]     = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [agendaScope, setAgendaScope] = useState<"mine" | "team">("mine");
+  const [newApptOpen, setNewApptOpen] = useState(false);
+  const [editApptId, setEditApptId] = useState<string | null>(null);
   const [rescheduleApptId, setRescheduleApptId] = useState<string | null>(null);
-  const [exportOpen, setExportOpen]     = useState(false);
-  const [exporting, setExporting]       = useState<"csv" | "excel" | "pdf" | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState<"csv" | "excel" | "pdf" | null>(null);
   const [enableInPersonMbWay, setEnableInPersonMbWay] = useState(false);
 
   useEffect(() => {
@@ -176,7 +191,9 @@ function AgendaPage() {
       .catch(() => {
         if (mounted) setEnableInPersonMbWay(false);
       });
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [getMbWaySettings]);
 
   useEffect(() => {
@@ -187,21 +204,45 @@ function AgendaPage() {
   async function loadData(options?: { silent?: boolean }) {
     if (!studio) return;
     if (!options?.silent) setLoading(true);
-    const staffAgendaVisibility = (studio.staff_agenda_visibility ?? "private") as StaffAgendaVisibility;
+    const staffAgendaVisibility = (studio.staff_agenda_visibility ??
+      "private") as StaffAgendaVisibility;
     const canStaffLoadTeamAgenda = studio.role === "staff" && staffAgendaVisibility !== "private";
-    const staffDataFilter = studio.role === "staff" && !canStaffLoadTeamAgenda ? studio.staff_id : null;
+    const staffDataFilter =
+      studio.role === "staff" && !canStaffLoadTeamAgenda ? studio.staff_id : null;
     const { data } = await fetchAgendaAppointments(studio.id, staffDataFilter);
     const appointmentRows = sortAppointmentsChronologically((data ?? []) as unknown as Appt[]);
     const sensitiveAppointmentIds =
       studio.role === "staff"
-        ? appointmentRows.filter((appt) => appt.staff?.id === studio.staff_id).map((appt) => appt.id)
+        ? appointmentRows
+            .filter((appt) => appt.staff?.id === studio.staff_id)
+            .map((appt) => appt.id)
         : appointmentRows.map((appt) => appt.id);
     const shouldLoadSensitiveRows = studio.role !== "staff" || sensitiveAppointmentIds.length > 0;
     const [paymentsResult, cashPaymentsResult, logsResult] = shouldLoadSensitiveRows
       ? await Promise.all([
-          scopeAppointmentRows(supabase.from("payment_intents").select("appointment_id,amount_cents,status").eq("studio_id", studio.id), studio.role === "staff" ? sensitiveAppointmentIds : null),
-          scopeAppointmentRows((supabase as any).from("cash_register_movements").select("appointment_id,amount,movement_type").eq("studio_id", studio.id).eq("movement_type", "service_payment"), studio.role === "staff" ? sensitiveAppointmentIds : null),
-          scopeAppointmentRows((supabase as any).from("whatsapp_message_logs").select("appointment_id,status,reason,created_at").eq("studio_id", studio.id).order("created_at", { ascending: false }), studio.role === "staff" ? sensitiveAppointmentIds : null),
+          scopeAppointmentRows(
+            supabase
+              .from("payment_intents")
+              .select("appointment_id,amount_cents,status")
+              .eq("studio_id", studio.id),
+            studio.role === "staff" ? sensitiveAppointmentIds : null,
+          ),
+          scopeAppointmentRows(
+            (supabase as any)
+              .from("cash_register_movements")
+              .select("appointment_id,amount,movement_type")
+              .eq("studio_id", studio.id)
+              .eq("movement_type", "service_payment"),
+            studio.role === "staff" ? sensitiveAppointmentIds : null,
+          ),
+          scopeAppointmentRows(
+            (supabase as any)
+              .from("whatsapp_message_logs")
+              .select("appointment_id,status,reason,created_at")
+              .eq("studio_id", studio.id)
+              .order("created_at", { ascending: false }),
+            studio.role === "staff" ? sensitiveAppointmentIds : null,
+          ),
         ])
       : [{ data: [] }, { data: [] }, { data: [] }];
     setAppts(appointmentRows);
@@ -222,29 +263,75 @@ function AgendaPage() {
     };
     const channel = supabase
       .channel(`admin-agenda-live-${studio.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "payment_intents", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "booking_payment_requests", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "cash_register_movements", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, scheduleRefresh)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "appointments",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "payment_intents",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "booking_payment_requests",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "cash_register_movements",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "appointment_services" },
+        scheduleRefresh,
+      )
       .subscribe();
     return () => {
       if (refreshTimer) window.clearTimeout(refreshTimer);
       void supabase.removeChannel(channel);
     };
-  // loadData intentionally reads the latest studio state from this render.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // loadData intentionally reads the latest studio state from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studio?.id, studio?.role, studio?.staff_id]);
 
   // Derived maps
   const paidByAppointment = new Map<string, number>();
   for (const p of paidRows) {
     if (!p.appointment_id || p.status !== "succeeded") continue;
-    paidByAppointment.set(p.appointment_id, (paidByAppointment.get(p.appointment_id) ?? 0) + p.amount_cents / 100);
+    paidByAppointment.set(
+      p.appointment_id,
+      (paidByAppointment.get(p.appointment_id) ?? 0) + p.amount_cents / 100,
+    );
   }
   for (const p of cashPaymentRows) {
     if (!p.appointment_id || p.movement_type !== "service_payment") continue;
-    paidByAppointment.set(p.appointment_id, (paidByAppointment.get(p.appointment_id) ?? 0) + Number(p.amount || 0));
+    paidByAppointment.set(
+      p.appointment_id,
+      (paidByAppointment.get(p.appointment_id) ?? 0) + Number(p.amount || 0),
+    );
   }
   const latestMessageByAppointment = new Map<string, MessageLog>();
   for (const log of messageLogs) {
@@ -254,47 +341,77 @@ function AgendaPage() {
 
   // Filtering
   const isProfessionalPanel = studio?.role === "staff";
-  const staffAgendaVisibility = (studio?.staff_agenda_visibility ?? "private") as StaffAgendaVisibility;
+  const staffAgendaVisibility = (studio?.staff_agenda_visibility ??
+    "private") as StaffAgendaVisibility;
   const canStaffViewTeamAgenda = isProfessionalPanel && staffAgendaVisibility !== "private";
   const canStaffViewBasicDetails = staffAgendaVisibility === "team_basic";
-  const filterOptions     = buildFilterOptions(appts);
+  const filterOptions = buildFilterOptions(appts);
   const activeFilterCount = countActiveFilters(filters);
-  const filteredAppts     = sortAppointmentsChronologically(appts.filter((a) => {
-    if (isProfessionalPanel) {
-      if (!canStaffViewTeamAgenda || agendaScope === "mine") {
-        if (a.staff?.id !== studio?.staff_id) return false;
+  const filteredAppts = sortAppointmentsChronologically(
+    appts.filter((a) => {
+      if (isProfessionalPanel) {
+        if (!canStaffViewTeamAgenda || agendaScope === "mine") {
+          if (a.staff?.id !== studio?.staff_id) return false;
+        }
       }
-    }
-    if (!appointmentMatchesFilters(a, filters, paidByAppointment)) return false;
-    if (searchQuery.trim()) {
-      const q   = normalizeFilterText(searchQuery);
-      const canSeeSensitive = canViewSensitiveAppointment(a, studio);
-      const canSeeBasic = canSeeSensitive || canStaffViewBasicDetails;
-      const hay = normalizeFilterText(
-        `${canSeeSensitive ? `${a.clients?.name ?? ""} ${a.clients?.phone ?? ""}` : ""} ${canSeeBasic ? appointmentServiceLabel(a) : ""} ${a.staff?.name ?? ""}`,
-      );
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  }));
-  const sensitiveFilteredAppts = filteredAppts.filter((a) => canViewSensitiveAppointment(a, studio));
+      if (!appointmentMatchesFilters(a, filters, paidByAppointment)) return false;
+      if (searchQuery.trim()) {
+        const q = normalizeFilterText(searchQuery);
+        const canSeeSensitive = canViewSensitiveAppointment(a, studio);
+        const canSeeBasic = canSeeSensitive || canStaffViewBasicDetails;
+        const hay = normalizeFilterText(
+          `${canSeeSensitive ? `${a.clients?.name ?? ""} ${a.clients?.phone ?? ""}` : ""} ${canSeeBasic ? appointmentServiceLabel(a) : ""} ${a.staff?.name ?? ""}`,
+        );
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    }),
+  );
+  const sensitiveFilteredAppts = filteredAppts.filter((a) =>
+    canViewSensitiveAppointment(a, studio),
+  );
 
   // KPIs
-  const now            = new Date();
-  const startOfToday   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfWeek    = new Date(startOfToday); startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
-  const endOfWeek      = new Date(startOfWeek);  endOfWeek.setDate(startOfWeek.getDate() + 7);
-  const startYesterday = new Date(startOfToday); startYesterday.setDate(startOfToday.getDate() - 1);
-  const startLastWeek  = new Date(startOfWeek);  startLastWeek.setDate(startOfWeek.getDate() - 7);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfWeek = new Date(startOfToday);
+  startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
+  const endOfWeek = new Date(startOfWeek);
+  endOfWeek.setDate(startOfWeek.getDate() + 7);
+  const startYesterday = new Date(startOfToday);
+  startYesterday.setDate(startOfToday.getDate() - 1);
+  const startLastWeek = new Date(startOfWeek);
+  startLastWeek.setDate(startOfWeek.getDate() - 7);
 
-  const todayAppts     = filteredAppts.filter((a) => { const d = new Date(a.starts_at); return d >= startOfToday && d < new Date(startOfToday.getTime() + 86400000); });
-  const yesterdayAppts = appts.filter((a)          => { const d = new Date(a.starts_at); return d >= startYesterday && d < startOfToday; });
-  const weekAppts      = filteredAppts.filter((a)  => { const d = new Date(a.starts_at); return d >= startOfWeek && d < endOfWeek; });
-  const lastWeekAppts  = appts.filter((a)          => { const d = new Date(a.starts_at); return d >= startLastWeek && d < startOfWeek; });
-  const activeClients    = new Set(sensitiveFilteredAppts.map((a) => a.clients?.phone).filter(Boolean)).size;
-  const lastWeekClients  = new Set(lastWeekAppts.map((a) => a.clients?.phone).filter(Boolean)).size;
-  const totalRevenue     = sensitiveFilteredAppts.reduce((sum, a) => { const p = paidByAppointment.get(a.id) ?? 0; if (!isFinanciallyRelevantAppointment(a.status, p)) return sum; return sum + computeAttendanceRevenue(a.total_price, p, a.status).confirmed; }, 0);
-  const lastWeekRevenue  = lastWeekAppts.reduce((sum, a) => { const p = paidByAppointment.get(a.id) ?? 0; if (!isFinanciallyRelevantAppointment(a.status, p)) return sum; return sum + computeAttendanceRevenue(a.total_price, p, a.status).confirmed; }, 0);
+  const todayAppts = filteredAppts.filter((a) => {
+    const d = new Date(a.starts_at);
+    return d >= startOfToday && d < new Date(startOfToday.getTime() + 86400000);
+  });
+  const yesterdayAppts = appts.filter((a) => {
+    const d = new Date(a.starts_at);
+    return d >= startYesterday && d < startOfToday;
+  });
+  const weekAppts = filteredAppts.filter((a) => {
+    const d = new Date(a.starts_at);
+    return d >= startOfWeek && d < endOfWeek;
+  });
+  const lastWeekAppts = appts.filter((a) => {
+    const d = new Date(a.starts_at);
+    return d >= startLastWeek && d < startOfWeek;
+  });
+  const activeClients = new Set(sensitiveFilteredAppts.map((a) => a.clients?.phone).filter(Boolean))
+    .size;
+  const lastWeekClients = new Set(lastWeekAppts.map((a) => a.clients?.phone).filter(Boolean)).size;
+  const totalRevenue = sensitiveFilteredAppts.reduce((sum, a) => {
+    const p = paidByAppointment.get(a.id) ?? 0;
+    if (!isFinanciallyRelevantAppointment(a.status, p)) return sum;
+    return sum + computeAttendanceRevenue(a.total_price, p, a.status).confirmed;
+  }, 0);
+  const lastWeekRevenue = lastWeekAppts.reduce((sum, a) => {
+    const p = paidByAppointment.get(a.id) ?? 0;
+    if (!isFinanciallyRelevantAppointment(a.status, p)) return sum;
+    return sum + computeAttendanceRevenue(a.total_price, p, a.status).confirmed;
+  }, 0);
 
   function pctChange(cur: number, prev: number) {
     if (prev === 0) return cur > 0 ? 100 : 0;
@@ -306,7 +423,8 @@ function AgendaPage() {
   const groups: Record<string, Appt[]> = {};
   for (const a of filteredAppts) {
     const diff = Math.floor((new Date(a.starts_at).getTime() - startOfToday.getTime()) / 86400000);
-    const key  = diff === 0 ? "Hoje" : diff === 1 ? "Amanhã" : diff > 1 ? "Próximos Dias" : "Passados";
+    const key =
+      diff === 0 ? "Hoje" : diff === 1 ? "Amanhã" : diff > 1 ? "Próximos Dias" : "Passados";
     (groups[key] ??= []).push(a);
   }
   for (const key of Object.keys(groups)) {
@@ -327,34 +445,56 @@ function AgendaPage() {
   function updateFilter<K extends keyof AgendaFilters>(key: K, value: AgendaFilters[K]) {
     setFilters((c) => ({ ...c, [key]: value }));
   }
-  function resetFilters() { setFilters(EMPTY_FILTERS); setFiltersOpen(false); setMobileFiltersOpen(false); }
+  function resetFilters() {
+    setFilters(EMPTY_FILTERS);
+    setFiltersOpen(false);
+    setMobileFiltersOpen(false);
+  }
 
-  function closeMenu() { setMenuOpenId(null); setMenuAnchorEl(null); }
+  function closeMenu() {
+    setMenuOpenId(null);
+    setMenuAnchorEl(null);
+  }
 
   // Actions
   async function markPresence(appt: Appt, nextStatus: "completed" | "no_show") {
     if (!studio) return;
     setSavingPresenceId(appt.id);
-    const { error } = await supabase.from("appointments")
+    const { error } = await supabase
+      .from("appointments")
       .update({ status: nextStatus, updated_at: new Date().toISOString() } as any)
-      .eq("id", appt.id).eq("studio_id", studio.id);
+      .eq("id", appt.id)
+      .eq("studio_id", studio.id);
     setSavingPresenceId(null);
-    if (error) { toast.error(error.message); return; }
-    setAppts((c) => c.map((i) => i.id === appt.id ? { ...i, status: nextStatus } : i));
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setAppts((c) => c.map((i) => (i.id === appt.id ? { ...i, status: nextStatus } : i)));
     toast.success(nextStatus === "completed" ? "Atendimento confirmado." : "Falta registada.");
   }
 
-  async function confirmStudioPayment(appt: Appt, paymentMethod: StudioPaymentMethod, options?: { phone?: string }) {
+  async function confirmStudioPayment(
+    appt: Appt,
+    paymentMethod: StudioPaymentMethod,
+    options?: { phone?: string },
+  ) {
     if (!studio) return;
     setReceivingPaymentId(appt.id);
     if (paymentMethod === "mb_way" && enableInPersonMbWay) {
       try {
-        await createMbWayCharge({ data: { appointmentId: appt.id, phone: options?.phone || appt.clients?.phone || "" } });
+        await createMbWayCharge({
+          data: { appointmentId: appt.id, phone: options?.phone || appt.clients?.phone || "" },
+        });
         setPaymentDialogAppt(null);
         await loadData({ silent: true });
-        toast.success("Cobrança MB WAY enviada. O pagamento será confirmado automaticamente pela Stripe.");
+        toast.success(
+          "Cobrança MB WAY enviada. O pagamento será confirmado automaticamente pela Stripe.",
+        );
       } catch (error) {
-        toast.error(inPersonMbWayErrorMessage(error instanceof Error ? error.message : String(error)));
+        toast.error(
+          inPersonMbWayErrorMessage(error instanceof Error ? error.message : String(error)),
+        );
       } finally {
         setReceivingPaymentId(null);
       }
@@ -370,7 +510,7 @@ function AgendaPage() {
       return;
     }
     setPaymentDialogAppt(null);
-    setAppts((c) => c.map((i) => i.id === appt.id ? { ...i, status: "completed" } : i));
+    setAppts((c) => c.map((i) => (i.id === appt.id ? { ...i, status: "completed" } : i)));
     await loadData({ silent: true });
     toast.success("Pagamento confirmado e atendimento finalizado.");
   }
@@ -378,25 +518,61 @@ function AgendaPage() {
   async function cancelAppointment(apptId: string) {
     if (!studio) return;
     setCancellingId(apptId);
-    const { error } = await supabase.from("appointments")
+    const { error } = await supabase
+      .from("appointments")
       .update({ status: "cancelled", updated_at: new Date().toISOString() } as any)
-      .eq("id", apptId).eq("studio_id", studio.id);
+      .eq("id", apptId)
+      .eq("studio_id", studio.id);
     setCancellingId(null);
     setConfirmCancelId(null);
-    if (error) { toast.error(error.message); return; }
-    setAppts((c) => c.map((i) => i.id === apptId ? { ...i, status: "cancelled" } : i));
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setAppts((c) => c.map((i) => (i.id === apptId ? { ...i, status: "cancelled" } : i)));
     toast.success("Marcação cancelada.");
   }
 
   async function resendMessage(appt: Appt) {
+    if (isPastAppointment(appt.ends_at)) {
+      const message = buildPastAppointmentWhatsAppMessage({
+        clientName: appt.clients?.name ?? "",
+        studioName: studio?.name ?? "",
+        bookingUrl: studio?.slug ? `${window.location.origin}/s/${studio.slug}` : "",
+        serviceName: appointmentServiceLabel(appt),
+        startsAt: appt.starts_at,
+        endsAt: appt.ends_at,
+        status: appt.status,
+      });
+      const url = buildWhatsAppComposeUrl(appt.clients?.phone ?? "", message);
+      if (!url) {
+        toast.error("O telefone da cliente não é válido para abrir o WhatsApp.");
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+      toast.success("Mensagem personalizada preparada no WhatsApp.");
+      return;
+    }
     setResendingMessageId(appt.id);
     try {
       const log = (await resendWhatsApp({ data: { appointmentId: appt.id } })) as MessageLog | null;
-      if (log) setMessageLogs((c) => [log, ...c]);
-      toast.success("Envio de WhatsApp atualizado.");
+      if (!log) throw new Error("Não foi possível iniciar o envio pelo WhatsApp.");
+      setMessageLogs((current) => [
+        log,
+        ...current.filter((item) => item.appointment_id !== log.appointment_id),
+      ]);
+      if (log.status === "sent") {
+        toast.success("Mensagem entregue no WhatsApp.");
+      } else if (log.status === "pending") {
+        toast.info("Mensagem aceite pela operadora. A aguardar confirmação de entrega.");
+      } else {
+        toast.error(formatWhatsAppFailure(log.reason));
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível reenviar.");
-    } finally { setResendingMessageId(null); }
+    } finally {
+      setResendingMessageId(null);
+    }
   }
 
   // Export
@@ -404,19 +580,22 @@ function AgendaPage() {
     return filteredAppts.map((a) => {
       const canSeeSensitive = canViewSensitiveAppointment(a, studio);
       const canSeeBasic = canSeeSensitive || canStaffViewBasicDetails;
-      const paid    = paidByAppointment.get(a.id) ?? 0;
+      const paid = paidByAppointment.get(a.id) ?? 0;
       const service = canSeeBasic ? appointmentServiceLabel(a) : "Ocupado";
       const payLabel = formatPaymentState(a, paid);
       return {
-        Cliente:      canSeeSensitive ? a.clients?.name ?? "-" : "Reservado",
-        Telefone:     canSeeSensitive ? a.clients?.phone ?? "-" : "-",
-        Serviço:      service,
+        Cliente: canSeeSensitive ? (a.clients?.name ?? "-") : "Reservado",
+        Telefone: canSeeSensitive ? (a.clients?.phone ?? "-") : "-",
+        Serviço: service,
         Profissional: a.staff?.name ?? "-",
-        Data:         new Date(a.starts_at).toLocaleDateString("pt-PT"),
-        Hora:         new Date(a.starts_at).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" }),
-        Estado:       canSeeSensitive ? formatAppointmentStatus(a.status) : "Ocupado",
-        Valor:        canSeeSensitive ? formatEUR(a.total_price) : "-",
-        Pagamento:    canSeeSensitive ? payLabel : "-",
+        Data: new Date(a.starts_at).toLocaleDateString("pt-PT"),
+        Hora: new Date(a.starts_at).toLocaleTimeString("pt-PT", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        Estado: canSeeSensitive ? formatAppointmentStatus(a.status) : "Ocupado",
+        Valor: canSeeSensitive ? formatEUR(a.total_price) : "-",
+        Pagamento: canSeeSensitive ? payLabel : "-",
       };
     });
   }
@@ -427,65 +606,113 @@ function AgendaPage() {
     try {
       await new Promise((r) => setTimeout(r, 300));
       const rows = buildExportRows();
-      if (rows.length === 0) { toast.error("Nenhuma marcação para exportar."); return; }
+      if (rows.length === 0) {
+        toast.error("Nenhuma marcação para exportar.");
+        return;
+      }
       if (format === "csv") {
         const headers = Object.keys(rows[0]);
-        const csvLines = [headers.join(";"), ...rows.map((row) => headers.map((h) => `"${String((row as Record<string, string>)[h]).replace(/"/g, '""')}"`).join(";"))];
+        const csvLines = [
+          headers.join(";"),
+          ...rows.map((row) =>
+            headers
+              .map((h) => `"${String((row as Record<string, string>)[h]).replace(/"/g, '""')}"`)
+              .join(";"),
+          ),
+        ];
         const blob = new Blob(["﻿" + csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
         triggerDownload(blob, `marcacoes-${todayStr()}.csv`);
         toast.success("CSV exportado com sucesso.");
       } else if (format === "excel") {
         const headers = Object.keys(rows[0]);
-        const th  = headers.map((h) => `<th>${h}</th>`).join("");
-        const trs = rows.map((row) => `<tr>${headers.map((h) => `<td>${(row as Record<string, string>)[h]}</td>`).join("")}</tr>`).join("");
+        const th = headers.map((h) => `<th>${h}</th>`).join("");
+        const trs = rows
+          .map(
+            (row) =>
+              `<tr>${headers.map((h) => `<td>${(row as Record<string, string>)[h]}</td>`).join("")}</tr>`,
+          )
+          .join("");
         const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body><table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></body></html>`;
         const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8;" });
         triggerDownload(blob, `marcacoes-${todayStr()}.xls`);
         toast.success("Excel exportado com sucesso.");
       } else {
         const headers = Object.keys(rows[0]);
-        const th  = headers.map((h) => `<th>${h}</th>`).join("");
-        const trs = rows.map((row) => `<tr>${headers.map((h) => `<td>${(row as Record<string, string>)[h]}</td>`).join("")}</tr>`).join("");
+        const th = headers.map((h) => `<th>${h}</th>`).join("");
+        const trs = rows
+          .map(
+            (row) =>
+              `<tr>${headers.map((h) => `<td>${(row as Record<string, string>)[h]}</td>`).join("")}</tr>`,
+          )
+          .join("");
         const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Marcações</title><style>body{font-family:sans-serif;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:4px 8px;text-align:left}th{background:#f5f5f5}</style></head><body><h2>Marcações - ${new Date().toLocaleDateString("pt-PT")}</h2><table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></body></html>`;
         const win = window.open("", "_blank");
-        if (win) { win.document.write(html); win.document.close(); win.focus(); win.print(); }
+        if (win) {
+          win.document.write(html);
+          win.document.close();
+          win.focus();
+          win.print();
+        }
         toast.success("Janela de impressão aberta.");
       }
-    } catch { toast.error("Erro ao exportar. Tente novamente."); }
-    finally { setExporting(null); }
+    } catch {
+      toast.error("Erro ao exportar. Tente novamente.");
+    } finally {
+      setExporting(null);
+    }
   }
 
   function triggerDownload(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob);
-    const a   = document.createElement("a");
-    a.href = url; a.download = filename; a.click();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
     URL.revokeObjectURL(url);
   }
-  function todayStr() { return new Date().toISOString().slice(0, 10); }
+  function todayStr() {
+    return new Date().toISOString().slice(0, 10);
+  }
 
-  const editAppt       = editApptId       ? appts.find((a) => a.id === editApptId)       ?? null : null;
-  const rescheduleAppt = rescheduleApptId ? appts.find((a) => a.id === rescheduleApptId) ?? null : null;
+  const editAppt = editApptId ? (appts.find((a) => a.id === editApptId) ?? null) : null;
+  const rescheduleAppt = rescheduleApptId
+    ? (appts.find((a) => a.id === rescheduleApptId) ?? null)
+    : null;
 
   return (
     <div
       className="mx-auto flex w-full max-w-[1320px] flex-col gap-3 pb-24 md:gap-4 md:pb-6"
-      onClick={() => { if (menuOpenId) closeMenu(); if (exportOpen) setExportOpen(false); }}
+      onClick={() => {
+        if (menuOpenId) closeMenu();
+        if (exportOpen) setExportOpen(false);
+      }}
     >
       {/* Header */}
       <header className="flex flex-col gap-3 rounded-[1.25rem] border border-border/80 bg-card/95 px-4 py-3.5 shadow-sm md:flex-row md:items-center md:justify-between md:px-5 md:py-4">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">Agenda</p>
-          <h1 className="mt-0.5 truncate text-xl font-semibold tracking-tight md:text-2xl">Marcações</h1>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            Agenda
+          </p>
+          <h1 className="mt-0.5 truncate text-xl font-semibold tracking-tight md:text-2xl">
+            Marcações
+          </h1>
         </div>
         <div className="bellza-panel-actions md:min-w-[22rem]">
           <button
             ref={exportBtnRef}
             type="button"
-            onClick={(e) => { e.stopPropagation(); setExportOpen((v) => !v); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setExportOpen((v) => !v);
+            }}
             disabled={exporting !== null}
             className={`bellza-panel-action ${exportOpen ? "bellza-panel-action-primary" : "bellza-panel-action-secondary"}`}
           >
-            {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+            {exporting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
             <span>{exporting ? "A exportar..." : "Exportar"}</span>
           </button>
           {exportOpen && (
@@ -509,10 +736,39 @@ function AgendaPage() {
 
       {/* KPI Cards */}
       <div className="flex gap-2.5 overflow-x-auto pb-0.5 [scrollbar-width:none] md:grid md:grid-cols-4 md:gap-3 md:overflow-visible [&::-webkit-scrollbar]:hidden">
-        <KpiCard icon={<CalendarDays className="h-4 w-4" />} label="Hoje"         value={loading ? null : todayAppts.length}   pct={loading ? null : pctChange(todayAppts.length, yesterdayAppts.length)} hint="vs. ontem"            color="violet" />
-        <KpiCard icon={<Clock        className="h-4 w-4" />} label="Esta Semana"  value={loading ? null : weekAppts.length}    pct={loading ? null : pctChange(weekAppts.length, lastWeekAppts.length)}   hint="vs. semana anterior" color="blue" />
-        <KpiCard icon={<Users        className="h-4 w-4" />} label="Clientes"     value={loading ? null : activeClients}       pct={loading ? null : pctChange(activeClients, lastWeekClients)}            hint="vs. semana anterior" color="amber" />
-        <KpiCard icon={<Euro         className="h-4 w-4" />} label="Faturação"    value={loading ? null : formatEUR(totalRevenue)} pct={loading ? null : pctChange(totalRevenue, lastWeekRevenue)}      hint="vs. semana anterior" color="emerald" money />
+        <KpiCard
+          icon={<CalendarDays className="h-4 w-4" />}
+          label="Hoje"
+          value={loading ? null : todayAppts.length}
+          pct={loading ? null : pctChange(todayAppts.length, yesterdayAppts.length)}
+          hint="vs. ontem"
+          color="violet"
+        />
+        <KpiCard
+          icon={<Clock className="h-4 w-4" />}
+          label="Esta Semana"
+          value={loading ? null : weekAppts.length}
+          pct={loading ? null : pctChange(weekAppts.length, lastWeekAppts.length)}
+          hint="vs. semana anterior"
+          color="blue"
+        />
+        <KpiCard
+          icon={<Users className="h-4 w-4" />}
+          label="Clientes"
+          value={loading ? null : activeClients}
+          pct={loading ? null : pctChange(activeClients, lastWeekClients)}
+          hint="vs. semana anterior"
+          color="amber"
+        />
+        <KpiCard
+          icon={<Euro className="h-4 w-4" />}
+          label="Faturação"
+          value={loading ? null : formatEUR(totalRevenue)}
+          pct={loading ? null : pctChange(totalRevenue, lastWeekRevenue)}
+          hint="vs. semana anterior"
+          color="emerald"
+          money
+        />
       </div>
 
       {/* Search + Filter */}
@@ -520,26 +776,65 @@ function AgendaPage() {
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Pesquisar cliente, telefone ou profissional..." className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm text-foreground placeholder:text-muted-foreground outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8 md:bg-background/70" />
-            {searchQuery && <button type="button" onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>}
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Pesquisar cliente, telefone ou profissional..."
+              className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm text-foreground placeholder:text-muted-foreground outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8 md:bg-background/70"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
-          <button type="button" onClick={() => setFiltersOpen((v) => !v)} className={`hidden h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:inline-flex ${filtersOpen || activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+          <button
+            type="button"
+            onClick={() => setFiltersOpen((v) => !v)}
+            className={`hidden h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:inline-flex ${filtersOpen || activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          >
             <Filter className="h-3.5 w-3.5" />
             Filtros
-            {activeFilterCount > 0 && <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">{activeFilterCount}</span>}
+            {activeFilterCount > 0 && (
+              <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">
+                {activeFilterCount}
+              </span>
+            )}
           </button>
-          <button type="button" onClick={() => setMobileFiltersOpen(true)} className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:hidden ${activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground"}`}>
+          <button
+            type="button"
+            onClick={() => setMobileFiltersOpen(true)}
+            className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:hidden ${activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground"}`}
+          >
             <Filter className="h-3.5 w-3.5" />
-            {activeFilterCount > 0 && <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">{activeFilterCount}</span>}
+            {activeFilterCount > 0 && (
+              <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">
+                {activeFilterCount}
+              </span>
+            )}
           </button>
         </div>
 
         {canStaffViewTeamAgenda && (
           <div className="grid grid-cols-2 gap-2 md:flex md:w-fit">
-            <AgendaScopeButton active={agendaScope === "mine"} onClick={() => { setAgendaScope("mine"); updateFilter("staffId", "all"); }}>
+            <AgendaScopeButton
+              active={agendaScope === "mine"}
+              onClick={() => {
+                setAgendaScope("mine");
+                updateFilter("staffId", "all");
+              }}
+            >
               Minha agenda
             </AgendaScopeButton>
-            <AgendaScopeButton active={agendaScope === "team"} onClick={() => setAgendaScope("team")}>
+            <AgendaScopeButton
+              active={agendaScope === "team"}
+              onClick={() => setAgendaScope("team")}
+            >
               Toda a equipa
             </AgendaScopeButton>
           </div>
@@ -552,12 +847,37 @@ function AgendaPage() {
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-xs font-semibold text-muted-foreground">Filtros Avançados</p>
-                {activeFilterCount > 0 && <button type="button" onClick={resetFilters} className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">Limpar filtros</button>}
+                {activeFilterCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
               </div>
-              <AgendaFilterFields filters={filters} options={filterOptions} onChange={updateFilter} hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda} />
+              <AgendaFilterFields
+                filters={filters}
+                options={filterOptions}
+                onChange={updateFilter}
+                hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda}
+              />
               <div className="mt-3 flex justify-end gap-2">
-                <button type="button" onClick={() => setFiltersOpen(false)} className="h-9 rounded-xl border border-border px-4 text-xs font-semibold text-muted-foreground transition hover:bg-muted">Fechar</button>
-                <button type="button" onClick={() => setFiltersOpen(false)} className="h-9 rounded-xl bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-90">Aplicar</button>
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(false)}
+                  className="h-9 rounded-xl border border-border px-4 text-xs font-semibold text-muted-foreground transition hover:bg-muted"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(false)}
+                  className="h-9 rounded-xl bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-90"
+                >
+                  Aplicar
+                </button>
               </div>
             </div>
           </div>
@@ -568,16 +888,37 @@ function AgendaPage() {
       {loading ? (
         <SkeletonList />
       ) : appts.length === 0 ? (
-        <EmptyState title="Ainda não existem marcações" description="Assim que uma pessoa cliente marcar online, a reserva aparece aqui." />
+        <EmptyState
+          title="Ainda não existem marcações"
+          description="Assim que uma pessoa cliente marcar online, a reserva aparece aqui."
+        />
       ) : filteredAppts.length === 0 ? (
-        <EmptyState title="Nenhuma marcação encontrada" description="Ajuste os filtros ou limpe a pesquisa." action={<button type="button" onClick={resetFilters} className="mt-4 h-9 rounded-xl bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-90">Limpar filtros</button>} />
+        <EmptyState
+          title="Nenhuma marcação encontrada"
+          description="Ajuste os filtros ou limpe a pesquisa."
+          action={
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="mt-4 h-9 rounded-xl bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-90"
+            >
+              Limpar filtros
+            </button>
+          }
+        />
       ) : (
         <div className="flex flex-col gap-3 md:gap-4">
           {GROUP_ORDER.map((groupKey) => {
             const list = groups[groupKey];
             if (!list?.length) return null;
             return (
-              <DayGroup key={groupKey} label={groupKey} count={list.length} collapsed={collapsedGroups.has(groupKey)} onToggle={() => toggleGroup(groupKey)}>
+              <DayGroup
+                key={groupKey}
+                label={groupKey}
+                count={list.length}
+                collapsed={collapsedGroups.has(groupKey)}
+                onToggle={() => toggleGroup(groupKey)}
+              >
                 <ExpandableList
                   items={list}
                   initialCount={5}
@@ -585,50 +926,78 @@ function AgendaPage() {
                   getKey={(a) => a.id}
                   moreLabel={(hidden) => `Ver mais ${hidden} marcação${hidden !== 1 ? "ões" : ""}`}
                   renderItem={(a) => {
-                  const paid     = paidByAppointment.get(a.id) ?? 0;
-                  const split    = computeAppointmentSplit(a, studio, paid);
-                  const revenue  = computeAttendanceRevenue(a.total_price, paid, a.status);
-                  const payLabel = formatPaymentState(a, paid);
-                  const msgState = formatMessageState(a, paid, latestMessageByAppointment.get(a.id));
-                  const canViewSensitive = canViewSensitiveAppointment(a, studio);
-                  const canViewBasic = canViewSensitive || canStaffViewBasicDetails;
-                  const canConfirm  = canViewSensitive && revenue.isOnlinePaid && a.status !== "cancelled";
-                  const canResend   = canViewSensitive && msgState?.tone === "danger";
-                  return (
-                    <AppointmentCard
-                      appt={a}
-                      split={split}
-                      paidAmount={paid}
-                      paymentLabel={payLabel}
-                      messageState={msgState}
-                      canViewSensitiveDetails={canViewSensitive}
-                      canViewBasicDetails={canViewBasic}
-                      canUseActions={canViewSensitive}
-                      canConfirmPresence={canConfirm}
-                      canResendMessage={canResend}
-                      savingPresenceId={savingPresenceId}
-                      resendingMessageId={resendingMessageId}
-                      cancellingId={cancellingId}
-                      confirmCancelId={confirmCancelId}
-                      showDepositSplit={showDepositSplit}
-                      setShowDepositSplit={setShowDepositSplit}
-                      isExpanded={expandedId === a.id}
-                      isMenuOpen={menuOpenId === a.id}
-                      onExpand={() => setExpandedId(expandedId === a.id ? null : a.id)}
-                      onMenuToggle={(e, el) => { e.stopPropagation(); if (menuOpenId === a.id) { closeMenu(); } else { setMenuOpenId(a.id); setMenuAnchorEl(el); } }}
-                      onMenuClose={closeMenu}
-                      onMarkPresence={(s) => markPresence(a, s)}
-                      onRequestReceivePayment={() => setPaymentDialogAppt(a)}
-                      onResendMessage={() => resendMessage(a)}
-                      onRequestCancel={() => { setConfirmCancelId(a.id); closeMenu(); }}
-                      onConfirmCancel={() => cancelAppointment(a.id)}
-                      onDismissCancel={() => setConfirmCancelId(null)}
-                      onRequestEdit={() => { setEditApptId(a.id); closeMenu(); }}
-                      onRequestReschedule={() => { setRescheduleApptId(a.id); closeMenu(); }}
-                      receivingPaymentId={receivingPaymentId}
-                      menuAnchorEl={menuAnchorEl}
-                    />
-                  );
+                    const paid = paidByAppointment.get(a.id) ?? 0;
+                    const split = computeAppointmentSplit(a, studio, paid);
+                    const revenue = computeAttendanceRevenue(a.total_price, paid, a.status);
+                    const payLabel = formatPaymentState(a, paid);
+                    const msgState = formatMessageState(
+                      a,
+                      paid,
+                      latestMessageByAppointment.get(a.id),
+                    );
+                    const canViewSensitive = canViewSensitiveAppointment(a, studio);
+                    const canViewBasic = canViewSensitive || canStaffViewBasicDetails;
+                    const canConfirm =
+                      canViewSensitive && revenue.isOnlinePaid && a.status !== "cancelled";
+                    const canResend =
+                      canViewSensitive &&
+                      (msgState?.tone === "danger" ||
+                        (isPastAppointment(a.ends_at) &&
+                          Boolean(
+                            a.clients?.phone && normalizePhoneForDisplay(a.clients.phone),
+                          )));
+                    return (
+                      <AppointmentCard
+                        appt={a}
+                        split={split}
+                        paidAmount={paid}
+                        paymentLabel={payLabel}
+                        messageState={msgState}
+                        canViewSensitiveDetails={canViewSensitive}
+                        canViewBasicDetails={canViewBasic}
+                        canUseActions={canViewSensitive}
+                        canConfirmPresence={canConfirm}
+                        canResendMessage={canResend}
+                        savingPresenceId={savingPresenceId}
+                        resendingMessageId={resendingMessageId}
+                        cancellingId={cancellingId}
+                        confirmCancelId={confirmCancelId}
+                        showDepositSplit={showDepositSplit}
+                        setShowDepositSplit={setShowDepositSplit}
+                        isExpanded={expandedId === a.id}
+                        isMenuOpen={menuOpenId === a.id}
+                        onExpand={() => setExpandedId(expandedId === a.id ? null : a.id)}
+                        onMenuToggle={(e, el) => {
+                          e.stopPropagation();
+                          if (menuOpenId === a.id) {
+                            closeMenu();
+                          } else {
+                            setMenuOpenId(a.id);
+                            setMenuAnchorEl(el);
+                          }
+                        }}
+                        onMenuClose={closeMenu}
+                        onMarkPresence={(s) => markPresence(a, s)}
+                        onRequestReceivePayment={() => setPaymentDialogAppt(a)}
+                        onResendMessage={() => resendMessage(a)}
+                        onRequestCancel={() => {
+                          setConfirmCancelId(a.id);
+                          closeMenu();
+                        }}
+                        onConfirmCancel={() => cancelAppointment(a.id)}
+                        onDismissCancel={() => setConfirmCancelId(null)}
+                        onRequestEdit={() => {
+                          setEditApptId(a.id);
+                          closeMenu();
+                        }}
+                        onRequestReschedule={() => {
+                          setRescheduleApptId(a.id);
+                          closeMenu();
+                        }}
+                        receivingPaymentId={receivingPaymentId}
+                        menuAnchorEl={menuAnchorEl}
+                      />
+                    );
                   }}
                 />
               </DayGroup>
@@ -638,28 +1007,62 @@ function AgendaPage() {
       )}
 
       {/* Mobile FAB */}
-      <button type="button" onClick={() => setNewApptOpen(true)} className="fixed bottom-6 right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-lg shadow-black/25 transition-all hover:opacity-90 active:scale-95 md:hidden">
+      <button
+        type="button"
+        onClick={() => setNewApptOpen(true)}
+        className="fixed bottom-6 right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-lg shadow-black/25 transition-all hover:opacity-90 active:scale-95 md:hidden"
+      >
         <Plus className="h-6 w-6" />
       </button>
 
       {/* Mobile Filter Bottom Sheet */}
       {mobileFiltersOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
-          <button type="button" className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setMobileFiltersOpen(false)} />
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setMobileFiltersOpen(false)}
+          />
           <div className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-hidden rounded-t-[1.5rem] border-t border-border bg-card shadow-2xl">
             <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Filtros</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                  Filtros
+                </p>
                 <p className="text-sm font-semibold">Filtros Avançados</p>
               </div>
-              <button type="button" onClick={() => setMobileFiltersOpen(false)} className="grid size-9 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground"><X className="h-4 w-4" /></button>
+              <button
+                type="button"
+                onClick={() => setMobileFiltersOpen(false)}
+                className="grid size-9 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
             <div className="max-h-[calc(88vh-8.5rem)] overflow-y-auto px-4 py-4">
-              <AgendaFilterFields filters={filters} options={filterOptions} onChange={updateFilter} mobile hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda} />
+              <AgendaFilterFields
+                filters={filters}
+                options={filterOptions}
+                onChange={updateFilter}
+                mobile
+                hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda}
+              />
             </div>
             <div className="grid grid-cols-2 gap-2 border-t border-border p-3">
-              <button type="button" onClick={resetFilters} className="h-12 rounded-2xl border border-border text-sm font-semibold text-muted-foreground transition hover:bg-muted">Limpar</button>
-              <button type="button" onClick={() => setMobileFiltersOpen(false)} className="h-12 rounded-2xl bg-foreground text-sm font-semibold text-background transition hover:opacity-90">Aplicar</button>
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="h-12 rounded-2xl border border-border text-sm font-semibold text-muted-foreground transition hover:bg-muted"
+              >
+                Limpar
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileFiltersOpen(false)}
+                className="h-12 rounded-2xl bg-foreground text-sm font-semibold text-background transition hover:opacity-90"
+              >
+                Aplicar
+              </button>
             </div>
           </div>
         </div>
@@ -667,23 +1070,57 @@ function AgendaPage() {
 
       {/* Nova marcação Modal */}
       {newApptOpen && studio && (
-        <NewAppointmentModal studioId={studio.id} staffId={studio.role === "staff" ? studio.staff_id : null} onClose={() => setNewApptOpen(false)} onCreated={() => { setNewApptOpen(false); loadData(); }} />
+        <NewAppointmentModal
+          studioId={studio.id}
+          staffId={studio.role === "staff" ? studio.staff_id : null}
+          onClose={() => setNewApptOpen(false)}
+          onCreated={() => {
+            setNewApptOpen(false);
+            loadData();
+          }}
+        />
       )}
 
       {/* Editar marcação Modal */}
       {editAppt && studio && (
-        <EditAppointmentModal studioId={studio.id} staffId={studio.role === "staff" ? studio.staff_id : null} appt={editAppt} onClose={() => setEditApptId(null)} onSaved={() => { setEditApptId(null); loadData(); }} />
+        <EditAppointmentModal
+          studioId={studio.id}
+          staffId={studio.role === "staff" ? studio.staff_id : null}
+          appt={editAppt}
+          onClose={() => setEditApptId(null)}
+          onSaved={() => {
+            setEditApptId(null);
+            loadData();
+          }}
+        />
       )}
 
       {/* Reagendar Modal */}
       {rescheduleAppt && studio && (
-        <RescheduleModal studioId={studio.id} staffId={studio.role === "staff" ? studio.staff_id : null} appt={rescheduleAppt} onClose={() => setRescheduleApptId(null)} onSaved={() => { setRescheduleApptId(null); loadData(); }} />
+        <RescheduleModal
+          studioId={studio.id}
+          staffId={studio.role === "staff" ? studio.staff_id : null}
+          appt={rescheduleAppt}
+          onClose={() => setRescheduleApptId(null)}
+          onSaved={() => {
+            setRescheduleApptId(null);
+            loadData();
+          }}
+        />
       )}
 
       {paymentDialogAppt && (
         <StudioPaymentDialog
           appt={paymentDialogAppt}
-          amount={paidByAppointment.get(paymentDialogAppt.id) ? Math.max(0, paymentDialogAppt.total_price - (paidByAppointment.get(paymentDialogAppt.id) ?? 0)) : paymentDialogAppt.total_price}
+          amount={
+            paidByAppointment.get(paymentDialogAppt.id)
+              ? Math.max(
+                  0,
+                  paymentDialogAppt.total_price -
+                    (paidByAppointment.get(paymentDialogAppt.id) ?? 0),
+                )
+              : paymentDialogAppt.total_price
+          }
           busy={receivingPaymentId === paymentDialogAppt.id}
           enableInPersonMbWay={enableInPersonMbWay}
           onClose={() => setPaymentDialogAppt(null)}
@@ -696,9 +1133,21 @@ function AgendaPage() {
 
 // ─── Export Menu Item ────────────────────────────────────────────────────────
 
-function ExportMenuItem({ icon, children, onClick }: { icon: React.ReactNode; children: React.ReactNode; onClick: () => void }) {
+function ExportMenuItem({
+  icon,
+  children,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
   return (
-    <button type="button" onClick={onClick} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-foreground transition-colors hover:bg-muted">
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-foreground transition-colors hover:bg-muted"
+    >
       <span className="text-muted-foreground">{icon}</span>
       {children}
     </button>
@@ -707,7 +1156,12 @@ function ExportMenuItem({ icon, children, onClick }: { icon: React.ReactNode; ch
 
 // ─── Portal Export Menu ───────────────────────────────────────────────────────
 
-function PortalExportMenu({ anchorEl, onClose, onExport, exporting }: {
+function PortalExportMenu({
+  anchorEl,
+  onClose,
+  onExport,
+  exporting,
+}: {
   anchorEl: HTMLElement | null;
   onClose: () => void;
   onExport: (type: "csv" | "excel" | "pdf") => void;
@@ -722,7 +1176,7 @@ function PortalExportMenu({ anchorEl, onClose, onExport, exporting }: {
     setIsMobile(mobile);
     if (!anchorEl || mobile) return;
 
-    const rect  = anchorEl.getBoundingClientRect();
+    const rect = anchorEl.getBoundingClientRect();
     const menuW = 210;
     const menuH = 130;
     const viewW = window.innerWidth;
@@ -759,23 +1213,59 @@ function PortalExportMenu({ anchorEl, onClose, onExport, exporting }: {
   if (isMobile) {
     return createPortal(
       <div className="fixed inset-0 z-[9998]">
-        <button type="button" aria-label="Fechar" className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+        <button
+          type="button"
+          aria-label="Fechar"
+          className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          onClick={onClose}
+        />
         <div className="absolute inset-x-0 bottom-0 overflow-hidden rounded-t-[1.5rem] border-t border-border bg-card shadow-2xl animate-in slide-in-from-bottom-2 duration-200">
           <div className="mx-auto mt-3 h-1 w-10 rounded-full bg-border" />
           <div className="flex items-center justify-between px-5 py-3.5 border-b border-border">
             <p className="text-sm font-semibold">Exportar dados</p>
-            <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:bg-muted">
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:bg-muted"
+            >
               <X className="h-3.5 w-3.5" />
             </button>
           </div>
           <div className="p-3 pb-10">
-            <SheetItem icon={<FileText className="h-4 w-4" />} onClick={() => { onExport("csv");   onClose(); }} disabled={exporting !== null}>Exportar CSV</SheetItem>
-            <SheetItem icon={<FileSpreadsheet className="h-4 w-4" />} onClick={() => { onExport("excel"); onClose(); }} disabled={exporting !== null}>Exportar Excel (.xls)</SheetItem>
-            <SheetItem icon={<Printer className="h-4 w-4" />} onClick={() => { onExport("pdf");   onClose(); }} disabled={exporting !== null}>Imprimir / PDF</SheetItem>
+            <SheetItem
+              icon={<FileText className="h-4 w-4" />}
+              onClick={() => {
+                onExport("csv");
+                onClose();
+              }}
+              disabled={exporting !== null}
+            >
+              Exportar CSV
+            </SheetItem>
+            <SheetItem
+              icon={<FileSpreadsheet className="h-4 w-4" />}
+              onClick={() => {
+                onExport("excel");
+                onClose();
+              }}
+              disabled={exporting !== null}
+            >
+              Exportar Excel (.xls)
+            </SheetItem>
+            <SheetItem
+              icon={<Printer className="h-4 w-4" />}
+              onClick={() => {
+                onExport("pdf");
+                onClose();
+              }}
+              disabled={exporting !== null}
+            >
+              Imprimir / PDF
+            </SheetItem>
           </div>
         </div>
       </div>,
-      document.body
+      document.body,
     );
   }
 
@@ -789,40 +1279,88 @@ function PortalExportMenu({ anchorEl, onClose, onExport, exporting }: {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-1">
-          <DropMenuItem icon={<FileText className="h-3.5 w-3.5" />} onClick={() => { onExport("csv");   onClose(); }} disabled={exporting !== null}>Exportar CSV</DropMenuItem>
-          <DropMenuItem icon={<FileSpreadsheet className="h-3.5 w-3.5" />} onClick={() => { onExport("excel"); onClose(); }} disabled={exporting !== null}>Exportar Excel (.xls)</DropMenuItem>
-          <DropMenuItem icon={<Printer className="h-3.5 w-3.5" />} onClick={() => { onExport("pdf");   onClose(); }} disabled={exporting !== null}>Imprimir / PDF</DropMenuItem>
+          <DropMenuItem
+            icon={<FileText className="h-3.5 w-3.5" />}
+            onClick={() => {
+              onExport("csv");
+              onClose();
+            }}
+            disabled={exporting !== null}
+          >
+            Exportar CSV
+          </DropMenuItem>
+          <DropMenuItem
+            icon={<FileSpreadsheet className="h-3.5 w-3.5" />}
+            onClick={() => {
+              onExport("excel");
+              onClose();
+            }}
+            disabled={exporting !== null}
+          >
+            Exportar Excel (.xls)
+          </DropMenuItem>
+          <DropMenuItem
+            icon={<Printer className="h-3.5 w-3.5" />}
+            onClick={() => {
+              onExport("pdf");
+              onClose();
+            }}
+            disabled={exporting !== null}
+          >
+            Imprimir / PDF
+          </DropMenuItem>
         </div>
       </div>
     </>,
-    document.body
+    document.body,
   );
 }
 
 // ─── New Appointment Modal ───────────────────────────────────────────────────
 
-function NewAppointmentModal({ studioId, staffId, onClose, onCreated }: { studioId: string; staffId?: string | null; onClose: () => void; onCreated: () => void }) {
-  const [services,  setServices]  = useState<StudioService[]>([]);
+function NewAppointmentModal({
+  studioId,
+  staffId,
+  onClose,
+  onCreated,
+}: {
+  studioId: string;
+  staffId?: string | null;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [services, setServices] = useState<StudioService[]>([]);
   const [staffList, setStaffList] = useState<StudioStaff[]>([]);
-  const [clients,   setClients]   = useState<StudioClient[]>([]);
-  const [loadingData,   setLoadingData]   = useState(true);
-  const [clientSearch,  setClientSearch]  = useState("");
-  const [selectedClient,setSelectedClient]= useState<StudioClient | null>(null);
+  const [clients, setClients] = useState<StudioClient[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [clientSearch, setClientSearch] = useState("");
+  const [selectedClient, setSelectedClient] = useState<StudioClient | null>(null);
   const [newClientName, setNewClientName] = useState("");
-  const [newClientPhone,setNewClientPhone]= useState("");
-  const [isNewClient,   setIsNewClient]   = useState(false);
-  const [selectedService,setSelectedService]= useState("");
-  const [selectedStaff,  setSelectedStaff]  = useState("");
-  const [date,  setDate]  = useState("");
-  const [time,  setTime]  = useState("09:00");
+  const [newClientPhone, setNewClientPhone] = useState("");
+  const [isNewClient, setIsNewClient] = useState(false);
+  const [selectedService, setSelectedService] = useState("");
+  const [selectedStaff, setSelectedStaff] = useState("");
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("09:00");
   const [notes, setNotes] = useState("");
-  const [saving,setSaving]= useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     (async () => {
       const [{ data: svcs }, { data: stf }, { data: cls }] = await Promise.all([
-        supabase.from("services" as any).select("id,name,price,duration_min").eq("studio_id", studioId).eq("is_active", true).order("sort_order"),
-        supabase.from("staff" as any).select("id,name").eq("studio_id", studioId).eq("is_active", true).match(staffId ? { id: staffId } : {}).order("sort_order"),
+        supabase
+          .from("services" as any)
+          .select("id,name,price,duration_min")
+          .eq("studio_id", studioId)
+          .eq("is_active", true)
+          .order("sort_order"),
+        supabase
+          .from("staff" as any)
+          .select("id,name")
+          .eq("studio_id", studioId)
+          .eq("is_active", true)
+          .match(staffId ? { id: staffId } : {})
+          .order("sort_order"),
         staffId
           ? (supabase as any)
               .from("appointments")
@@ -831,7 +1369,11 @@ function NewAppointmentModal({ studioId, staffId, onClose, onCreated }: { studio
               .eq("staff_id", staffId)
               .not("client_id", "is", null)
               .order("starts_at", { ascending: true })
-          : supabase.from("clients" as any).select("id,name,phone").eq("studio_id", studioId).order("name"),
+          : supabase
+              .from("clients" as any)
+              .select("id,name,phone")
+              .eq("studio_id", studioId)
+              .order("name"),
       ]);
       setServices((svcs ?? []) as unknown as StudioService[]);
       const staffRows = (stf ?? []) as unknown as StudioStaff[];
@@ -850,79 +1392,201 @@ function NewAppointmentModal({ studioId, staffId, onClose, onCreated }: { studio
   const chosenService = services.find((s) => s.id === selectedService);
 
   async function handleSave() {
-    if (!date || !time || !selectedService || !selectedStaff) { toast.error("Preencha todos os campos obrigatórios."); return; }
-    if (!isNewClient && !selectedClient) { toast.error("Selecione ou crie um cliente."); return; }
+    if (!date || !time || !selectedService || !selectedStaff) {
+      toast.error("Preencha todos os campos obrigatórios.");
+      return;
+    }
+    if (!isNewClient && !selectedClient) {
+      toast.error("Selecione ou crie um cliente.");
+      return;
+    }
     const normalizedNewClientPhone = normalizeInternationalPhone(newClientPhone);
-    if (isNewClient && (!newClientName.trim() || !isValidInternationalPhone(newClientPhone))) { toast.error("Nome e telefone são obrigatórios."); return; }
+    if (isNewClient && (!newClientName.trim() || !isValidInternationalPhone(newClientPhone))) {
+      toast.error("Nome e telefone são obrigatórios.");
+      return;
+    }
     setSaving(true);
     try {
       let clientId: string;
       if (isNewClient) {
-        const { data: existing } = await supabase.from("clients" as any).select("id").eq("studio_id", studioId).eq("phone", normalizedNewClientPhone).maybeSingle();
-        if (existing) { clientId = (existing as any).id; }
-        else {
-          const { data: created, error: ce } = await supabase.from("clients" as any).insert({ studio_id: studioId, name: newClientName.trim(), phone: normalizedNewClientPhone }).select("id").single();
+        const { data: existing } = await supabase
+          .from("clients" as any)
+          .select("id")
+          .eq("studio_id", studioId)
+          .eq("phone", normalizedNewClientPhone)
+          .maybeSingle();
+        if (existing) {
+          clientId = (existing as any).id;
+        } else {
+          const { data: created, error: ce } = await supabase
+            .from("clients" as any)
+            .insert({
+              studio_id: studioId,
+              name: newClientName.trim(),
+              phone: normalizedNewClientPhone,
+            })
+            .select("id")
+            .single();
           if (ce || !created) throw new Error(ce?.message ?? "Erro ao criar cliente");
           clientId = (created as any).id;
         }
-      } else { clientId = selectedClient!.id; }
-      const svc      = chosenService!;
+      } else {
+        clientId = selectedClient!.id;
+      }
+      const svc = chosenService!;
       const startsAt = new Date(`${date}T${time}:00`);
-      const endsAt   = new Date(startsAt.getTime() + svc.duration_min * 60000);
-      const { data: appt, error: ae } = await supabase.from("appointments" as any).insert({
-        studio_id: studioId, client_id: clientId, staff_id: selectedStaff,
-        starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(),
-        status: "confirmed", total_price: svc.price, total_duration_min: svc.duration_min,
-        notes: notes.trim() || null, updated_at: new Date().toISOString(),
-      }).select("id").single();
+      const endsAt = new Date(startsAt.getTime() + svc.duration_min * 60000);
+      const { data: appt, error: ae } = await supabase
+        .from("appointments" as any)
+        .insert({
+          studio_id: studioId,
+          client_id: clientId,
+          staff_id: selectedStaff,
+          starts_at: startsAt.toISOString(),
+          ends_at: endsAt.toISOString(),
+          status: "confirmed",
+          total_price: svc.price,
+          total_duration_min: svc.duration_min,
+          notes: notes.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
       if (ae || !appt) throw new Error(ae?.message ?? "Erro ao criar marcação");
-      await supabase.from("appointment_services" as any).insert({ appointment_id: (appt as any).id, service_id: svc.id, price: svc.price, duration_min: svc.duration_min });
+      await supabase
+        .from("appointment_services" as any)
+        .insert({
+          appointment_id: (appt as any).id,
+          service_id: svc.id,
+          price: svc.price,
+          duration_min: svc.duration_min,
+        });
       toast.success("Marcação criada com sucesso!");
       onCreated();
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Erro ao criar marcação."); }
-    finally { setSaving(false); }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao criar marcação.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <ModalShell title="Nova marcação" onClose={onClose}>
       {loadingData ? (
-        <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
       ) : (
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
           <div>
             <div className="mb-1.5 flex items-center justify-between gap-3">
-              <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Cliente *</label>
-              <button type="button" onClick={() => { setIsNewClient((v) => !v); setSelectedClient(null); setClientSearch(""); }} className="inline-flex h-7 shrink-0 items-center rounded-full border border-border bg-background/70 px-2.5 text-[10px] font-bold text-muted-foreground transition hover:border-foreground/20 hover:bg-muted hover:text-foreground">
+              <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Cliente *
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsNewClient((v) => !v);
+                  setSelectedClient(null);
+                  setClientSearch("");
+                }}
+                className="inline-flex h-7 shrink-0 items-center rounded-full border border-border bg-background/70 px-2.5 text-[10px] font-bold text-muted-foreground transition hover:border-foreground/20 hover:bg-muted hover:text-foreground"
+              >
                 {isNewClient ? "Escolher existente" : "+ Novo cliente"}
               </button>
             </div>
             {isNewClient ? (
               <div className="space-y-2">
-                <input value={newClientName} onChange={(e) => setNewClientName(e.target.value)} placeholder="Nome completo" className={inputCls} />
-                <InternationalPhoneInput value={newClientPhone} onChange={setNewClientPhone} inputClassName="h-11 rounded-xl bg-background/70 shadow-none" />
+                <input
+                  value={newClientName}
+                  onChange={(e) => setNewClientName(e.target.value)}
+                  placeholder="Nome completo"
+                  className={inputCls}
+                />
+                <InternationalPhoneInput
+                  value={newClientPhone}
+                  onChange={setNewClientPhone}
+                  inputClassName="h-11 rounded-xl bg-background/70 shadow-none"
+                />
               </div>
             ) : (
               <div className="space-y-1.5">
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <input value={clientSearch} onChange={(e) => { setClientSearch(e.target.value); setSelectedClient(null); }} placeholder="Pesquisar cliente..." className={`${inputCls} pl-9`} />
+                  <input
+                    value={clientSearch}
+                    onChange={(e) => {
+                      setClientSearch(e.target.value);
+                      setSelectedClient(null);
+                    }}
+                    placeholder="Pesquisar cliente..."
+                    className={`${inputCls} pl-9`}
+                  />
                 </div>
                 {selectedClient ? (
                   <div className="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/8 px-3 py-2">
                     <ClientAvatar name={selectedClient.name} size="sm" />
-                    <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold" title={selectedClient.name}>{selectedClient.name}</p><p className="truncate text-xs text-muted-foreground" title={selectedClient.phone ?? ""}>{selectedClient.phone}</p></div>
-                    <button type="button" onClick={() => { setSelectedClient(null); setClientSearch(""); }} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold" title={selectedClient.name}>
+                        {selectedClient.name}
+                      </p>
+                      <p
+                        className="truncate text-xs text-muted-foreground"
+                        title={selectedClient.phone ?? ""}
+                      >
+                        {selectedClient.phone}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedClient(null);
+                        setClientSearch("");
+                      }}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 ) : clientSearch.trim() ? (
                   <div className="max-h-40 overflow-y-auto rounded-xl border border-border bg-background shadow-lg">
                     {filteredClients.length === 0 ? (
-                      <p className="px-3 py-3 text-xs text-muted-foreground">Nenhum cliente encontrado. <button type="button" onClick={() => setIsNewClient(true)} className="underline">Criar novo?</button></p>
-                    ) : filteredClients.slice(0, 8).map((c) => (
-                      <button key={c.id} type="button" onClick={() => { setSelectedClient(c); setClientSearch(c.name); }} className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-muted">
-                        <ClientAvatar name={c.name} size="sm" />
-                        <div className="min-w-0"><p className="truncate text-xs font-semibold" title={c.name}>{c.name}</p><p className="truncate text-[11px] text-muted-foreground" title={c.phone ?? ""}>{c.phone}</p></div>
-                      </button>
-                    ))}
+                      <p className="px-3 py-3 text-xs text-muted-foreground">
+                        Nenhum cliente encontrado.{" "}
+                        <button
+                          type="button"
+                          onClick={() => setIsNewClient(true)}
+                          className="underline"
+                        >
+                          Criar novo?
+                        </button>
+                      </p>
+                    ) : (
+                      filteredClients.slice(0, 8).map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedClient(c);
+                            setClientSearch(c.name);
+                          }}
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-muted"
+                        >
+                          <ClientAvatar name={c.name} size="sm" />
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold" title={c.name}>
+                              {c.name}
+                            </p>
+                            <p
+                              className="truncate text-[11px] text-muted-foreground"
+                              title={c.phone ?? ""}
+                            >
+                              {c.phone}
+                            </p>
+                          </div>
+                        </button>
+                      ))
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -930,41 +1594,82 @@ function NewAppointmentModal({ studioId, staffId, onClose, onCreated }: { studio
           </div>
           <ModalField label="Serviço *">
             <Select value={selectedService} onValueChange={setSelectedService}>
-              <SelectTrigger className={selectTriggerCls}><SelectValue placeholder="Escolher serviço" /></SelectTrigger>
+              <SelectTrigger className={selectTriggerCls}>
+                <SelectValue placeholder="Escolher serviço" />
+              </SelectTrigger>
               <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
-                {services.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} — {formatEUR(s.price)} — {s.duration_min}min</SelectItem>)}
+                {services.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name} — {formatEUR(s.price)} — {s.duration_min}min
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </ModalField>
           <ModalField label="Profissional *">
             <Select value={selectedStaff} onValueChange={setSelectedStaff}>
-              <SelectTrigger className={selectTriggerCls}><SelectValue placeholder="Escolher profissional" /></SelectTrigger>
+              <SelectTrigger className={selectTriggerCls}>
+                <SelectValue placeholder="Escolher profissional" />
+              </SelectTrigger>
               <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
-                {staffList.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                {staffList.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </ModalField>
           <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
             <ModalField label="Data *">
               {/* Override PremiumDatePicker base styles (h-12 rounded-2xl px-4 shadow-sm) to match inputCls */}
-              <PremiumDatePicker value={date} onChange={setDate} placeholder="Escolher data" className={datePickerCls} />
+              <PremiumDatePicker
+                value={date}
+                onChange={setDate}
+                placeholder="Escolher data"
+                className={datePickerCls}
+              />
             </ModalField>
             <ModalField label="Hora *">
               {/* [color-scheme] ensures native time picker respects dark/light theme */}
-              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={`${timeCls}`} />
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className={`${timeCls}`}
+              />
             </ModalField>
           </div>
           <ModalField label="Notas">
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações opcionais..." rows={2} className={textareaCls} />
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Observações opcionais..."
+              rows={2}
+              className={textareaCls}
+            />
           </ModalField>
           {chosenService && date && time && (
             <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/8 px-3 py-2">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Resumo</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Resumo
+              </p>
               <div className="mt-1 flex items-end justify-between gap-3">
-                <p className="min-w-0 truncate text-sm font-semibold" title={chosenService.name}>{chosenService.name}</p>
-                <p className="shrink-0 text-sm font-black text-emerald-700 dark:text-emerald-300">{formatEUR(chosenService.price)}</p>
+                <p className="min-w-0 truncate text-sm font-semibold" title={chosenService.name}>
+                  {chosenService.name}
+                </p>
+                <p className="shrink-0 text-sm font-black text-emerald-700 dark:text-emerald-300">
+                  {formatEUR(chosenService.price)}
+                </p>
               </div>
-              <p className="truncate text-xs text-muted-foreground">{new Date(`${date}T${time}:00`).toLocaleDateString("pt-PT", { weekday: "long", day: "2-digit", month: "long" })} as {time} · {chosenService.duration_min}min</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {new Date(`${date}T${time}:00`).toLocaleDateString("pt-PT", {
+                  weekday: "long",
+                  day: "2-digit",
+                  month: "long",
+                })}{" "}
+                as {time} · {chosenService.duration_min}min
+              </p>
             </div>
           )}
         </div>
@@ -976,21 +1681,44 @@ function NewAppointmentModal({ studioId, staffId, onClose, onCreated }: { studio
 
 // ─── Edit Appointment Modal ───────────────────────────────────────────────────
 
-function EditAppointmentModal({ studioId, staffId, appt, onClose, onSaved }: { studioId: string; staffId?: string | null; appt: Appt; onClose: () => void; onSaved: () => void }) {
-  const [services,  setServices]  = useState<StudioService[]>([]);
+function EditAppointmentModal({
+  studioId,
+  staffId,
+  appt,
+  onClose,
+  onSaved,
+}: {
+  studioId: string;
+  staffId?: string | null;
+  appt: Appt;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [services, setServices] = useState<StudioService[]>([]);
   const [staffList, setStaffList] = useState<StudioStaff[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const currentSvc = appt.appointment_services?.[0];
   const [selectedService, setSelectedService] = useState("");
-  const [selectedStaff,   setSelectedStaff]   = useState(appt.staff?.id ?? "");
-  const [notes,            setNotes]           = useState(appt.notes ?? "");
-  const [saving,           setSaving]          = useState(false);
+  const [selectedStaff, setSelectedStaff] = useState(appt.staff?.id ?? "");
+  const [notes, setNotes] = useState(appt.notes ?? "");
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     (async () => {
       const [{ data: svcs }, { data: stf }] = await Promise.all([
-        supabase.from("services" as any).select("id,name,price,duration_min").eq("studio_id", studioId).eq("is_active", true).order("sort_order"),
-        supabase.from("staff" as any).select("id,name").eq("studio_id", studioId).eq("is_active", true).match(staffId ? { id: staffId } : {}).order("sort_order"),
+        supabase
+          .from("services" as any)
+          .select("id,name,price,duration_min")
+          .eq("studio_id", studioId)
+          .eq("is_active", true)
+          .order("sort_order"),
+        supabase
+          .from("staff" as any)
+          .select("id,name")
+          .eq("studio_id", studioId)
+          .eq("is_active", true)
+          .match(staffId ? { id: staffId } : {})
+          .order("sort_order"),
       ]);
       const svcList = (svcs ?? []) as unknown as StudioService[];
       setServices(svcList);
@@ -1006,90 +1734,174 @@ function EditAppointmentModal({ studioId, staffId, appt, onClose, onSaved }: { s
   const chosenService = services.find((s) => s.id === selectedService);
 
   async function handleSave() {
-    if (!selectedService || !selectedStaff) { toast.error("Serviço e profissional são obrigatórios."); return; }
+    if (!selectedService || !selectedStaff) {
+      toast.error("Serviço e profissional são obrigatórios.");
+      return;
+    }
     const svc = chosenService!;
     setSaving(true);
     try {
-      const { error } = await supabase.from("appointments" as any).update({
-        staff_id: selectedStaff, total_price: svc.price, total_duration_min: svc.duration_min,
-        notes: notes.trim() || null, updated_at: new Date().toISOString(),
-      }).eq("id", appt.id).eq("studio_id", studioId);
+      const { error } = await supabase
+        .from("appointments" as any)
+        .update({
+          staff_id: selectedStaff,
+          total_price: svc.price,
+          total_duration_min: svc.duration_min,
+          notes: notes.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", appt.id)
+        .eq("studio_id", studioId);
       if (error) throw error;
       // Update appointment_services if present
       if (appt.appointment_services?.length) {
-        await supabase.from("appointment_services" as any).update({ service_id: svc.id, price: svc.price, duration_min: svc.duration_min }).eq("appointment_id", appt.id);
+        await supabase
+          .from("appointment_services" as any)
+          .update({ service_id: svc.id, price: svc.price, duration_min: svc.duration_min })
+          .eq("appointment_id", appt.id);
       }
       toast.success("Marcação atualizada.");
       onSaved();
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Erro ao atualizar marcação."); }
-    finally { setSaving(false); }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao atualizar marcação.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <ModalShell title="Editar marcação" onClose={onClose}>
       {loadingData ? (
-        <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
       ) : (
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
           {/* Client info (read-only) */}
           {appt.clients && (
             <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2.5">
-              <ClientAvatar name={appt.clients.name} avatarUrl={appt.clients.avatar_url} size="sm" />
-              <div className="min-w-0"><p className="truncate text-sm font-semibold" title={appt.clients.name}>{appt.clients.name}</p><p className="truncate text-xs text-muted-foreground" title={appt.clients.phone ?? ""}>{appt.clients.phone}</p></div>
-              <span className="ml-auto shrink-0 rounded-full bg-muted px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Fixo</span>
+              <ClientAvatar
+                name={appt.clients.name}
+                avatarUrl={appt.clients.avatar_url}
+                size="sm"
+              />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold" title={appt.clients.name}>
+                  {appt.clients.name}
+                </p>
+                <p
+                  className="truncate text-xs text-muted-foreground"
+                  title={appt.clients.phone ?? ""}
+                >
+                  {appt.clients.phone}
+                </p>
+              </div>
+              <span className="ml-auto shrink-0 rounded-full bg-muted px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                Fixo
+              </span>
             </div>
           )}
           <ModalField label="Serviço *">
             <Select value={selectedService} onValueChange={setSelectedService}>
-              <SelectTrigger className={selectTriggerCls}><SelectValue placeholder="Escolher serviço" /></SelectTrigger>
+              <SelectTrigger className={selectTriggerCls}>
+                <SelectValue placeholder="Escolher serviço" />
+              </SelectTrigger>
               <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
-                {services.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} — {formatEUR(s.price)} — {s.duration_min}min</SelectItem>)}
+                {services.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name} — {formatEUR(s.price)} — {s.duration_min}min
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </ModalField>
           <ModalField label="Profissional *">
             <Select value={selectedStaff} onValueChange={setSelectedStaff}>
-              <SelectTrigger className={selectTriggerCls}><SelectValue placeholder="Escolher profissional" /></SelectTrigger>
+              <SelectTrigger className={selectTriggerCls}>
+                <SelectValue placeholder="Escolher profissional" />
+              </SelectTrigger>
               <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
-                {staffList.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                {staffList.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </ModalField>
           <ModalField label="Notas">
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações opcionais..." rows={2} className={textareaCls} />
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Observações opcionais..."
+              rows={2}
+              className={textareaCls}
+            />
           </ModalField>
         </div>
       )}
-      <ModalFooter onClose={onClose} onSave={handleSave} saving={saving} disabled={loadingData} label="Guardar alterações" />
+      <ModalFooter
+        onClose={onClose}
+        onSave={handleSave}
+        saving={saving}
+        disabled={loadingData}
+        label="Guardar alterações"
+      />
     </ModalShell>
   );
 }
 
 // ─── Reschedule Modal ────────────────────────────────────────────────────────
 
-function RescheduleModal({ studioId, appt, onClose, onSaved }: { studioId: string; staffId?: string | null; appt: Appt; onClose: () => void; onSaved: () => void }) {
-  const durationMin = Math.round((new Date(appt.ends_at).getTime() - new Date(appt.starts_at).getTime()) / 60000);
+function RescheduleModal({
+  studioId,
+  appt,
+  onClose,
+  onSaved,
+}: {
+  studioId: string;
+  staffId?: string | null;
+  appt: Appt;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const durationMin = Math.round(
+    (new Date(appt.ends_at).getTime() - new Date(appt.starts_at).getTime()) / 60000,
+  );
   const currentDate = toDateInputValue(new Date(appt.starts_at));
-  const currentTime = new Date(appt.starts_at).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" }).replace(":", ":");
-  const [date,   setDate]   = useState(currentDate);
-  const [time,   setTime]   = useState(currentTime);
+  const currentTime = new Date(appt.starts_at)
+    .toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })
+    .replace(":", ":");
+  const [date, setDate] = useState(currentDate);
+  const [time, setTime] = useState(currentTime);
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
-    if (!date || !time) { toast.error("Data e hora são obrigatórias."); return; }
+    if (!date || !time) {
+      toast.error("Data e hora são obrigatórias.");
+      return;
+    }
     setSaving(true);
     try {
       const startsAt = new Date(`${date}T${time}:00`);
-      const endsAt   = new Date(startsAt.getTime() + durationMin * 60000);
-      const { error } = await supabase.from("appointments" as any).update({
-        starts_at: startsAt.toISOString(), ends_at: endsAt.toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq("id", appt.id).eq("studio_id", studioId);
+      const endsAt = new Date(startsAt.getTime() + durationMin * 60000);
+      const { error } = await supabase
+        .from("appointments" as any)
+        .update({
+          starts_at: startsAt.toISOString(),
+          ends_at: endsAt.toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", appt.id)
+        .eq("studio_id", studioId);
       if (error) throw error;
       toast.success("Marcação reagendada.");
       onSaved();
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Erro ao reagendar."); }
-    finally { setSaving(false); }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Erro ao reagendar.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -1099,43 +1911,94 @@ function RescheduleModal({ studioId, appt, onClose, onSaved }: { studioId: strin
           <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2">
             <ClientAvatar name={appt.clients.name} avatarUrl={appt.clients.avatar_url} size="sm" />
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold" title={appt.clients.name}>{appt.clients.name}</p>
-              <p className="truncate text-xs text-muted-foreground" title={appt.appointment_services?.map((s) => s.services?.name).filter(Boolean).join(", ") || "-"}>{appt.appointment_services?.map((s) => s.services?.name).filter(Boolean).join(", ") || "-"} · {durationMin}min</p>
+              <p className="truncate text-sm font-semibold" title={appt.clients.name}>
+                {appt.clients.name}
+              </p>
+              <p
+                className="truncate text-xs text-muted-foreground"
+                title={
+                  appt.appointment_services
+                    ?.map((s) => s.services?.name)
+                    .filter(Boolean)
+                    .join(", ") || "-"
+                }
+              >
+                {appt.appointment_services
+                  ?.map((s) => s.services?.name)
+                  .filter(Boolean)
+                  .join(", ") || "-"}{" "}
+                · {durationMin}min
+              </p>
             </div>
           </div>
         )}
         <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
           <ModalField label="Nova data *">
-            <PremiumDatePicker value={date} onChange={setDate} placeholder="Escolher data" className={datePickerCls} />
+            <PremiumDatePicker
+              value={date}
+              onChange={setDate}
+              placeholder="Escolher data"
+              className={datePickerCls}
+            />
           </ModalField>
           <ModalField label="Nova hora *">
-            <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={`${timeCls}`} />
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className={`${timeCls}`}
+            />
           </ModalField>
         </div>
         {date && time && (
           <div className="rounded-xl border border-blue-500/25 bg-blue-500/8 px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Nova data</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Nova data
+            </p>
             <div className="mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
-              <p className="min-w-0 truncate text-sm font-semibold">{new Date(`${date}T${time}:00`).toLocaleDateString("pt-PT", { weekday: "long", day: "2-digit", month: "long" })}</p>
-              <p className="shrink-0 rounded-full bg-blue-500/12 px-2 py-0.5 text-xs font-black text-blue-700 dark:text-blue-300">{time}</p>
+              <p className="min-w-0 truncate text-sm font-semibold">
+                {new Date(`${date}T${time}:00`).toLocaleDateString("pt-PT", {
+                  weekday: "long",
+                  day: "2-digit",
+                  month: "long",
+                })}
+              </p>
+              <p className="shrink-0 rounded-full bg-blue-500/12 px-2 py-0.5 text-xs font-black text-blue-700 dark:text-blue-300">
+                {time}
+              </p>
             </div>
             <p className="text-xs text-muted-foreground">Duração: {durationMin}min</p>
           </div>
         )}
       </div>
-      <ModalFooter onClose={onClose} onSave={handleSave} saving={saving} label="Confirmar reagendamento" />
+      <ModalFooter
+        onClose={onClose}
+        onSave={handleSave}
+        saving={saving}
+        label="Confirmar reagendamento"
+      />
     </ModalShell>
   );
 }
 
 // ─── Modal Shell & helpers ────────────────────────────────────────────────────
 
-function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+function ModalShell({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
   // Body scroll lock while modal is open
   useEffect(() => {
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
+    return () => {
+      document.body.style.overflow = prev;
+    };
   }, []);
 
   return (
@@ -1144,10 +2007,20 @@ function ModalShell({ title, onClose, children }: { title: string; onClose: () =
         {/* Sticky header — always visible, never scrolls away */}
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Agenda</p>
-            <p className="truncate text-sm font-semibold" title={title}>{title}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Agenda
+            </p>
+            <p className="truncate text-sm font-semibold" title={title}>
+              {title}
+            </p>
           </div>
-          <button type="button" onClick={onClose} className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
         {children}
       </div>
@@ -1155,12 +2028,41 @@ function ModalShell({ title, onClose, children }: { title: string; onClose: () =
   );
 }
 
-function ModalFooter({ onClose, onSave, saving, disabled, label = "Guardar marcação" }: { onClose: () => void; onSave: () => void; saving: boolean; disabled?: boolean; label?: string }) {
+function ModalFooter({
+  onClose,
+  onSave,
+  saving,
+  disabled,
+  label = "Guardar marcação",
+}: {
+  onClose: () => void;
+  onSave: () => void;
+  saving: boolean;
+  disabled?: boolean;
+  label?: string;
+}) {
   return (
     <div className="grid shrink-0 gap-2 border-t border-border bg-card/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] min-[380px]:grid-cols-[0.85fr_1.15fr]">
-      <button type="button" onClick={onClose} className="h-10 rounded-xl border border-border text-sm font-semibold text-muted-foreground transition hover:bg-muted">Cancelar</button>
-      <button type="button" onClick={onSave} disabled={saving || disabled} className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl bg-foreground px-3 py-2 text-center text-xs font-semibold leading-tight text-background transition hover:opacity-90 disabled:opacity-60 min-[380px]:text-sm">
-        {saving ? <><Loader2 className="h-4 w-4 shrink-0 animate-spin" />A guardar...</> : <span className="min-w-0 break-words">{label}</span>}
+      <button
+        type="button"
+        onClick={onClose}
+        className="h-10 rounded-xl border border-border text-sm font-semibold text-muted-foreground transition hover:bg-muted"
+      >
+        Cancelar
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={saving || disabled}
+        className="flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl bg-foreground px-3 py-2 text-center text-xs font-semibold leading-tight text-background transition hover:opacity-90 disabled:opacity-60 min-[380px]:text-sm"
+      >
+        {saving ? (
+          <>
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />A guardar...
+          </>
+        ) : (
+          <span className="min-w-0 break-words">{label}</span>
+        )}
       </button>
     </div>
   );
@@ -1169,29 +2071,43 @@ function ModalFooter({ onClose, onSave, saving, disabled, label = "Guardar marca
 function ModalField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="grid min-w-0 gap-1.5">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </span>
       {children}
     </label>
   );
 }
 
-const inputCls = "h-9 min-w-0 w-full rounded-xl border border-border bg-background/70 px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8";
+const inputCls =
+  "h-9 min-w-0 w-full rounded-xl border border-border bg-background/70 px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8";
 // timeCls: same visual as inputCls but with color-scheme + appearance resets so iOS Safari renders consistently
-const timeCls = "h-9 min-w-0 w-full rounded-xl border border-border bg-background/70 px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8 appearance-none [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-calendar-picker-indicator]:ml-auto [&::-webkit-calendar-picker-indicator]:opacity-50 [&::-webkit-date-and-time-value]:text-left";
-const selectTriggerCls = "h-9 min-w-0 rounded-xl border-border bg-background/70 px-3 text-sm shadow-none focus:ring-2 focus:ring-foreground/10 [&>span]:truncate";
+const timeCls =
+  "h-9 min-w-0 w-full rounded-xl border border-border bg-background/70 px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8 appearance-none [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-calendar-picker-indicator]:ml-auto [&::-webkit-calendar-picker-indicator]:opacity-50 [&::-webkit-date-and-time-value]:text-left";
+const selectTriggerCls =
+  "h-9 min-w-0 rounded-xl border-border bg-background/70 px-3 text-sm shadow-none focus:ring-2 focus:ring-foreground/10 [&>span]:truncate";
 const datePickerCls = "h-9 min-w-0 rounded-xl border-border bg-background/70 px-3 shadow-none";
-const textareaCls = "max-h-20 min-w-0 w-full resize-none rounded-xl border border-border bg-background/70 px-3 py-2 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8";
+const textareaCls =
+  "max-h-20 min-w-0 w-full resize-none rounded-xl border border-border bg-background/70 px-3 py-2 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8";
 
 // ─── Client Avatar ────────────────────────────────────────────────────────────
 
-function ClientAvatar({ name, avatarUrl, size = "md", className: sizeOverride }: { name?: string | null; avatarUrl?: string | null; size?: "sm" | "md" | "lg"; className?: string }) {
+function ClientAvatar({
+  name,
+  avatarUrl,
+  size = "md",
+  className: sizeOverride,
+}: {
+  name?: string | null;
+  avatarUrl?: string | null;
+  size?: "sm" | "md" | "lg";
+  className?: string;
+}) {
   const [imgError, setImgError] = useState(false);
 
-  const sizeClass = sizeOverride ?? (
-    size === "sm" ? "size-7 text-[10px]" :
-    size === "lg" ? "size-11 text-sm" :
-    "size-9 text-xs"
-  );
+  const sizeClass =
+    sizeOverride ??
+    (size === "sm" ? "size-7 text-[10px]" : size === "lg" ? "size-11 text-sm" : "size-9 text-xs");
 
   if (avatarUrl && !imgError) {
     return (
@@ -1205,7 +2121,12 @@ function ClientAvatar({ name, avatarUrl, size = "md", className: sizeOverride }:
   }
 
   const initials = name
-    ? name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("")
+    ? name
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((w) => w[0]?.toUpperCase() ?? "")
+        .join("")
     : "?";
 
   const palettes = [
@@ -1223,7 +2144,9 @@ function ClientAvatar({ name, avatarUrl, size = "md", className: sizeOverride }:
     : 0;
 
   return (
-    <div className={`shrink-0 grid place-items-center rounded-full font-semibold select-none ${sizeClass} ${palettes[idx]}`}>
+    <div
+      className={`shrink-0 grid place-items-center rounded-full font-semibold select-none ${sizeClass} ${palettes[idx]}`}
+    >
       {initials}
     </div>
   );
@@ -1231,36 +2154,60 @@ function ClientAvatar({ name, avatarUrl, size = "md", className: sizeOverride }:
 
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
 
-function KpiCard({ icon, label, value, pct, hint, money, color = "emerald" }: {
-  icon: React.ReactNode; label: string; value: React.ReactNode; pct: number | null; hint: string; money?: boolean;
+function KpiCard({
+  icon,
+  label,
+  value,
+  pct,
+  hint,
+  money,
+  color = "emerald",
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
+  pct: number | null;
+  hint: string;
+  money?: boolean;
   color?: "emerald" | "violet" | "blue" | "amber";
 }) {
   const isPos = (pct ?? 0) >= 0;
   const iconColors: Record<string, string> = {
     emerald: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-    violet:  "bg-violet-500/10 text-violet-700 dark:text-violet-400",
-    blue:    "bg-blue-500/10 text-blue-700 dark:text-blue-400",
-    amber:   "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    violet: "bg-violet-500/10 text-violet-700 dark:text-violet-400",
+    blue: "bg-blue-500/10 text-blue-700 dark:text-blue-400",
+    amber: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
   };
   const valueColor: Record<string, string> = {
     emerald: "text-emerald-700 dark:text-emerald-400",
-    violet:  "text-foreground",
-    blue:    "text-foreground",
-    amber:   "text-foreground",
+    violet: "text-foreground",
+    blue: "text-foreground",
+    amber: "text-foreground",
   };
   return (
     <div className="group flex min-h-[8.25rem] min-w-[160px] flex-1 flex-col justify-between gap-3 rounded-2xl border border-border/80 bg-card/95 p-4 shadow-sm transition-all hover:border-foreground/15 hover:shadow-md md:min-w-0">
       <div className="flex items-center justify-between">
-        <span className={`grid size-8 shrink-0 place-items-center rounded-xl ${iconColors[color]}`}>{icon}</span>
+        <span className={`grid size-8 shrink-0 place-items-center rounded-xl ${iconColors[color]}`}>
+          {icon}
+        </span>
         {pct !== null && (
-          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${isPos ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-red-500/10 text-red-600 dark:text-red-400"}`}>
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${isPos ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-red-500/10 text-red-600 dark:text-red-400"}`}
+          >
             {isPos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-            {isPos ? "+" : ""}{pct}%
+            {isPos ? "+" : ""}
+            {pct}%
           </span>
         )}
       </div>
-      {value === null ? <div className="h-7 w-16 animate-pulse rounded-lg bg-muted" /> : (
-        <p className={`text-2xl font-semibold tracking-tight leading-none ${money ? `font-mono ${valueColor[color]}` : ""}`}>{value}</p>
+      {value === null ? (
+        <div className="h-7 w-16 animate-pulse rounded-lg bg-muted" />
+      ) : (
+        <p
+          className={`text-2xl font-semibold tracking-tight leading-none ${money ? `font-mono ${valueColor[color]}` : ""}`}
+        >
+          {value}
+        </p>
       )}
       <div>
         <p className="text-xs font-medium text-foreground">{label}</p>
@@ -1272,23 +2219,63 @@ function KpiCard({ icon, label, value, pct, hint, money, color = "emerald" }: {
 
 // ─── Quick Chips ──────────────────────────────────────────────────────────────
 
-function QuickChips({ filters, setFilters, resetFilters }: { filters: AgendaFilters; setFilters: React.Dispatch<React.SetStateAction<AgendaFilters>>; resetFilters: () => void }) {
+function QuickChips({
+  filters,
+  setFilters,
+  resetFilters,
+}: {
+  filters: AgendaFilters;
+  setFilters: React.Dispatch<React.SetStateAction<AgendaFilters>>;
+  resetFilters: () => void;
+}) {
   const activeCount = countActiveFilters(filters);
   const chips = [
-    { label: "Hoje",       active: filters.dateMode === "today",      onClick: () => setFilters((c) => ({ ...c, dateMode: "today", date: "" })) },
-    { label: "Próximos",   active: filters.dateMode === "upcoming",   onClick: () => setFilters((c) => ({ ...c, dateMode: "upcoming", date: "" })) },
-    { label: "Canceladas", active: filters.status === "cancelled",    onClick: () => setFilters((c) => ({ ...c, status: "cancelled" })) },
-    { label: "Compareceu", active: filters.attendance === "attended", onClick: () => setFilters((c) => ({ ...c, attendance: "attended" })) },
-    { label: "Faltas",     active: filters.attendance === "missed",   onClick: () => setFilters((c) => ({ ...c, attendance: "missed" })) },
+    {
+      label: "Hoje",
+      active: filters.dateMode === "today",
+      onClick: () => setFilters((c) => ({ ...c, dateMode: "today", date: "" })),
+    },
+    {
+      label: "Próximos",
+      active: filters.dateMode === "upcoming",
+      onClick: () => setFilters((c) => ({ ...c, dateMode: "upcoming", date: "" })),
+    },
+    {
+      label: "Canceladas",
+      active: filters.status === "cancelled",
+      onClick: () => setFilters((c) => ({ ...c, status: "cancelled" })),
+    },
+    {
+      label: "Compareceu",
+      active: filters.attendance === "attended",
+      onClick: () => setFilters((c) => ({ ...c, attendance: "attended" })),
+    },
+    {
+      label: "Faltas",
+      active: filters.attendance === "missed",
+      onClick: () => setFilters((c) => ({ ...c, attendance: "missed" })),
+    },
   ];
   return (
     <div className="flex gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {chips.map((chip) => (
-        <button key={chip.label} type="button" onClick={chip.onClick} className={`h-7 shrink-0 rounded-full border px-3 text-[11px] font-semibold transition-all ${chip.active ? "border-foreground bg-foreground text-background" : "border-border bg-transparent text-muted-foreground hover:border-foreground/20 hover:text-foreground"}`}>{chip.label}</button>
+        <button
+          key={chip.label}
+          type="button"
+          onClick={chip.onClick}
+          className={`h-7 shrink-0 rounded-full border px-3 text-[11px] font-semibold transition-all ${chip.active ? "border-foreground bg-foreground text-background" : "border-border bg-transparent text-muted-foreground hover:border-foreground/20 hover:text-foreground"}`}
+        >
+          {chip.label}
+        </button>
       ))}
       {activeCount > 0 && (
-        <button type="button" onClick={resetFilters} className="h-7 shrink-0 rounded-full border border-border px-3 text-[11px] font-semibold text-muted-foreground transition hover:text-foreground">
-          <X className="inline h-3 w-3 mr-1" />Limpar
+        <button
+          type="button"
+          onClick={resetFilters}
+          className="h-7 shrink-0 rounded-full border border-border px-3 text-[11px] font-semibold text-muted-foreground transition hover:text-foreground"
+        >
+          <X className="inline h-3 w-3 mr-1" />
+          Limpar
         </button>
       )}
     </div>
@@ -1297,9 +2284,21 @@ function QuickChips({ filters, setFilters, resetFilters }: { filters: AgendaFilt
 
 // ─── Day Group ────────────────────────────────────────────────────────────────
 
-function DayGroup({ label, count, collapsed, onToggle, children }: { label: string; count: number; collapsed: boolean; onToggle: () => void; children: React.ReactNode }) {
-  const isToday  = label === "Hoje";
-  const isPast   = label === "Passados";
+function DayGroup({
+  label,
+  count,
+  collapsed,
+  onToggle,
+  children,
+}: {
+  label: string;
+  count: number;
+  collapsed: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  const isToday = label === "Hoje";
+  const isPast = label === "Passados";
 
   if (collapsed && isPast) {
     return (
@@ -1322,11 +2321,21 @@ function DayGroup({ label, count, collapsed, onToggle, children }: { label: stri
         className="flex w-full items-center justify-between gap-3 border-b border-border/70 bg-muted/25 px-4 py-2.5 transition hover:bg-muted/45 md:px-5 md:py-3"
       >
         <div className="flex items-center gap-2.5">
-          {isToday && <span className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />}
-          <span className={`text-xs font-semibold uppercase tracking-[0.14em] ${isToday ? "text-foreground" : "text-muted-foreground"}`}>{label}</span>
-          <span className="rounded-full bg-background border border-border/60 px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{count}</span>
+          {isToday && (
+            <span className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+          )}
+          <span
+            className={`text-xs font-semibold uppercase tracking-[0.14em] ${isToday ? "text-foreground" : "text-muted-foreground"}`}
+          >
+            {label}
+          </span>
+          <span className="rounded-full bg-background border border-border/60 px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+            {count}
+          </span>
         </div>
-        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform duration-300 ${collapsed ? "-rotate-90" : ""}`} />
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground transition-transform duration-300 ${collapsed ? "-rotate-90" : ""}`}
+        />
       </button>
 
       {/* CSS-grid smooth collapse — animates height without JS */}
@@ -1338,9 +2347,7 @@ function DayGroup({ label, count, collapsed, onToggle, children }: { label: stri
         }}
       >
         <div className="overflow-hidden">
-          <div className="flex flex-col gap-2.5 p-2.5 md:gap-2 md:p-3">
-            {children}
-          </div>
+          <div className="flex flex-col gap-2.5 p-2.5 md:gap-2 md:p-3">{children}</div>
         </div>
       </div>
     </div>
@@ -1350,57 +2357,123 @@ function DayGroup({ label, count, collapsed, onToggle, children }: { label: stri
 // ─── Appointment Card ─────────────────────────────────────────────────────────
 
 function AppointmentCard({
-  appt: a, split, paidAmount, paymentLabel, messageState, canConfirmPresence, canResendMessage,
-  canViewSensitiveDetails, canViewBasicDetails, canUseActions,
-  savingPresenceId, resendingMessageId, receivingPaymentId, cancellingId, confirmCancelId,
-  showDepositSplit, setShowDepositSplit,
-  isExpanded, isMenuOpen, menuAnchorEl,
-  onExpand, onMenuToggle, onMenuClose,
-  onMarkPresence, onRequestReceivePayment, onResendMessage,
-  onRequestCancel, onConfirmCancel, onDismissCancel,
-  onRequestEdit, onRequestReschedule,
+  appt: a,
+  split,
+  paidAmount,
+  paymentLabel,
+  messageState,
+  canConfirmPresence,
+  canResendMessage,
+  canViewSensitiveDetails,
+  canViewBasicDetails,
+  canUseActions,
+  savingPresenceId,
+  resendingMessageId,
+  receivingPaymentId,
+  cancellingId,
+  confirmCancelId,
+  showDepositSplit,
+  setShowDepositSplit,
+  isExpanded,
+  isMenuOpen,
+  menuAnchorEl,
+  onExpand,
+  onMenuToggle,
+  onMenuClose,
+  onMarkPresence,
+  onRequestReceivePayment,
+  onResendMessage,
+  onRequestCancel,
+  onConfirmCancel,
+  onDismissCancel,
+  onRequestEdit,
+  onRequestReschedule,
 }: {
-  appt: Appt; split: ReturnType<typeof computeAppointmentSplit>; paidAmount: number; paymentLabel: string;
-  messageState: ReturnType<typeof formatMessageState>; canConfirmPresence: boolean; canResendMessage: boolean;
-  canViewSensitiveDetails: boolean; canViewBasicDetails: boolean; canUseActions: boolean;
-  savingPresenceId: string | null; resendingMessageId: string | null; receivingPaymentId: string | null; cancellingId: string | null; confirmCancelId: string | null;
-  showDepositSplit: boolean; setShowDepositSplit: (v: boolean) => void;
-  isExpanded: boolean; isMenuOpen: boolean; menuAnchorEl: HTMLElement | null;
-  onExpand: () => void; onMenuToggle: (e: React.MouseEvent, el: HTMLElement) => void; onMenuClose: () => void;
-  onMarkPresence: (s: "completed" | "no_show") => void; onRequestReceivePayment: () => void; onResendMessage: () => void;
-  onRequestCancel: () => void; onConfirmCancel: () => void; onDismissCancel: () => void;
-  onRequestEdit: () => void; onRequestReschedule: () => void;
+  appt: Appt;
+  split: ReturnType<typeof computeAppointmentSplit>;
+  paidAmount: number;
+  paymentLabel: string;
+  messageState: ReturnType<typeof formatMessageState>;
+  canConfirmPresence: boolean;
+  canResendMessage: boolean;
+  canViewSensitiveDetails: boolean;
+  canViewBasicDetails: boolean;
+  canUseActions: boolean;
+  savingPresenceId: string | null;
+  resendingMessageId: string | null;
+  receivingPaymentId: string | null;
+  cancellingId: string | null;
+  confirmCancelId: string | null;
+  showDepositSplit: boolean;
+  setShowDepositSplit: (v: boolean) => void;
+  isExpanded: boolean;
+  isMenuOpen: boolean;
+  menuAnchorEl: HTMLElement | null;
+  onExpand: () => void;
+  onMenuToggle: (e: React.MouseEvent, el: HTMLElement) => void;
+  onMenuClose: () => void;
+  onMarkPresence: (s: "completed" | "no_show") => void;
+  onRequestReceivePayment: () => void;
+  onResendMessage: () => void;
+  onRequestCancel: () => void;
+  onConfirmCancel: () => void;
+  onDismissCancel: () => void;
+  onRequestEdit: () => void;
+  onRequestReschedule: () => void;
 }) {
   const menuBtnRef = useRef<HTMLButtonElement>(null);
-  const cancelled  = a.status === "cancelled";
-  const completed  = a.status === "completed";
-  const missed     = a.status === "no_show";
-  const service    = canViewBasicDetails ? appointmentServiceLabel(a) : "Ocupado";
-  const time       = new Date(a.starts_at).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" });
-  const timeEnd    = new Date(a.ends_at).toLocaleTimeString("pt-PT",   { hour: "2-digit", minute: "2-digit" });
+  const cancelled = a.status === "cancelled";
+  const completed = a.status === "completed";
+  const missed = a.status === "no_show";
+  const service = canViewBasicDetails ? appointmentServiceLabel(a) : "Ocupado";
+  const time = new Date(a.starts_at).toLocaleTimeString("pt-PT", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const timeEnd = new Date(a.ends_at).toLocaleTimeString("pt-PT", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   const durationLabel = formatDurationBetween(a.starts_at, a.ends_at, a.total_duration_min);
-  const isCancelling       = cancellingId === a.id;
+  const isCancelling = cancellingId === a.id;
   const isConfirmingCancel = confirmCancelId === a.id;
   const financialSummary = getAppointmentFinancialSummary(a, split, paidAmount);
   const canShowSplit = financialSummary.splitAvailable;
   const canExpand = canUseActions || canViewSensitiveDetails;
 
   return (
-    <article className={`relative overflow-hidden rounded-xl border shadow-sm transition-all duration-200
+    <article
+      className={`relative overflow-hidden rounded-xl border shadow-sm transition-all duration-200
       md:rounded-xl md:border md:shadow-sm md:hover:border-foreground/15 md:hover:shadow-md
-      ${missed    ? "border-red-400/25 bg-red-500/[0.04] dark:bg-red-500/[0.025]"
-        : cancelled ? "border-border/50 bg-muted/20 opacity-60"
-        : completed ? "border-emerald-500/15 bg-emerald-500/[0.03] md:bg-emerald-500/[0.025]"
-        : "border-border/80 bg-card md:bg-background/60 md:hover:bg-background/90"}`}>
-
+      ${
+        missed
+          ? "border-red-400/25 bg-red-500/[0.04] dark:bg-red-500/[0.025]"
+          : cancelled
+            ? "border-border/50 bg-muted/20 opacity-60"
+            : completed
+              ? "border-emerald-500/15 bg-emerald-500/[0.03] md:bg-emerald-500/[0.025]"
+              : "border-border/80 bg-card md:bg-background/60 md:hover:bg-background/90"
+      }`}
+    >
       {/* Cancel confirm overlay */}
       {isConfirmingCancel && canUseActions && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/96 px-4 text-center backdrop-blur-sm">
           <p className="text-sm font-semibold">Cancelar esta marcação?</p>
           <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
           <div className="flex gap-2">
-            <button type="button" onClick={onDismissCancel} className="h-9 rounded-xl border border-border px-4 text-xs font-semibold text-muted-foreground hover:bg-muted">Não</button>
-            <button type="button" onClick={onConfirmCancel} disabled={isCancelling} className="flex h-9 items-center gap-1.5 rounded-xl bg-red-600 px-4 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60">
+            <button
+              type="button"
+              onClick={onDismissCancel}
+              className="h-9 rounded-xl border border-border px-4 text-xs font-semibold text-muted-foreground hover:bg-muted"
+            >
+              Não
+            </button>
+            <button
+              type="button"
+              onClick={onConfirmCancel}
+              disabled={isCancelling}
+              className="flex h-9 items-center gap-1.5 rounded-xl bg-red-600 px-4 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+            >
               {isCancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}Sim, cancelar
             </button>
           </div>
@@ -1410,16 +2483,36 @@ function AppointmentCard({
       {/* Main row */}
       <div className="grid grid-cols-[3.75rem_2.5rem_minmax(0,1fr)_2rem] items-center gap-x-2.5 gap-y-1.5 px-3 py-2.5 md:grid-cols-[4.8rem_2.25rem_minmax(12rem,1.4fr)_minmax(11rem,0.9fr)_auto_6.75rem] md:gap-x-3 md:px-4">
         {/* Time block */}
-        <div className={`row-span-2 flex min-h-[3rem] shrink-0 flex-col items-center justify-center rounded-xl px-2 py-1.5 text-center md:min-h-[3.15rem] ${missed ? "bg-red-500/10 text-red-700 dark:text-red-300" : completed ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400" : cancelled ? "bg-muted/60 text-muted-foreground/60" : "bg-muted text-foreground"}`}>
-          <span className="text-[16px] font-black tabular-nums leading-none tracking-normal md:text-[17px]">{time}</span>
-          <span className="mt-1 text-[9px] font-semibold tabular-nums leading-none opacity-55">{timeEnd}</span>
+        <div
+          className={`row-span-2 flex min-h-[3rem] shrink-0 flex-col items-center justify-center rounded-xl px-2 py-1.5 text-center md:min-h-[3.15rem] ${missed ? "bg-red-500/10 text-red-700 dark:text-red-300" : completed ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400" : cancelled ? "bg-muted/60 text-muted-foreground/60" : "bg-muted text-foreground"}`}
+        >
+          <span className="text-[16px] font-black tabular-nums leading-none tracking-normal md:text-[17px]">
+            {time}
+          </span>
+          <span className="mt-1 text-[9px] font-semibold tabular-nums leading-none opacity-55">
+            {timeEnd}
+          </span>
         </div>
 
-        <ClientAvatar name={canViewSensitiveDetails ? a.clients?.name : undefined} avatarUrl={canViewSensitiveDetails ? a.clients?.avatar_url : undefined} className="size-10 shrink-0 text-xs md:size-9" />
+        <ClientAvatar
+          name={canViewSensitiveDetails ? a.clients?.name : undefined}
+          avatarUrl={canViewSensitiveDetails ? a.clients?.avatar_url : undefined}
+          className="size-10 shrink-0 text-xs md:size-9"
+        />
 
-        <div className={`min-w-0 md:pr-1 ${canExpand ? "cursor-pointer" : ""}`} onClick={canExpand ? onExpand : undefined} role={canExpand ? "button" : undefined} tabIndex={canExpand ? 0 : undefined} onKeyDown={(e) => e.key === "Enter" && canExpand && onExpand()}>
+        <div
+          className={`min-w-0 md:pr-1 ${canExpand ? "cursor-pointer" : ""}`}
+          onClick={canExpand ? onExpand : undefined}
+          role={canExpand ? "button" : undefined}
+          tabIndex={canExpand ? 0 : undefined}
+          onKeyDown={(e) => e.key === "Enter" && canExpand && onExpand()}
+        >
           <p className="min-w-0 break-words text-sm font-bold leading-tight text-foreground md:text-[15px]">
-            {canViewSensitiveDetails ? a.clients?.name ?? <span className="italic text-muted-foreground">Sem cliente</span> : "Horário ocupado"}
+            {canViewSensitiveDetails
+              ? (a.clients?.name ?? (
+                  <span className="italic text-muted-foreground">Sem cliente</span>
+                ))
+              : "Horário ocupado"}
           </p>
           <p className="mt-0.5 min-w-0 break-words text-xs font-medium leading-snug text-muted-foreground md:text-[12px]">
             {service} <span className="text-muted-foreground/70">· {durationLabel}</span>
@@ -1437,22 +2530,39 @@ function AppointmentCard({
         </div>
 
         <div className="col-start-4 row-start-1 flex shrink-0 items-center justify-end gap-0.5 md:col-start-6 md:row-start-1 md:justify-end">
-          {canExpand && <button type="button" onClick={onExpand} title={isExpanded ? "Fechar" : "Ver detalhes"} className={`hidden md:grid size-8 place-items-center rounded-lg transition hover:bg-muted ${isExpanded ? "text-foreground bg-muted" : "text-muted-foreground"}`}>
-            <Eye className="h-3.5 w-3.5" />
-          </button>}
+          {canExpand && (
+            <button
+              type="button"
+              onClick={onExpand}
+              title={isExpanded ? "Fechar" : "Ver detalhes"}
+              className={`hidden md:grid size-8 place-items-center rounded-lg transition hover:bg-muted ${isExpanded ? "text-foreground bg-muted" : "text-muted-foreground"}`}
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </button>
+          )}
           {canUseActions && a.clients?.phone && (
-            <a href={`tel:${a.clients.phone}`} onClick={(e) => e.stopPropagation()} title="Ligar" className="hidden md:grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground">
+            <a
+              href={`tel:${a.clients.phone}`}
+              onClick={(e) => e.stopPropagation()}
+              title="Ligar"
+              className="hidden md:grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
               <Phone className="h-3.5 w-3.5" />
             </a>
           )}
-          {canUseActions && <button
-            ref={menuBtnRef}
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onMenuToggle(e, menuBtnRef.current!); }}
-            className={`grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground ${isMenuOpen ? "bg-muted text-foreground" : ""}`}
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </button>}
+          {canUseActions && (
+            <button
+              ref={menuBtnRef}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onMenuToggle(e, menuBtnRef.current!);
+              }}
+              className={`grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground ${isMenuOpen ? "bg-muted text-foreground" : ""}`}
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         <div className="col-span-4 flex min-w-0 items-start justify-between gap-2 md:contents">
@@ -1465,22 +2575,35 @@ function AppointmentCard({
               </span>
             )}
           </div>
-          {canViewSensitiveDetails && <span className="shrink-0 self-start whitespace-nowrap pt-0.5 font-mono text-sm font-bold leading-none text-emerald-700 dark:text-emerald-400 md:col-start-5 md:row-start-1 md:self-center md:pt-0 md:text-right md:text-[15px]">
-            {formatEUR(split.serviceTotal)}
-          </span>}
+          {canViewSensitiveDetails && (
+            <span className="shrink-0 self-start whitespace-nowrap pt-0.5 font-mono text-sm font-bold leading-none text-emerald-700 dark:text-emerald-400 md:col-start-5 md:row-start-1 md:self-center md:pt-0 md:text-right md:text-[15px]">
+              {formatEUR(split.serviceTotal)}
+            </span>
+          )}
         </div>
       </div>
 
       {/* Notes */}
-      {canViewSensitiveDetails && a.notes && <p className="border-t border-border/40 px-4 pb-2.5 pt-2 text-[11px] italic text-muted-foreground">"{a.notes}"</p>}
+      {canViewSensitiveDetails && a.notes && (
+        <p className="border-t border-border/40 px-4 pb-2.5 pt-2 text-[11px] italic text-muted-foreground">
+          "{a.notes}"
+        </p>
+      )}
 
       {/* Expanded financial panel */}
       {isExpanded && canViewSensitiveDetails && (
-        <div className={`border-t px-3.5 pb-3.5 pt-3 md:px-4 ${missed ? "border-red-500/20 bg-red-500/3" : "border-border/50 bg-muted/15"}`}>
+        <div
+          className={`border-t px-3.5 pb-3.5 pt-3 md:px-4 ${missed ? "border-red-500/20 bg-red-500/3" : "border-border/50 bg-muted/15"}`}
+        >
           <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
             <div className="grid gap-2 sm:grid-cols-3 md:flex md:flex-wrap md:items-center">
               {financialSummary.items.map((item) => (
-                <FinancialLine key={item.label} label={item.label} value={formatEUR(item.value)} emphasis={item.emphasis} />
+                <FinancialLine
+                  key={item.label}
+                  label={item.label}
+                  value={formatEUR(item.value)}
+                  emphasis={item.emphasis}
+                />
               ))}
             </div>
             {canShowSplit && (
@@ -1506,49 +2629,136 @@ function AppointmentCard({
           )}
 
           <div className="hidden">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Repartição financeira</p>
-            <label className="flex cursor-pointer items-center gap-1.5 text-[10px] font-semibold text-muted-foreground">
-              <input type="checkbox" checked={showDepositSplit} onChange={(e) => setShowDepositSplit(e.target.checked)} className="h-3 w-3 accent-emerald-600" />
-              Ver divisão do sinal
-            </label>
-          </div>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <FinancialMetricCard label="Valor total"     value={formatEUR(split.serviceTotal)} featured />
-            <FinancialMetricCard label="Recebido online" value={formatEUR(split.received)} />
-            <FinancialMetricCard label="Restante"        value={formatEUR(split.pending)} />
-            <FinancialMetricCard label={a.status === "completed" ? "Faturado" : "Pendente"} value={formatEUR(split.confirmed)} muted={a.status !== "completed"} />
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <FinancialMetricCard label="Estúdio recebe"       value={formatEUR(split.studio)}       detail={`${split.commissionPercent}% do total`} featured />
-            <FinancialMetricCard label="Profissional recebe" value={formatEUR(split.professional)} detail={`${100 - split.commissionPercent}% do total`} featured />
-          </div>
-          {showDepositSplit && split.received > 0 && (
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <FinancialMetricCard label="Sinal: estúdio"       value={formatEUR(split.signalStudio)}       detail="Apenas referência" muted />
-              <FinancialMetricCard label="Sinal: profissional" value={formatEUR(split.signalProfessional)} detail="Apenas referência" muted />
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Repartição financeira
+              </p>
+              <label className="flex cursor-pointer items-center gap-1.5 text-[10px] font-semibold text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={showDepositSplit}
+                  onChange={(e) => setShowDepositSplit(e.target.checked)}
+                  className="h-3 w-3 accent-emerald-600"
+                />
+                Ver divisão do sinal
+              </label>
             </div>
-          )}
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              <FinancialMetricCard
+                label="Valor total"
+                value={formatEUR(split.serviceTotal)}
+                featured
+              />
+              <FinancialMetricCard label="Recebido online" value={formatEUR(split.received)} />
+              <FinancialMetricCard label="Restante" value={formatEUR(split.pending)} />
+              <FinancialMetricCard
+                label={a.status === "completed" ? "Faturado" : "Pendente"}
+                value={formatEUR(split.confirmed)}
+                muted={a.status !== "completed"}
+              />
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <FinancialMetricCard
+                label="Estúdio recebe"
+                value={formatEUR(split.studio)}
+                detail={`${split.commissionPercent}% do total`}
+                featured
+              />
+              <FinancialMetricCard
+                label="Profissional recebe"
+                value={formatEUR(split.professional)}
+                detail={`${100 - split.commissionPercent}% do total`}
+                featured
+              />
+            </div>
+            {showDepositSplit && split.received > 0 && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <FinancialMetricCard
+                  label="Sinal: estúdio"
+                  value={formatEUR(split.signalStudio)}
+                  detail="Apenas referência"
+                  muted
+                />
+                <FinancialMetricCard
+                  label="Sinal: profissional"
+                  value={formatEUR(split.signalProfessional)}
+                  detail="Apenas referência"
+                  muted
+                />
+              </div>
+            )}
           </div>
           {canConfirmPresence && (
-            <div className={`mt-3 grid gap-2 ${canResendMessage ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
-              <PresenceButton active={a.status === "completed"} disabled={savingPresenceId === a.id} onClick={() => onMarkPresence("completed")}><Check className="h-3.5 w-3.5" /> Compareceu</PresenceButton>
-              <PresenceButton active={a.status === "no_show"} danger disabled={savingPresenceId === a.id} onClick={() => onMarkPresence("no_show")}><X className="h-3.5 w-3.5" /> Não compareceu</PresenceButton>
-              {canResendMessage && <PresenceButton active={false} whatsapp disabled={resendingMessageId === a.id} onClick={onResendMessage}><WhatsAppIcon className="h-3.5 w-3.5 shrink-0" />{resendingMessageId === a.id ? "A reenviar..." : "Reenviar WhatsApp"}</PresenceButton>}
+            <div
+              className={`mt-3 grid gap-2 ${canResendMessage ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}
+            >
+              <PresenceButton
+                active={a.status === "completed"}
+                disabled={savingPresenceId === a.id}
+                onClick={() => onMarkPresence("completed")}
+              >
+                <Check className="h-3.5 w-3.5" /> Compareceu
+              </PresenceButton>
+              <PresenceButton
+                active={a.status === "no_show"}
+                danger
+                disabled={savingPresenceId === a.id}
+                onClick={() => onMarkPresence("no_show")}
+              >
+                <X className="h-3.5 w-3.5" /> Não compareceu
+              </PresenceButton>
+              {canResendMessage && (
+                <PresenceButton
+                  active={false}
+                  whatsapp
+                  disabled={resendingMessageId === a.id}
+                  onClick={onResendMessage}
+                >
+                  <WhatsAppIcon className="h-3.5 w-3.5 shrink-0" />
+                  {resendingMessageId === a.id
+                    ? "A reenviar..."
+                    : isPastAppointment(a.ends_at)
+                      ? "Contactar no WhatsApp"
+                      : "Reenviar WhatsApp"}
+                </PresenceButton>
+              )}
             </div>
           )}
           {financialSummary.needsStudioPaymentConfirmation && (
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <PresenceButton active={false} disabled={receivingPaymentId === a.id} onClick={onRequestReceivePayment}>
+              <PresenceButton
+                active={false}
+                disabled={receivingPaymentId === a.id}
+                onClick={onRequestReceivePayment}
+              >
                 <Euro className="h-3.5 w-3.5" /> Receber pagamento
               </PresenceButton>
-              <PresenceButton active={a.status === "no_show"} danger disabled={savingPresenceId === a.id || receivingPaymentId === a.id} onClick={() => onMarkPresence("no_show")}>
+              <PresenceButton
+                active={a.status === "no_show"}
+                danger
+                disabled={savingPresenceId === a.id || receivingPaymentId === a.id}
+                onClick={() => onMarkPresence("no_show")}
+              >
                 <X className="h-3.5 w-3.5" /> Marcar falta
               </PresenceButton>
             </div>
           )}
           {canResendMessage && !canConfirmPresence && (
-            <div className="mt-3"><PresenceButton active={false} whatsapp disabled={resendingMessageId === a.id} onClick={onResendMessage}><WhatsAppIcon className="h-3.5 w-3.5 shrink-0" />{resendingMessageId === a.id ? "A reenviar..." : "Reenviar WhatsApp"}</PresenceButton></div>
+            <div className="mt-3">
+              <PresenceButton
+                active={false}
+                whatsapp
+                disabled={resendingMessageId === a.id}
+                onClick={onResendMessage}
+              >
+                <WhatsAppIcon className="h-3.5 w-3.5 shrink-0" />
+                {resendingMessageId === a.id
+                  ? "A reenviar..."
+                  : isPastAppointment(a.ends_at)
+                    ? "Contactar no WhatsApp"
+                    : "Reenviar WhatsApp"}
+              </PresenceButton>
+            </div>
           )}
         </div>
       )}
@@ -1561,12 +2771,27 @@ function AppointmentCard({
           canResendMessage={canResendMessage}
           canReceivePayment={financialSummary.needsStudioPaymentConfirmation}
           resendingMessageId={resendingMessageId}
-          onViewDetails={() => { onExpand(); onMenuClose(); }}
-          onEdit={() => { onRequestEdit(); }}
-          onReschedule={() => { onRequestReschedule(); }}
-          onReceivePayment={() => { onRequestReceivePayment(); onMenuClose(); }}
-          onResendMessage={() => { onResendMessage(); onMenuClose(); }}
-          onRequestCancel={() => { onRequestCancel(); }}
+          onViewDetails={() => {
+            onExpand();
+            onMenuClose();
+          }}
+          onEdit={() => {
+            onRequestEdit();
+          }}
+          onReschedule={() => {
+            onRequestReschedule();
+          }}
+          onReceivePayment={() => {
+            onRequestReceivePayment();
+            onMenuClose();
+          }}
+          onResendMessage={() => {
+            onResendMessage();
+            onMenuClose();
+          }}
+          onRequestCancel={() => {
+            onRequestCancel();
+          }}
           onClose={onMenuClose}
         />
       )}
@@ -1576,11 +2801,32 @@ function AppointmentCard({
 
 // ─── Portal Action Menu ───────────────────────────────────────────────────────
 
-function PortalActionMenu({ anchorEl, appt: a, canResendMessage, canReceivePayment, resendingMessageId, onViewDetails, onEdit, onReschedule, onReceivePayment, onResendMessage, onRequestCancel, onClose }: {
+function PortalActionMenu({
+  anchorEl,
+  appt: a,
+  canResendMessage,
+  canReceivePayment,
+  resendingMessageId,
+  onViewDetails,
+  onEdit,
+  onReschedule,
+  onReceivePayment,
+  onResendMessage,
+  onRequestCancel,
+  onClose,
+}: {
   anchorEl: HTMLElement | null;
-  appt: Appt; canResendMessage: boolean; canReceivePayment: boolean; resendingMessageId: string | null;
-  onViewDetails: () => void; onEdit: () => void; onReschedule: () => void; onReceivePayment: () => void;
-  onResendMessage: () => void; onRequestCancel: () => void; onClose: () => void;
+  appt: Appt;
+  canResendMessage: boolean;
+  canReceivePayment: boolean;
+  resendingMessageId: string | null;
+  onViewDetails: () => void;
+  onEdit: () => void;
+  onReschedule: () => void;
+  onReceivePayment: () => void;
+  onResendMessage: () => void;
+  onRequestCancel: () => void;
+  onClose: () => void;
 }) {
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
   const [isMobile, setIsMobile] = useState(false);
@@ -1591,11 +2837,11 @@ function PortalActionMenu({ anchorEl, appt: a, canResendMessage, canReceivePayme
 
     if (!anchorEl || window.innerWidth < 768) return;
 
-    const rect     = anchorEl.getBoundingClientRect();
-    const menuW    = 216;
-    const menuH    = a.status !== "cancelled" ? 280 : 240;
-    const viewW    = window.innerWidth;
-    const viewH    = window.innerHeight;
+    const rect = anchorEl.getBoundingClientRect();
+    const menuW = 216;
+    const menuH = a.status !== "cancelled" ? 280 : 240;
+    const viewW = window.innerWidth;
+    const viewH = window.innerHeight;
     const rightGap = viewW - rect.right;
 
     const newStyle: React.CSSProperties = { position: "fixed", zIndex: 9999, minWidth: menuW };
@@ -1629,7 +2875,11 @@ function PortalActionMenu({ anchorEl, appt: a, canResendMessage, canReceivePayme
   if (isMobile) {
     return createPortal(
       <div className="fixed inset-0 z-[9998]">
-        <button type="button" className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+        <button
+          type="button"
+          className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          onClick={onClose}
+        />
         <div className="absolute inset-x-0 bottom-0 overflow-hidden rounded-t-[1.5rem] border-t border-border bg-card shadow-2xl animate-in slide-in-from-bottom-2 duration-200">
           {/* Handle + client info */}
           <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
@@ -1640,27 +2890,65 @@ function PortalActionMenu({ anchorEl, appt: a, canResendMessage, canReceivePayme
                 <p className="text-xs text-muted-foreground">{a.clients?.phone ?? ""}</p>
               </div>
             </div>
-            <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:bg-muted"><X className="h-3.5 w-3.5" /></button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:bg-muted"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
           <div className="p-2">
-            <SheetItem icon={<Eye className="h-4 w-4" />} onClick={onViewDetails}>Ver detalhes</SheetItem>
-            <SheetItem icon={<Pencil className="h-4 w-4" />} onClick={onEdit}>Editar marcação</SheetItem>
-            <SheetItem icon={<CalendarClock className="h-4 w-4" />} onClick={onReschedule}>Reagendar</SheetItem>
-            {canReceivePayment && <SheetItem icon={<Euro className="h-4 w-4" />} onClick={onReceivePayment}>Receber pagamento</SheetItem>}
-            {a.clients?.phone && <SheetItem icon={<Phone className="h-4 w-4" />} onClick={() => { window.open(`tel:${a.clients?.phone}`); onClose(); }}>Contactar cliente</SheetItem>}
-            {canResendMessage && <SheetItem icon={<WhatsAppIcon className="h-4 w-4" />} onClick={() => { onResendMessage(); }} disabled={resendingMessageId === a.id}>Reenviar WhatsApp</SheetItem>}
+            <SheetItem icon={<Eye className="h-4 w-4" />} onClick={onViewDetails}>
+              Ver detalhes
+            </SheetItem>
+            <SheetItem icon={<Pencil className="h-4 w-4" />} onClick={onEdit}>
+              Editar marcação
+            </SheetItem>
+            <SheetItem icon={<CalendarClock className="h-4 w-4" />} onClick={onReschedule}>
+              Reagendar
+            </SheetItem>
+            {canReceivePayment && (
+              <SheetItem icon={<Euro className="h-4 w-4" />} onClick={onReceivePayment}>
+                Receber pagamento
+              </SheetItem>
+            )}
+            {a.clients?.phone && (
+              <SheetItem
+                icon={<Phone className="h-4 w-4" />}
+                onClick={() => {
+                  window.open(`tel:${a.clients?.phone}`);
+                  onClose();
+                }}
+              >
+                Contactar cliente
+              </SheetItem>
+            )}
+            {canResendMessage && (
+              <SheetItem
+                icon={<WhatsAppIcon className="h-4 w-4" />}
+                onClick={() => {
+                  onResendMessage();
+                }}
+                disabled={resendingMessageId === a.id}
+              >
+                {isPastAppointment(a.ends_at) ? "Contactar no WhatsApp" : "Reenviar WhatsApp"}
+              </SheetItem>
+            )}
           </div>
           {a.status !== "cancelled" && (
             <>
               <div className="mx-3 border-t border-border/60" />
               <div className="p-2 pb-10">
-                <SheetItem icon={<X className="h-4 w-4" />} onClick={onRequestCancel} danger>Cancelar marcação</SheetItem>
+                <SheetItem icon={<X className="h-4 w-4" />} onClick={onRequestCancel} danger>
+                  Cancelar marcação
+                </SheetItem>
               </div>
             </>
           )}
         </div>
       </div>,
-      document.body
+      document.body,
     );
   }
 
@@ -1675,24 +2963,54 @@ function PortalActionMenu({ anchorEl, appt: a, canResendMessage, canReceivePayme
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-1">
-          <DropMenuItem icon={<Eye className="h-3.5 w-3.5" />} onClick={onViewDetails}>Ver detalhes</DropMenuItem>
-          <DropMenuItem icon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit}>Editar marcação</DropMenuItem>
-          <DropMenuItem icon={<CalendarClock className="h-3.5 w-3.5" />} onClick={onReschedule}>Reagendar</DropMenuItem>
-          {canReceivePayment && <DropMenuItem icon={<Euro className="h-3.5 w-3.5" />} onClick={onReceivePayment}>Receber pagamento</DropMenuItem>}
-          {a.clients?.phone && <DropMenuItem icon={<Phone className="h-3.5 w-3.5" />} onClick={() => { window.open(`tel:${a.clients?.phone}`); onClose(); }}>Contactar cliente</DropMenuItem>}
-          {canResendMessage && <DropMenuItem icon={<WhatsAppIcon className="h-3.5 w-3.5" />} onClick={onResendMessage} disabled={resendingMessageId === a.id}>Reenviar WhatsApp</DropMenuItem>}
+          <DropMenuItem icon={<Eye className="h-3.5 w-3.5" />} onClick={onViewDetails}>
+            Ver detalhes
+          </DropMenuItem>
+          <DropMenuItem icon={<Pencil className="h-3.5 w-3.5" />} onClick={onEdit}>
+            Editar marcação
+          </DropMenuItem>
+          <DropMenuItem icon={<CalendarClock className="h-3.5 w-3.5" />} onClick={onReschedule}>
+            Reagendar
+          </DropMenuItem>
+          {canReceivePayment && (
+            <DropMenuItem icon={<Euro className="h-3.5 w-3.5" />} onClick={onReceivePayment}>
+              Receber pagamento
+            </DropMenuItem>
+          )}
+          {a.clients?.phone && (
+            <DropMenuItem
+              icon={<Phone className="h-3.5 w-3.5" />}
+              onClick={() => {
+                window.open(`tel:${a.clients?.phone}`);
+                onClose();
+              }}
+            >
+              Contactar cliente
+            </DropMenuItem>
+          )}
+          {canResendMessage && (
+            <DropMenuItem
+              icon={<WhatsAppIcon className="h-3.5 w-3.5" />}
+              onClick={onResendMessage}
+              disabled={resendingMessageId === a.id}
+            >
+              {isPastAppointment(a.ends_at) ? "Contactar no WhatsApp" : "Reenviar WhatsApp"}
+            </DropMenuItem>
+          )}
         </div>
         {a.status !== "cancelled" && (
           <>
             <div className="border-t border-border/50" />
             <div className="p-1">
-              <DropMenuItem icon={<X className="h-3.5 w-3.5" />} danger onClick={onRequestCancel}>Cancelar marcação</DropMenuItem>
+              <DropMenuItem icon={<X className="h-3.5 w-3.5" />} danger onClick={onRequestCancel}>
+                Cancelar marcação
+              </DropMenuItem>
             </div>
           </>
         )}
       </div>
     </>,
-    document.body
+    document.body,
   );
 }
 
@@ -1726,16 +3044,24 @@ function StudioPaymentDialog({
         <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">Receber pagamento</p>
-            <p className="truncate text-xs text-muted-foreground">{appt.clients?.name ?? "Cliente"} · {formatEUR(amount)}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {appt.clients?.name ?? "Cliente"} · {formatEUR(amount)}
+            </p>
           </div>
-          <button type="button" onClick={onClose} className="grid size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:bg-muted">
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-9 place-items-center rounded-xl border border-border text-muted-foreground hover:bg-muted"
+          >
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
 
         <div className="space-y-4 px-4 py-4">
           <div className="rounded-xl border border-border/70 bg-muted/25 px-3 py-2.5">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Valor a receber</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Valor a receber
+            </p>
             <p className="mt-1 font-mono text-xl font-bold text-foreground">{formatEUR(amount)}</p>
           </div>
 
@@ -1769,7 +3095,8 @@ function StudioPaymentDialog({
                 />
               </div>
               <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                A cliente aprova a cobrança na app MB WAY. A Bellza só confirma o pagamento após resposta da Stripe.
+                A cliente aprova a cobrança na app MB WAY. A Bellza só confirma o pagamento após
+                resposta da Stripe.
               </p>
             </div>
           )}
@@ -1786,13 +3113,19 @@ function StudioPaymentDialog({
         </div>
 
         <div className="grid grid-cols-2 gap-2 border-t border-border bg-muted/20 p-3">
-          <button type="button" onClick={onClose} className="h-11 rounded-xl border border-border bg-background text-sm font-semibold text-muted-foreground hover:bg-muted">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-11 rounded-xl border border-border bg-background text-sm font-semibold text-muted-foreground hover:bg-muted"
+          >
             Cancelar
           </button>
           <button
             type="button"
             disabled={busy || !clientAttended || !canSendMbWayCharge}
-            onClick={() => onConfirm(paymentMethod, isStripeMbWay ? { phone: normalizedMbWayPhone } : undefined)}
+            onClick={() =>
+              onConfirm(paymentMethod, isStripeMbWay ? { phone: normalizedMbWayPhone } : undefined)
+            }
             className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-sm font-semibold text-background shadow-sm transition hover:opacity-90 disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
@@ -1812,19 +3145,57 @@ const STUDIO_PAYMENT_METHODS: Array<{ value: StudioPaymentMethod; label: string 
   { value: "other", label: "Outro" },
 ];
 
-function DropMenuItem({ icon, children, onClick, danger, disabled }: { icon: React.ReactNode; children: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean }) {
+function DropMenuItem({
+  icon,
+  children,
+  onClick,
+  danger,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+}) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium transition-colors disabled:opacity-50 ${danger ? "text-red-600 hover:bg-red-500/10 dark:text-red-400" : "text-foreground hover:bg-muted"}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium transition-colors disabled:opacity-50 ${danger ? "text-red-600 hover:bg-red-500/10 dark:text-red-400" : "text-foreground hover:bg-muted"}`}
+    >
       <span className={danger ? "text-red-500" : "text-muted-foreground"}>{icon}</span>
       {children}
     </button>
   );
 }
 
-function SheetItem({ icon, children, onClick, danger, disabled }: { icon: React.ReactNode; children: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean }) {
+function SheetItem({
+  icon,
+  children,
+  onClick,
+  danger,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+}) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium transition-colors disabled:opacity-50 ${danger ? "text-red-600 hover:bg-red-500/10 dark:text-red-400" : "text-foreground hover:bg-muted"}`}>
-      <span className={`grid size-8 shrink-0 place-items-center rounded-xl ${danger ? "bg-red-500/10 text-red-500" : "bg-muted text-muted-foreground"}`}>{icon}</span>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium transition-colors disabled:opacity-50 ${danger ? "text-red-600 hover:bg-red-500/10 dark:text-red-400" : "text-foreground hover:bg-muted"}`}
+    >
+      <span
+        className={`grid size-8 shrink-0 place-items-center rounded-xl ${danger ? "bg-red-500/10 text-red-500" : "bg-muted text-muted-foreground"}`}
+      >
+        {icon}
+      </span>
       {children}
     </button>
   );
@@ -1834,15 +3205,30 @@ function SheetItem({ icon, children, onClick, danger, disabled }: { icon: React.
 
 function StatusChip({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    confirmed:       { label: "Confirmada",    cls: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400" },
-    completed:       { label: "Concluída",     cls: "bg-blue-500/12 text-blue-700 dark:text-blue-400" },
-    cancelled:       { label: "Cancelada",     cls: "bg-red-500/12 text-red-600 dark:text-red-400" },
-    no_show:         { label: "Falta",         cls: "bg-red-500/12 text-red-600 dark:text-red-400" },
-    pending:         { label: "Pendente",      cls: "bg-amber-500/12 text-amber-700 dark:text-amber-400" },
-    pending_payment: { label: "Aguarda pagamento", cls: "bg-amber-500/12 text-amber-700 dark:text-amber-400" },
+    confirmed: {
+      label: "Confirmada",
+      cls: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
+    },
+    completed: { label: "Concluída", cls: "bg-blue-500/12 text-blue-700 dark:text-blue-400" },
+    cancelled: { label: "Cancelada", cls: "bg-red-500/12 text-red-600 dark:text-red-400" },
+    no_show: { label: "Falta", cls: "bg-red-500/12 text-red-600 dark:text-red-400" },
+    pending: { label: "Pendente", cls: "bg-amber-500/12 text-amber-700 dark:text-amber-400" },
+    pending_payment: {
+      label: "Aguarda pagamento",
+      cls: "bg-amber-500/12 text-amber-700 dark:text-amber-400",
+    },
   };
-  const cfg = map[status] ?? { label: formatAppointmentStatus(status), cls: "bg-muted text-muted-foreground" };
-  return <span className={`max-w-full rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight ${cfg.cls}`}>{cfg.label}</span>;
+  const cfg = map[status] ?? {
+    label: formatAppointmentStatus(status),
+    cls: "bg-muted text-muted-foreground",
+  };
+  return (
+    <span
+      className={`max-w-full rounded-full px-2 py-0.5 text-[10px] font-semibold leading-tight ${cfg.cls}`}
+    >
+      {cfg.label}
+    </span>
+  );
 }
 
 function SharedAgendaChip() {
@@ -1853,7 +3239,15 @@ function SharedAgendaChip() {
   );
 }
 
-function AgendaScopeButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function AgendaScopeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
   return (
     <button
       type="button"
@@ -1910,7 +3304,11 @@ function getAppointmentFinancialSummary(
       items: [
         { label: "Valor do serviço", value: total, emphasis: true },
         { label: "Sinal recebido", value: paid },
-        { label: completed ? "Cobrado no estúdio" : "Cobrar no estúdio", value: remaining, emphasis: !completed },
+        {
+          label: completed ? "Cobrado no estúdio" : "Cobrar no estúdio",
+          value: remaining,
+          emphasis: !completed,
+        },
       ],
     };
   }
@@ -1949,11 +3347,23 @@ function FinancialStatusChip({
   );
 }
 
-function FinancialLine({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) {
+function FinancialLine({
+  label,
+  value,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+}) {
   return (
     <div className="min-w-0 rounded-lg border border-border/60 bg-background/70 px-3 py-2 md:min-w-[8.5rem]">
-      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
-      <p className={`mt-0.5 truncate font-mono text-sm font-semibold ${emphasis ? "text-foreground" : "text-emerald-700 dark:text-emerald-400"}`}>
+      <p className="truncate text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={`mt-0.5 truncate font-mono text-sm font-semibold ${emphasis ? "text-foreground" : "text-emerald-700 dark:text-emerald-400"}`}
+      >
         {value}
       </p>
     </div>
@@ -1981,10 +3391,17 @@ function SkeletonList() {
                 <div className="h-10 w-12 animate-pulse rounded-xl bg-muted shrink-0" />
                 <div className="size-9 animate-pulse rounded-full bg-muted shrink-0" />
                 <div className="flex-1 space-y-1.5">
-                  <div className="flex gap-2 items-center"><div className="h-4 w-28 animate-pulse rounded-lg bg-muted" /><div className="h-4 w-16 animate-pulse rounded-full bg-muted" /></div>
+                  <div className="flex gap-2 items-center">
+                    <div className="h-4 w-28 animate-pulse rounded-lg bg-muted" />
+                    <div className="h-4 w-16 animate-pulse rounded-full bg-muted" />
+                  </div>
                   <div className="h-3 w-44 animate-pulse rounded-lg bg-muted/70" />
                 </div>
-                <div className="flex gap-1 shrink-0"><div className="size-8 animate-pulse rounded-lg bg-muted" /><div className="size-8 animate-pulse rounded-lg bg-muted" /><div className="size-8 animate-pulse rounded-lg bg-muted" /></div>
+                <div className="flex gap-1 shrink-0">
+                  <div className="size-8 animate-pulse rounded-lg bg-muted" />
+                  <div className="size-8 animate-pulse rounded-lg bg-muted" />
+                  <div className="size-8 animate-pulse rounded-lg bg-muted" />
+                </div>
               </div>
             ))}
           </div>
@@ -1996,10 +3413,20 @@ function SkeletonList() {
 
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
-function EmptyState({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
+function EmptyState({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card px-6 py-16 text-center shadow-sm">
-      <div className="mb-4 grid size-12 place-items-center rounded-2xl bg-muted"><CalendarDays className="h-5 w-5 text-muted-foreground" /></div>
+      <div className="mb-4 grid size-12 place-items-center rounded-2xl bg-muted">
+        <CalendarDays className="h-5 w-5 text-muted-foreground" />
+      </div>
       <p className="text-sm font-semibold">{title}</p>
       <p className="mt-1 max-w-xs text-sm text-muted-foreground">{description}</p>
       {action}
@@ -2009,11 +3436,31 @@ function EmptyState({ title, description, action }: { title: string; description
 
 // ─── Financial Metric Card ────────────────────────────────────────────────────
 
-function FinancialMetricCard({ label, value, detail, featured, muted }: { label: string; value: string; detail?: string; featured?: boolean; muted?: boolean }) {
+function FinancialMetricCard({
+  label,
+  value,
+  detail,
+  featured,
+  muted,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  featured?: boolean;
+  muted?: boolean;
+}) {
   return (
-    <div className={`rounded-xl border px-3 py-2.5 ${featured ? "border-emerald-700/20 bg-emerald-950/5 dark:bg-emerald-400/[0.05]" : "border-border/60 bg-background/60"}`}>
-      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
-      <p className={`mt-1 font-mono text-sm font-semibold text-emerald-700 dark:text-emerald-400 ${muted ? "opacity-70" : ""}`}>{value}</p>
+    <div
+      className={`rounded-xl border px-3 py-2.5 ${featured ? "border-emerald-700/20 bg-emerald-950/5 dark:bg-emerald-400/[0.05]" : "border-border/60 bg-background/60"}`}
+    >
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={`mt-1 font-mono text-sm font-semibold text-emerald-700 dark:text-emerald-400 ${muted ? "opacity-70" : ""}`}
+      >
+        {value}
+      </p>
       {detail && <p className="mt-0.5 text-[10px] text-muted-foreground">{detail}</p>}
     </div>
   );
@@ -2021,9 +3468,28 @@ function FinancialMetricCard({ label, value, detail, featured, muted }: { label:
 
 // ─── Presence Button ──────────────────────────────────────────────────────────
 
-function PresenceButton({ children, active, danger, whatsapp, disabled, onClick }: { children: React.ReactNode; active: boolean; danger?: boolean; whatsapp?: boolean; disabled?: boolean; onClick: () => void }) {
+function PresenceButton({
+  children,
+  active,
+  danger,
+  whatsapp,
+  disabled,
+  onClick,
+}: {
+  children: React.ReactNode;
+  active: boolean;
+  danger?: boolean;
+  whatsapp?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={`flex h-10 w-full items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-all disabled:cursor-wait disabled:opacity-60 ${active ? (danger ? "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300" : "border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300") : whatsapp ? "border-emerald-500/20 bg-emerald-600/8 text-emerald-700 hover:bg-emerald-600/12 dark:text-emerald-300" : "border-border bg-background/60 text-muted-foreground hover:bg-muted hover:text-foreground"}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-10 w-full items-center justify-center gap-2 rounded-xl border px-3 text-xs font-semibold transition-all disabled:cursor-wait disabled:opacity-60 ${active ? (danger ? "border-red-500/25 bg-red-500/10 text-red-700 dark:text-red-300" : "border-emerald-500/25 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300") : whatsapp ? "border-emerald-500/20 bg-emerald-600/8 text-emerald-700 hover:bg-emerald-600/12 dark:text-emerald-300" : "border-border bg-background/60 text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+    >
       {children}
     </button>
   );
@@ -2041,37 +3507,110 @@ function WhatsAppIcon({ className = "" }: { className?: string }) {
 
 // ─── Filter Fields ────────────────────────────────────────────────────────────
 
-function AgendaFilterFields({ filters, options, onChange, mobile, hideProfessional }: { filters: AgendaFilters; options: ReturnType<typeof buildFilterOptions>; onChange: <K extends keyof AgendaFilters>(key: K, value: AgendaFilters[K]) => void; mobile?: boolean; hideProfessional?: boolean }) {
+function AgendaFilterFields({
+  filters,
+  options,
+  onChange,
+  mobile,
+  hideProfessional,
+}: {
+  filters: AgendaFilters;
+  options: ReturnType<typeof buildFilterOptions>;
+  onChange: <K extends keyof AgendaFilters>(key: K, value: AgendaFilters[K]) => void;
+  mobile?: boolean;
+  hideProfessional?: boolean;
+}) {
   return (
     <div className={`grid gap-3 ${mobile ? "" : "md:grid-cols-2 xl:grid-cols-4"}`}>
       <FilterField label="Data">
-        <PremiumFilterSelect value={filters.dateMode} onValueChange={(v) => { const value = v as AgendaFilters["dateMode"]; onChange("dateMode", value); if (value !== "specific") onChange("date", ""); }} options={[["all", "Todas as datas"], ["today", "Hoje"], ["upcoming", "Próximos"], ["specific", "Escolher data"]]} />
+        <PremiumFilterSelect
+          value={filters.dateMode}
+          onValueChange={(v) => {
+            const value = v as AgendaFilters["dateMode"];
+            onChange("dateMode", value);
+            if (value !== "specific") onChange("date", "");
+          }}
+          options={[
+            ["all", "Todas as datas"],
+            ["today", "Hoje"],
+            ["upcoming", "Próximos"],
+            ["specific", "Escolher data"],
+          ]}
+        />
       </FilterField>
       <FilterField label="Dia especifico">
-        <PremiumDatePicker value={filters.date} onChange={(v) => { onChange("date", v); onChange("dateMode", v ? "specific" : "all"); }} placeholder="Escolher data" className="h-10 rounded-xl px-3 shadow-none bg-background/70 border-border" />
+        <PremiumDatePicker
+          value={filters.date}
+          onChange={(v) => {
+            onChange("date", v);
+            onChange("dateMode", v ? "specific" : "all");
+          }}
+          placeholder="Escolher data"
+          className="h-10 rounded-xl px-3 shadow-none bg-background/70 border-border"
+        />
       </FilterField>
       {!hideProfessional && (
         <FilterField label="Profissional">
-          <PremiumFilterSelect value={filters.staffId} onValueChange={(v) => onChange("staffId", v)} options={[["all", "Todos"], ...options.professionals]} />
+          <PremiumFilterSelect
+            value={filters.staffId}
+            onValueChange={(v) => onChange("staffId", v)}
+            options={[["all", "Todos"], ...options.professionals]}
+          />
         </FilterField>
       )}
       <FilterField label="Serviço">
-        <PremiumFilterSelect value={filters.service} onValueChange={(v) => onChange("service", v)} options={[["all", "Todos"], ...options.services.map((s) => [s, s] as [string, string])]} />
+        <PremiumFilterSelect
+          value={filters.service}
+          onValueChange={(v) => onChange("service", v)}
+          options={[["all", "Todos"], ...options.services.map((s) => [s, s] as [string, string])]}
+        />
       </FilterField>
       <FilterField label="Estado">
-        <PremiumFilterSelect value={filters.status} onValueChange={(v) => onChange("status", v)} options={[["all", "Todos"], ...options.statuses.map((s) => [s, formatAppointmentStatus(s)] as [string, string]), ...(!options.statuses.includes("cancelled") ? [["cancelled", "Cancelada"] as [string, string]] : [])]} />
+        <PremiumFilterSelect
+          value={filters.status}
+          onValueChange={(v) => onChange("status", v)}
+          options={[
+            ["all", "Todos"],
+            ...options.statuses.map((s) => [s, formatAppointmentStatus(s)] as [string, string]),
+            ...(!options.statuses.includes("cancelled")
+              ? [["cancelled", "Cancelada"] as [string, string]]
+              : []),
+          ]}
+        />
       </FilterField>
       <FilterField label="Cliente / Telefone">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input value={filters.client} onChange={(e) => onChange("client", e.target.value)} placeholder="Nome ou telefone" className="h-10 w-full rounded-xl border border-border bg-background/70 pl-9 pr-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8" />
+          <input
+            value={filters.client}
+            onChange={(e) => onChange("client", e.target.value)}
+            placeholder="Nome ou telefone"
+            className="h-10 w-full rounded-xl border border-border bg-background/70 pl-9 pr-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8"
+          />
         </div>
       </FilterField>
       <FilterField label="Pagamento">
-        <PremiumFilterSelect value={filters.payment} onValueChange={(v) => onChange("payment", v as AgendaFilters["payment"])} options={[["all", "Todos"], ["online", "Online"], ["studio", "No estudio"], ["pending", "Aguarda pagamento"]]} />
+        <PremiumFilterSelect
+          value={filters.payment}
+          onValueChange={(v) => onChange("payment", v as AgendaFilters["payment"])}
+          options={[
+            ["all", "Todos"],
+            ["online", "Online"],
+            ["studio", "No estudio"],
+            ["pending", "Aguarda pagamento"],
+          ]}
+        />
       </FilterField>
       <FilterField label="Presenca">
-        <PremiumFilterSelect value={filters.attendance} onValueChange={(v) => onChange("attendance", v as AgendaFilters["attendance"])} options={[["all", "Todos"], ["attended", "Compareceu"], ["missed", "Faltas"]]} />
+        <PremiumFilterSelect
+          value={filters.attendance}
+          onValueChange={(v) => onChange("attendance", v as AgendaFilters["attendance"])}
+          options={[
+            ["all", "Todos"],
+            ["attended", "Compareceu"],
+            ["missed", "Faltas"],
+          ]}
+        />
       </FilterField>
     </div>
   );
@@ -2080,18 +3619,34 @@ function AgendaFilterFields({ filters, options, onChange, mobile, hideProfession
 function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="grid gap-1.5">
-      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </span>
       {children}
     </label>
   );
 }
 
-function PremiumFilterSelect({ value, onValueChange, options }: { value: string; onValueChange: (v: string) => void; options: [string, string][] }) {
+function PremiumFilterSelect({
+  value,
+  onValueChange,
+  options,
+}: {
+  value: string;
+  onValueChange: (v: string) => void;
+  options: [string, string][];
+}) {
   return (
     <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger className="h-10 rounded-xl border-border bg-background/70 px-3 text-sm shadow-none hover:bg-background focus:ring-2 focus:ring-foreground/10"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="h-10 rounded-xl border-border bg-background/70 px-3 text-sm shadow-none hover:bg-background focus:ring-2 focus:ring-foreground/10">
+        <SelectValue />
+      </SelectTrigger>
       <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
-        {options.map(([v, label]) => <SelectItem key={v} value={v}>{label}</SelectItem>)}
+        {options.map(([v, label]) => (
+          <SelectItem key={v} value={v}>
+            {label}
+          </SelectItem>
+        ))}
       </SelectContent>
     </Select>
   );
@@ -2105,13 +3660,17 @@ function buildFilterOptions(appts: Appt[]) {
   const statuses = new Set<string>();
   for (const a of appts) {
     if (a.staff?.id) professionals.set(a.staff.id, a.staff.name);
-    a.appointment_services?.forEach((line) => { if (line.services?.name) services.add(line.services.name); });
+    a.appointment_services?.forEach((line) => {
+      if (line.services?.name) services.add(line.services.name);
+    });
     if (a.status) statuses.add(a.status);
   }
   return {
     professionals: Array.from(professionals.entries()).sort((a, b) => a[1].localeCompare(b[1])),
     services: Array.from(services).sort((a, b) => a.localeCompare(b)),
-    statuses: Array.from(statuses).sort((a, b) => formatAppointmentStatus(a).localeCompare(formatAppointmentStatus(b))),
+    statuses: Array.from(statuses).sort((a, b) =>
+      formatAppointmentStatus(a).localeCompare(formatAppointmentStatus(b)),
+    ),
   };
 }
 
@@ -2139,25 +3698,38 @@ function isBirthdayThisWeek(value: string | null | undefined) {
   return birthday >= start && birthday <= end;
 }
 
-function appointmentMatchesFilters(a: Appt, filters: AgendaFilters, paidByAppointment: Map<string, number>) {
+function appointmentMatchesFilters(
+  a: Appt,
+  filters: AgendaFilters,
+  paidByAppointment: Map<string, number>,
+) {
   const start = new Date(a.starts_at);
-  const now   = new Date();
-  const paid  = paidByAppointment.get(a.id) ?? 0;
-  const svcNames = a.appointment_services?.map((l) => l.services?.name).filter(Boolean) as string[] | undefined;
-  if (filters.dateMode === "today"    && start.toDateString() !== now.toDateString()) return false;
+  const now = new Date();
+  const paid = paidByAppointment.get(a.id) ?? 0;
+  const svcNames = a.appointment_services?.map((l) => l.services?.name).filter(Boolean) as
+    | string[]
+    | undefined;
+  if (filters.dateMode === "today" && start.toDateString() !== now.toDateString()) return false;
   if (filters.dateMode === "upcoming" && start.getTime() < now.getTime()) return false;
-  if (filters.dateMode === "specific" && filters.date && toDateInputValue(start) !== filters.date) return false;
-  if (filters.staffId !== "all"       && a.staff?.id !== filters.staffId) return false;
-  if (filters.service !== "all"       && !svcNames?.includes(filters.service)) return false;
-  if (filters.status  !== "all"       && a.status !== filters.status) return false;
-  if (filters.client.trim()) { const q = normalizeFilterText(filters.client); const hay = normalizeFilterText(`${a.clients?.name ?? ""} ${a.clients?.phone ?? ""}`); if (!hay.includes(q)) return false; }
-  if (filters.payment === "online"  && paid <= 0) return false;
-  if (filters.payment === "studio"  && paid > 0)  return false;
+  if (filters.dateMode === "specific" && filters.date && toDateInputValue(start) !== filters.date)
+    return false;
+  if (filters.staffId !== "all" && a.staff?.id !== filters.staffId) return false;
+  if (filters.service !== "all" && !svcNames?.includes(filters.service)) return false;
+  if (filters.status !== "all" && a.status !== filters.status) return false;
+  if (filters.client.trim()) {
+    const q = normalizeFilterText(filters.client);
+    const hay = normalizeFilterText(`${a.clients?.name ?? ""} ${a.clients?.phone ?? ""}`);
+    if (!hay.includes(q)) return false;
+  }
+  if (filters.payment === "online" && paid <= 0) return false;
+  if (filters.payment === "studio" && paid > 0) return false;
   if (filters.payment === "pending" && a.status !== "pending_payment") return false;
-  if (filters.confirmation === "confirmed"   && !["confirmed", "completed"].includes(a.status)) return false;
-  if (filters.confirmation === "unconfirmed" && ["confirmed", "completed"].includes(a.status))  return false;
+  if (filters.confirmation === "confirmed" && !["confirmed", "completed"].includes(a.status))
+    return false;
+  if (filters.confirmation === "unconfirmed" && ["confirmed", "completed"].includes(a.status))
+    return false;
   if (filters.attendance === "attended" && a.status !== "completed") return false;
-  if (filters.attendance === "missed"   && a.status !== "no_show")   return false;
+  if (filters.attendance === "missed" && a.status !== "no_show") return false;
   return true;
 }
 
@@ -2175,24 +3747,41 @@ function countActiveFilters(filters: AgendaFilters) {
   ].filter(Boolean).length;
 }
 
-function normalizeFilterText(v: string) { return v.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); }
-function toDateInputValue(d: Date) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
-function canViewSensitiveAppointment(a: Appt, studio: { role: string; staff_id: string | null } | null) {
+function normalizeFilterText(v: string) {
+  return v.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+function toDateInputValue(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function canViewSensitiveAppointment(
+  a: Appt,
+  studio: { role: string; staff_id: string | null } | null,
+) {
   if (!studio || studio.role !== "staff") return true;
   return !!studio.staff_id && a.staff?.id === studio.staff_id;
 }
 function appointmentServiceLabel(a: Appt) {
-  return a.appointment_services?.map((s) => s.services?.name).filter(Boolean).join(", ") || "-";
+  return (
+    a.appointment_services
+      ?.map((s) => s.services?.name)
+      .filter(Boolean)
+      .join(", ") || "-"
+  );
 }
 function formatDurationBetween(startsAt: string, endsAt: string, explicitDuration?: number | null) {
-  const minutes = Number(explicitDuration) || Math.max(0, Math.round((new Date(endsAt).getTime() - new Date(startsAt).getTime()) / 60000));
+  const minutes =
+    Number(explicitDuration) ||
+    Math.max(0, Math.round((new Date(endsAt).getTime() - new Date(startsAt).getTime()) / 60000));
   if (minutes <= 0) return "duração por confirmar";
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest ? `${hours}h ${rest}min` : `${hours}h`;
 }
-function scopeAppointmentRows<T extends { in: (column: string, values: string[]) => T }>(query: T, appointmentIds: string[] | null) {
+function scopeAppointmentRows<T extends { in: (column: string, values: string[]) => T }>(
+  query: T,
+  appointmentIds: string[] | null,
+) {
   return appointmentIds ? query.in("appointment_id", appointmentIds) : query;
 }
 function sortAppointmentsChronologically(items: Appt[]) {
@@ -2201,56 +3790,111 @@ function sortAppointmentsChronologically(items: Appt[]) {
 
 async function fetchAgendaAppointments(studioId: string, staffId?: string | null) {
   // Try with avatar_url (present if clients table has that column)
-  const withAvatar = await supabase.from("appointments")
-    .select("id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,avatar_url,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))")
-    .eq("studio_id", studioId).match(staffId ? { staff_id: staffId } : {}).order("starts_at", { ascending: true }).limit(1000);
+  const withAvatar = await supabase
+    .from("appointments")
+    .select(
+      "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,avatar_url,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
+    )
+    .eq("studio_id", studioId)
+    .match(staffId ? { staff_id: staffId } : {})
+    .order("starts_at", { ascending: true })
+    .limit(1000);
   if (!withAvatar.error) return withAvatar;
 
   // Fallback: full schema without avatar_url
-  const full = await supabase.from("appointments")
-    .select("id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))")
-    .eq("studio_id", studioId).match(staffId ? { staff_id: staffId } : {}).order("starts_at", { ascending: true }).limit(1000);
+  const full = await supabase
+    .from("appointments")
+    .select(
+      "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
+    )
+    .eq("studio_id", studioId)
+    .match(staffId ? { staff_id: staffId } : {})
+    .order("starts_at", { ascending: true })
+    .limit(1000);
   if (!full.error) return full;
 
   // Legacy fallback
-  return supabase.from("appointments")
-    .select("id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name),appointment_services(price,services(name))")
-    .eq("studio_id", studioId).match(staffId ? { staff_id: staffId } : {}).order("starts_at", { ascending: true }).limit(1000);
+  return supabase
+    .from("appointments")
+    .select(
+      "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name),appointment_services(price,services(name))",
+    )
+    .eq("studio_id", studioId)
+    .match(staffId ? { staff_id: staffId } : {})
+    .order("starts_at", { ascending: true })
+    .limit(1000);
 }
 
-function computeAppointmentSplit(a: Appt, studio: (FinancialRuleSource & { deposit_percent: number; payment_policy: string }) | null, paidAmount: number) {
+function computeAppointmentSplit(
+  a: Appt,
+  studio: (FinancialRuleSource & { deposit_percent: number; payment_policy: string }) | null,
+  paidAmount: number,
+) {
   const revenue = computeAttendanceRevenue(Number(a.total_price), paidAmount, a.status);
-  const lines   = a.appointment_services?.length ? a.appointment_services : [{ price: Number(a.total_price), services: null }];
+  const lines = a.appointment_services?.length
+    ? a.appointment_services
+    : [{ price: Number(a.total_price), services: null }];
   return lines.reduce(
     (acc, line) => {
-      const rule          = line.services ?? a.staff ?? studio;
-      const studioPercent = rule?.commission_percent ?? a.staff?.commission_percent ?? studio?.commission_percent ?? 0;
-      const linePaid      = Number(a.total_price) > 0 ? (paidAmount * Number(line.price)) / Number(a.total_price) : 0;
-      const lineTotal     = Number(line.price);
-      const lineConfirmed = Number(a.total_price) > 0 ? (revenue.confirmed * lineTotal) / Number(a.total_price) : lineTotal;
-      const linePredicted = Number(a.total_price) > 0 ? (revenue.predicted * lineTotal) / Number(a.total_price) : 0;
-      const finalSplit    = computeFinancialSplit(lineTotal, studioPercent, { depositPercent: studio?.deposit_percent ?? 0, requiresDeposit: false, receivedAmount: linePaid });
-      const signalSplit   = computeFinancialSplit(linePaid,  studioPercent, { depositPercent: studio?.deposit_percent ?? 0, requiresDeposit: false, receivedAmount: linePaid });
+      const rule = line.services ?? a.staff ?? studio;
+      const studioPercent =
+        rule?.commission_percent ?? a.staff?.commission_percent ?? studio?.commission_percent ?? 0;
+      const linePaid =
+        Number(a.total_price) > 0 ? (paidAmount * Number(line.price)) / Number(a.total_price) : 0;
+      const lineTotal = Number(line.price);
+      const lineConfirmed =
+        Number(a.total_price) > 0
+          ? (revenue.confirmed * lineTotal) / Number(a.total_price)
+          : lineTotal;
+      const linePredicted =
+        Number(a.total_price) > 0 ? (revenue.predicted * lineTotal) / Number(a.total_price) : 0;
+      const finalSplit = computeFinancialSplit(lineTotal, studioPercent, {
+        depositPercent: studio?.deposit_percent ?? 0,
+        requiresDeposit: false,
+        receivedAmount: linePaid,
+      });
+      const signalSplit = computeFinancialSplit(linePaid, studioPercent, {
+        depositPercent: studio?.deposit_percent ?? 0,
+        requiresDeposit: false,
+        receivedAmount: linePaid,
+      });
       return {
-        total:              acc.total + lineTotal,
-        serviceTotal:       acc.serviceTotal + lineTotal,
-        confirmed:          acc.confirmed + lineConfirmed,
-        predicted:          acc.predicted + linePredicted,
-        deposit:            acc.deposit + signalSplit.deposit,
-        remaining:          acc.remaining + linePredicted,
-        commissionBase:     acc.commissionBase + finalSplit.commissionBase,
-        commission:         acc.commission + finalSplit.commission,
-        professional:       acc.professional + finalSplit.professional,
-        studio:             acc.studio + finalSplit.studio,
+        total: acc.total + lineTotal,
+        serviceTotal: acc.serviceTotal + lineTotal,
+        confirmed: acc.confirmed + lineConfirmed,
+        predicted: acc.predicted + linePredicted,
+        deposit: acc.deposit + signalSplit.deposit,
+        remaining: acc.remaining + linePredicted,
+        commissionBase: acc.commissionBase + finalSplit.commissionBase,
+        commission: acc.commission + finalSplit.commission,
+        professional: acc.professional + finalSplit.professional,
+        studio: acc.studio + finalSplit.studio,
         signalProfessional: acc.signalProfessional + signalSplit.professional,
-        signalStudio:       acc.signalStudio + signalSplit.studio,
-        received:           acc.received + Math.min(lineTotal, Math.max(0, linePaid)),
-        pending:            acc.pending + linePredicted,
-        commissionPercent:  studioPercent,
+        signalStudio: acc.signalStudio + signalSplit.studio,
+        received: acc.received + Math.min(lineTotal, Math.max(0, linePaid)),
+        pending: acc.pending + linePredicted,
+        commissionPercent: studioPercent,
         depositProfessionalPercent: 0,
       };
     },
-    { total: 0, serviceTotal: 0, confirmed: 0, predicted: 0, deposit: 0, remaining: 0, commissionBase: 0, commission: 0, professional: 0, studio: 0, signalProfessional: 0, signalStudio: 0, received: 0, pending: 0, commissionPercent: 0, depositProfessionalPercent: 0 },
+    {
+      total: 0,
+      serviceTotal: 0,
+      confirmed: 0,
+      predicted: 0,
+      deposit: 0,
+      remaining: 0,
+      commissionBase: 0,
+      commission: 0,
+      professional: 0,
+      studio: 0,
+      signalProfessional: 0,
+      signalStudio: 0,
+      received: 0,
+      pending: 0,
+      commissionPercent: 0,
+      depositProfessionalPercent: 0,
+    },
   );
 }
 
@@ -2265,9 +3909,12 @@ function formatPaymentState(a: Appt, paid: number) {
 }
 
 function studioPaymentErrorMessage(message: string) {
-  if (message.includes("cash_register_not_open")) return "Abra o caixa antes de receber este pagamento.";
-  if (message.includes("appointment_payment_already_confirmed")) return "Este pagamento já foi confirmado.";
-  if (message.includes("appointment_already_paid_online")) return "Este agendamento já tem pagamento online confirmado.";
+  if (message.includes("cash_register_not_open"))
+    return "Abra o caixa antes de receber este pagamento.";
+  if (message.includes("appointment_payment_already_confirmed"))
+    return "Este pagamento já foi confirmado.";
+  if (message.includes("appointment_already_paid_online"))
+    return "Este agendamento já tem pagamento online confirmado.";
   if (message.includes("appointment_cancelled")) return "Esta marcação está cancelada.";
   if (message.includes("appointment_no_show")) return "Esta marcação foi registada como falta.";
   if (message.includes("invalid_payment_method")) return "Escolha uma forma de pagamento válida.";
@@ -2277,25 +3924,51 @@ function studioPaymentErrorMessage(message: string) {
 }
 
 function inPersonMbWayErrorMessage(message: string) {
-  if (message.includes("in_person_mb_way_disabled")) return "MB WAY automatico ainda nao esta ativo.";
-  if (message.includes("mb_way_phone_invalid")) return "Indique um telemovel portugues valido para MB WAY.";
-  if (message.includes("connect_account_not_ready")) return "A conta Stripe Connect do estudio ainda nao esta pronta para MB WAY.";
+  if (message.includes("in_person_mb_way_disabled"))
+    return "MB WAY automatico ainda nao esta ativo.";
+  if (message.includes("mb_way_phone_invalid"))
+    return "Indique um telemovel portugues valido para MB WAY.";
+  if (message.includes("connect_account_not_ready"))
+    return "A conta Stripe Connect do estudio ainda nao esta pronta para MB WAY.";
   if (message.includes("appointment_already_paid")) return "Este agendamento ja esta pago.";
-  if (message.includes("appointment_not_payable")) return "Esta marcacao nao pode receber pagamento.";
+  if (message.includes("appointment_not_payable"))
+    return "Esta marcacao nao pode receber pagamento.";
   if (message.includes("payment_method")) return "MB WAY nao esta disponivel nesta conta Stripe.";
   return message || "Nao foi possivel enviar a cobranca MB WAY.";
 }
 
 function formatMessageState(a: Appt, paid: number, log?: MessageLog) {
-  if (paid <= 0 && a.status === "pending_payment") return { label: "Aguarda pagamento", tone: "muted" as const };
-  if (!a.clients?.phone || !normalizePhoneForDisplay(a.clients.phone)) return { label: "Telefone invalido", tone: "danger" as const };
+  if (paid <= 0 && a.status === "pending_payment")
+    return { label: "Aguarda pagamento", tone: "muted" as const };
+  if (!a.clients?.phone || !normalizePhoneForDisplay(a.clients.phone))
+    return { label: "Telefone invalido", tone: "danger" as const };
   if (!log) return { label: "WhatsApp pendente", tone: "muted" as const };
-  if (log.status === "sent") return { label: "Mensagem enviada", tone: "success" as const };
-  if (log.status === "failed" && log.reason?.includes("63015")) return { label: "Número não autorizado", tone: "danger" as const };
+  if (log.status === "sent") return { label: "Mensagem entregue", tone: "success" as const };
+  if (log.status === "pending") return { label: "A confirmar entrega", tone: "muted" as const };
+  if (log.status === "failed" && log.reason?.includes("63015"))
+    return { label: "Número não autorizado", tone: "danger" as const };
   if (log.status === "failed") return { label: "Falha no envio", tone: "danger" as const };
-  if (log.status === "skipped" && log.reason === "invalid_phone") return { label: "Telefone invalido", tone: "danger" as const };
-  if (log.status === "skipped" && log.reason === "auto_send_disabled") return { label: "Envio desligado", tone: "muted" as const };
+  if (log.status === "skipped" && log.reason === "invalid_phone")
+    return { label: "Telefone invalido", tone: "danger" as const };
+  if (log.status === "skipped" && log.reason === "auto_send_disabled")
+    return { label: "Envio desligado", tone: "muted" as const };
   return { label: "Aguarda envio", tone: "muted" as const };
 }
 
-function normalizePhoneForDisplay(v: string) { return v.replace(/\D/g, "").length >= 9; }
+function formatWhatsAppFailure(reason?: string | null) {
+  const value = String(reason || "");
+  if (value.includes("auto_send_disabled")) return "O envio automático de WhatsApp está desligado.";
+  if (value.includes("invalid_phone")) return "O número de WhatsApp da cliente é inválido.";
+  if (value.includes("channel_unavailable") || value.includes("channel_mismatch")) {
+    return "A operadora não reconheceu este contacto como disponível no WhatsApp.";
+  }
+  if (value.includes("button_parameter_unresolved") || value.includes("template")) {
+    return "O template de WhatsApp está inválido ou incompleto.";
+  }
+  if (value.includes("awaiting_delivery")) return "A operadora ainda não confirmou a entrega.";
+  return "A mensagem não foi entregue pelo WhatsApp. Tente novamente.";
+}
+
+function normalizePhoneForDisplay(v: string) {
+  return v.replace(/\D/g, "").length >= 9;
+}
