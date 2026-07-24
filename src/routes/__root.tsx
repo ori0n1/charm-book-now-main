@@ -16,7 +16,7 @@ import { APP_BRAND } from "@/lib/app-brand";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
 import appCss from "../styles.css?url";
 
-const SERVICE_WORKER_VERSION = "20260724-visual-update";
+const SERVICE_WORKER_VERSION = "20260724-force-client-refresh";
 const META_PIXEL_ID = "2079568283438502";
 
 const LazyCookieBanner = lazy(() =>

@@ -1,5 +1,6 @@
-const CACHE_VERSION = "bellza-pwa-v20260724-visual-update";
+const CACHE_VERSION = "bellza-pwa-v20260724-force-client-refresh";
 const APP_CACHE = `${CACHE_VERSION}-app`;
+const IS_UPDATE = Boolean(self.registration.active);
 const STATIC_ASSETS = [
   "/bellza-logo.png",
   "/pwa-icon.svg",
@@ -26,7 +27,21 @@ self.addEventListener("activate", (event) => {
             .map((key) => caches.delete(key)),
         ),
       )
-      .then(() => self.clients.claim()),
+      .then(async () => {
+        await self.clients.claim();
+        if (!IS_UPDATE) return;
+        const clientList = await self.clients.matchAll({
+          type: "window",
+          includeUncontrolled: true,
+        });
+        await Promise.all(
+          clientList.map((client) => {
+            const clientUrl = new URL(client.url);
+            if (clientUrl.origin !== self.location.origin || !("navigate" in client)) return undefined;
+            return client.navigate(client.url).catch(() => undefined);
+          }),
+        );
+      }),
   );
 });
 
