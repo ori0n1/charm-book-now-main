@@ -766,7 +766,7 @@ function TeamPage() {
   if (loading) return <p className="text-sm text-muted-foreground">A carregar...</p>;
 
   return (
-    <div className="space-y-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:space-y-5 lg:pb-6">
+    <div className="space-y-3 pb-[calc(6rem+env(safe-area-inset-bottom))] md:space-y-4 lg:pb-6">
       <header className="rounded-xl border border-border/75 bg-card/90 px-4 py-3 shadow-sm">
         <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">

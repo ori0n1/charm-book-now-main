@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const viewports = (process.env.RESPONSIVE_AUDIT_WIDTHS ?? "320,360,375,390,414,430")
+const viewports = (process.env.RESPONSIVE_AUDIT_WIDTHS ?? "320,390,768,1024,1440")
   .split(",")
   .map((item) => Number(item.trim()))
   .filter(Boolean);
@@ -24,10 +24,22 @@ const paths = (process.env.RESPONSIVE_AUDIT_PATHS ??
     "/s/bellza",
     "/admin",
     "/admin/agenda",
+    "/admin/clientes",
+    "/admin/equipa",
+    "/admin/horarios",
+    "/admin/servicos",
     "/admin/pagamentos",
+    "/admin/recebimento",
     "/admin/sinal",
     "/admin/marca",
     "/admin/balcao",
+    "/admin/whatsapp",
+    "/admin/politicas",
+    "/admin/fidelidade",
+    "/admin/indicacoes",
+    "/admin/comissoes",
+    "/admin/premium",
+    "/admin/guia-rapido",
   ].join(","))
   .split(",")
   .map((item) => item.trim())

@@ -98,7 +98,7 @@ function AdminLoyaltyPage() {
   }
 
   return (
-    <main className="mx-auto w-full max-w-6xl space-y-4 px-3 pb-24 pt-3 sm:px-4 md:px-6 md:pb-10">
+    <main className="mx-auto w-full max-w-[88rem] space-y-3 px-3 pb-24 pt-3 sm:px-4 md:px-0 md:pb-10">
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex flex-col gap-3 border-b border-border px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">

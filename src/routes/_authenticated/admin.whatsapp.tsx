@@ -286,31 +286,31 @@ function WhatsAppPage() {
   const SelectedCommunityIcon = selectedCommunityKind.icon;
 
   return (
-    <div className="mx-auto flex w-full max-w-[1320px] flex-col gap-3 pb-24 md:gap-4 md:pb-6">
-      <header className="overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm">
-        <p className="px-4 pt-4 text-[10px] font-bold uppercase tracking-[0.24em] text-muted-foreground md:px-5 md:pt-5">
+    <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-3 pb-24 md:gap-4 md:pb-6">
+      <header className="overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm lg:grid lg:grid-cols-[minmax(0,1fr)_23rem] lg:items-center lg:gap-x-5 lg:px-5 lg:py-4">
+        <p className="px-4 pt-4 text-[10px] font-bold uppercase tracking-[0.24em] text-muted-foreground md:px-5 md:pt-5 lg:px-0 lg:pt-0">
           Configurações
         </p>
-        <h1 className="mt-1.5 px-4 text-2xl font-semibold tracking-tight md:px-5 md:text-3xl">
+        <h1 className="mt-1.5 px-4 text-2xl font-semibold tracking-tight md:px-5 md:text-3xl lg:px-0">
           Comunicação
         </h1>
-        <p className="max-w-2xl px-4 pb-4 pt-2 text-sm leading-relaxed text-muted-foreground md:px-5 md:pb-5">
+        <p className="max-w-2xl px-4 pb-4 pt-2 text-sm leading-relaxed text-muted-foreground md:px-5 md:pb-5 lg:px-0 lg:pb-0">
           Envie avisos para seguidores do app do estúdio e mantenha as confirmações por WhatsApp.
         </p>
-        <div className="grid grid-cols-3 gap-2 border-t border-border/70 bg-muted/20 p-3 md:p-4">
-          <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+        <div className="grid grid-cols-3 gap-2 border-t border-border/70 bg-muted/20 p-3 md:p-4 lg:col-start-2 lg:row-span-3 lg:row-start-1 lg:border-t-0 lg:bg-transparent lg:p-0">
+          <div className="flex min-h-[4.4rem] min-w-0 flex-col justify-center rounded-2xl border border-border/70 bg-background/70 p-3 text-center">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
               Canais
             </p>
             <p className="mt-1 text-lg font-semibold leading-none">2</p>
           </div>
-          <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+          <div className="flex min-h-[4.4rem] min-w-0 flex-col justify-center rounded-2xl border border-border/70 bg-background/70 p-3 text-center">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
               Avisos
             </p>
             <p className="mt-1 text-lg font-semibold leading-none">{communityCampaigns.length}</p>
           </div>
-          <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
+          <div className="flex min-h-[4.4rem] min-w-0 flex-col justify-center rounded-2xl border border-border/70 bg-background/70 p-3 text-center">
             <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
               WhatsApp
             </p>
@@ -346,7 +346,7 @@ function WhatsAppPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[minmax(0,1fr)_21rem]">
+        <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
           <div className="grid min-w-0 gap-4">
             <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-2.5">
               {communityCampaigns.map((item) => {
@@ -434,7 +434,7 @@ function WhatsAppPage() {
             </div>
           </div>
 
-          <aside className="flex min-w-0 flex-col justify-between rounded-[1.15rem] bg-background/60 p-4 ring-1 ring-border/50">
+          <aside className="flex min-w-0 flex-col justify-between self-start rounded-[1.15rem] bg-background/60 p-4 ring-1 ring-border/50 xl:sticky xl:top-24">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
                 Pré-visualização

@@ -266,7 +266,7 @@ function BrandPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-4">
+    <div className="mx-auto w-full max-w-[88rem] space-y-3 md:space-y-4">
       <header className="flex flex-col gap-3 rounded-2xl border border-border bg-card/90 p-4 shadow-sm md:flex-row md:items-center md:justify-between md:px-5">
         <div>
           <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">

@@ -696,7 +696,7 @@ function ProfessionalOverview({
   const [privacyOpen, setPrivacyOpen] = useState(false);
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-3 pb-2 md:space-y-4 md:pb-8">
+    <div className="mx-auto w-full max-w-[88rem] space-y-3 pb-2 md:space-y-4 md:pb-8">
       <section className="overflow-hidden rounded-[1.35rem] border border-border bg-card shadow-sm">
         <div className="bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_52%,rgba(14,165,233,0.08))] px-4 py-4 md:px-5">
           <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">

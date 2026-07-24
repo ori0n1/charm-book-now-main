@@ -39,7 +39,7 @@ function IndicacoesPage() {
 
   if (!studio?.id || isLoading) {
     return (
-      <div className="mx-auto flex max-w-4xl flex-col gap-5 py-2 md:py-5">
+      <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-3 py-2 md:gap-4 md:py-5">
         <div className="h-48 animate-pulse rounded-3xl bg-muted/40" />
         <div className="h-32 animate-pulse rounded-3xl bg-muted/40" />
       </div>
@@ -49,7 +49,7 @@ function IndicacoesPage() {
   if (isError) {
     const msg = error instanceof Error ? error.message : "Erro desconhecido";
     return (
-      <div className="mx-auto flex max-w-4xl flex-col gap-5 py-2 md:py-5">
+      <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-3 py-2 md:gap-4 md:py-5">
         <div className="flex flex-col items-center gap-4 rounded-3xl border border-red-200/60 bg-red-50/60 px-6 py-12 text-center dark:border-red-900/30 dark:bg-red-900/10">
           <span className="grid size-12 place-items-center rounded-2xl bg-red-100 text-red-500 dark:bg-red-900/30">
             <AlertCircle className="h-5 w-5" />
@@ -69,11 +69,13 @@ function IndicacoesPage() {
   if (!data) return null;
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-5 py-2 md:py-5">
+    <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-3 py-2 md:gap-4 md:py-5">
       <HeroSection data={data} />
       <StatsGrid data={data} />
-      <HowItWorks />
-      <HistorySection data={data} />
+      <div className="grid items-start gap-3 md:gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <HowItWorks />
+        <HistorySection data={data} />
+      </div>
     </div>
   );
 }

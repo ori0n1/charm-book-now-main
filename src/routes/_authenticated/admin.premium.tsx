@@ -256,7 +256,7 @@ function PremiumAccessPage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4 py-1 md:gap-5 md:py-4">
+    <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-3 py-1 md:gap-4 md:py-4">
       <section className="overflow-hidden rounded-[1.35rem] border border-border bg-card shadow-sm md:rounded-[1.55rem]">
         <div className="grid min-h-[9.5rem] gap-0 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="flex flex-col justify-center p-4 md:p-6">
@@ -441,7 +441,7 @@ function PremiumAccessPage() {
           </div>
         </div>
 
-        <div className="mt-5 grid items-stretch gap-4 sm:grid-cols-2 lg:mx-auto lg:max-w-[44rem]">
+        <div className="mt-5 grid items-stretch gap-4 sm:grid-cols-2">
           {PLANS.map((plan) => {
             const current = plan.id === currentPlan;
             const currentAndActive = current && activeSubscription;

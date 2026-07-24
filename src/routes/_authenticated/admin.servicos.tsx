@@ -267,7 +267,7 @@ function ServicesPage() {
   if (loading) return <p className="text-sm text-muted-foreground">A carregar…</p>;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-3 md:space-y-4">
       <header className="grid gap-3 rounded-[1.25rem] border border-border/80 bg-card/95 p-4 shadow-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
         <div>
           <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">Serviços</p>
@@ -289,9 +289,9 @@ function ServicesPage() {
         <ExpandableList
           items={services}
           initialCount={5}
-          className="grid grid-cols-1 gap-3 md:grid-cols-2"
+          className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
           itemClassName="min-w-0"
-          buttonWrapClassName="md:col-span-2"
+          buttonWrapClassName="md:col-span-2 xl:col-span-3"
           getKey={(service) => service.id}
           moreLabel={(hidden) => `Mostrar mais ${hidden} serviço${hidden !== 1 ? "s" : ""}`}
           renderItem={(s) => {

@@ -667,7 +667,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
         }`}
       >
         <div
-          className={`admin-content mx-auto max-w-6xl px-3 pt-3 sm:px-4 md:px-8 md:pb-10 md:pt-8 ${
+          className={`admin-content mx-auto max-w-[88rem] px-3 pt-3 sm:px-4 md:px-5 md:pb-10 md:pt-5 xl:px-6 ${
             isBalcaoPage
               ? "pb-[calc(env(safe-area-inset-bottom)+5.75rem)]"
               : "pb-[calc(env(safe-area-inset-bottom)+5.75rem)]"

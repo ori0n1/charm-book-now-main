@@ -1596,6 +1596,16 @@
     max-width: 100%;
   }
 
+  .admin-content > * {
+    width: 100%;
+  }
+
+  .admin-content :where(p, h1, h2, h3, h4, label, span) {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
   .admin-content :where(table),
   .public-booking :where(table),
   .public-shell :where(table) {

@@ -289,7 +289,7 @@ function PaymentsPage() {
     })
     .filter((member) => member.total > 0);
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 md:space-y-4">
       <header className="overflow-hidden rounded-3xl border border-emerald-700/20 bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_42%,rgba(16,185,129,0.06))] p-4 shadow-sm md:p-5">
         <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
           <div>
