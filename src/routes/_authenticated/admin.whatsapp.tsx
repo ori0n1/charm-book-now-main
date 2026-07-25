@@ -286,7 +286,7 @@ function WhatsAppPage() {
   const SelectedCommunityIcon = selectedCommunityKind.icon;
 
   return (
-    <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-3 pb-24 md:gap-4 md:pb-6">
+    <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-2.5 pb-24 md:gap-4 md:pb-6">
       <header className="overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm lg:grid lg:grid-cols-[minmax(0,1fr)_23rem] lg:items-center lg:gap-x-5 lg:px-5 lg:py-4">
         <p className="px-4 pt-4 text-[10px] font-bold uppercase tracking-[0.24em] text-muted-foreground md:px-5 md:pt-5 lg:px-0 lg:pt-0">
           Configurações
@@ -322,7 +322,7 @@ function WhatsAppPage() {
       </header>
 
       <section className="overflow-hidden rounded-[1.35rem] bg-card shadow-sm ring-1 ring-border/60">
-        <div className="grid gap-4 bg-muted/10 p-4 md:p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
+        <div className="grid gap-3 bg-muted/10 p-3 md:gap-4 md:p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
           <div className="flex items-start gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-sky-600/10 text-sky-700 dark:text-sky-300">
               <Users className="h-5 w-5" />
@@ -340,15 +340,15 @@ function WhatsAppPage() {
               </p>
             </div>
           </div>
-          <div className="min-w-0 rounded-2xl bg-background/55 p-3 text-xs leading-relaxed text-muted-foreground ring-1 ring-border/45">
+          <div className="min-w-0 rounded-2xl bg-background/55 p-2.5 text-xs leading-relaxed text-muted-foreground ring-1 ring-border/45 md:p-3">
             <BellRing className="mb-1.5 h-4 w-4 text-foreground/80" />
             Promoções, horários vagos, vagas liberadas, novos serviços e horários disponíveis.
           </div>
         </div>
 
-        <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
-          <div className="grid min-w-0 gap-4">
-            <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-2.5">
+        <div className="grid gap-3 p-3 md:gap-4 md:p-5 xl:grid-cols-[minmax(0,1fr)_23rem]">
+          <div className="grid min-w-0 gap-3 md:gap-4">
+            <div className="grid auto-rows-fr grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] sm:gap-2.5">
               {communityCampaigns.map((item) => {
                 const Icon = item.icon;
                 const active = communityKind === item.kind;
@@ -361,28 +361,28 @@ function WhatsAppPage() {
                       setCommunityTitle(item.title);
                       setCommunityBody(item.body);
                     }}
-                    className={`group flex h-full min-h-[3.9rem] w-full min-w-0 items-center gap-2.5 rounded-2xl px-3 py-2.5 text-left ring-1 transition ${
+                    className={`group flex h-full min-h-[6.25rem] w-full min-w-0 flex-col items-start gap-2 rounded-xl px-2.5 py-2.5 text-left ring-1 transition sm:min-h-[3.9rem] sm:flex-row sm:items-center sm:gap-2.5 sm:rounded-2xl sm:px-3 ${
                       active
                         ? "bg-muted/45 text-foreground shadow-sm shadow-black/5 ring-foreground/20"
                         : "bg-muted/15 text-foreground ring-border/45 hover:bg-muted/25 hover:ring-foreground/15"
                     }`}
                   >
                     <span
-                      className={`grid size-9 shrink-0 place-items-center rounded-xl ${
+                      className={`grid size-8 shrink-0 place-items-center rounded-lg sm:size-9 sm:rounded-xl ${
                         active ? `${item.tone} ring-1 ring-current/10` : item.tone
                       }`}
                     >
                       <Icon className="h-4 w-4" />
                     </span>
-                    <span className="min-w-0 flex-1">
+                    <span className="min-w-0 flex-1 self-stretch">
                       <span
-                        className={`block overflow-hidden text-[10px] font-bold uppercase tracking-[0.14em] ${
+                        className={`block overflow-hidden text-[9px] font-bold uppercase tracking-[0.1em] sm:text-[10px] sm:tracking-[0.14em] ${
                           active ? "text-muted-foreground" : "text-muted-foreground"
                         }`}
                       >
                         {item.eyebrow}
                       </span>
-                      <span className="mt-0.5 block min-w-0 whitespace-normal break-normal text-[13px] font-semibold leading-snug hyphens-none md:text-sm">
+                      <span className="mt-0.5 block min-h-[2rem] min-w-0 whitespace-normal break-normal text-[12px] font-semibold leading-[1.2] hyphens-none sm:min-h-0 sm:text-[13px] sm:leading-snug md:text-sm">
                         {item.label}
                       </span>
                     </span>
@@ -434,7 +434,7 @@ function WhatsAppPage() {
             </div>
           </div>
 
-          <aside className="flex min-w-0 flex-col justify-between self-start rounded-[1.15rem] bg-background/60 p-4 ring-1 ring-border/50 xl:sticky xl:top-24">
+          <aside className="flex min-w-0 flex-col justify-between self-start rounded-[1.15rem] bg-background/60 p-3 ring-1 ring-border/50 md:p-4 xl:sticky xl:top-24">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
                 Pré-visualização
@@ -477,9 +477,9 @@ function WhatsAppPage() {
         </div>
       </section>
 
-      <section className="rounded-[1.35rem] border border-border/80 bg-card p-3.5 shadow-sm md:p-4">
-        <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-center">
-          <div className="flex items-start gap-3">
+      <section className="rounded-[1.35rem] border border-border/80 bg-card p-3 shadow-sm md:p-4">
+        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-[1fr_auto_auto] lg:items-center lg:gap-3">
+          <div className="col-span-2 flex items-start gap-3 lg:col-span-1">
             <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
               <MessageCircle className="h-5 w-5" />
             </span>
@@ -492,7 +492,7 @@ function WhatsAppPage() {
             </div>
           </div>
 
-          <label className="flex h-11 items-center justify-between gap-3 rounded-2xl border border-border/80 bg-background/70 px-3.5 text-sm font-medium lg:min-w-44">
+          <label className="flex h-10 min-w-0 items-center justify-between gap-2 rounded-xl border border-border/80 bg-background/70 px-2.5 text-xs font-medium sm:h-11 sm:rounded-2xl sm:px-3.5 sm:text-sm lg:min-w-44">
             <span>Ativar envio</span>
             <input
               type="checkbox"
@@ -504,7 +504,7 @@ function WhatsAppPage() {
           <button
             type="button"
             onClick={() => setShowWhatsAppDetails((current) => !current)}
-            className="inline-flex h-11 items-center justify-center rounded-2xl border border-border/80 bg-background/70 px-4 text-xs font-bold uppercase tracking-wide text-foreground transition hover:border-foreground/20"
+            className="inline-flex h-10 min-w-0 items-center justify-center rounded-xl border border-border/80 bg-background/70 px-2.5 text-[11px] font-bold uppercase tracking-wide text-foreground transition hover:border-foreground/20 sm:h-11 sm:rounded-2xl sm:px-4 sm:text-xs"
           >
             {showWhatsAppDetails ? "Ver menos" : "Ver mais"}
           </button>
