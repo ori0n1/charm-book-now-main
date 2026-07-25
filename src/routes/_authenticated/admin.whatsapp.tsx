@@ -20,7 +20,6 @@ import { sendFollowerNotification } from "@/lib/studio-follows.functions";
 import {
   getWhatsAppSettings,
   saveWhatsAppSettings,
-  testWhatsAppMessage,
 } from "@/lib/whatsapp.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/whatsapp")({
@@ -157,20 +156,16 @@ function WhatsAppPage() {
   const { studio, loading: studioLoading, error: studioError } = useCurrentStudio();
   const loadSettings = useServerFn(getWhatsAppSettings);
   const saveSettings = useServerFn(saveWhatsAppSettings);
-  const testMessage = useServerFn(testWhatsAppMessage);
   const notifyFollowers = useServerFn(sendFollowerNotification);
 
   const [settings, setSettings] = useState<WhatsAppSettings | null>(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [testPhone, setTestPhone] = useState("");
   const [communityBusy, setCommunityBusy] = useState(false);
   const [communityKind, setCommunityKind] = useState<FollowerNotificationKind>("open_slot");
   const [communityTitle, setCommunityTitle] = useState("Horário vago disponível");
   const [communityBody, setCommunityBody] = useState(
     "Temos um horário livre para atendimento. Abra o app do estúdio para reservar.",
   );
-  const [showWhatsAppDetails, setShowWhatsAppDetails] = useState(false);
   const communityBodyRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -202,7 +197,7 @@ function WhatsAppPage() {
     }
   }
 
-  async function save(next: { autoSendEnabled?: boolean; messageTemplate?: string }) {
+  async function save(next: { autoSendEnabled: boolean }) {
     if (!studio || !settings) return;
     const previous = settings;
     const merged = { ...settings, ...next };
@@ -213,23 +208,6 @@ function WhatsAppPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao guardar.");
       setSettings(previous);
-    }
-  }
-
-  async function sendTest() {
-    if (!studio) return;
-    setBusy(true);
-    try {
-      const result = await testMessage({ data: { studioId: studio.id, phone: testPhone } });
-      if (result.delivered) {
-        toast.success("Mensagem de teste entregue no WhatsApp.");
-      } else {
-        toast.info("Mensagem aceite pela operadora. A aguardar confirmação de entrega.");
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha no teste.");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -478,21 +456,21 @@ function WhatsAppPage() {
       </section>
 
       <section className="rounded-[1.35rem] border border-border/80 bg-card p-3 shadow-sm md:p-4">
-        <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-[1fr_auto_auto] lg:items-center lg:gap-3">
-          <div className="col-span-2 flex items-start gap-3 lg:col-span-1">
+        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div className="flex min-w-0 items-start gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
               <MessageCircle className="h-5 w-5" />
             </span>
             <div className="min-w-0">
               <p className="text-sm font-semibold">Envio por WhatsApp</p>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Canal de envio gerido pela Send.dm. Use esta área para afinar a mensagem antes de
-                ativar o envio automático.
+                Ao ativar, o cliente recebe automaticamente pelo WhatsApp a confirmação da marcação
+                com o template aprovado.
               </p>
             </div>
           </div>
 
-          <label className="flex h-10 min-w-0 items-center justify-between gap-2 rounded-xl border border-border/80 bg-background/70 px-2.5 text-xs font-medium sm:h-11 sm:rounded-2xl sm:px-3.5 sm:text-sm lg:min-w-44">
+          <label className="flex h-10 min-w-0 items-center justify-between gap-3 rounded-xl border border-border/80 bg-background/70 px-3 text-xs font-medium sm:h-11 sm:min-w-44 sm:rounded-2xl sm:px-3.5 sm:text-sm">
             <span>Ativar envio</span>
             <input
               type="checkbox"
@@ -501,59 +479,8 @@ function WhatsAppPage() {
               className="size-4 accent-emerald-600"
             />
           </label>
-          <button
-            type="button"
-            onClick={() => setShowWhatsAppDetails((current) => !current)}
-            className="inline-flex h-10 min-w-0 items-center justify-center rounded-xl border border-border/80 bg-background/70 px-2.5 text-[11px] font-bold uppercase tracking-wide text-foreground transition hover:border-foreground/20 sm:h-11 sm:rounded-2xl sm:px-4 sm:text-xs"
-          >
-            {showWhatsAppDetails ? "Ver menos" : "Ver mais"}
-          </button>
         </div>
       </section>
-
-      {showWhatsAppDetails && (
-        <section className="rounded-[1.35rem] border border-border/80 bg-card p-3.5 shadow-sm md:p-4">
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-              Mensagem padrão
-            </span>
-            <textarea
-              value={currentSettings.messageTemplate}
-              rows={4}
-              onChange={(event) =>
-                setSettings((current) =>
-                  current ? { ...current, messageTemplate: event.target.value } : current,
-                )
-              }
-              onBlur={(event) => save({ messageTemplate: event.target.value || DEFAULT_TEMPLATE })}
-              className="box-border w-full min-w-0 resize-y rounded-2xl border border-border bg-background/85 px-3.5 py-2.5 text-sm leading-relaxed shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
-            />
-          </label>
-
-          <div className="mt-3 grid gap-3 rounded-2xl border border-border/80 bg-background/55 p-3 md:grid-cols-[1fr_auto] md:items-end">
-            <label className="block">
-              <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                Testar envio
-              </span>
-              <input
-                value={testPhone}
-                onChange={(event) => setTestPhone(event.target.value)}
-                placeholder="+351912345678"
-                className="box-border h-10 w-full min-w-0 rounded-2xl border border-border bg-background/85 px-3.5 text-sm shadow-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-ring/15"
-              />
-            </label>
-            <button
-              type="button"
-              onClick={sendTest}
-              disabled={busy || !testPhone.trim()}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Send className="h-4 w-4" />
-              Testar
-            </button>
-          </div>
-        </section>
-      )}
     </div>
   );
 }
