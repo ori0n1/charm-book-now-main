@@ -2204,7 +2204,11 @@ function KpiCard({
         <div className="h-7 w-16 animate-pulse rounded-lg bg-muted" />
       ) : (
         <p
-          className={`text-2xl font-semibold tracking-tight leading-none ${money ? `font-mono ${valueColor[color]}` : ""}`}
+          className={`font-semibold tracking-tight leading-none ${
+            money
+              ? `inline-flex max-w-full flex-nowrap items-center whitespace-nowrap font-mono text-[clamp(1.125rem,4.8vw,1.5rem)] ${valueColor[color]}`
+              : "text-2xl"
+          }`}
         >
           {value}
         </p>

@@ -10,3 +10,10 @@ test("agenda appointment times stay on one line on mobile and desktop", async ()
   expect(source).toContain("{time}");
   expect(source).toContain("{timeEnd}");
 });
+
+test("agenda revenue value keeps the amount and currency on one line", async () => {
+  const source = await readFile("src/routes/_authenticated/admin.agenda.tsx", "utf8");
+
+  expect(source).toContain("inline-flex max-w-full flex-nowrap items-center whitespace-nowrap");
+  expect(source).toContain("text-[clamp(1.125rem,4.8vw,1.5rem)]");
+});
