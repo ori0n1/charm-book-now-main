@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   buildPlatformMetrics,
+  resolvePlatformMetricsAccess,
   type PlatformMetricsFilters,
   type PlatformMetricsInput,
 } from "../src/lib/platform-metrics-core";
@@ -29,6 +30,7 @@ function fixture(filters: PlatformMetricsFilters = baseFilters): PlatformMetrics
         plan: "pro",
         subscription_status: "active",
         trial_claimed_at: "2026-07-25T08:00:00.000Z",
+        trial_ends_at: "2026-08-08T08:00:00.000Z",
       },
       {
         id: "studio-b",
@@ -153,12 +155,12 @@ test("keeps Bellza subscription revenue separate from studio appointment volume"
 });
 
 test("deduplicates Stripe invoice events and isolates a selected studio", () => {
-  const metrics = buildPlatformMetrics(
-    fixture({ ...baseFilters, studioId: "studio-a" }),
-  );
+  const metrics = buildPlatformMetrics(fixture({ ...baseFilters, studioId: "studio-a" }));
 
   expect(metrics.studios.total).toBe(1);
   expect(metrics.selectedStudio?.name).toBe("Studio A");
+  expect(metrics.selectedStudio?.trialStartedAt).toBe("2026-07-25T08:00:00.000Z");
+  expect(metrics.selectedStudio?.trialEndsAt).toBe("2026-08-08T08:00:00.000Z");
   expect(metrics.finances.platformRevenueCents).toBe(899);
   expect(metrics.finances.studioVolumeCents).toBe(10000);
   expect(metrics.appointments.total).toBe(2);
@@ -168,9 +170,7 @@ test("deduplicates Stripe invoice events and isolates a selected studio", () => 
 });
 
 test("uses each studio timezone at day boundaries without mixing local dates", () => {
-  const metrics = buildPlatformMetrics(
-    fixture({ ...baseFilters, studioId: "studio-a" }),
-  );
+  const metrics = buildPlatformMetrics(fixture({ ...baseFilters, studioId: "studio-a" }));
 
   expect(metrics.period.timezone).toBe("Europe/Lisbon");
   expect(metrics.period.from).toBe("2026-07-25");
@@ -183,12 +183,29 @@ test("uses each studio timezone at day boundaries without mixing local dates", (
 });
 
 test("applies plan filters before aggregating any studio data", () => {
-  const metrics = buildPlatformMetrics(
-    fixture({ ...baseFilters, plan: "yearly" }),
-  );
+  const metrics = buildPlatformMetrics(fixture({ ...baseFilters, plan: "yearly" }));
 
   expect(metrics.studios.total).toBe(1);
   expect(metrics.studioRows[0].id).toBe("studio-b");
   expect(metrics.finances.platformRevenueCents).toBe(8999);
   expect(metrics.finances.studioVolumeCents).toBe(30000);
+});
+
+test("allows duplicate SaaS owner roles and keeps studio owners tenant-scoped", () => {
+  expect(
+    resolvePlatformMetricsAccess(
+      [
+        { role: "saas_owner", studio_id: null },
+        { role: "saas_owner", studio_id: "studio-a" },
+      ],
+      "studio-b",
+    ),
+  ).toEqual({ isSaasOwner: true, studioId: "studio-b" });
+
+  expect(
+    resolvePlatformMetricsAccess([{ role: "studio_owner", studio_id: "studio-a" }], "studio-a"),
+  ).toEqual({ isSaasOwner: false, studioId: "studio-a" });
+  expect(
+    resolvePlatformMetricsAccess([{ role: "studio_owner", studio_id: "studio-a" }], "studio-b"),
+  ).toBeNull();
 });

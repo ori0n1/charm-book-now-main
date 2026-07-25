@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import {
   buildPlatformMetrics,
+  resolvePlatformMetricsAccess,
   resolveMetricsPeriod,
   type PlatformBillingEventSource,
   type PlatformMetrics,
@@ -32,13 +33,19 @@ export type PlatformMetricsResponse = {
 const filtersSchema = z.object({
   studioId: z.string().uuid().nullable().default(null),
   preset: z.enum(["today", "7d", "30d", "month", "year", "custom"]).default("30d"),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().default(null),
+  from: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .default(null),
+  to: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .nullable()
+    .default(null),
   plan: z.enum(["all", "trial", "monthly", "quarterly", "yearly"]).default("all"),
   accountStatus: z.enum(["all", "active", "blocked", "cancelled"]).default("all"),
-  subscriptionStatus: z
-    .enum(["all", "trialing", "active", "past_due", "canceled"])
-    .default("all"),
+  subscriptionStatus: z.enum(["all", "trialing", "active", "past_due", "canceled"]).default("all"),
 });
 
 const exportSchema = filtersSchema.extend({
@@ -59,17 +66,20 @@ function admin(): any {
   return getAdminClient();
 }
 
-async function assertSaasOwner(userId: string) {
+async function authorizeMetricsAccess(userId: string, requestedStudioId: string | null) {
   const sb = admin();
   const { data, error } = await sb
     .from("user_roles")
-    .select("role")
-    .eq("user_id", userId)
-    .eq("role", "saas_owner")
-    .maybeSingle();
-  if (error || data?.role !== "saas_owner") {
-    throw new Response("forbidden", { status: 403 });
+    .select("role,studio_id")
+    .eq("user_id", userId);
+
+  if (error) {
+    throw new Error(`metrics_access_lookup_failed:${error.message}`);
   }
+
+  const access = resolvePlatformMetricsAccess(data ?? [], requestedStudioId);
+  if (!access) throw new Response("forbidden", { status: 403 });
+  return access;
 }
 
 async function pagedRows(
@@ -182,7 +192,10 @@ function broadDateBounds(period: { from: string; to: string }) {
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
-async function loadPlatformData(filters: PlatformMetricsFilters): Promise<PlatformMetricsResponse> {
+async function loadPlatformData(
+  filters: PlatformMetricsFilters,
+  access?: ReturnType<typeof resolvePlatformMetricsAccess>,
+): Promise<PlatformMetricsResponse> {
   const sb = admin();
 
   const [studios, subscriptions, roles, authUsers] = await Promise.all([
@@ -225,11 +238,7 @@ async function loadPlatformData(filters: PlatformMetricsFilters): Promise<Platfo
   const profiles =
     userIds.length > 0
       ? await pagedRows((from, to) =>
-          sb
-            .from("profiles")
-            .select("id,full_name")
-            .in("id", userIds)
-            .range(from, to),
+          sb.from("profiles").select("id,full_name").in("id", userIds).range(from, to),
         )
       : [];
 
@@ -282,6 +291,7 @@ async function loadPlatformData(filters: PlatformMetricsFilters): Promise<Platfo
   return {
     metrics,
     studioOptions: studios
+      .filter((studio) => access?.isSaasOwner !== false || studio.id === access.studioId)
       .map((studio) => ({
         id: studio.id as string,
         name: studio.name as string,
@@ -295,8 +305,8 @@ export const getPlatformMetrics = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => filtersSchema.parse(input ?? DEFAULT_FILTERS))
   .handler(async ({ data, context }): Promise<PlatformMetricsResponse> => {
-    await assertSaasOwner((context as any).userId);
-    return loadPlatformData(data);
+    const access = await authorizeMetricsAccess((context as any).userId, data.studioId);
+    return loadPlatformData({ ...data, studioId: access.studioId }, access);
   });
 
 function csvCell(value: unknown) {
@@ -366,9 +376,9 @@ export const exportPlatformMetrics = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => exportSchema.parse(input))
   .handler(async ({ data, context }) => {
-    await assertSaasOwner((context as any).userId);
     const { format, ...filters } = data;
-    const { metrics } = await loadPlatformData(filters);
+    const access = await authorizeMetricsAccess((context as any).userId, filters.studioId);
+    const { metrics } = await loadPlatformData({ ...filters, studioId: access.studioId }, access);
     const rows = exportRows(metrics);
     const stamp = `${metrics.period.from}_${metrics.period.to}`;
 

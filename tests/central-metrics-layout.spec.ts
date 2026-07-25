@@ -14,12 +14,24 @@ test("Central metrics keeps compact responsive cards and unbroken monetary value
   expect(metricsPage).toContain('label="Volume dos estúdios"');
   expect(metricsPage).toContain('label="Pendentes"');
   expect(metricsPage).toContain('label="Não compareceram"');
+  expect(metricsPage).toContain('["overview", "Visão geral"]');
+  expect(metricsPage).toContain("Filtros avançados");
+  expect(metricsPage).toContain("Indicadores detalhados");
+  expect(metricsPage).toContain('label="Início do teste"');
+  expect(metricsPage).toContain('label="Fim do teste"');
 });
 
-test("Central routes and exports remain restricted to the SaaS owner", async () => {
-  const source = await readFile("src/lib/platform-metrics.functions.ts", "utf8");
+test("Central metrics keeps explicit tenant authorization without weakening isolation", async () => {
+  const [source, core] = await Promise.all([
+    readFile("src/lib/platform-metrics.functions.ts", "utf8"),
+    readFile("src/lib/platform-metrics-core.ts", "utf8"),
+  ]);
 
-  expect(source.match(/assertSaasOwner/g)?.length).toBeGreaterThanOrEqual(3);
+  expect(source).toContain("authorizeMetricsAccess");
+  expect(source).toContain('throw new Response("forbidden", { status: 403 })');
+  expect(core).toContain('role.role === "saas_owner"');
+  expect(core).toContain('role.role === "studio_owner"');
+  expect(core).toContain("ownedStudioIds.has(requestedStudioId)");
   expect(source.match(/middleware\(\[requireSupabaseAuth\]\)/g)?.length).toBeGreaterThanOrEqual(2);
   expect(source).toContain('format: z.enum(["csv", "excel"])');
   expect(source).not.toContain("client_name");

@@ -2,12 +2,7 @@ import { getStudioDateKey, normalizeStudioTimeZone } from "@/lib/studio-time";
 
 export type MetricsPreset = "today" | "7d" | "30d" | "month" | "year" | "custom";
 export type AccountFilter = "all" | "active" | "blocked" | "cancelled";
-export type SubscriptionFilter =
-  | "all"
-  | "trialing"
-  | "active"
-  | "past_due"
-  | "canceled";
+export type SubscriptionFilter = "all" | "trialing" | "active" | "past_due" | "canceled";
 export type PlanFilter = "all" | "trial" | "monthly" | "quarterly" | "yearly";
 
 export type PlatformMetricsFilters = {
@@ -19,6 +14,35 @@ export type PlatformMetricsFilters = {
   accountStatus: AccountFilter;
   subscriptionStatus: SubscriptionFilter;
 };
+
+export type PlatformMetricsAccessRole = {
+  role: string;
+  studio_id: string | null;
+};
+
+export type PlatformMetricsAccess = {
+  isSaasOwner: boolean;
+  studioId: string | null;
+};
+
+export function resolvePlatformMetricsAccess(
+  roles: PlatformMetricsAccessRole[],
+  requestedStudioId: string | null,
+): PlatformMetricsAccess | null {
+  if (roles.some((role) => role.role === "saas_owner")) {
+    return { isSaasOwner: true, studioId: requestedStudioId };
+  }
+
+  const ownedStudioIds = new Set(
+    roles
+      .filter((role) => role.role === "studio_owner" && role.studio_id)
+      .map((role) => role.studio_id as string),
+  );
+  if (requestedStudioId && ownedStudioIds.has(requestedStudioId)) {
+    return { isSaasOwner: false, studioId: requestedStudioId };
+  }
+  return null;
+}
 
 export type PlatformStudioSource = {
   id: string;
@@ -99,6 +123,8 @@ export type PlatformStudioRow = {
   ownerName: string;
   email: string;
   createdAt: string;
+  trialStartedAt: string;
+  trialEndsAt: string | null;
   lastAccessAt: string | null;
   timezone: string;
   plan: string;
@@ -200,8 +226,7 @@ function daysBetween(from: string, to: string) {
   return Math.max(
     0,
     Math.round(
-      (Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) /
-        86400000,
+      (Date.parse(`${to}T00:00:00.000Z`) - Date.parse(`${from}T00:00:00.000Z`)) / 86400000,
     ),
   );
 }
@@ -302,9 +327,7 @@ function matchesStudioFilters(
   ) {
     return false;
   }
-  const status = normalizeSubscriptionStatus(
-    subscription?.status || studio.subscription_status,
-  );
+  const status = normalizeSubscriptionStatus(subscription?.status || studio.subscription_status);
   if (filters.subscriptionStatus === "past_due") {
     return ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(status);
   }
@@ -353,11 +376,7 @@ function cancellationEvents(events: PlatformBillingEventSource[]) {
     const id = String(object?.id || event.id);
     if (cancellations.has(id)) continue;
     cancellations.set(id, {
-      studioId:
-        event.resolved_studio_id ||
-        event.studio_id ||
-        object?.metadata?.studio_id ||
-        null,
+      studioId: event.resolved_studio_id || event.studio_id || object?.metadata?.studio_id || null,
       createdAt: event.created_at,
     });
   }
@@ -485,6 +504,8 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
       ownerName: identity?.ownerName || studio.owner_name || "Não informado",
       email: identity?.ownerEmail || studio.email || "Não informado",
       createdAt: studio.created_at,
+      trialStartedAt: studio.trial_claimed_at || studio.created_at,
+      trialEndsAt: studio.trial_ends_at || null,
       lastAccessAt: identity?.lastAccessAt || null,
       timezone: normalizeStudioTimeZone(studio.timezone),
       plan: studioPlan(studio, subscription),
@@ -568,23 +589,14 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
         .reduce((total, invoice) => total + invoice.amountCents, 0),
       studioVolumeCents: completedAppointments
         .filter((appointment) =>
-          withinBucket(
-            appointment.starts_at,
-            bucket,
-            timezoneForStudio(appointment.studio_id),
-          ),
+          withinBucket(appointment.starts_at, bucket, timezoneForStudio(appointment.studio_id)),
         )
         .reduce(
-          (total, appointment) =>
-            total + Math.round(Number(appointment.total_price || 0) * 100),
+          (total, appointment) => total + Math.round(Number(appointment.total_price || 0) * 100),
           0,
         ),
       appointments: periodAppointments.filter((appointment) =>
-        withinBucket(
-          appointment.starts_at,
-          bucket,
-          timezoneForStudio(appointment.studio_id),
-        ),
+        withinBucket(appointment.starts_at, bucket, timezoneForStudio(appointment.studio_id)),
       ).length,
       trials: bucketTrials.length,
       conversions: bucketTrials.filter((studio) => paidStudioIds.has(studio.id)).length,
@@ -604,21 +616,16 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
     .sort((a, b) => a.appointments - b.appointments || a.name.localeCompare(b.name))
     .slice(0, 15);
   const inactive = studioRows
-    .filter(
-      (studio) =>
-        !studio.lastAccessAt || Date.parse(studio.lastAccessAt) < inactiveThreshold,
-    )
+    .filter((studio) => !studio.lastAccessAt || Date.parse(studio.lastAccessAt) < inactiveThreshold)
     .sort(
       (a, b) =>
-        Date.parse(a.lastAccessAt || "1970-01-01") -
-        Date.parse(b.lastAccessAt || "1970-01-01"),
+        Date.parse(a.lastAccessAt || "1970-01-01") - Date.parse(b.lastAccessAt || "1970-01-01"),
     )
     .slice(0, 15);
 
-  const selectedStudio =
-    input.filters.studioId
-      ? studioRows.find((studio) => studio.id === input.filters.studioId) || null
-      : null;
+  const selectedStudio = input.filters.studioId
+    ? studioRows.find((studio) => studio.id === input.filters.studioId) || null
+    : null;
 
   return {
     generatedAt: now.toISOString(),
@@ -636,16 +643,10 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
         (studio) => accountStatus(studio, latestByStudio.get(studio.id)) === "cancelled",
       ).length,
       newInPeriod: scopedStudios.filter((studio) =>
-        inPeriod(
-          studio.created_at,
-          period.from,
-          period.to,
-          timezoneForStudio(studio.id),
-        ),
+        inPeriod(studio.created_at, period.from, period.to, timezoneForStudio(studio.id)),
       ).length,
-      trial: scopedStudios.filter(
-        (studio) => currentSubscriptionStatus(studio) === "trialing",
-      ).length,
+      trial: scopedStudios.filter((studio) => currentSubscriptionStatus(studio) === "trialing")
+        .length,
       paidActive,
       expired: scopedStudios.filter((studio) =>
         ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
@@ -680,12 +681,7 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
     clients: {
       total: scopedClients.length,
       newInPeriod: scopedClients.filter((client) =>
-        inPeriod(
-          client.created_at,
-          period.from,
-          period.to,
-          timezoneForStudio(client.studio_id),
-        ),
+        inPeriod(client.created_at, period.from, period.to, timezoneForStudio(client.studio_id)),
       ).length,
     },
     rates: {

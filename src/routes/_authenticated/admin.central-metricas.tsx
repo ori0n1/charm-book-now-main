@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -8,6 +8,7 @@ import {
   Building2,
   CalendarCheck2,
   CircleOff,
+  ChevronDown,
   Download,
   Euro,
   FileSpreadsheet,
@@ -82,6 +83,15 @@ const PERIOD_OPTIONS = [
   ["custom", "Período personalizado"],
 ] as const;
 
+const VIEW_OPTIONS = [
+  ["overview", "Visão geral"],
+  ["appointments", "Marcações"],
+  ["growth", "Crescimento"],
+  ["comparison", "Comparações"],
+] as const;
+
+type MetricsView = (typeof VIEW_OPTIONS)[number][0];
+
 function CentralMetricsPage() {
   const search = Route.useSearch();
   const fetchMetrics = useServerFn(getPlatformMetrics);
@@ -90,6 +100,8 @@ function CentralMetricsPage() {
     ...BASE_FILTERS,
     studioId: search.studio || null,
   });
+  const [activeView, setActiveView] = useState<MetricsView>("overview");
+  const [studioOptions, setStudioOptions] = useState<PlatformMetricsResponse["studioOptions"]>([]);
   const [exporting, setExporting] = useState<"csv" | "excel" | null>(null);
   const query = useQuery<PlatformMetricsResponse>({
     queryKey: ["platform-metrics-v2", filters],
@@ -98,26 +110,19 @@ function CentralMetricsPage() {
     retry: 1,
   });
   const metrics = query.data?.metrics;
-  const timelineHasData = useMemo(
-    () =>
-      metrics?.timeline.some(
-        (point) =>
-          point.studios ||
-          point.platformRevenueCents ||
-          point.studioVolumeCents ||
-          point.appointments ||
-          point.trials ||
-          point.conversions ||
-          point.cancellations,
-      ) ?? false,
-    [metrics?.timeline],
-  );
+  useEffect(() => {
+    if (query.data?.studioOptions) setStudioOptions(query.data.studioOptions);
+  }, [query.data?.studioOptions]);
+
+  const hasTimelineValue = (key: keyof NonNullable<typeof metrics>["timeline"][number]) =>
+    metrics?.timeline.some((point) => Number(point[key]) > 0) ?? false;
 
   const updateFilter = <K extends keyof PlatformMetricsFilters>(
     key: K,
     value: PlatformMetricsFilters[K],
   ) => {
     setFilters((current) => ({ ...current, [key]: value }));
+    setActiveView("overview");
   };
 
   const downloadExport = async (format: "csv" | "excel") => {
@@ -193,16 +198,25 @@ function CentralMetricsPage() {
 
         <Panel
           title="Filtros"
-          description="Todos os indicadores e gráficos são recalculados automaticamente."
+          description="Troque o estúdio ou o período para atualizar toda a análise."
         >
-          <div className="grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          <div className="grid gap-3 p-3 sm:grid-cols-2 lg:grid-cols-[minmax(16rem,1.5fr)_minmax(12rem,1fr)_auto]">
             <FilterSelect
               label="Estúdio"
               value={filters.studioId || "all"}
-              onChange={(value) => updateFilter("studioId", value === "all" ? null : value)}
+              onChange={(value) => {
+                setFilters((current) => ({
+                  ...current,
+                  studioId: value === "all" ? null : value,
+                  plan: "all",
+                  accountStatus: "all",
+                  subscriptionStatus: "all",
+                }));
+                setActiveView("overview");
+              }}
             >
               <option value="all">Todos os estúdios</option>
-              {(query.data?.studioOptions ?? []).map((studio) => (
+              {studioOptions.map((studio) => (
                 <option key={studio.id} value={studio.id}>
                   {studio.name}
                 </option>
@@ -221,50 +235,14 @@ function CentralMetricsPage() {
                 </option>
               ))}
             </FilterSelect>
-            <FilterSelect
-              label="Plano"
-              value={filters.plan}
-              onChange={(value) => updateFilter("plan", value as PlatformMetricsFilters["plan"])}
-            >
-              <option value="all">Todos os planos</option>
-              <option value="trial">Teste gratuito</option>
-              <option value="monthly">Mensal</option>
-              <option value="quarterly">Trimestral</option>
-              <option value="yearly">Anual</option>
-            </FilterSelect>
-            <FilterSelect
-              label="Estado da conta"
-              value={filters.accountStatus}
-              onChange={(value) =>
-                updateFilter("accountStatus", value as PlatformMetricsFilters["accountStatus"])
-              }
-            >
-              <option value="all">Todos os estados</option>
-              <option value="active">Ativa</option>
-              <option value="blocked">Bloqueada</option>
-              <option value="cancelled">Cancelada</option>
-            </FilterSelect>
-            <FilterSelect
-              label="Assinatura"
-              value={filters.subscriptionStatus}
-              onChange={(value) =>
-                updateFilter(
-                  "subscriptionStatus",
-                  value as PlatformMetricsFilters["subscriptionStatus"],
-                )
-              }
-            >
-              <option value="all">Todas as assinaturas</option>
-              <option value="trialing">Em teste</option>
-              <option value="active">Ativa</option>
-              <option value="past_due">Vencida</option>
-              <option value="canceled">Cancelada</option>
-            </FilterSelect>
             <div className="flex items-end">
               <button
                 type="button"
-                onClick={() => setFilters({ ...BASE_FILTERS, studioId: null })}
-                className="h-10 w-full rounded-xl border border-border bg-background px-3 text-xs font-semibold text-muted-foreground"
+                onClick={() => {
+                  setFilters({ ...BASE_FILTERS, studioId: null });
+                  setActiveView("overview");
+                }}
+                className="h-10 w-full whitespace-nowrap rounded-xl border border-border bg-background px-4 text-xs font-semibold text-muted-foreground"
               >
                 Limpar filtros
               </button>
@@ -284,30 +262,110 @@ function CentralMetricsPage() {
               />
             </div>
           )}
+          <details className="group border-t border-border/60">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-xs font-semibold text-muted-foreground">
+              Filtros avançados
+              <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="grid gap-3 border-t border-border/40 p-3 sm:grid-cols-3">
+              <FilterSelect
+                label="Plano"
+                value={filters.plan}
+                onChange={(value) => updateFilter("plan", value as PlatformMetricsFilters["plan"])}
+              >
+                <option value="all">Todos os planos</option>
+                <option value="trial">Teste gratuito</option>
+                <option value="monthly">Mensal</option>
+                <option value="quarterly">Trimestral</option>
+                <option value="yearly">Anual</option>
+              </FilterSelect>
+              <FilterSelect
+                label="Estado da conta"
+                value={filters.accountStatus}
+                onChange={(value) =>
+                  updateFilter("accountStatus", value as PlatformMetricsFilters["accountStatus"])
+                }
+              >
+                <option value="all">Todos os estados</option>
+                <option value="active">Ativa</option>
+                <option value="blocked">Bloqueada</option>
+                <option value="cancelled">Cancelada</option>
+              </FilterSelect>
+              <FilterSelect
+                label="Assinatura"
+                value={filters.subscriptionStatus}
+                onChange={(value) =>
+                  updateFilter(
+                    "subscriptionStatus",
+                    value as PlatformMetricsFilters["subscriptionStatus"],
+                  )
+                }
+              >
+                <option value="all">Todas as assinaturas</option>
+                <option value="trialing">Em teste</option>
+                <option value="active">Ativa</option>
+                <option value="past_due">Vencida</option>
+                <option value="canceled">Cancelada</option>
+              </FilterSelect>
+            </div>
+          </details>
         </Panel>
 
         {query.isError && (
           <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">
-            Não foi possível carregar estas métricas. Confirme a permissão administrativa e os
-            filtros selecionados.
+            Não foi possível atualizar os dados agora. A análise anterior foi removida para não
+            misturar informações. Tente novamente ou escolha outro período.
           </div>
         )}
 
         {metrics?.selectedStudio && (
-          <Panel
-            title={metrics.selectedStudio.name}
-            description={`Dados exclusivos do estúdio · ${metrics.period.label}`}
-          >
-            <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+          <section className="overflow-hidden rounded-2xl border border-violet-500/20 bg-card shadow-sm">
+            <div className="flex flex-col gap-3 border-b border-border/60 bg-violet-500/[0.04] p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-600 dark:text-violet-300">
+                  Estúdio selecionado
+                </p>
+                <h2 className="mt-1 truncate text-lg font-semibold tracking-tight">
+                  {metrics.selectedStudio.name}
+                </h2>
+                <p className="truncate text-xs text-muted-foreground">
+                  {metrics.selectedStudio.ownerName} · {metrics.selectedStudio.email}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <StatusBadge value={studioAccountLabel(metrics.selectedStudio)} />
+                <StatusBadge value={metrics.selectedStudio.subscriptionStatus} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3 p-4 sm:grid-cols-3 lg:grid-cols-5">
               <Info label="Responsável" value={metrics.selectedStudio.ownerName} />
               <Info label="E-mail" value={metrics.selectedStudio.email} />
               <Info
-                label="Criação"
+                label="Criação da conta"
                 value={formatDateTime(
                   metrics.selectedStudio.createdAt,
                   metrics.selectedStudio.timezone,
                 )}
               />
+              <Info
+                label="Início do teste"
+                value={formatDateTime(
+                  metrics.selectedStudio.trialStartedAt,
+                  metrics.selectedStudio.timezone,
+                )}
+              />
+              <Info
+                label="Fim do teste"
+                value={formatDateTime(
+                  metrics.selectedStudio.trialEndsAt,
+                  metrics.selectedStudio.timezone,
+                )}
+              />
+              <Info
+                label="Dias gratuitos"
+                value={`${metrics.selectedStudio.trialDaysRemaining} dias`}
+              />
+              <Info label="Plano" value={metrics.selectedStudio.plan} />
               <Info
                 label="Último acesso"
                 value={formatDateTime(
@@ -315,92 +373,24 @@ function CentralMetricsPage() {
                   metrics.selectedStudio.timezone,
                 )}
               />
-              <Info label="Plano" value={metrics.selectedStudio.plan} />
-              <Info
-                label="Teste restante"
-                value={`${metrics.selectedStudio.trialDaysRemaining} dias`}
-              />
-              <Info label="Conta" value={metrics.selectedStudio.accountStatus} />
+              <Info label="Estado da conta" value={studioAccountLabel(metrics.selectedStudio)} />
               <Info label="Assinatura" value={metrics.selectedStudio.subscriptionStatus} />
             </div>
-          </Panel>
+          </section>
         )}
 
-        <section className="grid grid-cols-2 gap-2.5 md:grid-cols-4 xl:grid-cols-8">
-          <MetricCard
-            label="Estúdios"
-            value={metrics?.studios.total ?? 0}
-            hint="Escopo atual"
-            icon={Building2}
-            accent="violet"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Ativos"
-            value={metrics?.studios.active ?? 0}
-            hint="Contas operacionais"
-            icon={CalendarCheck2}
-            accent="emerald"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Bloqueados"
-            value={metrics?.studios.blocked ?? 0}
-            hint="Acesso desativado"
-            icon={Ban}
-            accent="red"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Cancelados"
-            value={metrics?.studios.cancelled ?? 0}
-            hint="Conta cancelada"
-            icon={CircleOff}
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Novos estúdios"
-            value={metrics?.studios.newInPeriod ?? 0}
-            hint={metrics?.period.label}
-            icon={Building2}
-            accent="blue"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Em teste"
-            value={metrics?.studios.trial ?? 0}
-            hint="Teste gratuito"
-            icon={Activity}
-            accent="amber"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Assinaturas ativas"
-            value={metrics?.studios.paidActive ?? 0}
-            hint="Planos pagos"
-            icon={TrendingUp}
-            accent="emerald"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Vencidas"
-            value={metrics?.studios.expired ?? 0}
-            hint="Requer atenção"
-            icon={TrendingDown}
-            accent="red"
-            loading={query.isLoading}
-          />
-        </section>
-
-        <section className="grid grid-cols-2 gap-2.5 md:grid-cols-4 xl:grid-cols-6">
+        <section
+          aria-label="Indicadores principais"
+          className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6"
+        >
           <MetricCard
             label="Receita Bellza"
             value={formatMoney(metrics?.finances.platformRevenueCents ?? 0)}
-            hint="Somente assinaturas pagas"
+            hint="Assinaturas pagas"
             icon={Euro}
             accent="emerald"
             money
-            loading={query.isLoading}
+            loading={query.isLoading || query.isFetching}
           />
           <MetricCard
             label="Volume dos estúdios"
@@ -409,15 +399,15 @@ function CentralMetricsPage() {
             icon={Euro}
             accent="violet"
             money
-            loading={query.isLoading}
+            loading={query.isLoading || query.isFetching}
           />
           <MetricCard
             label="Marcações"
             value={metrics?.appointments.total ?? 0}
-            hint="Total no período"
+            hint={metrics?.period.label ?? "Período"}
             icon={CalendarCheck2}
             accent="blue"
-            loading={query.isLoading}
+            loading={query.isLoading || query.isFetching}
           />
           <MetricCard
             label="Concluídas"
@@ -425,40 +415,7 @@ function CentralMetricsPage() {
             hint="Atendimentos realizados"
             icon={CalendarCheck2}
             accent="emerald"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Canceladas"
-            value={metrics?.appointments.cancelled ?? 0}
-            hint="Canceladas no período"
-            icon={CircleOff}
-            accent="red"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Pendentes"
-            value={metrics?.appointments.pending ?? 0}
-            hint="Pendentes ou confirmadas"
-            icon={Activity}
-            accent="amber"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Não compareceram"
-            value={metrics?.appointments.noShow ?? 0}
-            hint="Estado não compareceu"
-            icon={CircleOff}
-            accent="red"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Valor médio"
-            value={formatMoney(metrics?.finances.averageAppointmentCents ?? 0)}
-            hint="Por marcação concluída"
-            icon={Euro}
-            accent="amber"
-            money
-            loading={query.isLoading}
+            loading={query.isLoading || query.isFetching}
           />
           <MetricCard
             label="Clientes"
@@ -466,150 +423,362 @@ function CentralMetricsPage() {
             hint="Total no escopo"
             icon={Users}
             accent="violet"
-            loading={query.isLoading}
+            loading={query.isLoading || query.isFetching}
           />
           <MetricCard
             label="Novos clientes"
             value={metrics?.clients.newInPeriod ?? 0}
-            hint="Criados no período"
+            hint={metrics?.period.label ?? "Período"}
             icon={UserPlus}
             accent="blue"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Conversão"
-            value={`${metrics?.rates.trialConversion ?? 0}%`}
-            hint="Teste gratuito → pago"
-            icon={UserPlus}
-            accent="blue"
-            loading={query.isLoading}
-          />
-          <MetricCard
-            label="Cancelamento"
-            value={`${metrics?.rates.subscriptionCancellation ?? 0}%`}
-            hint="Taxa de assinaturas"
-            icon={TrendingDown}
-            accent="red"
-            loading={query.isLoading}
+            loading={query.isLoading || query.isFetching}
           />
         </section>
 
+        <nav
+          aria-label="Secções das métricas"
+          className="flex gap-1 overflow-x-auto rounded-2xl border border-border/80 bg-card p-1.5 shadow-sm"
+        >
+          {VIEW_OPTIONS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={activeView === value}
+              onClick={() => setActiveView(value)}
+              className={cn(
+                "min-h-10 flex-1 whitespace-nowrap rounded-xl px-3 text-xs font-semibold transition",
+                activeView === value
+                  ? "bg-foreground text-background shadow-sm"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        {activeView === "growth" && (
+          <details className="group overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5">
+              <span>
+                <span className="block text-sm font-semibold">Indicadores de estúdios</span>
+                <span className="text-[11px] text-muted-foreground">
+                  Estados das contas e assinaturas
+                </span>
+              </span>
+              <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <section className="grid grid-cols-2 gap-2.5 border-t border-border/60 p-3 md:grid-cols-4 xl:grid-cols-8">
+              <MetricCard
+                label="Estúdios"
+                value={metrics?.studios.total ?? 0}
+                hint="Escopo atual"
+                icon={Building2}
+                accent="violet"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Ativos"
+                value={metrics?.studios.active ?? 0}
+                hint="Contas operacionais"
+                icon={CalendarCheck2}
+                accent="emerald"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Bloqueados"
+                value={metrics?.studios.blocked ?? 0}
+                hint="Acesso desativado"
+                icon={Ban}
+                accent="red"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Cancelados"
+                value={metrics?.studios.cancelled ?? 0}
+                hint="Conta cancelada"
+                icon={CircleOff}
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Novos estúdios"
+                value={metrics?.studios.newInPeriod ?? 0}
+                hint={metrics?.period.label}
+                icon={Building2}
+                accent="blue"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Em teste"
+                value={metrics?.studios.trial ?? 0}
+                hint="Teste gratuito"
+                icon={Activity}
+                accent="amber"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Assinaturas ativas"
+                value={metrics?.studios.paidActive ?? 0}
+                hint="Planos pagos"
+                icon={TrendingUp}
+                accent="emerald"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Vencidas"
+                value={metrics?.studios.expired ?? 0}
+                hint="Requer atenção"
+                icon={TrendingDown}
+                accent="red"
+                loading={query.isLoading}
+              />
+            </section>
+          </details>
+        )}
+
+        {activeView === "appointments" && (
+          <details className="group overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5">
+              <span>
+                <span className="block text-sm font-semibold">Indicadores detalhados</span>
+                <span className="text-[11px] text-muted-foreground">
+                  Estados, valor médio, clientes e taxas
+                </span>
+              </span>
+              <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <section className="grid grid-cols-2 gap-2.5 border-t border-border/60 p-3 md:grid-cols-4 xl:grid-cols-6">
+              <MetricCard
+                label="Receita Bellza"
+                value={formatMoney(metrics?.finances.platformRevenueCents ?? 0)}
+                hint="Somente assinaturas pagas"
+                icon={Euro}
+                accent="emerald"
+                money
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Volume dos estúdios"
+                value={formatMoney(metrics?.finances.studioVolumeCents ?? 0)}
+                hint="Marcações concluídas"
+                icon={Euro}
+                accent="violet"
+                money
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Marcações"
+                value={metrics?.appointments.total ?? 0}
+                hint="Total no período"
+                icon={CalendarCheck2}
+                accent="blue"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Concluídas"
+                value={metrics?.appointments.completed ?? 0}
+                hint="Atendimentos realizados"
+                icon={CalendarCheck2}
+                accent="emerald"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Canceladas"
+                value={metrics?.appointments.cancelled ?? 0}
+                hint="Canceladas no período"
+                icon={CircleOff}
+                accent="red"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Pendentes"
+                value={metrics?.appointments.pending ?? 0}
+                hint="Pendentes ou confirmadas"
+                icon={Activity}
+                accent="amber"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Não compareceram"
+                value={metrics?.appointments.noShow ?? 0}
+                hint="Estado não compareceu"
+                icon={CircleOff}
+                accent="red"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Valor médio"
+                value={formatMoney(metrics?.finances.averageAppointmentCents ?? 0)}
+                hint="Por marcação concluída"
+                icon={Euro}
+                accent="amber"
+                money
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Clientes"
+                value={metrics?.clients.total ?? 0}
+                hint="Total no escopo"
+                icon={Users}
+                accent="violet"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Novos clientes"
+                value={metrics?.clients.newInPeriod ?? 0}
+                hint="Criados no período"
+                icon={UserPlus}
+                accent="blue"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Conversão"
+                value={`${metrics?.rates.trialConversion ?? 0}%`}
+                hint="Teste gratuito → pago"
+                icon={UserPlus}
+                accent="blue"
+                loading={query.isLoading}
+              />
+              <MetricCard
+                label="Cancelamento"
+                value={`${metrics?.rates.subscriptionCancellation ?? 0}%`}
+                hint="Taxa de assinaturas"
+                icon={TrendingDown}
+                accent="red"
+                loading={query.isLoading}
+              />
+            </section>
+          </details>
+        )}
+
         <div className="grid gap-4 xl:grid-cols-2">
-          <MetricChart
-            title="Crescimento de estúdios"
-            description={`Novos cadastros · ${metrics?.period.label ?? "período"}`}
-            hasData={timelineHasData}
-          >
-            <BarChart data={metrics?.timeline ?? []}>
-              <ChartAxes />
-              <Tooltip contentStyle={chartTooltipStyle} />
-              <Bar dataKey="studios" name="Novos estúdios" fill="#7c3aed" radius={[5, 5, 0, 0]} />
-            </BarChart>
-          </MetricChart>
+          {activeView === "growth" && (
+            <MetricChart
+              title="Crescimento de estúdios"
+              description={`Novos cadastros · ${metrics?.period.label ?? "período"}`}
+              hasData={hasTimelineValue("studios")}
+            >
+              <BarChart data={metrics?.timeline ?? []}>
+                <ChartAxes />
+                <Tooltip contentStyle={chartTooltipStyle} />
+                <Bar dataKey="studios" name="Novos estúdios" fill="#7c3aed" radius={[5, 5, 0, 0]} />
+              </BarChart>
+            </MetricChart>
+          )}
 
-          <MetricChart
-            title="Receita da Bellza"
-            description="Faturas de assinatura efetivamente pagas"
-            hasData={timelineHasData}
-          >
-            <AreaChart data={metrics?.timeline ?? []}>
-              <ChartAxes money />
-              <Tooltip
-                contentStyle={chartTooltipStyle}
-                formatter={(value: number) => [formatMoney(value), "Receita Bellza"]}
-              />
-              <Area
-                type="monotone"
-                dataKey="platformRevenueCents"
-                name="Receita Bellza"
-                stroke="#059669"
-                fill="#10b98122"
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </MetricChart>
+          {activeView === "growth" && (
+            <MetricChart
+              title="Receita da Bellza"
+              description="Faturas de assinatura efetivamente pagas"
+              hasData={hasTimelineValue("platformRevenueCents")}
+            >
+              <AreaChart data={metrics?.timeline ?? []}>
+                <ChartAxes money />
+                <Tooltip
+                  contentStyle={chartTooltipStyle}
+                  formatter={(value: number) => [formatMoney(value), "Receita Bellza"]}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="platformRevenueCents"
+                  name="Receita Bellza"
+                  stroke="#059669"
+                  fill="#10b98122"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </MetricChart>
+          )}
 
-          <MetricChart
-            title="Volume financeiro dos estúdios"
-            description="Valor das marcações concluídas; não é receita Bellza"
-            hasData={timelineHasData}
-          >
-            <AreaChart data={metrics?.timeline ?? []}>
-              <ChartAxes money />
-              <Tooltip
-                contentStyle={chartTooltipStyle}
-                formatter={(value: number) => [formatMoney(value), "Volume dos estúdios"]}
-              />
-              <Area
-                type="monotone"
-                dataKey="studioVolumeCents"
-                name="Volume dos estúdios"
-                stroke="#7c3aed"
-                fill="#8b5cf622"
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </MetricChart>
+          {activeView === "overview" && (
+            <MetricChart
+              title="Volume financeiro dos estúdios"
+              description="Valor das marcações concluídas; não é receita Bellza"
+              hasData={hasTimelineValue("studioVolumeCents")}
+            >
+              <AreaChart data={metrics?.timeline ?? []}>
+                <ChartAxes money />
+                <Tooltip
+                  contentStyle={chartTooltipStyle}
+                  formatter={(value: number) => [formatMoney(value), "Volume dos estúdios"]}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="studioVolumeCents"
+                  name="Volume dos estúdios"
+                  stroke="#7c3aed"
+                  fill="#8b5cf622"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </MetricChart>
+          )}
 
-          <MetricChart
-            title="Quantidade de marcações"
-            description="Todos os estados no período selecionado"
-            hasData={timelineHasData}
-          >
-            <BarChart data={metrics?.timeline ?? []}>
-              <ChartAxes />
-              <Tooltip contentStyle={chartTooltipStyle} />
-              <Bar
-                dataKey="appointments"
-                name="Marcações"
-                fill="#2563eb"
-                radius={[5, 5, 0, 0]}
-              />
-            </BarChart>
-          </MetricChart>
+          {activeView === "appointments" && (
+            <MetricChart
+              title="Quantidade de marcações"
+              description="Todos os estados no período selecionado"
+              hasData={hasTimelineValue("appointments")}
+            >
+              <BarChart data={metrics?.timeline ?? []}>
+                <ChartAxes />
+                <Tooltip contentStyle={chartTooltipStyle} />
+                <Bar dataKey="appointments" name="Marcações" fill="#2563eb" radius={[5, 5, 0, 0]} />
+              </BarChart>
+            </MetricChart>
+          )}
 
-          <MetricChart
-            title="Conversão de testes gratuitos"
-            description="Coortes iniciadas no período e convertidas em plano pago"
-            hasData={timelineHasData}
-          >
-            <ComposedChart data={metrics?.timeline ?? []}>
-              <ChartAxes />
-              <Tooltip contentStyle={chartTooltipStyle} />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar dataKey="trials" name="Testes iniciados" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-              <Line
-                type="monotone"
-                dataKey="conversions"
-                name="Convertidos"
-                stroke="#059669"
-                strokeWidth={2}
-              />
-            </ComposedChart>
-          </MetricChart>
+          {activeView === "growth" && (
+            <MetricChart
+              title="Conversão de testes gratuitos"
+              description="Coortes iniciadas no período e convertidas em plano pago"
+              hasData={hasTimelineValue("trials") || hasTimelineValue("conversions")}
+            >
+              <ComposedChart data={metrics?.timeline ?? []}>
+                <ChartAxes />
+                <Tooltip contentStyle={chartTooltipStyle} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar
+                  dataKey="trials"
+                  name="Testes iniciados"
+                  fill="#f59e0b"
+                  radius={[4, 4, 0, 0]}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="conversions"
+                  name="Convertidos"
+                  stroke="#059669"
+                  strokeWidth={2}
+                />
+              </ComposedChart>
+            </MetricChart>
+          )}
 
-          <MetricChart
-            title="Cancelamentos de assinaturas"
-            description={`${metrics?.rates.subscriptionCancellation ?? 0}% no período`}
-            hasData={timelineHasData}
-          >
-            <BarChart data={metrics?.timeline ?? []}>
-              <ChartAxes />
-              <Tooltip contentStyle={chartTooltipStyle} />
-              <Bar
-                dataKey="cancellations"
-                name="Cancelamentos"
-                fill="#dc2626"
-                radius={[5, 5, 0, 0]}
-              />
-            </BarChart>
-          </MetricChart>
+          {activeView === "growth" && (
+            <MetricChart
+              title="Cancelamentos de assinaturas"
+              description={`${metrics?.rates.subscriptionCancellation ?? 0}% no período`}
+              hasData={hasTimelineValue("cancellations")}
+            >
+              <BarChart data={metrics?.timeline ?? []}>
+                <ChartAxes />
+                <Tooltip contentStyle={chartTooltipStyle} />
+                <Bar
+                  dataKey="cancellations"
+                  name="Cancelamentos"
+                  fill="#dc2626"
+                  radius={[5, 5, 0, 0]}
+                />
+              </BarChart>
+            </MetricChart>
+          )}
 
-          {!filters.studioId && (
+          {activeView === "comparison" && !filters.studioId && (
             <MetricChart
               title="Comparação entre estúdios"
               description="Estúdios com maior volume financeiro no período"
-              hasData={(metrics?.rankings.byVolume.some((studio) => studio.volumeCents > 0) ?? false)}
+              hasData={metrics?.rankings.byVolume.some((studio) => studio.volumeCents > 0) ?? false}
             >
               <BarChart
                 data={(metrics?.rankings.byVolume ?? []).slice(0, 8).map((studio) => ({
@@ -631,11 +800,11 @@ function CentralMetricsPage() {
             </MetricChart>
           )}
 
-          {filters.studioId && (
+          {activeView === "overview" && filters.studioId && (
             <MetricChart
               title="Evolução individual do estúdio"
               description="Volume financeiro e marcações no período"
-              hasData={timelineHasData}
+              hasData={hasTimelineValue("studioVolumeCents") || hasTimelineValue("appointments")}
             >
               <ComposedChart data={metrics?.timeline ?? []}>
                 <ChartAxes money />
@@ -666,23 +835,25 @@ function CentralMetricsPage() {
           )}
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-3">
-          <RankingPanel
-            title="Maior volume financeiro"
-            rows={(metrics?.rankings.byVolume ?? []).slice(0, 8)}
-            value={(row) => formatMoney(row.volumeCents)}
-          />
-          <RankingPanel
-            title="Mais marcações"
-            rows={(metrics?.rankings.byAppointments ?? []).slice(0, 8)}
-            value={(row) => `${row.appointments} marcações`}
-          />
-          <RankingPanel
-            title="Pouco ou nenhum uso"
-            rows={(metrics?.rankings.lowUsage ?? []).slice(0, 8)}
-            value={(row) => `${row.appointments} marcações`}
-          />
-        </div>
+        {activeView === "comparison" && (
+          <div className="grid gap-4 lg:grid-cols-3">
+            <RankingPanel
+              title="Maior volume financeiro"
+              rows={(metrics?.rankings.byVolume ?? []).slice(0, 8)}
+              value={(row) => formatMoney(row.volumeCents)}
+            />
+            <RankingPanel
+              title="Mais marcações"
+              rows={(metrics?.rankings.byAppointments ?? []).slice(0, 8)}
+              value={(row) => `${row.appointments} marcações`}
+            />
+            <RankingPanel
+              title="Pouco ou nenhum uso"
+              rows={(metrics?.rankings.lowUsage ?? []).slice(0, 8)}
+              value={(row) => `${row.appointments} marcações`}
+            />
+          </div>
+        )}
       </div>
     </CentralShell>
   );
@@ -737,6 +908,22 @@ function DateFilter({
       />
     </label>
   );
+}
+
+function studioAccountLabel(
+  studio: NonNullable<PlatformMetricsResponse["metrics"]["selectedStudio"]>,
+) {
+  if (
+    studio.trialDaysRemaining > 0 &&
+    (studio.subscriptionStatus === "trialing" ||
+      studio.plan.toLowerCase().includes("trial") ||
+      studio.plan.toLowerCase().includes("teste"))
+  ) {
+    return "Em teste";
+  }
+  if (studio.accountStatus === "blocked") return "Bloqueada";
+  if (studio.accountStatus === "cancelled") return "Cancelada";
+  return "Ativa";
 }
 
 function Info({ label, value }: { label: string; value: string }) {
