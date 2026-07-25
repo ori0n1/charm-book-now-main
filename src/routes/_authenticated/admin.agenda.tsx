@@ -2481,15 +2481,15 @@ function AppointmentCard({
       )}
 
       {/* Main row */}
-      <div className="grid grid-cols-[3.75rem_2.5rem_minmax(0,1fr)_2rem] items-center gap-x-2.5 gap-y-1.5 px-3 py-2.5 md:grid-cols-[4.8rem_2.25rem_minmax(12rem,1.4fr)_minmax(11rem,0.9fr)_auto_6.75rem] md:gap-x-3 md:px-4">
+      <div className="grid grid-cols-[4rem_2.5rem_minmax(0,1fr)_2rem] items-center gap-x-2.5 gap-y-1.5 px-3 py-2.5 md:grid-cols-[4.8rem_2.25rem_minmax(12rem,1.4fr)_minmax(11rem,0.9fr)_auto_6.75rem] md:gap-x-3 md:px-4">
         {/* Time block */}
         <div
           className={`row-span-2 flex min-h-[3rem] shrink-0 flex-col items-center justify-center rounded-xl px-2 py-1.5 text-center md:min-h-[3.15rem] ${missed ? "bg-red-500/10 text-red-700 dark:text-red-300" : completed ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400" : cancelled ? "bg-muted/60 text-muted-foreground/60" : "bg-muted text-foreground"}`}
         >
-          <span className="text-[16px] font-black tabular-nums leading-none tracking-normal md:text-[17px]">
+          <span className="inline-flex w-full items-center justify-center whitespace-nowrap text-[16px] font-black tabular-nums leading-none tracking-normal md:text-[17px]">
             {time}
           </span>
-          <span className="mt-1 text-[9px] font-semibold tabular-nums leading-none opacity-55">
+          <span className="mt-1 inline-flex w-full items-center justify-center whitespace-nowrap text-[9px] font-semibold tabular-nums leading-none opacity-55">
             {timeEnd}
           </span>
         </div>
