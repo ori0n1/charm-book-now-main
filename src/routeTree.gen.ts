@@ -53,6 +53,7 @@ import { Route as AuthenticatedAdminFidelidadeRouteImport } from './routes/_auth
 import { Route as AuthenticatedAdminEquipaRouteImport } from './routes/_authenticated/admin.equipa'
 import { Route as AuthenticatedAdminComissoesRouteImport } from './routes/_authenticated/admin.comissoes'
 import { Route as AuthenticatedAdminClientesRouteImport } from './routes/_authenticated/admin.clientes'
+import { Route as AuthenticatedAdminCentralMetricasRouteImport } from './routes/_authenticated/admin.central-metricas'
 import { Route as AuthenticatedAdminCentralLevantamentosRouteImport } from './routes/_authenticated/admin.central-levantamentos'
 import { Route as AuthenticatedAdminCentralRouteImport } from './routes/_authenticated/admin.central'
 import { Route as AuthenticatedAdminBalcaoRouteImport } from './routes/_authenticated/admin.balcao'
@@ -294,6 +295,12 @@ const AuthenticatedAdminClientesRoute =
     path: '/clientes',
     getParentRoute: () => AuthenticatedAdminRoute,
   } as any)
+const AuthenticatedAdminCentralMetricasRoute =
+  AuthenticatedAdminCentralMetricasRouteImport.update({
+    id: '/central-metricas',
+    path: '/central-metricas',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminCentralLevantamentosRoute =
   AuthenticatedAdminCentralLevantamentosRouteImport.update({
     id: '/central-levantamentos',
@@ -362,6 +369,7 @@ export interface FileRoutesByFullPath {
   '/admin/balcao': typeof AuthenticatedAdminBalcaoRoute
   '/admin/central': typeof AuthenticatedAdminCentralRoute
   '/admin/central-levantamentos': typeof AuthenticatedAdminCentralLevantamentosRoute
+  '/admin/central-metricas': typeof AuthenticatedAdminCentralMetricasRoute
   '/admin/clientes': typeof AuthenticatedAdminClientesRoute
   '/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/admin/equipa': typeof AuthenticatedAdminEquipaRoute
@@ -411,6 +419,7 @@ export interface FileRoutesByTo {
   '/admin/balcao': typeof AuthenticatedAdminBalcaoRoute
   '/admin/central': typeof AuthenticatedAdminCentralRoute
   '/admin/central-levantamentos': typeof AuthenticatedAdminCentralLevantamentosRoute
+  '/admin/central-metricas': typeof AuthenticatedAdminCentralMetricasRoute
   '/admin/clientes': typeof AuthenticatedAdminClientesRoute
   '/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/admin/equipa': typeof AuthenticatedAdminEquipaRoute
@@ -464,6 +473,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/balcao': typeof AuthenticatedAdminBalcaoRoute
   '/_authenticated/admin/central': typeof AuthenticatedAdminCentralRoute
   '/_authenticated/admin/central-levantamentos': typeof AuthenticatedAdminCentralLevantamentosRoute
+  '/_authenticated/admin/central-metricas': typeof AuthenticatedAdminCentralMetricasRoute
   '/_authenticated/admin/clientes': typeof AuthenticatedAdminClientesRoute
   '/_authenticated/admin/comissoes': typeof AuthenticatedAdminComissoesRoute
   '/_authenticated/admin/equipa': typeof AuthenticatedAdminEquipaRoute
@@ -517,6 +527,7 @@ export interface FileRouteTypes {
     | '/admin/balcao'
     | '/admin/central'
     | '/admin/central-levantamentos'
+    | '/admin/central-metricas'
     | '/admin/clientes'
     | '/admin/comissoes'
     | '/admin/equipa'
@@ -566,6 +577,7 @@ export interface FileRouteTypes {
     | '/admin/balcao'
     | '/admin/central'
     | '/admin/central-levantamentos'
+    | '/admin/central-metricas'
     | '/admin/clientes'
     | '/admin/comissoes'
     | '/admin/equipa'
@@ -618,6 +630,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/balcao'
     | '/_authenticated/admin/central'
     | '/_authenticated/admin/central-levantamentos'
+    | '/_authenticated/admin/central-metricas'
     | '/_authenticated/admin/clientes'
     | '/_authenticated/admin/comissoes'
     | '/_authenticated/admin/equipa'
@@ -977,6 +990,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAdminClientesRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
     }
+    '/_authenticated/admin/central-metricas': {
+      id: '/_authenticated/admin/central-metricas'
+      path: '/central-metricas'
+      fullPath: '/admin/central-metricas'
+      preLoaderRoute: typeof AuthenticatedAdminCentralMetricasRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/central-levantamentos': {
       id: '/_authenticated/admin/central-levantamentos'
       path: '/central-levantamentos'
@@ -1027,6 +1047,7 @@ interface AuthenticatedAdminRouteChildren {
   AuthenticatedAdminBalcaoRoute: typeof AuthenticatedAdminBalcaoRoute
   AuthenticatedAdminCentralRoute: typeof AuthenticatedAdminCentralRoute
   AuthenticatedAdminCentralLevantamentosRoute: typeof AuthenticatedAdminCentralLevantamentosRoute
+  AuthenticatedAdminCentralMetricasRoute: typeof AuthenticatedAdminCentralMetricasRoute
   AuthenticatedAdminClientesRoute: typeof AuthenticatedAdminClientesRoute
   AuthenticatedAdminComissoesRoute: typeof AuthenticatedAdminComissoesRoute
   AuthenticatedAdminEquipaRoute: typeof AuthenticatedAdminEquipaRoute
@@ -1052,6 +1073,8 @@ const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
   AuthenticatedAdminCentralRoute: AuthenticatedAdminCentralRoute,
   AuthenticatedAdminCentralLevantamentosRoute:
     AuthenticatedAdminCentralLevantamentosRoute,
+  AuthenticatedAdminCentralMetricasRoute:
+    AuthenticatedAdminCentralMetricasRoute,
   AuthenticatedAdminClientesRoute: AuthenticatedAdminClientesRoute,
   AuthenticatedAdminComissoesRoute: AuthenticatedAdminComissoesRoute,
   AuthenticatedAdminEquipaRoute: AuthenticatedAdminEquipaRoute,
