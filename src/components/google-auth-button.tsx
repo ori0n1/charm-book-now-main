@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
 import { resolveAuthLanding } from "@/lib/auth-landing";
+import { syncCurrentSessionAccountType } from "@/lib/auth-context";
 import {
   createGoogleNoncePair,
   getGoogleIdentity,
@@ -63,6 +64,9 @@ export function GoogleAuthButton({ mode, className }: GoogleAuthButtonProps) {
               return;
             }
             const landing = await resolveAuthLanding(data.user.id);
+            if (landing !== "/onboarding") {
+              await syncCurrentSessionAccountType("studio");
+            }
             navigate({ to: landing as never, replace: true });
           },
         });

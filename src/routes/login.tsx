@@ -7,6 +7,7 @@ import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
 import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
+import { syncCurrentSessionAccountType } from "@/lib/auth-context";
 import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
 import { resolveTeamLoginIdentifier } from "@/lib/access.functions";
 import { toast } from "sonner";
@@ -46,6 +47,9 @@ function LoginPage() {
         }
 
         const landing = await resolveAuthLanding(session.user.id);
+        if (landing !== "/onboarding") {
+          await syncCurrentSessionAccountType("studio");
+        }
         if (!cancelled) navigate({ to: landing as never, replace: true });
       } catch {
         // Let the user submit the login form if an existing session cannot be resolved.
@@ -82,6 +86,9 @@ function LoginPage() {
     if (data.session) {
       recordAuthDebugEvent({ kind: "password_login_success" });
       const landing = await resolveAuthLanding(data.user.id);
+      if (landing !== "/onboarding") {
+        await syncCurrentSessionAccountType("studio");
+      }
       navigate({ to: landing as never });
     } else {
       setLoading(false);

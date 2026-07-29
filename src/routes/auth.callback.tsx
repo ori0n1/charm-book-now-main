@@ -1,9 +1,14 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { readAndClearPublicAuthContext, readAndClearPublicReturnTo } from "@/lib/auth-context";
+import {
+  readAndClearPublicAuthContext,
+  readAndClearPublicReturnTo,
+  resolveAuthCallbackDestination,
+  syncCurrentSessionAccountType,
+} from "@/lib/auth-context";
 import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
-import { supabase } from "@/integrations/supabase/client";
+import { recordAuthDebugEvent } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/auth/callback")({
   head: () => ({
@@ -31,20 +36,36 @@ function AuthCallbackPage() {
         }
 
         const callbackContext = readAuthCallbackContext();
-        const storedContext = readAndClearPublicAuthContext();
+        const clearedLegacyPublicContext = readAndClearPublicAuthContext();
         const publicReturnTo = readAndClearPublicReturnTo();
-        const isExplicitPublicAuth = callbackContext === "public" || storedContext === "public";
-
-        if (isExplicitPublicAuth) {
-          await markSessionAsPublicCustomer();
-          setMessage("A voltar à página de marcação...");
-          if (!cancelled) navigate({ to: (publicReturnTo ?? "/") as never, replace: true });
-          return;
-        }
 
         setMessage("A carregar conta...");
-        const destination = await resolveAuthLanding(session.user.id);
-        if (!cancelled) navigate({ to: destination as never, replace: true });
+        const landing = await resolveAuthLanding(session.user.id);
+        const decision = resolveAuthCallbackDestination({
+          landing,
+          callbackContext,
+          publicReturnTo,
+        });
+
+        recordAuthDebugEvent({
+          kind: "auth_callback_destination",
+          ok: true,
+          message: JSON.stringify({
+            landing,
+            destination: decision.destination,
+            accountType: decision.accountType,
+            explicitPublicContext: callbackContext === "public",
+            clearedLegacyPublicContext: clearedLegacyPublicContext === "public",
+          }),
+        });
+
+        if (decision.accountType) {
+          await syncCurrentSessionAccountType(decision.accountType);
+        }
+        if (decision.accountType === "customer") {
+          setMessage("A voltar à página de marcação...");
+        }
+        if (!cancelled) navigate({ to: decision.destination as never, replace: true });
       } catch (error) {
         if (cancelled) return;
         const detail = error instanceof Error ? error.message : "Não foi possível concluir o login.";
@@ -70,22 +91,4 @@ function readAuthCallbackContext() {
   if (typeof window === "undefined") return null;
   const url = new URL(window.location.href);
   return url.searchParams.get("context") === "public" ? "public" : null;
-}
-
-async function markSessionAsPublicCustomer() {
-  try {
-    const { data } = await supabase.auth.getUser();
-    const metadata = (data.user?.user_metadata ?? {}) as Record<string, unknown>;
-    if (metadata.account_type === "customer" && metadata.bellza_account_type === "customer") return;
-    await supabase.auth.updateUser({
-      data: {
-        ...metadata,
-        account_type: "customer",
-        bellza_account_type: "customer",
-      },
-    });
-  } catch {
-    // The public callback context is authoritative for routing; metadata only
-    // helps future guards identify pure customer accounts.
-  }
 }

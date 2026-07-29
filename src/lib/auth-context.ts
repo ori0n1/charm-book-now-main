@@ -1,4 +1,6 @@
 import type { User } from "@supabase/supabase-js";
+import type { AuthLandingPath } from "@/lib/auth-landing";
+import { supabase } from "@/integrations/supabase/client";
 
 export const PUBLIC_AUTH_CONTEXT_KEY = "bellza.auth.context";
 export const PUBLIC_RETURN_TO_KEY = "bellza.public.returnTo";
@@ -48,6 +50,65 @@ export function readAndClearPublicReturnTo() {
     return sanitizePublicReturnTo(stored);
   } catch {
     return null;
+  }
+}
+
+export function resolveAuthCallbackDestination(input: {
+  landing: AuthLandingPath;
+  callbackContext: "public" | null;
+  publicReturnTo: string | null;
+}) {
+  if (input.landing !== "/onboarding") {
+    return {
+      destination: input.landing,
+      accountType: "studio" as const,
+    };
+  }
+
+  if (input.callbackContext === "public") {
+    return {
+      destination: input.publicReturnTo ?? "/",
+      accountType: "customer" as const,
+    };
+  }
+
+  return {
+    destination: input.landing,
+    accountType: null,
+  };
+}
+
+export function withValidatedAccountType(
+  metadata: Record<string, unknown>,
+  accountType: "studio" | "customer",
+) {
+  return {
+    ...metadata,
+    account_type: accountType,
+    bellza_account_type: accountType,
+  };
+}
+
+export async function syncCurrentSessionAccountType(
+  accountType: "studio" | "customer",
+) {
+  try {
+    const { data } = await supabase.auth.getUser();
+    const metadata = (data.user?.user_metadata ?? {}) as Record<string, unknown>;
+    if (
+      metadata.account_type === accountType &&
+      metadata.bellza_account_type === accountType
+    ) {
+      return true;
+    }
+
+    const { error } = await supabase.auth.updateUser({
+      data: withValidatedAccountType(metadata, accountType),
+    });
+    return !error;
+  } catch {
+    // Database roles remain authoritative; metadata repair is best-effort.
+    return false;
   }
 }
 
