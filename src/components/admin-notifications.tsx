@@ -1,4 +1,11 @@
-import { forwardRef, useEffect, useState, type ButtonHTMLAttributes } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ButtonHTMLAttributes,
+} from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Bell,
@@ -16,7 +23,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { supabase } from "@/integrations/supabase/client";
 import { reconcileStudioBookingPayments } from "@/lib/payments.functions";
 import { savePushSubscription, sendTestPushNotification } from "@/lib/push-subscriptions.functions";
-import { requestPushSubscription } from "@/lib/pwa-push";
+import {
+  requestPushSubscription,
+  shouldRefreshStoredPushSubscription,
+} from "@/lib/pwa-push";
 import { syncStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 import { ClientAvatar } from "@/components/client-avatar";
 import { ExpandableList } from "@/components/ui/expandable-list";
@@ -49,6 +59,7 @@ type AdminNotificationsProps = {
 };
 
 const permissionStorageKey = "studio-notification-permission-asked";
+const PUSH_RECONCILE_TTL_MS = 5 * 60 * 1000;
 
 export function AdminNotifications({ studioId, studioName }: AdminNotificationsProps) {
   const [items, setItems] = useState<StudioNotification[]>([]);
@@ -59,56 +70,123 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   const syncPushNotifications = useServerFn(syncStudioPushNotifications);
   const persistPushSubscription = useServerFn(savePushSubscription);
   const sendTestPush = useServerFn(sendTestPushNotification);
+  const pushRegistrationRef = useRef<Promise<boolean> | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
     "unsupported",
   );
+  const [pushNeedsAttention, setPushNeedsAttention] = useState(false);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setPermission("Notification" in window ? Notification.permission : "unsupported");
-  }, []);
+  const registerStudioPush = useCallback(
+    async (options: { forceRenew?: boolean } = {}): Promise<boolean> => {
+      if (pushRegistrationRef.current) return pushRegistrationRef.current;
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    if (Notification.permission !== "granted" || !studioId) return;
-    let cancelled = false;
-    requestPushSubscription()
-      .then((result) => {
-        if (cancelled || result.permission !== "granted" || !result.subscription) return;
-        return persistPushSubscription({
-          data: {
-            audience: "studio",
-            studioId,
-            subscription: result.subscription,
-          },
-        });
-      })
-      .catch((error) => console.warn("studio_push_auto_register_failed", error));
-    return () => {
-      cancelled = true;
-    };
-  }, [persistPushSubscription, studioId]);
+      const registration: Promise<boolean> = (async (): Promise<boolean> => {
+        let forceRenew = Boolean(options.forceRenew);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const result = await requestPushSubscription({ forceRenew });
+          setPermission(
+            result.permission === "granted" ||
+              result.permission === "denied" ||
+              result.permission === "default"
+              ? result.permission
+              : "unsupported",
+          );
+          if (result.permission !== "granted" || !result.subscription) {
+            setPushNeedsAttention(true);
+            return false;
+          }
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !("serviceWorker" in navigator) || !studioId) return;
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type !== "BELLZA_PUSH_SUBSCRIPTION_CHANGED") return;
-      void requestPushSubscription({ forceRenew: true })
-        .then((result) => {
-          if (result.permission !== "granted" || !result.subscription) return;
-          return persistPushSubscription({
+          const saved = (await persistPushSubscription({
             data: {
               audience: "studio",
               studioId,
               subscription: result.subscription,
             },
-          });
+          })) as { ok: boolean; requiresRenewal?: boolean };
+
+          if (saved.requiresRenewal && !forceRenew) {
+            forceRenew = true;
+            continue;
+          }
+
+          setPushNeedsAttention(!saved.ok);
+          return saved.ok;
+        }
+        setPushNeedsAttention(true);
+        return false;
+      })()
+        .catch((error: unknown) => {
+          setPushNeedsAttention(true);
+          console.warn("studio_push_registration_failed", error);
+          return false;
         })
-        .catch((error) => console.warn("studio_push_subscription_refresh_failed", error));
+        .finally(() => {
+          pushRegistrationRef.current = null;
+        });
+
+      pushRegistrationRef.current = registration;
+      return registration;
+    },
+    [persistPushSubscription, studioId],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window) || !studioId) return;
+    setPermission(Notification.permission);
+    setPushNeedsAttention(Notification.permission !== "granted");
+    if (Notification.permission === "granted") void registerStudioPush();
+  }, [registerStudioPush, studioId]);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      !("serviceWorker" in navigator) ||
+      !("Notification" in window) ||
+      !studioId
+    ) {
+      return;
+    }
+
+    const reconcileWhenUsable = () => {
+      if (Notification.permission !== "granted") {
+        setPermission(Notification.permission);
+        setPushNeedsAttention(true);
+        return;
+      }
+      if (
+        shouldRefreshStoredPushSubscription(
+          `studio:${studioId}`,
+          PUSH_RECONCILE_TTL_MS,
+        )
+      ) {
+        void registerStudioPush();
+      }
     };
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type !== "BELLZA_PUSH_SUBSCRIPTION_CHANGED") return;
+      void registerStudioPush({ forceRenew: !event.data?.subscription });
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") reconcileWhenUsable();
+    };
+
     navigator.serviceWorker.addEventListener("message", handleMessage);
-    return () => navigator.serviceWorker.removeEventListener("message", handleMessage);
-  }, [persistPushSubscription, studioId]);
+    navigator.serviceWorker.addEventListener("controllerchange", reconcileWhenUsable);
+    window.addEventListener("online", reconcileWhenUsable);
+    window.addEventListener("pageshow", reconcileWhenUsable);
+    window.addEventListener("focus", reconcileWhenUsable);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", handleMessage);
+      navigator.serviceWorker.removeEventListener("controllerchange", reconcileWhenUsable);
+      window.removeEventListener("online", reconcileWhenUsable);
+      window.removeEventListener("pageshow", reconcileWhenUsable);
+      window.removeEventListener("focus", reconcileWhenUsable);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [registerStudioPush, studioId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -194,6 +272,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
               },
             });
           }
+          void syncPushNotifications({ data: { studioId } }).catch((error) => {
+            console.warn("studio_push_realtime_dispatch_failed", error);
+          });
         },
       )
       .on(
@@ -280,15 +361,28 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     }
     setPermission(next);
     if (next === "granted" && result.subscription) {
-      await persistPushSubscription({
+      const saved = (await persistPushSubscription({
         data: {
           audience: "studio",
           studioId,
           subscription: result.subscription,
         },
-      });
-      toast.success("Avisos push ativados neste dispositivo.");
-      void sendTestPush({ data: { audience: "studio", studioId } });
+      })) as { ok: boolean; requiresRenewal?: boolean };
+      const activated = saved.requiresRenewal
+        ? await registerStudioPush({ forceRenew: true })
+        : saved.ok;
+      setPushNeedsAttention(!activated);
+      if (activated) {
+        toast.success("Avisos push ativados neste dispositivo.");
+        void sendTestPush({ data: { audience: "studio", studioId } });
+      } else {
+        toast.message("Não foi possível concluir a ativação. Tente novamente.");
+      }
+    } else if (next === "denied") {
+      setPushNeedsAttention(true);
+      toast.message(
+        "As notificações estão bloqueadas. Autorize a Bellza nas definições do navegador.",
+      );
     }
   }
 
@@ -495,6 +589,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
       <>
         <NotificationBell
           unreadCount={unreadCount}
+          pushNeedsAttention={pushNeedsAttention}
           onClick={() => setOpen((current) => !current)}
         />
         {open && (
@@ -517,7 +612,11 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <NotificationBell unreadCount={unreadCount} open={open} />
+        <NotificationBell
+          unreadCount={unreadCount}
+          open={open}
+          pushNeedsAttention={pushNeedsAttention}
+        />
       </PopoverTrigger>
       <PopoverContent
         align="end"
@@ -534,10 +633,11 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
 type NotificationBellProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   unreadCount: number;
   open?: boolean;
+  pushNeedsAttention?: boolean;
 };
 
 const NotificationBell = forwardRef<HTMLButtonElement, NotificationBellProps>(function NotificationBell(
-  { unreadCount, open, className = "", ...props },
+  { unreadCount, open, pushNeedsAttention, className = "", ...props },
   ref,
 ) {
   return (
@@ -554,6 +654,12 @@ const NotificationBell = forwardRef<HTMLButtonElement, NotificationBellProps>(fu
         <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm ring-2 ring-background">
           {unreadCount > 99 ? "99+" : unreadCount}
         </span>
+      )}
+      {unreadCount === 0 && pushNeedsAttention && (
+        <span
+          className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-amber-500 ring-2 ring-background"
+          aria-hidden="true"
+        />
       )}
     </button>
   );

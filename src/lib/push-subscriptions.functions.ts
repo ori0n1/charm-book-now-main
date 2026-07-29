@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
@@ -23,6 +24,10 @@ const TestPushInput = z.object({
   studioId: z.string().uuid().optional(),
 });
 
+const RevokeCurrentDeviceInput = z.object({
+  endpoint: z.string().url(),
+});
+
 const MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_STUDIO_USER = 12;
 
 export const savePushSubscription = createServerFn({ method: "POST" })
@@ -44,23 +49,49 @@ export const savePushSubscription = createServerFn({ method: "POST" })
     const clientId =
       data.audience === "client" ? await resolveClientId(sb, userId, studioId, claims) : null;
 
-    await revokeCrossStudioEndpointSubscriptions(sb, {
-      userId,
-      studioId,
-      endpoint: data.subscription.endpoint,
-      audience: data.audience,
-    });
-
     const { data: existing, error: existingError } = await (sb as any)
       .from("push_subscriptions")
-      .select("audience,client_id,studio_id")
+      .select("id,audience,client_id,studio_id,revoked_at")
       .eq("endpoint", data.subscription.endpoint)
       .eq("studio_id", studioId)
       .maybeSingle();
     if (existingError) throw new Error(existingError.message);
 
+    const { data: endpointOwners, error: endpointOwnersError } = await (sb as any)
+      .from("push_subscriptions")
+      .select("id,user_id")
+      .eq("endpoint", data.subscription.endpoint)
+      .is("revoked_at", null);
+    if (endpointOwnersError) throw new Error(endpointOwnersError.message);
+
+    const belongsToAnotherAccount = (endpointOwners ?? []).some(
+      (row: { user_id: string }) => row.user_id !== userId,
+    );
+    if (existing?.revoked_at || belongsToAnotherAccount) {
+      await insertNotificationLog(sb, {
+        studioId,
+        channel: data.audience === "client" ? "push_client" : "push_studio",
+        kind: "push_subscription",
+        recipient: `user:${userId}`,
+        status: "renewal_required",
+        error: existing?.revoked_at ? "revoked_endpoint_reused" : "endpoint_account_changed",
+        payload: { event: "push_subscription_renewal_required" },
+      });
+      return {
+        ok: false,
+        requiresRenewal: true,
+        reason: existing?.revoked_at ? "revoked_endpoint_reused" : "endpoint_account_changed",
+      };
+    }
+
+    await revokeEndpointSubscriptionsFromOtherAccounts(sb, {
+      userId,
+      endpoint: data.subscription.endpoint,
+    });
+
     const now = new Date().toISOString();
     const audience = mergePushAudience(existing?.audience, data.audience);
+    const request = getRequest();
     const payload = {
       user_id: userId,
       studio_id: studioId,
@@ -70,8 +101,9 @@ export const savePushSubscription = createServerFn({ method: "POST" })
       p256dh: data.subscription.keys.p256dh,
       auth: data.subscription.keys.auth,
       expiration_time: data.subscription.expirationTime ?? null,
-      user_agent: String((context as any).headers?.["user-agent"] ?? "").slice(0, 500) || null,
+      user_agent: request?.headers.get("user-agent")?.slice(0, 500) || null,
       revoked_at: null,
+      revocation_reason: null,
       last_seen_at: now,
       updated_at: now,
     };
@@ -80,6 +112,21 @@ export const savePushSubscription = createServerFn({ method: "POST" })
       .from("push_subscriptions")
       .upsert(payload, { onConflict: "endpoint,studio_id" });
     if (error) throw new Error(error.message);
+
+    if (!existing?.id) {
+      await insertNotificationLog(sb, {
+        studioId,
+        channel: data.audience === "client" ? "push_client" : "push_studio",
+        kind: "push_subscription",
+        recipient: `user:${userId}`,
+        status: "active",
+        payload: {
+          event: "push_subscription_registered",
+          audience,
+          endpoint: maskEndpoint(data.subscription.endpoint),
+        },
+      });
+    }
 
     if (clientId) {
       await (sb as any)
@@ -104,7 +151,45 @@ export const savePushSubscription = createServerFn({ method: "POST" })
       });
     }
 
-    return { ok: true };
+    return { ok: true, requiresRenewal: false };
+  });
+
+export const revokeCurrentDevicePushSubscription = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => RevokeCurrentDeviceInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const userId = String((context as any).userId ?? "").trim();
+    if (!userId) throw new Response("Unauthorized", { status: 401 });
+
+    const sb = getAdminClient();
+    const now = new Date().toISOString();
+    const { data: rows, error } = await (sb as any)
+      .from("push_subscriptions")
+      .update({
+        revoked_at: now,
+        revocation_reason: "user_logout",
+        updated_at: now,
+      })
+      .eq("user_id", userId)
+      .eq("endpoint", data.endpoint)
+      .is("revoked_at", null)
+      .select("studio_id,audience");
+    if (error) throw new Error(error.message);
+
+    for (const row of rows ?? []) {
+      if (!row.studio_id) continue;
+      await insertNotificationLog(sb, {
+        studioId: row.studio_id,
+        channel: row.audience === "client" ? "push_client" : "push_studio",
+        kind: "push_subscription",
+        recipient: `user:${userId}`,
+        status: "revoked",
+        error: "user_logout",
+        payload: { event: "push_subscription_revoked_on_logout" },
+      });
+    }
+
+    return { ok: true, revoked: rows?.length ?? 0 };
   });
 
 export const sendTestPushNotification = createServerFn({ method: "POST" })
@@ -256,31 +341,28 @@ async function resolveClientId(
   return (data?.id as string | undefined) ?? null;
 }
 
-async function revokeCrossStudioEndpointSubscriptions(
+async function revokeEndpointSubscriptionsFromOtherAccounts(
   sb: any,
   input: {
     userId: string;
-    studioId: string;
     endpoint: string;
-    audience: "client" | "studio";
   },
 ) {
-  const audiences = input.audience === "client" ? ["client", "both"] : ["studio", "both"];
   const now = new Date().toISOString();
   const { error } = await (sb as any)
     .from("push_subscriptions")
-    .update({ revoked_at: now, updated_at: now })
+    .update({
+      revoked_at: now,
+      revocation_reason: "endpoint_account_changed",
+      updated_at: now,
+    })
     .eq("endpoint", input.endpoint)
-    .eq("user_id", input.userId)
-    .neq("studio_id", input.studioId)
-    .in("audience", audiences)
+    .neq("user_id", input.userId)
     .is("revoked_at", null);
 
   if (error) {
-    console.error("[push] cross_studio_subscription_revoke_failed", {
-      studio_id: input.studioId,
+    console.error("[push] cross_account_subscription_revoke_failed", {
       user_id: input.userId,
-      audience: input.audience,
       reason: error.message,
     });
     throw new Error(error.message);
@@ -345,7 +427,11 @@ async function pruneOldPushSubscriptions(sb: any, userId: string, studioId: stri
 
   const { error: updateError } = await (sb as any)
     .from("push_subscriptions")
-    .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({
+      revoked_at: new Date().toISOString(),
+      revocation_reason: "device_limit_exceeded",
+      updated_at: new Date().toISOString(),
+    })
     .in("id", ids);
   if (updateError) {
     console.warn("[push] prune_old_subscriptions_update_failed", {

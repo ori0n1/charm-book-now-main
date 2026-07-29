@@ -106,13 +106,33 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+    renewChangedPushSubscription(event).then((subscription) =>
+      self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        client.postMessage({ type: "BELLZA_PUSH_SUBSCRIPTION_CHANGED" });
-      }
-    }),
+          client.postMessage({
+            type: "BELLZA_PUSH_SUBSCRIPTION_CHANGED",
+            subscription: subscription?.toJSON?.() || null,
+          });
+        }
+      }),
+    ),
   );
 });
+
+async function renewChangedPushSubscription(event) {
+  if (event.newSubscription) return event.newSubscription;
+  const applicationServerKey = event.oldSubscription?.options?.applicationServerKey;
+  if (!applicationServerKey) return null;
+  try {
+    return await self.registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey,
+    });
+  } catch (error) {
+    console.error("[push] subscription_change_renewal_failed", error);
+    return null;
+  }
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

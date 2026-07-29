@@ -19,10 +19,14 @@ test("sends Web Push with high urgency", async () => {
 });
 
 test("studio push uses a durable claimed delivery queue with retries", async () => {
-  const [source, migration] = await Promise.all([
+  const [source, migration, selfHealingMigration] = await Promise.all([
     readFile("src/lib/notification-dispatcher.server.ts", "utf8"),
     readFile(
       "supabase/migrations/20260729130000_reliable_studio_notifications.sql",
+      "utf8",
+    ),
+    readFile(
+      "supabase/migrations/20260729170000_push_subscription_self_healing.sql",
       "utf8",
     ),
   ]);
@@ -32,6 +36,45 @@ test("studio push uses a durable claimed delivery queue with retries", async () 
   expect(migration).toContain("for update of d skip locked");
   expect(migration).toContain("unique(notification_id, subscription_id)");
   expect(migration).toContain("attempt_count < 12");
+  expect(selfHealingMigration).toContain("trg_fanout_studio_notification_delivery");
+  expect(selfHealingMigration).toContain("no_active_studio_push_subscription");
+});
+
+test("revoked endpoints are renewed instead of silently reactivated", async () => {
+  const [subscriptions, admin, dispatcher] = await Promise.all([
+    readFile("src/lib/push-subscriptions.functions.ts", "utf8"),
+    readFile("src/components/admin-notifications.tsx", "utf8"),
+    readFile("src/lib/notification-dispatcher.server.ts", "utf8"),
+  ]);
+
+  expect(subscriptions).toContain("revoked_endpoint_reused");
+  expect(subscriptions).toContain("requiresRenewal: true");
+  expect(admin).toContain("saved.requiresRenewal");
+  expect(admin).toContain("forceRenew = true");
+  expect(dispatcher).toContain(
+    "result.status === 400 || result.status === 404 || result.status === 410",
+  );
+});
+
+test("logout revokes and unsubscribes the current device", async () => {
+  const [layout, subscriptions, browserPush] = await Promise.all([
+    readFile("src/routes/_authenticated/admin.tsx", "utf8"),
+    readFile("src/lib/push-subscriptions.functions.ts", "utf8"),
+    readFile("src/lib/pwa-push.ts", "utf8"),
+  ]);
+
+  expect(layout).toContain("revokeCurrentDevicePushSubscription");
+  expect(layout).toContain("unsubscribeCurrentPushSubscription");
+  expect(subscriptions).toContain('revocation_reason: "user_logout"');
+  expect(browserPush).toContain("subscription.unsubscribe()");
+});
+
+test("service worker renews changed push subscriptions and informs every open tab", async () => {
+  const worker = await readFile("public/sw.js", "utf8");
+  expect(worker).toContain("renewChangedPushSubscription(event)");
+  expect(worker).toContain("event.oldSubscription?.options?.applicationServerKey");
+  expect(worker).toContain('type: "BELLZA_PUSH_SUBSCRIPTION_CHANGED"');
+  expect(worker).toContain('includeUncontrolled: true');
 });
 
 test("studio events are idempotent and cover the critical operational lifecycle", async () => {

@@ -167,14 +167,17 @@ async function deliverStudioPush(
       "status" in result &&
       (result.status === 400 || result.status === 401 || result.status === 403 ||
         result.status === 404 || result.status === 410);
+    const invalidSubscription =
+      "status" in result &&
+      (result.status === 400 || result.status === 404 || result.status === 410);
     const exhausted = delivery.attempt_count >= MAX_DELIVERY_ATTEMPTS;
     const status = terminal || exhausted ? "failed" : "retry";
 
     await finalizeDelivery(sb, delivery, { status, error: reason });
     await logDeliveryAttempt(sb, delivery, status, reason);
 
-    if (terminal) {
-      await revokePushSubscription(sb, delivery.subscription_id);
+    if (invalidSubscription) {
+      await revokePushSubscription(sb, delivery.subscription_id, reason);
     }
     return status;
   } catch (error) {
@@ -337,7 +340,11 @@ async function cleanupExpiredPushSubscriptions(
   const now = Date.now();
   let query = (sb as any)
     .from("push_subscriptions")
-    .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({
+      revoked_at: new Date().toISOString(),
+      revocation_reason: "subscription_expired",
+      updated_at: new Date().toISOString(),
+    })
     .is("revoked_at", null)
     .not("expiration_time", "is", null)
     .lt("expiration_time", now);
@@ -382,7 +389,11 @@ async function cleanupExcessStudioPushSubscriptions(
 
   const { error: updateError } = await (sb as any)
     .from("push_subscriptions")
-    .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .update({
+      revoked_at: new Date().toISOString(),
+      revocation_reason: "device_limit_exceeded",
+      updated_at: new Date().toISOString(),
+    })
     .in("id", revokeIds);
   if (updateError) console.warn("push_subscription_excess_cleanup_update_failed", updateError.message);
 }
@@ -390,11 +401,12 @@ async function cleanupExcessStudioPushSubscriptions(
 async function revokePushSubscription(
   sb: ReturnType<typeof getAdminClient>,
   subscriptionId: string,
+  reason: string,
 ) {
   const now = new Date().toISOString();
   const { error } = await (sb as any)
     .from("push_subscriptions")
-    .update({ revoked_at: now, updated_at: now })
+    .update({ revoked_at: now, revocation_reason: reason, updated_at: now })
     .eq("id", subscriptionId);
   if (error) console.warn("push_subscription_revoke_failed", error.message);
 }

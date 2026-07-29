@@ -36,6 +36,11 @@ import { APP_BRAND } from "@/lib/app-brand";
 import { getSegmentConfig } from "@/lib/segments";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
 import { getSettledSession } from "@/lib/auth-landing";
+import { revokeCurrentDevicePushSubscription } from "@/lib/push-subscriptions.functions";
+import {
+  getCurrentPushSubscription,
+  unsubscribeCurrentPushSubscription,
+} from "@/lib/pwa-push";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: APP_BRAND.name }] }),
@@ -218,6 +223,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const { studio, studios, loading, error, refetch } = useCurrentStudio();
   const loadBilling = useServerFn(getPlatformSubscriptionSummary);
+  const revokeCurrentDevicePush = useServerFn(revokeCurrentDevicePushSubscription);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [sidebarStateReady, setSidebarStateReady] = useState(false);
@@ -332,6 +338,16 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   }, [desktopSidebarCollapsed, sidebarStateReady]);
 
   async function logout() {
+    try {
+      const subscription = await getCurrentPushSubscription();
+      if (subscription?.endpoint) {
+        await revokeCurrentDevicePush({ data: { endpoint: subscription.endpoint } });
+      }
+    } catch (pushError) {
+      console.warn("push_subscription_logout_revoke_failed", pushError);
+    } finally {
+      await unsubscribeCurrentPushSubscription().catch(() => false);
+    }
     await supabase.auth.signOut();
     navigate({ to: "/login" });
   }

@@ -56,6 +56,37 @@ export async function requestPushSubscription(options: PushSubscriptionOptions =
   };
 }
 
+export async function getCurrentPushSubscription() {
+  if (
+    typeof window === "undefined" ||
+    !window.isSecureContext ||
+    !("serviceWorker" in navigator) ||
+    !("PushManager" in window)
+  ) {
+    return null;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  return subscription ? normalizeSubscription(subscription) : null;
+}
+
+export async function unsubscribeCurrentPushSubscription() {
+  if (
+    typeof window === "undefined" ||
+    !window.isSecureContext ||
+    !("serviceWorker" in navigator) ||
+    !("PushManager" in window)
+  ) {
+    return false;
+  }
+
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) return false;
+  return subscription.unsubscribe();
+}
+
 function shouldRenewSubscription(
   subscription: PushSubscription,
   options: PushSubscriptionOptions,
