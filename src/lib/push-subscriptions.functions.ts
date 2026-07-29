@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendWebPush } from "@/lib/web-push.server";
+import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 
 const PushSubscriptionInput = z.object({
   audience: z.enum(["client", "studio"]),
@@ -92,6 +93,16 @@ export const savePushSubscription = createServerFn({ method: "POST" })
     }
 
     await pruneOldPushSubscriptions(sb, userId, studioId);
+
+    if (data.audience === "studio") {
+      await dispatchPendingStudioPushNotifications({ studioId }).catch((dispatchError) => {
+        console.error("[push] pending_studio_delivery_after_subscription_failed", {
+          studio_id: studioId,
+          user_id: userId,
+          reason: dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+        });
+      });
+    }
 
     return { ok: true };
   });

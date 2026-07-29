@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 
 // ── Types ────────────────────────────────────────────────
 
@@ -74,7 +75,7 @@ export const submitStudioReview = createServerFn({ method: "POST" })
       if (existing) throw new Error("Já avaliaste esta marcação.");
     }
 
-    const { error } = await sb.from("studio_reviews").insert({
+    const { data: insertedReview, error } = await sb.from("studio_reviews").insert({
       studio_id: data.studioId,
       user_id: userId,
       appointment_id: data.appointmentId ?? null,
@@ -82,9 +83,19 @@ export const submitStudioReview = createServerFn({ method: "POST" })
       comment: data.comment ?? null,
       staff_ids: data.staffIds,
       reviewer_name: data.reviewerName ?? null,
-    });
+    }).select("id").single();
 
     if (error) throw new Error(error.message);
+    await dispatchPendingStudioPushNotifications({ studioId: data.studioId }).catch(
+      (dispatchError) => {
+        console.error("[reviews] studio_push_dispatch_failed", {
+          studio_id: data.studioId,
+          review_id: insertedReview?.id ?? null,
+          reason:
+            dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+        });
+      },
+    );
     return { success: true };
   });
 

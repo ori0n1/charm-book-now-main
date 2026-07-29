@@ -366,6 +366,13 @@ async function handlePaymentIntent(
         .eq("id", bookingRequestId)
         .in("status", ["awaiting_payment", "processing"]);
     }
+    if (reservedPayment.status !== piStatus) {
+      await dispatchStudioPushForPayment(sb, {
+        studioId: String(reservedPayment.studio_id),
+        bookingRequestId,
+        appointmentId: appointmentId ?? null,
+      });
+    }
   }
 }
 

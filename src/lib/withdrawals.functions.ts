@@ -4,6 +4,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccessWithOptions, rateLimitOrThrow } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 
 function admin(): SupabaseClient {
   return getAdminClient();
@@ -610,12 +611,27 @@ async function insertWithdrawalNotification(
   title = "Novo registo financeiro",
   body = `Registo financeiro de ${formatCents(amountCents)} aguardando processamento.`,
 ) {
-  await (sb as any).from("studio_notifications").insert({
-    studio_id: studioId,
-    kind: "withdrawal_requested",
-    title,
-    body,
-    payload: { withdrawal_request_id: requestId, amount_cents: amountCents, status },
+  const { error } = await (sb as any).rpc("insert_studio_notification", {
+    p_studio_id: studioId,
+    p_kind: "withdrawal_requested",
+    p_title: title,
+    p_body: body,
+    p_payload: {
+      withdrawal_request_id: requestId,
+      amount_cents: amountCents,
+      status,
+      event_key: `withdrawal:${requestId}:${status}`,
+      action_url: "/admin/recebimento",
+    },
+  });
+  if (error) throw new Error(error.message);
+  await dispatchPendingStudioPushNotifications({ studioId }).catch((dispatchError) => {
+    console.error("[withdrawals] studio_push_dispatch_failed", {
+      studio_id: studioId,
+      withdrawal_request_id: requestId,
+      reason:
+        dispatchError instanceof Error ? dispatchError.message : String(dispatchError),
+    });
   });
 }
 

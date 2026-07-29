@@ -1,6 +1,16 @@
-import { forwardRef, useEffect, useMemo, useState, type ButtonHTMLAttributes } from "react";
+import { forwardRef, useEffect, useState, type ButtonHTMLAttributes } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { Bell, BellRing, CalendarCheck, CreditCard, RefreshCcw, Settings, X } from "lucide-react";
+import {
+  Bell,
+  BellRing,
+  CalendarCheck,
+  CreditCard,
+  RefreshCcw,
+  Settings,
+  Star,
+  UserPlus,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
@@ -18,11 +28,17 @@ type StudioNotification = {
     | "new_appointment"
     | "payment_confirmed"
     | "payment_failed"
+    | "appointment_rescheduled"
+    | "appointment_cancelled"
+    | "new_client"
+    | "new_review"
     | "refund_request"
-    | "withdrawal_requested";
+    | "withdrawal_requested"
+    | "critical_request";
   title: string;
   body: string;
   payload: Record<string, unknown> | null;
+  action_url: string | null;
   read_at: string | null;
   created_at: string;
 };
@@ -36,6 +52,7 @@ const permissionStorageKey = "studio-notification-permission-asked";
 
 export function AdminNotifications({ studioId, studioName }: AdminNotificationsProps) {
   const [items, setItems] = useState<StudioNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const reconcilePayments = useServerFn(reconcileStudioBookingPayments);
@@ -109,15 +126,27 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     let cancelled = false;
 
     async function loadNotifications() {
-      const { data, error } = await (supabase as any)
-        .from("studio_notifications")
-        .select("id,studio_id,kind,title,body,payload,read_at,created_at")
-        .eq("studio_id", studioId)
-        .order("created_at", { ascending: false })
-        .limit(20);
+      const [historyResult, unreadResult] = await Promise.all([
+        (supabase as any)
+          .from("studio_notifications")
+          .select("id,studio_id,kind,title,body,payload,action_url,read_at,created_at")
+          .eq("studio_id", studioId)
+          .order("created_at", { ascending: false })
+          .limit(100),
+        (supabase as any)
+          .from("studio_notifications")
+          .select("id", { count: "exact", head: true })
+          .eq("studio_id", studioId)
+          .is("read_at", null),
+      ]);
 
-      if (!cancelled && !error) {
-        setItems(((data ?? []) as StudioNotification[]).map(normalizeNotification));
+      if (!cancelled && !historyResult.error) {
+        setItems(
+          ((historyResult.data ?? []) as StudioNotification[]).map(normalizeNotification),
+        );
+      }
+      if (!cancelled && !unreadResult.error) {
+        setUnreadCount(Number(unreadResult.count ?? 0));
       }
     }
 
@@ -149,11 +178,22 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         },
         (payload) => {
           const next = normalizeNotification(payload.new as StudioNotification);
-          setItems((current) =>
-            [next, ...current.filter((item) => item.id !== next.id)].slice(0, 20),
-          );
-          toast(next.title, { description: next.body });
-          showBrowserNotification(next, studioName);
+          setItems((current) => {
+            const alreadyLoaded = current.some((item) => item.id === next.id);
+            if (!alreadyLoaded && !next.read_at) {
+              setUnreadCount((count) => count + 1);
+            }
+            return [next, ...current.filter((item) => item.id !== next.id)].slice(0, 100);
+          });
+          if (shouldShowRealtimeToast(studioId, next.id)) {
+            toast(next.title, {
+              description: next.body,
+              action: {
+                label: "Abrir",
+                onClick: () => window.location.assign(notificationActionUrl(next)),
+              },
+            });
+          }
         },
       )
       .on(
@@ -166,13 +206,38 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         },
         (payload) => {
           const next = normalizeNotification(payload.new as StudioNotification);
-          setItems((current) => current.map((item) => (item.id === next.id ? next : item)));
+          setItems((current) => {
+            const existing = current.find((item) => item.id === next.id);
+            if (!existing && next.read_at) {
+              setUnreadCount((count) => Math.max(0, count - 1));
+            }
+            return current.map((item) => {
+              if (item.id !== next.id) return item;
+              if (!item.read_at && next.read_at) {
+                setUnreadCount((count) => Math.max(0, count - 1));
+              } else if (item.read_at && !next.read_at) {
+                setUnreadCount((count) => count + 1);
+              }
+              return next;
+            });
+          });
         },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") void loadNotifications();
+      });
+
+    const recoverNotifications = () => {
+      if (document.visibilityState === "hidden") return;
+      void syncAndLoadNotifications();
+    };
+    window.addEventListener("online", recoverNotifications);
+    document.addEventListener("visibilitychange", recoverNotifications);
 
     return () => {
       cancelled = true;
+      window.removeEventListener("online", recoverNotifications);
+      document.removeEventListener("visibilitychange", recoverNotifications);
       void supabase.removeChannel(channel);
     };
   }, [reconcilePayments, studioId, studioName, syncPushNotifications]);
@@ -191,8 +256,6 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open]);
-
-  const unreadCount = useMemo(() => items.filter((item) => !item.read_at).length, [items]);
 
   async function requestPermission() {
     if (typeof window === "undefined" || !("Notification" in window)) return;
@@ -230,27 +293,60 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   }
 
   async function markAsRead(id: string) {
+    const wasUnread = items.some((item) => item.id === id && !item.read_at);
     const readAt = new Date().toISOString();
     setItems((current) =>
       current.map((item) => (item.id === id ? { ...item, read_at: item.read_at ?? readAt } : item)),
     );
+    if (wasUnread) setUnreadCount((count) => Math.max(0, count - 1));
 
-    await (supabase as any)
+    const { error } = await (supabase as any)
       .from("studio_notifications")
       .update({ read_at: readAt })
       .eq("id", id)
       .eq("studio_id", studioId)
       .is("read_at", null);
+    if (error) {
+      await reloadNotificationState();
+      toast.error("Não foi possível marcar a notificação como lida.");
+    }
   }
 
   async function markAllRead() {
     const readAt = new Date().toISOString();
     setItems((current) => current.map((item) => ({ ...item, read_at: item.read_at ?? readAt })));
-    await (supabase as any)
+    setUnreadCount(0);
+    const { error } = await (supabase as any)
       .from("studio_notifications")
       .update({ read_at: readAt })
       .eq("studio_id", studioId)
       .is("read_at", null);
+    if (error) {
+      await reloadNotificationState();
+      toast.error("Não foi possível marcar todas como lidas.");
+    }
+  }
+
+  async function reloadNotificationState() {
+    const [historyResult, unreadResult] = await Promise.all([
+      (supabase as any)
+        .from("studio_notifications")
+        .select("id,studio_id,kind,title,body,payload,action_url,read_at,created_at")
+        .eq("studio_id", studioId)
+        .order("created_at", { ascending: false })
+        .limit(100),
+      (supabase as any)
+        .from("studio_notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("studio_id", studioId)
+        .is("read_at", null),
+    ]);
+    if (!historyResult.error) {
+      setItems(
+        ((historyResult.data ?? []) as StudioNotification[]).map(normalizeNotification),
+      );
+    }
+    if (!unreadResult.error) setUnreadCount(Number(unreadResult.count ?? 0));
   }
 
   const panel = (
@@ -259,7 +355,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Central</p>
-            <h2 className="mt-1 text-base font-semibold">Notificações</h2>
+            <h2 className="mt-1 text-base font-semibold" title={`Notificações de ${studioName}`}>
+              Notificações
+            </h2>
           </div>
           {unreadCount > 0 && (
             <button
@@ -299,7 +397,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
             </div>
             <p className="mt-3 text-sm font-semibold">Sem notificações</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Novas marcações e pagamentos aparecem aqui.
+              Marcações, pagamentos, clientes, avaliações e solicitações aparecem aqui.
             </p>
           </div>
         ) : (
@@ -313,6 +411,10 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
               const Icon =
                 item.kind === "payment_confirmed"
                   ? CreditCard
+                  : item.kind === "new_client"
+                    ? UserPlus
+                    : item.kind === "new_review"
+                      ? Star
                   : item.kind === "payment_failed" ||
                       item.kind === "refund_request" ||
                       item.kind === "withdrawal_requested"
@@ -330,7 +432,14 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
                 <button
                   type="button"
                   key={item.id}
-                  onClick={() => markAsRead(item.id)}
+                  onClick={async () => {
+                    await markAsRead(item.id);
+                    setOpen(false);
+                    const target = notificationActionUrl(item);
+                    if (`${window.location.pathname}${window.location.search}` !== target) {
+                      window.location.assign(target);
+                    }
+                  }}
                   className={`flex w-full gap-3 rounded-3xl px-3 py-3 text-left transition ${
                     item.read_at
                       ? "hover:bg-muted/65"
@@ -443,33 +552,12 @@ const NotificationBell = forwardRef<HTMLButtonElement, NotificationBellProps>(fu
       {unreadCount > 0 ? <BellRing className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
       {unreadCount > 0 && (
         <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white shadow-sm ring-2 ring-background">
-          {unreadCount > 9 ? "9+" : unreadCount}
+          {unreadCount > 99 ? "99+" : unreadCount}
         </span>
       )}
     </button>
   );
 });
-
-function showBrowserNotification(item: StudioNotification, studioName: string) {
-  if (typeof window === "undefined" || !("Notification" in window)) return;
-  if (Notification.permission !== "granted") return;
-
-  const title = normalizeDisplayText(sanitizeNotificationText(item.title, adminNotificationTitle(item.kind)));
-  const body = normalizeDisplayText(sanitizeNotificationText(item.body, adminNotificationBody(item.kind)));
-  const notification = new Notification("Bellza", {
-    body: [title, body].filter(Boolean).join("\n"),
-    tag: item.id,
-    icon: "/pwa-icon.svg",
-    badge: "/pwa-icon.svg",
-    data: { studioName, url: "/admin" },
-  });
-
-  notification.onclick = () => {
-    window.focus();
-    if (window.location.pathname !== "/admin") window.location.assign("/admin");
-    notification.close();
-  };
-}
 
 function readPayloadString(payload: Record<string, unknown> | null, key: string) {
   const value = payload?.[key];
@@ -484,10 +572,36 @@ function normalizeNotification(item: StudioNotification): StudioNotification {
   };
 }
 
+function notificationActionUrl(item: StudioNotification) {
+  const candidate =
+    item.action_url ?? readPayloadString(item.payload, "action_url") ?? "/admin";
+  if (!candidate.startsWith("/admin")) return "/admin";
+  try {
+    const url = new URL(candidate, window.location.origin);
+    return url.origin === window.location.origin && url.pathname.startsWith("/admin")
+      ? `${url.pathname}${url.search}${url.hash}`
+      : "/admin";
+  } catch {
+    return "/admin";
+  }
+}
+
+function shouldShowRealtimeToast(studioId: string, notificationId: string) {
+  if (typeof window === "undefined") return false;
+  const key = `bellza:studio-notification-toast:${studioId}:${notificationId}`;
+  if (window.localStorage.getItem(key)) return false;
+  window.localStorage.setItem(key, String(Date.now()));
+  return true;
+}
+
 function adminNotificationTitle(kind: string) {
   if (kind === "new_appointment") return "Nova marcação recebida";
+  if (kind === "appointment_rescheduled") return "Marcação remarcada";
+  if (kind === "appointment_cancelled") return "Marcação cancelada";
   if (kind === "payment_confirmed") return "Pagamento confirmado";
   if (kind === "payment_failed") return "Falha no pagamento";
+  if (kind === "new_client") return "Novo cliente cadastrado";
+  if (kind === "new_review") return "Nova avaliação recebida";
   if (kind === "refund_request") return "Pedido de reembolso recebido";
   if (kind === "withdrawal_requested") return "Pedido financeiro recebido";
   return "Notificação do painel";
@@ -497,6 +611,10 @@ function adminNotificationBody(kind: string) {
   if (kind === "new_appointment") return "Tem uma nova marcação para acompanhar no painel.";
   if (kind === "payment_confirmed") return "Um pagamento foi confirmado.";
   if (kind === "payment_failed") return "Um pagamento precisa de atenção.";
+  if (kind === "appointment_rescheduled") return "Uma marcação foi remarcada.";
+  if (kind === "appointment_cancelled") return "Uma marcação foi cancelada.";
+  if (kind === "new_client") return "Um novo cliente foi adicionado ao estúdio.";
+  if (kind === "new_review") return "O estúdio recebeu uma nova avaliação.";
   if (kind === "refund_request") return "Existe um pedido de reembolso para analisar.";
   if (kind === "withdrawal_requested") return "Existe uma nova atualização financeira para analisar.";
   return "Tem uma nova ação importante no painel.";

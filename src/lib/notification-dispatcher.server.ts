@@ -13,34 +13,25 @@ const DispatchRecentStudioAppointmentInput = z.object({
   appointmentId: z.string().uuid(),
 });
 
-type StudioNotificationRow = {
-  id: string;
+type ClaimedDelivery = {
+  delivery_id: string;
+  notification_id: string;
   studio_id: string;
-  kind: string;
-  title: string;
-  body: string;
-  payload: Record<string, unknown> | null;
-  created_at: string;
-};
-
-type PushSubscriptionRow = {
-  id: string;
-  user_id: string;
-  studio_id: string | null;
-  audience: string | null;
+  subscription_id: string;
   endpoint: string;
   p256dh: string;
   auth: string;
-  updated_at?: string | null;
+  user_id: string;
+  kind: string;
+  title: string;
+  body: string;
+  action_url: string | null;
+  payload: Record<string, unknown> | null;
+  attempt_count: number;
 };
 
-type NotificationLogRow = {
-  studio_id: string | null;
-  recipient: string;
-  status: string;
-  error: string | null;
-  payload: Record<string, unknown> | null;
-};
+const CLAIM_BATCH_SIZE = 100;
+const MAX_DELIVERY_ATTEMPTS = 12;
 
 export const syncStudioPushNotifications = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -65,337 +56,268 @@ export const dispatchRecentStudioAppointmentPushNotification = createServerFn({ 
         appointment_id: data.appointmentId,
         reason: "appointment_missing_or_old",
       });
-      return { sent: 0, failed: 0, skipped: 1 };
+      return { sent: 0, failed: 0, retried: 0, skipped: 1 };
     }
-    console.info("[notifications] studio_push_recent_dispatch", {
-      studio_id: data.studioId,
-      appointment_id: data.appointmentId,
-    });
+
     return dispatchPendingStudioPushNotifications({
       studioId: data.studioId,
       appointmentId: data.appointmentId,
     });
   });
 
-export async function dispatchPendingStudioPushNotifications(options?: { studioId?: string; appointmentId?: string }) {
+export async function dispatchPendingStudioPushNotifications(options?: {
+  studioId?: string;
+  appointmentId?: string;
+  notificationId?: string;
+}) {
   const sb = getAdminClient();
   await cleanupExpiredPushSubscriptions(sb, options?.studioId);
   await cleanupExcessStudioPushSubscriptions(sb, options?.studioId);
-  const cutoff = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
-
-  let query = (sb as any)
-    .from("studio_notifications")
-    .select("id,studio_id,kind,title,body,payload,created_at")
-    .gte("created_at", cutoff)
-    .order("created_at", { ascending: true })
-    .limit(100);
-
-  if (options?.studioId) query = query.eq("studio_id", options.studioId);
-  if (options?.appointmentId) query = query.contains("payload", { appointment_id: options.appointmentId });
-
-  const { data: notifications, error } = await query;
-  if (error) throw new Error(error.message);
-  const rows = ((notifications ?? []) as StudioNotificationRow[]).filter((item) => item.id && item.studio_id);
-  if (rows.length === 0) return { sent: 0, failed: 0, skipped: 0 };
-
-  const notificationIds = new Set(rows.map((item) => item.id));
-  const studioIds = Array.from(new Set(rows.map((item) => item.studio_id).filter(Boolean)));
-  const { data: existingLogs, error: logsError } = await (sb as any)
-    .from("notifications_log")
-    .select("studio_id,recipient,status,error,payload")
-    .eq("channel", "push_studio")
-    .in("studio_id", studioIds)
-    .gte("created_at", cutoff)
-    .order("created_at", { ascending: false })
-    .limit(1000);
-  if (logsError) throw new Error(logsError.message);
-
-  const dispatchedKeys = new Set<string>();
-  const loggedNoTargetKeys = new Set<string>();
-  for (const log of ((existingLogs ?? []) as NotificationLogRow[])) {
-    const notificationId = readPayloadString(log.payload, "studio_notification_id");
-    if (!notificationId || !notificationIds.has(notificationId)) continue;
-    const notification = rows.find((item) => item.id === notificationId);
-    if (!notification || log.studio_id !== notification.studio_id) continue;
-    if (log.status === "skipped" && log.recipient.startsWith("studio:")) {
-      const key = studioPushNoTargetKey(notificationId, log.recipient.replace(/^studio:/, ""));
-      if (log.error === "no_studio_push_subscription") {
-        loggedNoTargetKeys.add(key);
-      } else {
-        dispatchedKeys.add(key);
-      }
-      continue;
-    }
-    if (log.status !== "sent") continue;
-    const endpoint = readPayloadString(log.payload, "endpoint");
-    if (endpoint) dispatchedKeys.add(studioPushDeliveryKey(notificationId, endpoint));
-  }
 
   let sent = 0;
   let failed = 0;
+  let retried = 0;
   let skipped = 0;
 
-  for (const notification of rows) {
-    console.info("[notifications] studio_push_attempt", {
-      studio_id: notification.studio_id,
-      notification_id: notification.id,
-      kind: notification.kind,
+  for (let batch = 0; batch < 5; batch += 1) {
+    const { data, error } = await (sb as any).rpc("claim_studio_notification_deliveries", {
+      p_limit: CLAIM_BATCH_SIZE,
+      p_studio_id: options?.studioId ?? null,
+      p_notification_id: options?.notificationId ?? null,
     });
-    const scope = await validateStudioNotificationScope(sb, notification);
-    if (!scope.ok) {
-      const key = studioPushNoTargetKey(notification.id, notification.studio_id);
-      if (!dispatchedKeys.has(key)) {
-        await insertNotificationLog(sb, {
-          studioId: notification.studio_id,
-          channel: "push_studio",
-          kind: notification.kind,
-          recipient: `studio:${notification.studio_id}`,
-          status: "skipped",
-          error: scope.reason,
-          payload: {
-            studio_notification_id: notification.id,
-            event: "studio_notification_scope_guard",
-            appointment_id: readPayloadString(notification.payload, "appointment_id"),
-            booking_request_id: readPayloadString(notification.payload, "booking_request_id"),
-          },
-        });
-        dispatchedKeys.add(key);
-      }
-      skipped += 1;
-      continue;
-    }
+    if (error) throw new Error(error.message);
 
-    const targets = await loadStudioPushTargets(sb, notification, dispatchedKeys);
-
-    if (targets.length === 0) {
-      const key = studioPushNoTargetKey(notification.id, notification.studio_id);
-      if (!dispatchedKeys.has(key) && !loggedNoTargetKeys.has(key)) {
-        await insertNotificationLog(sb, {
-          studioId: notification.studio_id,
-          channel: "push_studio",
-          kind: notification.kind,
-          recipient: `studio:${notification.studio_id}`,
-          status: "skipped",
-          error: "no_studio_push_subscription",
-          payload: {
-            studio_notification_id: notification.id,
-            event: "studio_notification_push",
-          },
-        });
-        loggedNoTargetKeys.add(key);
-      }
-      skipped += 1;
-      continue;
-    }
-
-    const deliveryResults = await Promise.all(
-      targets.map(async (subscription) => {
-        const recipient = `user:${subscription.user_id}`;
-        const endpoint = maskEndpoint(subscription.endpoint);
-        const deliveryKey = studioPushDeliveryKey(notification.id, endpoint);
-        const title = sanitizeStudioNotificationText(notification.title, studioPushFallbackTitle(notification.kind));
-        const body = sanitizeStudioNotificationText(notification.body, studioPushFallbackBody(notification.kind));
-      try {
-        const result = await sendWebPush(subscription, {
-          title: "Bellza",
-          body: formatPushBody(title, body),
-          url: "/admin/agenda",
-          icon: "/pwa-icon.svg",
-          badge: "/pwa-icon.svg",
-          tag: `studio-${notification.id}`,
-          data: {
-            kind: notification.kind,
-            studioId: notification.studio_id,
-            notificationId: notification.id,
-          },
-        });
-
-        if (result.ok) {
-          console.info("[notifications] studio_push_sent", {
-            studio_id: notification.studio_id,
-            notification_id: notification.id,
-            recipient,
-            result,
-          });
-          await insertNotificationLog(sb, {
-            studioId: notification.studio_id,
-            channel: "push_studio",
-            kind: notification.kind,
-            recipient,
-            status: "sent",
-            payload: {
-              studio_notification_id: notification.id,
-              subscription_id: subscription.id,
-              endpoint,
-              event: "studio_notification_push",
-            },
-          });
-          dispatchedKeys.add(deliveryKey);
-          return { status: "sent" as const };
-        } else {
-          console.error("[notifications] studio_push_failed", {
-            studio_id: notification.studio_id,
-            notification_id: notification.id,
-            recipient,
-            reason: webPushFailureReason(result),
-            result,
-          });
-          await insertNotificationLog(sb, {
-            studioId: notification.studio_id,
-            channel: "push_studio",
-            kind: notification.kind,
-            recipient,
-            status: "failed",
-            error: webPushFailureReason(result),
-            payload: {
-              studio_notification_id: notification.id,
-              subscription_id: subscription.id,
-              endpoint,
-              event: "studio_notification_push",
-            },
-          });
-          if ("status" in result && (result.status === 400 || result.status === 404 || result.status === 410)) {
-            await (sb as any)
-              .from("push_subscriptions")
-              .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-              .eq("id", subscription.id);
-          }
-          return { status: "failed" as const };
-        }
-      } catch {
-        console.error("[notifications] studio_push_exception", {
-          studio_id: notification.studio_id,
-          notification_id: notification.id,
-          recipient,
-        });
-        await insertNotificationLog(sb, {
-          studioId: notification.studio_id,
-          channel: "push_studio",
-          kind: notification.kind,
-          recipient,
-          status: "failed",
-          error: "send_exception",
-          payload: {
-            studio_notification_id: notification.id,
-            subscription_id: subscription.id,
-            endpoint,
-            event: "studio_notification_push",
-          },
-        });
-        return { status: "failed" as const };
-      }
-      }),
+    const deliveries = ((data ?? []) as ClaimedDelivery[]).filter(
+      (item) =>
+        item.delivery_id &&
+        item.notification_id &&
+        item.studio_id &&
+        item.subscription_id &&
+        item.endpoint,
     );
-    sent += deliveryResults.filter((result) => result.status === "sent").length;
-    failed += deliveryResults.filter((result) => result.status === "failed").length;
+    if (deliveries.length === 0) break;
+
+    const results = await Promise.all(deliveries.map((delivery) => deliverStudioPush(sb, delivery)));
+    sent += results.filter((result) => result === "sent").length;
+    failed += results.filter((result) => result === "failed").length;
+    retried += results.filter((result) => result === "retry").length;
+    skipped += results.filter((result) => result === "skipped").length;
+
+    if (deliveries.length < CLAIM_BATCH_SIZE) break;
   }
 
-  return { sent, failed, skipped };
+  return { sent, failed, retried, skipped };
 }
 
-async function loadStudioPushTargets(
-  sb: any,
-  notification: StudioNotificationRow,
-  dispatchedKeys: Set<string>,
-) {
-  const { data: studioSubscriptions, error: studioSubscriptionError } = await (sb as any)
-    .from("push_subscriptions")
-    .select("id,user_id,studio_id,audience,endpoint,p256dh,auth,updated_at")
-    .eq("studio_id", notification.studio_id)
-    .in("audience", ["studio", "both"])
-    .is("revoked_at", null)
-    .order("updated_at", { ascending: false })
-    .limit(1000);
-  if (studioSubscriptionError) throw new Error(studioSubscriptionError.message);
+async function deliverStudioPush(
+  sb: ReturnType<typeof getAdminClient>,
+  delivery: ClaimedDelivery,
+): Promise<"sent" | "failed" | "retry" | "skipped"> {
+  const scope = await validateStudioNotificationScope(sb, delivery);
+  if (!scope.ok) {
+    await finalizeDelivery(sb, delivery, {
+      status: "skipped",
+      error: scope.reason,
+    });
+    await logDeliveryAttempt(sb, delivery, "skipped", scope.reason);
+    return "skipped";
+  }
 
-  const candidates = (studioSubscriptions ?? []) as PushSubscriptionRow[];
-  const byEndpoint = new Map<string, PushSubscriptionRow>();
-  const targetCountByUser = new Map<string, number>();
+  const title = sanitizeStudioNotificationText(
+    delivery.title,
+    studioPushFallbackTitle(delivery.kind),
+  );
+  const body = sanitizeStudioNotificationText(
+    delivery.body,
+    studioPushFallbackBody(delivery.kind),
+  );
+  const actionUrl = sanitizeActionUrl(delivery.action_url, delivery.kind);
 
-  for (const subscription of candidates) {
-    if (!subscription.user_id || !subscription.endpoint) continue;
-    if (dispatchedKeys.has(studioPushDeliveryKey(notification.id, maskEndpoint(subscription.endpoint)))) continue;
-    const currentUserTargets = targetCountByUser.get(subscription.user_id) ?? 0;
-    if (currentUserTargets >= 12) continue;
+  try {
+    const result = await sendWebPush(delivery, {
+      title: "Bellza",
+      body: formatPushBody(title, body),
+      url: actionUrl,
+      icon: "/pwa-icon.svg",
+      badge: "/pwa-icon.svg",
+      tag: `studio-${delivery.notification_id}`,
+      data: {
+        kind: delivery.kind,
+        studioId: delivery.studio_id,
+        notificationId: delivery.notification_id,
+        deliveryId: delivery.delivery_id,
+        url: actionUrl,
+      },
+    });
 
-    const isStudioAudience =
-      subscription.studio_id === notification.studio_id &&
-      (subscription.audience === "studio" || subscription.audience === "both");
-    if (!isStudioAudience) continue;
-
-    const current = byEndpoint.get(subscription.endpoint);
-    if (!current || subscriptionTargetRank(subscription, notification.studio_id) > subscriptionTargetRank(current, notification.studio_id)) {
-      byEndpoint.set(subscription.endpoint, subscription);
-      targetCountByUser.set(subscription.user_id, currentUserTargets + 1);
+    if (result.ok) {
+      await finalizeDelivery(sb, delivery, { status: "sent" });
+      await logDeliveryAttempt(sb, delivery, "sent");
+      console.info("[notifications] studio_push_accepted", {
+        studio_id: delivery.studio_id,
+        notification_id: delivery.notification_id,
+        delivery_id: delivery.delivery_id,
+        attempt: delivery.attempt_count,
+      });
+      return "sent";
     }
+
+    const reason = webPushFailureReason(result);
+    const terminal =
+      "status" in result &&
+      (result.status === 400 || result.status === 401 || result.status === 403 ||
+        result.status === 404 || result.status === 410);
+    const exhausted = delivery.attempt_count >= MAX_DELIVERY_ATTEMPTS;
+    const status = terminal || exhausted ? "failed" : "retry";
+
+    await finalizeDelivery(sb, delivery, { status, error: reason });
+    await logDeliveryAttempt(sb, delivery, status, reason);
+
+    if (terminal) {
+      await revokePushSubscription(sb, delivery.subscription_id);
+    }
+    return status;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message.slice(0, 500) : "send_exception";
+    const status = delivery.attempt_count >= MAX_DELIVERY_ATTEMPTS ? "failed" : "retry";
+    await finalizeDelivery(sb, delivery, { status, error: reason });
+    await logDeliveryAttempt(sb, delivery, status, reason);
+    console.error("[notifications] studio_push_exception", {
+      studio_id: delivery.studio_id,
+      notification_id: delivery.notification_id,
+      delivery_id: delivery.delivery_id,
+      attempt: delivery.attempt_count,
+      reason,
+    });
+    return status;
   }
-
-  console.info("[notifications] studio_push_targets_resolved", {
-    studio_id: notification.studio_id,
-    notification_id: notification.id,
-    studio_subscription_count: (studioSubscriptions ?? []).length,
-    target_count: byEndpoint.size,
-  });
-
-  return Array.from(byEndpoint.values());
 }
 
-async function validateStudioNotificationScope(sb: any, notification: StudioNotificationRow) {
+async function finalizeDelivery(
+  sb: ReturnType<typeof getAdminClient>,
+  delivery: ClaimedDelivery,
+  result: { status: "sent" | "failed" | "retry" | "skipped"; error?: string },
+) {
+  const now = new Date();
+  const patch: Record<string, unknown> = {
+    status: result.status,
+    lease_until: null,
+    last_error: result.error ?? null,
+    updated_at: now.toISOString(),
+  };
+  if (result.status === "sent") {
+    patch.accepted_at = now.toISOString();
+  }
+  if (result.status === "retry") {
+    patch.next_attempt_at = new Date(
+      now.getTime() + retryDelayMs(delivery.attempt_count),
+    ).toISOString();
+  }
+
+  const { error } = await (sb as any)
+    .from("studio_notification_deliveries")
+    .update(patch)
+    .eq("id", delivery.delivery_id)
+    .eq("studio_id", delivery.studio_id)
+    .eq("status", "delivering");
+  if (error) throw new Error(error.message);
+}
+
+async function logDeliveryAttempt(
+  sb: ReturnType<typeof getAdminClient>,
+  delivery: ClaimedDelivery,
+  status: string,
+  error?: string,
+) {
+  const { error: logError } = await (sb as any).from("notifications_log").insert({
+    studio_id: delivery.studio_id,
+    appointment_id: readPayloadString(delivery.payload, "appointment_id"),
+    channel: "push_studio",
+    kind: delivery.kind,
+    recipient: `user:${delivery.user_id}`,
+    payload: {
+      event: "studio_notification_push",
+      studio_notification_id: delivery.notification_id,
+      delivery_id: delivery.delivery_id,
+      subscription_id: delivery.subscription_id,
+      endpoint: maskEndpoint(delivery.endpoint),
+      attempt: delivery.attempt_count,
+    },
+    status,
+    error: error ?? null,
+  });
+  if (logError) {
+    console.error("[notifications] delivery_log_failed", {
+      delivery_id: delivery.delivery_id,
+      reason: logError.message,
+    });
+  }
+}
+
+async function validateStudioNotificationScope(
+  sb: ReturnType<typeof getAdminClient>,
+  notification: ClaimedDelivery,
+) {
   const payloadStudioId = readPayloadString(notification.payload, "studio_id");
   if (payloadStudioId && payloadStudioId !== notification.studio_id) {
     return { ok: false as const, reason: "payload_studio_mismatch" };
   }
 
-  const appointmentId = readPayloadString(notification.payload, "appointment_id");
-  if (appointmentId) {
-    const { data, error } = await sb
-      .from("appointments")
-      .select("id,studio_id")
-      .eq("id", appointmentId)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!data?.id) return { ok: false as const, reason: "appointment_missing" };
-    if (data.studio_id !== notification.studio_id) {
-      return { ok: false as const, reason: "appointment_studio_mismatch" };
-    }
-  }
+  const checks: Array<{
+    payloadKey: string;
+    table: string;
+    missing: string;
+    mismatch: string;
+  }> = [
+    {
+      payloadKey: "appointment_id",
+      table: "appointments",
+      missing: "appointment_missing",
+      mismatch: "appointment_studio_mismatch",
+    },
+    {
+      payloadKey: "booking_request_id",
+      table: "booking_payment_requests",
+      missing: "booking_request_missing",
+      mismatch: "booking_request_studio_mismatch",
+    },
+    {
+      payloadKey: "client_id",
+      table: "clients",
+      missing: "client_missing",
+      mismatch: "client_studio_mismatch",
+    },
+    {
+      payloadKey: "review_id",
+      table: "studio_reviews",
+      missing: "review_missing",
+      mismatch: "review_studio_mismatch",
+    },
+  ];
 
-  const bookingRequestId = readPayloadString(notification.payload, "booking_request_id");
-  if (bookingRequestId) {
-    const { data, error } = await sb
-      .from("booking_payment_requests")
-      .select("id,studio_id,appointment_id")
-      .eq("id", bookingRequestId)
+  for (const check of checks) {
+    const id = readPayloadString(notification.payload, check.payloadKey);
+    if (!id) continue;
+    const { data, error } = await (sb as any)
+      .from(check.table)
+      .select("id,studio_id")
+      .eq("id", id)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (!data?.id) return { ok: false as const, reason: "booking_request_missing" };
+    if (!data?.id) return { ok: false as const, reason: check.missing };
     if (data.studio_id !== notification.studio_id) {
-      return { ok: false as const, reason: "booking_request_studio_mismatch" };
-    }
-    if (appointmentId && data.appointment_id && data.appointment_id !== appointmentId) {
-      return { ok: false as const, reason: "booking_request_appointment_mismatch" };
+      return { ok: false as const, reason: check.mismatch };
     }
   }
 
   return { ok: true as const };
 }
 
-function studioPushDeliveryKey(notificationId: string, endpoint: string) {
-  return `${notificationId}:endpoint:${endpoint}`;
-}
-
-function studioPushNoTargetKey(notificationId: string, studioId: string) {
-  return `${notificationId}:studio:${studioId}`;
-}
-
-function subscriptionTargetRank(subscription: PushSubscriptionRow, studioId: string) {
-  if (subscription.studio_id === studioId && subscription.audience === "both") return 4;
-  if (subscription.studio_id === studioId && subscription.audience === "studio") return 3;
-  if (subscription.studio_id === studioId) return 2;
-  return 1;
-}
-
-async function loadRecentAppointmentForDispatch(sb: any, studioId: string, appointmentId: string) {
+async function loadRecentAppointmentForDispatch(
+  sb: ReturnType<typeof getAdminClient>,
+  studioId: string,
+  appointmentId: string,
+) {
   const since = new Date(Date.now() - 30 * 60 * 1000).toISOString();
   const { data, error } = await sb
     .from("appointments")
@@ -408,7 +330,10 @@ async function loadRecentAppointmentForDispatch(sb: any, studioId: string, appoi
   return data;
 }
 
-async function cleanupExpiredPushSubscriptions(sb: any, studioId?: string) {
+async function cleanupExpiredPushSubscriptions(
+  sb: ReturnType<typeof getAdminClient>,
+  studioId?: string,
+) {
   const now = Date.now();
   let query = (sb as any)
     .from("push_subscriptions")
@@ -416,14 +341,15 @@ async function cleanupExpiredPushSubscriptions(sb: any, studioId?: string) {
     .is("revoked_at", null)
     .not("expiration_time", "is", null)
     .lt("expiration_time", now);
-
   if (studioId) query = query.eq("studio_id", studioId);
-
   const { error } = await query;
   if (error) console.warn("push_subscription_expiry_cleanup_failed", error.message);
 }
 
-async function cleanupExcessStudioPushSubscriptions(sb: any, studioId?: string) {
+async function cleanupExcessStudioPushSubscriptions(
+  sb: ReturnType<typeof getAdminClient>,
+  studioId?: string,
+) {
   let query = (sb as any)
     .from("push_subscriptions")
     .select("id,user_id,studio_id,updated_at")
@@ -431,7 +357,6 @@ async function cleanupExcessStudioPushSubscriptions(sb: any, studioId?: string) 
     .is("revoked_at", null)
     .order("updated_at", { ascending: false })
     .limit(2000);
-
   if (studioId) query = query.eq("studio_id", studioId);
 
   const { data, error } = await query;
@@ -442,18 +367,19 @@ async function cleanupExcessStudioPushSubscriptions(sb: any, studioId?: string) 
 
   const keepCountByKey = new Map<string, number>();
   const revokeIds: string[] = [];
-  for (const row of (data ?? []) as Array<{ id: string; user_id: string; studio_id: string | null }>) {
+  for (const row of (data ?? []) as Array<{
+    id: string;
+    user_id: string;
+    studio_id: string | null;
+  }>) {
     if (!row.id || !row.user_id || !row.studio_id) continue;
     const key = `${row.studio_id}:${row.user_id}`;
     const count = keepCountByKey.get(key) ?? 0;
-    if (count >= 12) {
-      revokeIds.push(row.id);
-      continue;
-    }
-    keepCountByKey.set(key, count + 1);
+    if (count >= 12) revokeIds.push(row.id);
+    else keepCountByKey.set(key, count + 1);
   }
-
   if (revokeIds.length === 0) return;
+
   const { error: updateError } = await (sb as any)
     .from("push_subscriptions")
     .update({ revoked_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -461,7 +387,23 @@ async function cleanupExcessStudioPushSubscriptions(sb: any, studioId?: string) 
   if (updateError) console.warn("push_subscription_excess_cleanup_update_failed", updateError.message);
 }
 
-async function assertCanAccessStudio(sb: any, userId: string, studioId: string) {
+async function revokePushSubscription(
+  sb: ReturnType<typeof getAdminClient>,
+  subscriptionId: string,
+) {
+  const now = new Date().toISOString();
+  const { error } = await (sb as any)
+    .from("push_subscriptions")
+    .update({ revoked_at: now, updated_at: now })
+    .eq("id", subscriptionId);
+  if (error) console.warn("push_subscription_revoke_failed", error.message);
+}
+
+async function assertCanAccessStudio(
+  sb: ReturnType<typeof getAdminClient>,
+  userId: string,
+  studioId: string,
+) {
   const { data, error } = await sb
     .from("user_roles")
     .select("role")
@@ -473,27 +415,9 @@ async function assertCanAccessStudio(sb: any, userId: string, studioId: string) 
   if (!data?.role) throw new Response("forbidden", { status: 403 });
 }
 
-async function insertNotificationLog(
-  sb: any,
-  row: {
-    studioId: string;
-    channel: string;
-    kind: string;
-    recipient: string;
-    status: string;
-    payload?: Record<string, unknown>;
-    error?: string;
-  },
-) {
-  await (sb as any).from("notifications_log").insert({
-    studio_id: row.studioId,
-    channel: row.channel,
-    kind: row.kind,
-    recipient: row.recipient,
-    payload: row.payload ?? {},
-    status: row.status,
-    error: row.error ?? null,
-  });
+function retryDelayMs(attempt: number) {
+  const base = 30_000 * 2 ** Math.max(0, Math.min(attempt - 1, 10));
+  return Math.min(base, 6 * 60 * 60 * 1000);
 }
 
 function readPayloadString(payload: Record<string, unknown> | null, key: string) {
@@ -507,22 +431,26 @@ function webPushFailureReason(result: Awaited<ReturnType<typeof sendWebPush>>) {
   return "web_push_failed";
 }
 
-function studioNotificationTitle(kind: string) {
-  if (kind === "new_appointment") return "Nova marcação recebida";
-  if (kind === "payment_confirmed") return "Pagamento confirmado";
-  if (kind === "payment_failed") return "Falha no pagamento";
-  if (kind === "refund_request") return "Pedido de reembolso recebido";
-  if (kind === "withdrawal_requested") return "Pedido financeiro recebido";
-  return "Notificação do painel";
-}
-
-function studioNotificationBody(kind: string) {
-  if (kind === "new_appointment") return "Tem uma nova marcação para acompanhar no painel.";
-  if (kind === "payment_confirmed") return "Um pagamento foi confirmado.";
-  if (kind === "payment_failed") return "Um pagamento precisa de atenção.";
-  if (kind === "refund_request") return "Existe um pedido de reembolso para analisar.";
-  if (kind === "withdrawal_requested") return "Existe uma nova atualização financeira para analisar.";
-  return "Tem uma nova ação importante no painel.";
+function sanitizeActionUrl(value: string | null, kind: string) {
+  const fallback =
+    kind === "payment_confirmed" || kind === "payment_failed" || kind === "withdrawal_requested"
+      ? "/admin/recebimento"
+      : kind === "new_client" || kind === "new_review"
+        ? "/admin/clientes"
+        : kind === "refund_request"
+          ? "/admin/politicas"
+          : kind.includes("appointment")
+            ? "/admin/agenda"
+            : "/admin";
+  if (!value || !value.startsWith("/admin")) return fallback;
+  try {
+    const parsed = new URL(value, "https://bellza.pt");
+    return parsed.origin === "https://bellza.pt" && parsed.pathname.startsWith("/admin")
+      ? `${parsed.pathname}${parsed.search}${parsed.hash}`
+      : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function sanitizeStudioNotificationText(value: string, fallback: string) {
@@ -536,21 +464,29 @@ function sanitizeStudioNotificationText(value: string, fallback: string) {
 }
 
 function studioPushFallbackTitle(kind: string) {
-  if (kind === "new_appointment") return "Nova marca\u00e7\u00e3o recebida";
-  if (kind === "payment_confirmed") return "Pagamento confirmado";
-  if (kind === "payment_failed") return "Falha no pagamento";
+  if (kind === "new_appointment") return "Nova marcação recebida";
+  if (kind === "appointment_rescheduled") return "Marcação remarcada";
+  if (kind === "appointment_cancelled") return "Marcação cancelada";
+  if (kind === "payment_confirmed") return "Pagamento aprovado";
+  if (kind === "payment_failed") return "Pagamento não concluído";
+  if (kind === "new_client") return "Novo cliente cadastrado";
+  if (kind === "new_review") return "Nova avaliação recebida";
   if (kind === "refund_request") return "Pedido de reembolso recebido";
   if (kind === "withdrawal_requested") return "Pedido financeiro recebido";
-  return "Notifica\u00e7\u00e3o do painel";
+  return "Notificação do painel";
 }
 
 function studioPushFallbackBody(kind: string) {
-  if (kind === "new_appointment") return "Tem uma nova marca\u00e7\u00e3o para acompanhar no painel.";
-  if (kind === "payment_confirmed") return "Um pagamento foi confirmado.";
-  if (kind === "payment_failed") return "Um pagamento precisa de aten\u00e7\u00e3o.";
+  if (kind === "new_appointment") return "Tem uma nova marcação para acompanhar no painel.";
+  if (kind === "appointment_rescheduled") return "Uma marcação foi remarcada.";
+  if (kind === "appointment_cancelled") return "Uma marcação foi cancelada.";
+  if (kind === "payment_confirmed") return "Um pagamento foi aprovado.";
+  if (kind === "payment_failed") return "Um pagamento precisa de atenção.";
+  if (kind === "new_client") return "Um novo cliente foi adicionado ao estúdio.";
+  if (kind === "new_review") return "O estúdio recebeu uma nova avaliação.";
   if (kind === "refund_request") return "Existe um pedido de reembolso para analisar.";
-  if (kind === "withdrawal_requested") return "Existe uma nova atualiza\u00e7\u00e3o financeira para analisar.";
-  return "Tem uma nova a\u00e7\u00e3o importante no painel.";
+  if (kind === "withdrawal_requested") return "Existe uma atualização financeira para analisar.";
+  return "Tem uma nova ação importante no painel.";
 }
 
 function formatPushBody(title: string, body: string) {

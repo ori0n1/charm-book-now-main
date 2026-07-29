@@ -189,6 +189,10 @@ export const requestClientRefund = createServerFn({ method: "POST" })
       .select("id")
       .maybeSingle();
     if (error) throw new Error("Não foi possível enviar o pedido de reembolso.");
+    await dispatchPendingStudioPushNotifications({ studioId: appt.studio_id }).catch(
+      (dispatchError) =>
+        console.error("[client-action] refund request push failed", dispatchError),
+    );
     return { ok: true, refundId: refund?.id ?? null };
   });
 
@@ -307,6 +311,11 @@ async function notifyStudioAppointmentAction(sb: any, appt: any, kind: "appointm
     kind === "appointment_rescheduled"
       ? `${clientName} remarcou a marcação para ${when}.`
       : `${clientName} cancelou a marcação de ${when}.`;
+  const rescheduledAt = Math.floor(Date.parse(appt.starts_at) / 1000);
+  const eventKey =
+    kind === "appointment_rescheduled"
+      ? `appointment:${appt.id}:rescheduled:${rescheduledAt}:${appt.staff_id ?? "none"}`
+      : `appointment:${appt.id}:cancelled`;
   const { error } = await sb.rpc("insert_studio_notification", {
     p_studio_id: appt.studio_id,
     p_kind: kind,
@@ -314,8 +323,11 @@ async function notifyStudioAppointmentAction(sb: any, appt: any, kind: "appointm
     p_body: body,
     p_payload: {
       appointment_id: appt.id,
+      client_id: appt.client_id,
       client_name: clientName,
       starts_at: appt.starts_at,
+      event_key: eventKey,
+      action_url: "/admin/agenda",
     },
   });
   if (error) {
