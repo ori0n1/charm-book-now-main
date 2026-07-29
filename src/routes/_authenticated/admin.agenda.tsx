@@ -62,6 +62,12 @@ import {
   isPastAppointment,
 } from "@/lib/appointment-whatsapp-message";
 import {
+  buildAgendaDayGroups,
+  findNextOperationalAppointmentId,
+  getAgendaTimelineState,
+  type AgendaTimelineState,
+} from "@/lib/agenda-list-presentation";
+import {
   createInPersonMbWayPayment,
   getInPersonMbWaySettings,
 } from "@/lib/in-person-mbway.functions";
@@ -148,7 +154,9 @@ function AgendaPage() {
   const [messageLogs, setMessageLogs] = useState<MessageLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set(["Passados"]));
+  const [groupCollapseOverrides, setGroupCollapseOverrides] = useState<Map<string, boolean>>(
+    new Map(),
+  );
   const [savingPresenceId, setSavingPresenceId] = useState<string | null>(null);
   const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const [receivingPaymentId, setReceivingPaymentId] = useState<string | null>(null);
@@ -169,6 +177,7 @@ function AgendaPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<"csv" | "excel" | "pdf" | null>(null);
   const [enableInPersonMbWay, setEnableInPersonMbWay] = useState(false);
+  const [agendaNow, setAgendaNow] = useState(() => new Date());
 
   useEffect(() => {
     setShowDepositSplit(localStorage.getItem("agenda-show-deposit-split") === "true");
@@ -176,6 +185,10 @@ function AgendaPage() {
   useEffect(() => {
     localStorage.setItem("agenda-show-deposit-split", String(showDepositSplit));
   }, [showDepositSplit]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setAgendaNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!studio) return;
@@ -372,7 +385,7 @@ function AgendaPage() {
   );
 
   // KPIs
-  const now = new Date();
+  const now = agendaNow;
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfWeek = new Date(startOfToday);
   startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
@@ -418,27 +431,16 @@ function AgendaPage() {
     return Math.round(((cur - prev) / prev) * 100);
   }
 
-  // Grouping
-  const GROUP_ORDER = ["Hoje", "Amanhã", "Próximos Dias", "Passados"];
-  const groups: Record<string, Appt[]> = {};
-  for (const a of filteredAppts) {
-    const diff = Math.floor((new Date(a.starts_at).getTime() - startOfToday.getTime()) / 86400000);
-    const key =
-      diff === 0 ? "Hoje" : diff === 1 ? "Amanhã" : diff > 1 ? "Próximos Dias" : "Passados";
-    (groups[key] ??= []).push(a);
-  }
-  for (const key of Object.keys(groups)) {
-    groups[key] =
-      key === "Passados"
-        ? sortAppointmentsChronologicallyShared(groups[key], "history")
-        : sortAppointmentsChronologicallyShared(groups[key], "future");
-  }
+  // Presentation-only daily grouping. Today and upcoming dates stay first in
+  // ascending order; historical dates follow with the most recent day first.
+  const dayGroups = buildAgendaDayGroups(filteredAppts, now);
+  const nextAppointmentId = findNextOperationalAppointmentId(filteredAppts, now);
 
-  function toggleGroup(key: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+  function toggleGroup(key: string, defaultCollapsed: boolean) {
+    setGroupCollapseOverrides((prev) => {
+      const next = new Map(prev);
+      const current = next.get(key) ?? defaultCollapsed;
+      next.set(key, !current);
       return next;
     });
   }
@@ -908,16 +910,20 @@ function AgendaPage() {
         />
       ) : (
         <div className="flex flex-col gap-3 md:gap-4">
-          {GROUP_ORDER.map((groupKey) => {
-            const list = groups[groupKey];
-            if (!list?.length) return null;
+          {dayGroups.map((group) => {
+            const list = group.appointments;
+            const defaultCollapsed = group.isPast;
+            const collapsed = groupCollapseOverrides.get(group.key) ?? defaultCollapsed;
             return (
               <DayGroup
-                key={groupKey}
-                label={groupKey}
+                key={group.key}
+                label={group.title}
                 count={list.length}
-                collapsed={collapsedGroups.has(groupKey)}
-                onToggle={() => toggleGroup(groupKey)}
+                collapsed={collapsed}
+                isToday={group.isToday}
+                isTomorrow={group.isTomorrow}
+                isPast={group.isPast}
+                onToggle={() => toggleGroup(group.key, defaultCollapsed)}
               >
                 <ExpandableList
                   items={list}
@@ -949,6 +955,8 @@ function AgendaPage() {
                     return (
                       <AppointmentCard
                         appt={a}
+                        timelineState={getAgendaTimelineState(a, now)}
+                        isNextAppointment={a.id === nextAppointmentId}
                         split={split}
                         paidAmount={paid}
                         paymentLabel={payLabel}
@@ -2292,54 +2300,77 @@ function DayGroup({
   label,
   count,
   collapsed,
+  isToday,
+  isTomorrow,
+  isPast,
   onToggle,
   children,
 }: {
   label: string;
   count: number;
   collapsed: boolean;
+  isToday: boolean;
+  isTomorrow: boolean;
+  isPast: boolean;
   onToggle: () => void;
   children: React.ReactNode;
 }) {
-  const isToday = label === "Hoje";
-  const isPast = label === "Passados";
-
-  if (collapsed && isPast) {
-    return (
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-border/60 bg-transparent px-4 py-3 text-xs font-semibold text-muted-foreground transition-all hover:border-border hover:bg-muted/40 hover:text-foreground"
-      >
-        <ChevronDown className="h-3.5 w-3.5 -rotate-90 transition-transform duration-300" />
-        Ver {count} {count === 1 ? "marcação anterior" : "marcações anteriores"}
-      </button>
-    );
-  }
-
   return (
-    <div className="overflow-hidden rounded-[1.25rem] border border-border/80 bg-card/95 shadow-sm">
+    <section
+      data-agenda-day={label}
+      className={`overflow-hidden rounded-[1.25rem] border bg-card/95 shadow-sm ${
+        isToday
+          ? "border-emerald-500/30 ring-1 ring-emerald-500/10"
+          : isTomorrow
+            ? "border-violet-500/20"
+            : "border-border/80"
+      }`}
+    >
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 border-b border-border/70 bg-muted/25 px-4 py-2.5 transition hover:bg-muted/45 md:px-5 md:py-3"
+        aria-expanded={!collapsed}
+        className={`flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition hover:bg-muted/45 md:px-5 md:py-3.5 ${
+          collapsed ? "bg-muted/15" : "border-b border-border/70 bg-muted/25"
+        }`}
       >
-        <div className="flex items-center gap-2.5">
-          {isToday && (
-            <span className="size-1.5 rounded-full bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
-          )}
+        <div className="flex min-w-0 items-center gap-3">
           <span
-            className={`text-xs font-semibold uppercase tracking-[0.14em] ${isToday ? "text-foreground" : "text-muted-foreground"}`}
+            className={`grid size-9 shrink-0 place-items-center rounded-xl ${
+              isToday
+                ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300"
+                : isTomorrow
+                  ? "bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                  : isPast
+                    ? "bg-muted text-muted-foreground"
+                    : "bg-blue-500/10 text-blue-700 dark:text-blue-300"
+            }`}
           >
-            {label}
+            <CalendarDays className="h-4 w-4" />
           </span>
-          <span className="rounded-full bg-background border border-border/60 px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-            {count}
+          <span className="min-w-0">
+            <span
+              className={`block text-[13px] font-bold leading-snug md:text-sm ${
+                isPast ? "text-muted-foreground" : "text-foreground"
+              }`}
+            >
+              {label}
+            </span>
+            <span className="mt-0.5 block text-[10px] font-semibold text-muted-foreground md:text-[11px]">
+              {count} {count === 1 ? "agendamento" : "agendamentos"} · ordem cronológica
+            </span>
           </span>
         </div>
-        <ChevronDown
-          className={`h-4 w-4 text-muted-foreground transition-transform duration-300 ${collapsed ? "-rotate-90" : ""}`}
-        />
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="hidden rounded-full border border-border/60 bg-background px-2.5 py-1 text-[10px] font-semibold text-muted-foreground sm:inline-flex">
+            {collapsed ? "Expandir" : "Recolher"}
+          </span>
+          <ChevronDown
+            className={`h-4 w-4 text-muted-foreground transition-transform duration-300 ${
+              collapsed ? "-rotate-90" : ""
+            }`}
+          />
+        </span>
       </button>
 
       {/* CSS-grid smooth collapse — animates height without JS */}
@@ -2354,7 +2385,7 @@ function DayGroup({
           <div className="flex flex-col gap-2.5 p-2.5 md:gap-2 md:p-3">{children}</div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -2362,6 +2393,8 @@ function DayGroup({
 
 function AppointmentCard({
   appt: a,
+  timelineState,
+  isNextAppointment,
   split,
   paidAmount,
   paymentLabel,
@@ -2394,6 +2427,8 @@ function AppointmentCard({
   onRequestReschedule,
 }: {
   appt: Appt;
+  timelineState: AgendaTimelineState;
+  isNextAppointment: boolean;
   split: ReturnType<typeof computeAppointmentSplit>;
   paidAmount: number;
   paymentLabel: string;
@@ -2444,11 +2479,23 @@ function AppointmentCard({
   const financialSummary = getAppointmentFinancialSummary(a, split, paidAmount);
   const canShowSplit = financialSummary.splitAvailable;
   const canExpand = canUseActions || canViewSensitiveDetails;
+  const timelineAccent =
+    timelineState === "current"
+      ? "bg-amber-500"
+      : isNextAppointment
+        ? "bg-violet-500"
+        : timelineState === "past"
+          ? "bg-muted-foreground/25"
+          : "bg-blue-500/45";
 
   return (
     <article
+      data-timeline-state={timelineState}
+      data-next-appointment={isNextAppointment ? "true" : undefined}
       className={`relative overflow-hidden rounded-xl border shadow-sm transition-all duration-200
       md:rounded-xl md:border md:shadow-sm md:hover:border-foreground/15 md:hover:shadow-md
+      ${isNextAppointment ? "border-violet-500/35 ring-2 ring-violet-500/15 shadow-md shadow-violet-500/5" : ""}
+      ${timelineState === "past" && !cancelled && !completed && !missed ? "bg-muted/15" : ""}
       ${
         missed
           ? "border-red-400/25 bg-red-500/[0.04] dark:bg-red-500/[0.025]"
@@ -2459,6 +2506,11 @@ function AppointmentCard({
               : "border-border/80 bg-card md:bg-background/60 md:hover:bg-background/90"
       }`}
     >
+      <span
+        aria-hidden="true"
+        className={`absolute inset-y-2 left-0 w-1 rounded-r-full ${timelineAccent}`}
+      />
+
       {/* Cancel confirm overlay */}
       {isConfirmingCancel && canUseActions && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/96 px-4 text-center backdrop-blur-sm">
@@ -2485,16 +2537,28 @@ function AppointmentCard({
       )}
 
       {/* Main row */}
-      <div className="grid grid-cols-[4rem_2.5rem_minmax(0,1fr)_2rem] items-center gap-x-2.5 gap-y-1.5 px-3 py-2.5 md:grid-cols-[4.8rem_2.25rem_minmax(12rem,1.4fr)_minmax(11rem,0.9fr)_auto_6.75rem] md:gap-x-3 md:px-4">
+      <div className="grid grid-cols-[4rem_2.5rem_minmax(0,1fr)_2rem] items-center gap-x-2.5 gap-y-1.5 py-2.5 pl-4 pr-3 md:grid-cols-[4.8rem_2.25rem_minmax(12rem,1.4fr)_minmax(11rem,0.9fr)_auto_6.75rem] md:gap-x-3 md:pl-5 md:pr-4">
         {/* Time block */}
         <div
-          className={`row-span-2 flex min-h-[3rem] shrink-0 flex-col items-center justify-center rounded-xl px-2 py-1.5 text-center md:min-h-[3.15rem] ${missed ? "bg-red-500/10 text-red-700 dark:text-red-300" : completed ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400" : cancelled ? "bg-muted/60 text-muted-foreground/60" : "bg-muted text-foreground"}`}
+          className={`row-span-2 flex min-h-[3rem] shrink-0 flex-col items-center justify-center rounded-xl px-2 py-1.5 text-center md:min-h-[3.15rem] ${
+            timelineState === "current" && !cancelled
+              ? "bg-amber-500/12 text-amber-800 ring-1 ring-amber-500/20 dark:text-amber-200"
+              : isNextAppointment
+                ? "bg-violet-500/10 text-violet-800 ring-1 ring-violet-500/15 dark:text-violet-200"
+                : missed
+                  ? "bg-red-500/10 text-red-700 dark:text-red-300"
+                  : completed
+                    ? "bg-emerald-600/10 text-emerald-700 dark:text-emerald-400"
+                    : cancelled
+                      ? "bg-muted/60 text-muted-foreground/60"
+                      : "bg-muted text-foreground"
+          }`}
         >
           <span className="inline-flex w-full items-center justify-center whitespace-nowrap text-[16px] font-black tabular-nums leading-none tracking-normal md:text-[17px]">
             {time}
           </span>
           <span className="mt-1 inline-flex w-full items-center justify-center whitespace-nowrap text-[9px] font-semibold tabular-nums leading-none opacity-55">
-            {timeEnd}
+            até {timeEnd}
           </span>
         </div>
 
@@ -2523,7 +2587,7 @@ function AppointmentCard({
           </p>
           {a.staff?.name && (
             <p className="mt-0.5 min-w-0 break-words text-[11px] font-medium leading-snug text-muted-foreground/85">
-              {a.staff.name}
+              Profissional · {a.staff.name}
             </p>
           )}
           {a.public_token && canViewSensitiveDetails && (
@@ -2572,6 +2636,7 @@ function AppointmentCard({
         <div className="col-span-4 flex min-w-0 items-start justify-between gap-2 md:contents">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 md:col-start-4 md:row-start-1 md:flex-col md:items-start md:gap-1">
             {canViewSensitiveDetails ? <StatusChip status={a.status} /> : <SharedAgendaChip />}
+            <TimelineChip state={timelineState} isNext={isNextAppointment} />
             {canViewSensitiveDetails && <FinancialStatusChip summary={financialSummary} />}
             {canViewSensitiveDetails && isBirthdayThisWeek(a.clients?.date_of_birth) && (
               <span className="max-w-full rounded-full bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold uppercase leading-tight tracking-wide text-amber-700 dark:text-amber-300">
@@ -3206,6 +3271,42 @@ function SheetItem({
 }
 
 // ─── Status Chip ──────────────────────────────────────────────────────────────
+
+function TimelineChip({
+  state,
+  isNext,
+}: {
+  state: AgendaTimelineState;
+  isNext: boolean;
+}) {
+  if (state === "current") {
+    return (
+      <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-amber-500/12 px-2 py-0.5 text-[9px] font-bold uppercase leading-tight tracking-wide text-amber-800 dark:text-amber-300">
+        <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
+        Agora
+      </span>
+    );
+  }
+  if (isNext) {
+    return (
+      <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-violet-500/12 px-2 py-0.5 text-[9px] font-bold uppercase leading-tight tracking-wide text-violet-800 dark:text-violet-300">
+        <Clock className="h-2.5 w-2.5" />
+        Próximo atendimento
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`inline-flex max-w-full items-center rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide ${
+        state === "past"
+          ? "bg-muted text-muted-foreground/80"
+          : "bg-blue-500/8 text-blue-700/80 dark:text-blue-300/80"
+      }`}
+    >
+      {state === "past" ? "Horário passado" : "Mais tarde"}
+    </span>
+  );
+}
 
 function StatusChip({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
