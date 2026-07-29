@@ -150,22 +150,39 @@ export const savePushSubscription = createServerFn({ method: "POST" })
     const { error } = await (sb as any)
       .from("push_subscriptions")
       .upsert(payload, { onConflict: "endpoint,studio_id" });
-    if (error) throw new Error(error.message);
-
-    if (!existing?.id) {
+    if (error) {
       await insertNotificationLog(sb, {
         studioId,
         channel: data.audience === "client" ? "push_client" : "push_studio",
         kind: "push_subscription",
         recipient: `user:${userId}`,
-        status: "active",
+        status: "failed",
+        error: `subscription_store_${error.code ?? "database_error"}`,
         payload: {
-          event: "push_subscription_registered",
+          event: "push_subscription_store_failed",
           audience,
           endpoint: maskEndpoint(data.subscription.endpoint),
+          browser: request?.headers.get("user-agent")?.slice(0, 250) || null,
         },
       });
+      throw new Error(error.message);
     }
+
+    await insertNotificationLog(sb, {
+      studioId,
+      channel: data.audience === "client" ? "push_client" : "push_studio",
+      kind: "push_subscription",
+      recipient: `user:${userId}`,
+      status: "active",
+      payload: {
+        event: existing?.id
+          ? "push_subscription_refreshed"
+          : "push_subscription_registered",
+        audience,
+        endpoint: maskEndpoint(data.subscription.endpoint),
+        browser: request?.headers.get("user-agent")?.slice(0, 250) || null,
+      },
+    });
 
     if (clientId) {
       await (sb as any)

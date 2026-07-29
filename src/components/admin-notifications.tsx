@@ -28,8 +28,10 @@ import {
   sendTestPushNotification,
 } from "@/lib/push-subscriptions.functions";
 import {
+  pushActivationMessage,
   requestPushSubscription,
   shouldRefreshStoredPushSubscription,
+  type PushActivationCode,
 } from "@/lib/pwa-push";
 import { syncStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 import { ClientAvatar } from "@/components/client-avatar";
@@ -80,6 +82,8 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     "unsupported",
   );
   const [pushNeedsAttention, setPushNeedsAttention] = useState(false);
+  const [pushActivating, setPushActivating] = useState(false);
+  const [pushActivationCode, setPushActivationCode] = useState<PushActivationCode | null>(null);
 
   const registerStudioPush = useCallback(
     async (options: { forceRenew?: boolean } = {}): Promise<boolean> => {
@@ -97,6 +101,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
               : "unsupported",
           );
           if (result.permission !== "granted" || !result.subscription) {
+            setPushActivationCode(result.permission);
             setPushNeedsAttention(true);
             return false;
           }
@@ -115,6 +120,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
           }
 
           setPushNeedsAttention(!saved.ok);
+          setPushActivationCode(saved.ok ? "granted" : "subscription_failed");
           return saved.ok;
         }
         setPushNeedsAttention(true);
@@ -355,50 +361,64 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   }, [open]);
 
   async function requestPermission() {
-    if (typeof window === "undefined" || !("Notification" in window)) return;
-    const result = await requestPushSubscription();
-    const next = result.permission;
-    localStorage.setItem(permissionStorageKey, "true");
-    if (next === "missing_vapid_key") {
-      toast.message("Não foi possível ativar notificações agora. Tente novamente em instantes.");
-      return;
-    }
-    if (next === "unsupported") {
-      toast.message("As notificações push não estão disponíveis neste navegador.");
-      return;
-    }
-    if (next === "insecure_context") {
-      toast.message("As notificações push exigem HTTPS. Abra pelo domínio oficial da Bellza.");
-      return;
-    }
-    if (next === "push_unsupported") {
-      toast.message("Este navegador não suporta push neste modo. No iPhone, use o PWA instalado.");
-      return;
-    }
-    setPermission(next);
-    if (next === "granted" && result.subscription) {
+    if (typeof window === "undefined") return;
+    setPushActivating(true);
+    try {
+      const result = await requestPushSubscription();
+      const next = result.permission;
+      setPushActivationCode(next);
+      localStorage.setItem(permissionStorageKey, "true");
+      if (next === "granted" || next === "denied" || next === "default") {
+        setPermission(next);
+      } else {
+        setPermission("unsupported");
+      }
+
+      if (next !== "granted" || !result.subscription) {
+        setPushNeedsAttention(true);
+        toast.message(pushActivationMessage(next));
+        return;
+      }
+
       const saved = (await persistPushSubscription({
         data: {
           audience: "studio",
           studioId,
           subscription: result.subscription,
         },
-      })) as { ok: boolean; requiresRenewal?: boolean };
+      })) as { ok: boolean; requiresRenewal?: boolean; reason?: string };
       const activated = saved.requiresRenewal
         ? await registerStudioPush({ forceRenew: true })
         : saved.ok;
       setPushNeedsAttention(!activated);
+      setPushActivationCode(activated ? "granted" : "subscription_failed");
       if (activated) {
-        toast.success("Avisos push ativados neste dispositivo.");
-        void sendTestPush({ data: { audience: "studio", studioId } });
+        toast.success(
+          result.alreadySubscribed
+            ? "As notificações já estavam ativadas neste dispositivo."
+            : "Notificações ativadas e guardadas neste dispositivo.",
+        );
+        void sendTestPush({ data: { audience: "studio", studioId } }).catch((error) => {
+          console.warn("[push] studio_test_delivery_failed", {
+            studioId,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        });
       } else {
-        toast.message("Não foi possível concluir a ativação. Tente novamente.");
+        toast.message("A subscrição não foi guardada. Toque em Reativar notificações.");
       }
-    } else if (next === "denied") {
+    } catch (error) {
       setPushNeedsAttention(true);
+      setPushActivationCode("subscription_failed");
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn("[push] studio_activation_backend_failed", { studioId, reason });
       toast.message(
-        "As notificações estão bloqueadas. Autorize a Bellza nas definições do navegador.",
+        /401|unauthorized|session/i.test(reason)
+          ? "A sessão expirou. Inicie sessão novamente para ativar notificações."
+          : "Erro temporário do servidor. Toque em Reativar notificações.",
       );
+    } finally {
+      setPushActivating(false);
     }
   }
 
@@ -487,15 +507,28 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-        {permission !== "granted" && (
+        {(permission !== "granted" || pushNeedsAttention || pushActivating) && (
           <button
             type="button"
             onClick={requestPermission}
+            disabled={pushActivating}
             className="mt-3 flex w-full items-center gap-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-left text-xs text-emerald-700 transition hover:bg-emerald-500/15 dark:text-emerald-300"
           >
             <Settings className="h-3.5 w-3.5 shrink-0" />
-            Ativar avisos do navegador neste dispositivo
+            {pushActivating
+              ? "A ativar…"
+              : permission === "denied"
+                ? "Permissão bloqueada"
+                : pushNeedsAttention || pushActivationCode
+                  ? "Reativar notificações"
+                  : "Ativar notificações"}
           </button>
+        )}
+        {permission === "granted" && !pushNeedsAttention && !pushActivating && (
+          <div className="mt-3 flex w-full items-center gap-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+            <BellRing className="h-3.5 w-3.5 shrink-0" />
+            Notificações ativadas neste dispositivo
+          </div>
         )}
       </div>
 

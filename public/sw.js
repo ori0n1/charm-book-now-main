@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bellza-pwa-v20260729-push-receipts";
+const CACHE_VERSION = "bellza-pwa-v20260729-push-activation-fix";
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const IS_UPDATE = Boolean(self.registration.active);
 const STATIC_ASSETS = [
@@ -108,7 +108,14 @@ self.addEventListener("push", (event) => {
   const received = acknowledgePushReceipt(receipt, "received");
   const displayed = self.registration
     .showNotification(title, options)
-    .then(() => acknowledgePushReceipt(receipt, "displayed"));
+    .then(() => acknowledgePushReceipt(receipt, "displayed"))
+    .catch((error) => {
+      console.error("[push] notification_display_failed", {
+        deliveryId: receipt.deliveryId || null,
+        code: error?.name || "show_notification_failed",
+      });
+      throw error;
+    });
 
   event.waitUntil(Promise.allSettled([received, displayed]));
 });

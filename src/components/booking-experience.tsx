@@ -3,6 +3,7 @@ import {
   type FormEvent,
   type ReactNode,
   type TouchEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -97,7 +98,12 @@ import {
 import { dispatchRecentStudioAppointmentPushNotification } from "@/lib/notification-dispatcher.server";
 import { sendPublicAppointmentConfirmationForAppointment } from "@/lib/whatsapp.functions";
 import { savePushSubscription, sendTestPushNotification } from "@/lib/push-subscriptions.functions";
-import { requestPushSubscription } from "@/lib/pwa-push";
+import {
+  isIosDevice,
+  isStandalonePwa,
+  pushActivationMessage,
+  requestPushSubscription,
+} from "@/lib/pwa-push";
 import {
   createGoogleNoncePair,
   getGoogleIdentity,
@@ -512,6 +518,30 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const [notificationsConsent, setNotificationsConsent] = useState<"unknown" | "granted" | "denied">(
     "unknown",
   );
+  const registerClientBrowserPush = useCallback(
+    async (forceRenew = false) => {
+      if (!user?.id || !studio.id) return false;
+      let renew = forceRenew;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const result = await requestPushSubscription({ forceRenew: renew });
+        if (result.permission !== "granted" || !result.subscription) return false;
+        const saved = (await persistPushSubscription({
+          data: {
+            audience: "client",
+            studioId: studio.id,
+            subscription: result.subscription,
+          },
+        })) as { ok: boolean; requiresRenewal?: boolean };
+        if (saved.requiresRenewal && !renew) {
+          renew = true;
+          continue;
+        }
+        return saved.ok;
+      }
+      return false;
+    },
+    [persistPushSubscription, studio.id, user?.id],
+  );
   const [showEntryBanner, setShowEntryBanner] = useState(false);
   const [accountDrawerSignal, setAccountDrawerSignal] = useState(0);
   const [followStatus, setFollowStatus] = useState(false);
@@ -855,46 +885,30 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     if (typeof window === "undefined" || !("Notification" in window)) return;
     if (Notification.permission !== "granted") return;
     let cancelled = false;
-    requestPushSubscription()
-      .then((result) => {
-        if (cancelled || result.permission !== "granted" || !result.subscription) return;
-        setNotificationsConsent("granted");
-        return persistPushSubscription({
-          data: {
-            audience: "client",
-            studioId: studio.id,
-            subscription: result.subscription,
-          },
-        });
+    registerClientBrowserPush()
+      .then((active) => {
+        if (!cancelled && active) setNotificationsConsent("granted");
       })
       .catch((error) => console.warn("client_push_auto_register_failed", error));
     return () => {
       cancelled = true;
     };
-  }, [persistPushSubscription, studio.id, user?.id]);
+  }, [registerClientBrowserPush, studio.id, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !studio.id) return;
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type !== "BELLZA_PUSH_SUBSCRIPTION_CHANGED") return;
-      void requestPushSubscription({ forceRenew: true })
-        .then((result) => {
-          if (result.permission !== "granted" || !result.subscription) return;
-          setNotificationsConsent("granted");
-          return persistPushSubscription({
-            data: {
-              audience: "client",
-              studioId: studio.id,
-              subscription: result.subscription,
-            },
-          });
+      void registerClientBrowserPush(true)
+        .then((active) => {
+          if (active) setNotificationsConsent("granted");
         })
         .catch((error) => console.warn("client_push_subscription_refresh_failed", error));
     };
     navigator.serviceWorker.addEventListener("message", handleMessage);
     return () => navigator.serviceWorker.removeEventListener("message", handleMessage);
-  }, [persistPushSubscription, studio.id, user?.id]);
+  }, [registerClientBrowserPush, studio.id, user?.id]);
 
   // Load follow status and followed studios when user authenticates
   useEffect(() => {
@@ -1566,10 +1580,8 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     // iOS Safari in browser mode: Notification API is only available inside a
     // PWA (home screen). Guide the user to install first instead of showing a
     // generic "not supported" error.
-    const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const isStandalone =
-      ("standalone" in navigator && (navigator as any).standalone === true) ||
-      window.matchMedia("(display-mode: standalone)").matches;
+    const isIos = isIosDevice();
+    const isStandalone = isStandalonePwa();
 
     if (!("Notification" in window)) {
       if (isIos && !isStandalone) {
@@ -1592,46 +1604,76 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     }
 
     try {
-      const result = await requestPushSubscription();
-      const permission = result.permission;
-      if (permission === "missing_vapid_key") {
-        toast.message("Não foi possível ativar notificações agora. Tente novamente em instantes.");
-        setNotificationsConsent("unknown");
+      let result = await requestPushSubscription();
+      let permission = result.permission;
+      setNotificationsConsent(
+        permission === "granted" ? "granted" : permission === "denied" ? "denied" : "unknown",
+      );
+
+      if (permission !== "granted" || !result.subscription) {
+        toast.message(pushActivationMessage(permission));
         return;
       }
-      if (permission === "unsupported") {
-        toast.message("As notificações push não estão disponíveis neste navegador.");
+      if (!user?.id) {
         setNotificationsConsent("unknown");
+        toast.message("Inicie sessão para guardar as notificações neste dispositivo.");
         return;
       }
-      if (permission === "insecure_context") {
-        toast.message("As notificações push exigem HTTPS. Abra pelo domínio oficial da Bellza.");
-        setNotificationsConsent("unknown");
-        return;
-      }
-      if (permission === "push_unsupported") {
-        toast.message("Este navegador não suporta push neste modo. No iPhone, use o PWA instalado.");
-        setNotificationsConsent("unknown");
-        return;
-      }
-      setNotificationsConsent(permission === "default" ? "unknown" : permission);
-      if (permission === "granted") {
-        if (result.subscription && user?.id) {
-          await persistPushSubscription({
+
+      let saved = (await persistPushSubscription({
+        data: {
+          audience: "client",
+          studioId: studio.id,
+          subscription: result.subscription,
+        },
+      })) as { ok: boolean; requiresRenewal?: boolean };
+
+      if (saved.requiresRenewal) {
+        result = await requestPushSubscription({ forceRenew: true });
+        permission = result.permission;
+        if (permission !== "granted" || !result.subscription) {
+          setNotificationsConsent(permission === "denied" ? "denied" : "unknown");
+          toast.message(pushActivationMessage(permission));
+          return;
+        }
+        saved = (await persistPushSubscription({
             data: {
               audience: "client",
               studioId: studio.id,
               subscription: result.subscription,
             },
-          });
-          void sendTestPush({ data: { audience: "client", studioId: studio.id } });
-        }
-        toast.success("Notificações ativadas! Você receberá avisos importantes do app do estúdio.");
-      } else {
-        toast.message("Você pode ativar notificações mais tarde nas definições do navegador.");
+          })) as { ok: boolean; requiresRenewal?: boolean };
       }
-    } catch {
-      toast.message("Não foi possível pedir permissão. Tenta novamente.");
+
+      if (!saved.ok) {
+        setNotificationsConsent("unknown");
+        toast.message("A subscrição não foi guardada. Toque em Reativar notificações.");
+        return;
+      }
+
+      setNotificationsConsent("granted");
+      void sendTestPush({ data: { audience: "client", studioId: studio.id } }).catch((error) => {
+        console.warn("[push] client_test_delivery_failed", {
+          studioId: studio.id,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
+      toast.success(
+        result.alreadySubscribed
+          ? "As notificações já estavam ativadas neste dispositivo."
+          : "Notificações ativadas e guardadas neste dispositivo.",
+      );
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn("[push] client_activation_backend_failed", {
+        studioId: studio.id,
+        reason,
+      });
+      toast.message(
+        /401|unauthorized|session/i.test(reason)
+          ? "A sessão expirou. Inicie sessão novamente para ativar notificações."
+          : "Erro temporário do servidor. Tente ativar novamente.",
+      );
     }
   }
 

@@ -13,6 +13,46 @@ test("does not force-renew healthy browser push subscriptions during automatic r
   expect(booking).not.toContain("forceRenew: shouldRefreshStoredPushSubscription");
 });
 
+test("production build injects and validates the public VAPID key from JSONC", async () => {
+  const [viteConfig, browserPush, worker] = await Promise.all([
+    readFile("vite.config.ts", "utf8"),
+    readFile("src/lib/pwa-push.ts", "utf8"),
+    readFile("public/sw.js", "utf8"),
+  ]);
+
+  expect(viteConfig).toContain('"VITE_VAPID_PUBLIC_KEY"\\s*:\\s*');
+  expect(viteConfig).not.toContain("JSON.parse(readFileSync");
+  expect(viteConfig).toContain("VITE_VAPID_PUBLIC_KEY is required");
+  expect(browserPush).toContain("bytes.length === 65 && bytes[0] === 4");
+  expect(worker).toContain('self.addEventListener("push"');
+  expect(worker).toContain('self.addEventListener("notificationclick"');
+});
+
+test("push activation has explicit iOS, permission, worker and subscription states", async () => {
+  const [browserPush, admin, booking] = await Promise.all([
+    readFile("src/lib/pwa-push.ts", "utf8"),
+    readFile("src/components/admin-notifications.tsx", "utf8"),
+    readFile("src/components/booking-experience.tsx", "utf8"),
+  ]);
+
+  for (const state of [
+    "pwa_install_required",
+    "service_worker_timeout",
+    "service_worker_failed",
+    "subscription_failed",
+    "invalid_subscription",
+  ]) {
+    expect(browserPush).toContain(`"${state}"`);
+  }
+  expect(browserPush).toContain("await Notification.requestPermission()");
+  expect(browserPush.indexOf("await Notification.requestPermission()")).toBeLessThan(
+    browserPush.indexOf("await getReadyServiceWorkerRegistration()"),
+  );
+  expect(admin).toContain("Notificações ativadas neste dispositivo");
+  expect(admin).toContain("Reativar notificações");
+  expect(booking).toContain("pushActivationMessage(permission)");
+});
+
 test("sends Web Push with high urgency", async () => {
   const source = await readFile("src/lib/web-push.server.ts", "utf8");
   expect(source).toContain('Urgency: "high"');
