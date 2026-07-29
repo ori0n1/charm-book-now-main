@@ -160,11 +160,37 @@ function ClientAppointmentPage() {
     if (!appointment || busy) return;
     setBusy(`reschedule:${slot.startsAt}`);
     try {
-      setAppointment((await rescheduleAppointment({ data: { token, staffId: slot.staffId, startsAt: slot.startsAt } })) as AppointmentView);
+      if (import.meta.env.DEV) {
+        console.debug("[client-reschedule] request", {
+          selectedDate: rescheduleDate,
+          selectedTime: slot.label,
+          startsAt: slot.startsAt,
+          payload: { staffId: slot.staffId, startsAt: slot.startsAt },
+        });
+      }
+      const updatedAppointment = (await rescheduleAppointment({
+        data: { token, staffId: slot.staffId, startsAt: slot.startsAt },
+      })) as AppointmentView;
+      if (import.meta.env.DEV) {
+        console.debug("[client-reschedule] response", {
+          startsAt: updatedAppointment.startsAt,
+          endsAt: updatedAppointment.endsAt,
+          status: updatedAppointment.status,
+        });
+      }
+      setAppointment(updatedAppointment);
       setPanel("");
       toast.success("Marcação remarcada.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível remarcar.");
+      if (import.meta.env.DEV) {
+        console.error("[client-reschedule] failed", {
+          selectedDate: rescheduleDate,
+          selectedTime: slot.label,
+          startsAt: slot.startsAt,
+          error,
+        });
+      }
+      toast.error("Não foi possível remarcar o agendamento. Tente novamente em alguns instantes.");
     } finally {
       setBusy("");
     }

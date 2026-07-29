@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { normalizeAppointmentStart } from "@/lib/appointment-datetime";
 import {
   getBookingManageability,
   getStudioBookingActionSetting,
@@ -75,7 +76,13 @@ export const getClientRescheduleSlots = createServerFn({ method: "POST" })
 
 export const rescheduleClientAppointment = createServerFn({ method: "POST" })
   .inputValidator((input) =>
-    z.object({ token: z.string().min(16), staffId: z.string().uuid(), startsAt: z.string().datetime() }).parse(input),
+    z
+      .object({
+        token: z.string().min(16),
+        staffId: z.string().uuid(),
+        startsAt: z.unknown().transform(normalizeAppointmentStart),
+      })
+      .parse(input),
   )
   .handler(async ({ data }) => {
     const sb = admin();
