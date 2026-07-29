@@ -89,7 +89,7 @@ export function getStudioPublicUrl(): string {
 }
 
 export const categories: Category[] = [
-  { id: "all", label: "Todos" },
+  { id: "all", label: "Todos os serviços" },
   { id: "nails", label: "Unhas" },
   { id: "skincare", label: "Facial" },
   { id: "lashes", label: "Pestanas" },

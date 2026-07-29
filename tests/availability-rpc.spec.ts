@@ -76,6 +76,7 @@ test("get_available_slots returns real future availability for active Bellza sta
     .select("id, name, duration_min, is_active")
     .eq("studio_id", STUDIO_ID)
     .eq("is_active", true)
+    .gt("duration_min", 0)
     .order("duration_min", { ascending: true });
 
   expect(servicesError).toBeNull();

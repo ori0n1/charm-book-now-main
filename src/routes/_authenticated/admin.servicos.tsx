@@ -573,6 +573,9 @@ function ServiceModal({
   async function save() {
     if (!name.trim()) return toast.error("Nome obrigatório");
     if (existingService) return toast.error("Este serviço já existe no estúdio");
+    if (!Number.isInteger(duration) || duration < 0) {
+      return toast.error("A duração deve ser um número inteiro igual ou superior a 0.");
+    }
     setSaving(true);
     let finalCategoryId = categoryId;
     if (!finalCategoryId) {
@@ -752,12 +755,15 @@ function ServiceModal({
               <span className="text-muted-foreground">Duração (min)</span>
               <input
                 type="number"
-                min={5}
+                min={0}
                 step={5}
                 value={duration}
                 onChange={(e) => setDuration(Number(e.target.value))}
                 className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
+              <span className="mt-1 block text-[10px] leading-tight text-muted-foreground">
+                Use 0 para extras que não aumentam o tempo da marcação.
+              </span>
             </label>
             <label className="text-xs">
               <span className="text-muted-foreground">Preço (€)</span>
@@ -1364,14 +1370,18 @@ function UpsellEditor({
                         <span className="text-muted-foreground">Duração nesta oferta</span>
                         <input
                           type="number"
-                          min={1}
+                          min={0}
                           step="1"
                           value={r.duration_min ?? ""}
                           placeholder={`${offered.duration_min} min`}
                           onChange={(e) => {
-                            const value = Number(e.target.value);
+                            const rawValue = e.target.value;
+                            const value = Number(rawValue);
                             updateRow(r.rowKey, {
-                              duration_min: value > 0 ? Math.round(value) : null,
+                              duration_min:
+                                rawValue === "" || !Number.isFinite(value)
+                                  ? null
+                                  : Math.max(0, Math.round(value)),
                             });
                           }}
                           className="mt-1 min-h-11 w-full rounded-xl border border-border bg-background px-3 text-sm"

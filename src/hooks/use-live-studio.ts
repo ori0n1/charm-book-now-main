@@ -59,7 +59,9 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
   const [state, setState] = useState<LiveData>({
     studio: staticStudio as LiveStudio,
     services: allowStaticFallback ? staticServices : [],
-    categories: allowStaticFallback ? staticCategories : [{ id: "all", label: "Todos" }],
+    categories: allowStaticFallback
+      ? staticCategories
+      : [{ id: "all", label: "Todos os serviços" }],
     professionals: allowStaticFallback ? staticProfessionals : [],
     upsellsByServiceId: {},
     ready: false,
@@ -153,10 +155,13 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
 
     const liveCategories: Category[] =
       cats && cats.length
-        ? [{ id: "all", label: "Todos" }, ...cats.map((c) => ({ id: c.id, label: c.label }))]
+        ? [
+            { id: "all", label: "Todos os serviços" },
+            ...cats.map((c) => ({ id: c.id, label: c.label })),
+          ]
         : allowStaticFallback
           ? staticCategories
-          : [{ id: "all", label: "Todos" }];
+          : [{ id: "all", label: "Todos os serviços" }];
 
     const liveServices: Service[] =
       svc && svc.length

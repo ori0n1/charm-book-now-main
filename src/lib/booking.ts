@@ -137,7 +137,8 @@ function translateBookingError(msg: string): string {
   if (msg.includes("studio_not_available"))
     return "Este estúdio não está disponível para novas reservas neste momento. Contacte o estúdio.";
   if (msg.includes("staff_not_found")) return "Profissional indisponível.";
-  if (msg.includes("invalid_services")) return "Serviços inválidos. Recomece a reserva.";
+  if (msg.includes("invalid_services"))
+    return "Adicione pelo menos um serviço com duração para escolher um horário.";
   if (msg.includes("no_services")) return "Escolha pelo menos um serviço.";
   if (msg.includes("payment_not_succeeded"))
     return "O pagamento ainda não foi confirmado. Aguarde a confirmação ou tente novamente.";

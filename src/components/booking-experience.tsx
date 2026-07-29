@@ -70,6 +70,12 @@ import {
 import { buildPublicAuthCallbackUrl, rememberPublicAuthReturn } from "@/lib/auth-context";
 import { createPublicBooking } from "@/lib/booking";
 import {
+  buildPublicServiceCategories,
+  filterPublicServices,
+  hasBookableDuration,
+  sumServiceDuration,
+} from "@/lib/service-catalog";
+import {
   ensurePublicClientProfile,
   finalizePublicClientBooking,
   getPublicClientArea,
@@ -991,6 +997,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       toast.error("Escolha pelo menos um serviço para continuar.");
       return;
     }
+    if (!hasBookableDuration(selectedServices)) {
+      toast.error("Adicione pelo menos um serviço com duração para escolher um horário.");
+      return;
+    }
     const requiredIds = selectedServices.map((item) => item.id);
     const eligible = professionals.filter(
       (p) => p.serviceIds.length === 0 || professionalCanPerformServices(p, requiredIds),
@@ -1122,20 +1132,15 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     }
   }
 
-  const publicCategories = useMemo(
-    () =>
-      categories.filter((category) => services.some((service) => service.category === category.id)),
-    [categories, services],
-  );
   const bookingCategories = useMemo(
-    () => publicCategories,
-    [publicCategories],
+    () => buildPublicServiceCategories(categories, services),
+    [categories, services],
   );
   const activeCategoryId = bookingCategories.some((category) => category.id === categoryId)
     ? categoryId
     : bookingCategories[0]?.id;
   const filteredServices = useMemo(
-    () => (activeCategoryId ? services.filter((service) => service.category === activeCategoryId) : []),
+    () => filterPublicServices(services, activeCategoryId),
     [activeCategoryId, services],
   );
 
@@ -1242,10 +1247,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   }, [step, upsells]);
 
   const upsellsTotal = addedUpsellsPricing.finalTotal;
-  const upsellsDuration = addedUpsells.reduce((sum, u) => sum + u.durationMin, 0);
+  const upsellsDuration = sumServiceDuration(addedUpsells);
   const upsellsSavings = addedUpsellsPricing.savingsTotal;
   const servicesTotal = selectedServices.reduce((sum, item) => sum + item.price, 0);
-  const servicesDuration = selectedServices.reduce((sum, item) => sum + item.durationMin, 0);
+  const servicesDuration = sumServiceDuration(selectedServices);
 
   const total = servicesTotal + upsellsTotal;
   const totalDuration = servicesDuration + upsellsDuration;

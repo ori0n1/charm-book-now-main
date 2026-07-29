@@ -1691,6 +1691,9 @@ function ServicesPicker({
   async function createService() {
     const trimmed = newServiceName.trim();
     if (!trimmed) return toast.error("Digite o nome do serviço");
+    if (!Number.isInteger(newServiceDuration) || newServiceDuration < 0) {
+      return toast.error("A duração deve ser um número inteiro igual ou superior a 0.");
+    }
 
     const existing = services.find((s) => normalizeText(s.name) === normalizeText(trimmed));
     if (existing) {
@@ -2063,7 +2066,7 @@ function ServicesPicker({
               Duração (min)
               <input
                 type="number"
-                min={5}
+                min={0}
                 step={5}
                 value={newServiceDuration}
                 onChange={(e) => setNewServiceDuration(Number(e.target.value))}
