@@ -1,6 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { getBookingManageability } from "@/lib/booking-manageability";
+import {
+  getBookingManageability,
+  getStudioBookingActionSetting,
+} from "@/lib/booking-manageability";
 import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 import { getPublicReservationCode } from "@/lib/reservation-code";
 import { getAdminClient } from "@/lib/supabase-admin.server";
@@ -122,7 +125,7 @@ export const cancelClientAppointment = createServerFn({ method: "POST" })
       throw new Error(policy.blockReason);
     }
 
-    const { error } = await sb
+    const { data: cancelledAppointment, error } = await sb
       .from("appointments")
       .update({
         status: "cancelled",
@@ -130,8 +133,13 @@ export const cancelClientAppointment = createServerFn({ method: "POST" })
         updated_at: new Date().toISOString(),
       })
       .eq("id", appt.id)
-      .eq("status", appt.status);
+      .eq("status", appt.status)
+      .select("id")
+      .maybeSingle();
     if (error) throw new Error(error.message);
+    if (!cancelledAppointment?.id) {
+      throw new Error("A reserva foi atualizada entretanto. Recarregue a página e tente novamente.");
+    }
 
     const fresh = await loadAppointmentByToken(sb, data.token);
     await logClientAction(sb, fresh ?? appt, "cancel", "succeeded", "cancelled");
@@ -249,6 +257,14 @@ async function buildAppointmentPayload(sb: any, appt: any) {
 }
 
 function getActionPolicy(appt: any) {
+  const cancellation = getStudioBookingActionSetting(
+    appt.studios?.studio_policy_settings,
+    "cancellation",
+  );
+  const reschedule = getStudioBookingActionSetting(
+    appt.studios?.studio_policy_settings,
+    "reschedule",
+  );
   return getBookingManageability(
     {
       startsAt: appt.starts_at,
@@ -257,8 +273,11 @@ function getActionPolicy(appt: any) {
       status: appt.status,
     },
     {
-      cancellationNoticeHours: appt.studios?.cancellation_min_notice_hours,
-      rescheduleNoticeHours: getRescheduleNoticeHours(appt.studios?.studio_policy_settings),
+      cancellationEnabled: cancellation.enabled,
+      rescheduleEnabled: reschedule.enabled,
+      cancellationNoticeHours:
+        cancellation.noticeHours ?? appt.studios?.cancellation_min_notice_hours,
+      rescheduleNoticeHours: reschedule.noticeHours,
       afterDeadlinePolicy: appt.studios?.cancellation_after_deadline_policy,
       refundRequestsEnabled: appt.studios?.refund_requests_enabled,
       paymentPolicy: appt.studios?.payment_policy,
@@ -266,13 +285,6 @@ function getActionPolicy(appt: any) {
     },
     appt.studios?.timezone,
   );
-}
-
-function getRescheduleNoticeHours(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const reschedule = (value as { reschedule?: { notice_hours?: unknown } }).reschedule;
-  const hours = Number(reschedule?.notice_hours);
-  return Number.isFinite(hours) && hours >= 0 ? hours : null;
 }
 
 async function getAppointmentDuration(sb: any, appt: any) {

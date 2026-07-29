@@ -212,6 +212,18 @@ type PublicClientAreaPayload = {
     services: Array<{ name: string; price: number; durationMin: number }>;
     canOpen: boolean;
     isUpcoming: boolean;
+    policy: {
+      canCancel: boolean;
+      canReschedule: boolean;
+      noticeHours: number;
+      rescheduleNoticeHours: number;
+      deadlineText: string;
+      rescheduleDeadlineText: string;
+      blockReason: string;
+      rescheduleBlockReason: string;
+      manageabilityText: string;
+      rescheduleManageabilityText: string;
+    };
   }>;
   pendingPayments: Array<{
     appointmentId: string | null;
@@ -6128,6 +6140,96 @@ function ClientAccountArea({
     );
   }
 
+  function ReservationManagementActions({
+    appointment,
+  }: {
+    appointment: PublicClientAreaPayload["appointments"][number];
+  }) {
+    const secureLinkAvailable = Boolean(appointment.token && appointment.canOpen);
+    const canReschedule = secureLinkAvailable && Boolean(appointment.policy?.canReschedule);
+    const canCancel = secureLinkAvailable && Boolean(appointment.policy?.canCancel);
+    const unavailableLinkReason =
+      "Esta reserva não possui um link seguro para alterações. Fale com o estúdio.";
+    const rescheduleReason = secureLinkAvailable
+      ? appointment.policy?.rescheduleBlockReason
+      : unavailableLinkReason;
+    const cancellationReason = secureLinkAvailable
+      ? appointment.policy?.blockReason
+      : unavailableLinkReason;
+    const managementUrl = appointment.token
+      ? `/marcacao/${encodeURIComponent(appointment.token)}`
+      : "";
+
+    return (
+      <div className="mt-3 border-t border-border/70 pt-3">
+        <div className="grid grid-cols-2 gap-2">
+          {canReschedule ? (
+            <a
+              href={`${managementUrl}?acao=remarcar`}
+              className="inline-flex min-h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-background px-2.5 text-xs font-extrabold text-foreground transition hover:bg-muted active:scale-[0.98]"
+            >
+              <RefreshCcw className="size-3.5 shrink-0" />
+              Remarcar
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="inline-flex min-h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-muted/40 px-2.5 text-xs font-extrabold text-muted-foreground opacity-60"
+            >
+              <RefreshCcw className="size-3.5 shrink-0" />
+              Remarcar
+            </button>
+          )}
+          {canCancel ? (
+            <a
+              href={`${managementUrl}?acao=cancelar`}
+              className="inline-flex min-h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-red-500/25 bg-red-500/[0.04] px-2.5 text-xs font-extrabold text-red-700 transition hover:bg-red-500/10 active:scale-[0.98] dark:text-red-300"
+            >
+              <CalendarOff className="size-3.5 shrink-0" />
+              Cancelar reserva
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="inline-flex min-h-10 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-muted/40 px-2.5 text-xs font-extrabold text-muted-foreground opacity-60"
+            >
+              <CalendarOff className="size-3.5 shrink-0" />
+              Cancelar reserva
+            </button>
+          )}
+        </div>
+        {(!canReschedule || !canCancel) && (
+          <div className="mt-2 rounded-xl bg-amber-500/8 px-3 py-2 text-[11px] leading-relaxed text-amber-900 dark:text-amber-200">
+            {!canReschedule && (
+              <p>
+                <span className="font-extrabold">Remarcação:</span>{" "}
+                {rescheduleReason || "A política do estúdio não permite esta ação."}
+              </p>
+            )}
+            {!canCancel && (
+              <p className={cn(!canReschedule && "mt-1")}>
+                <span className="font-extrabold">Cancelamento:</span>{" "}
+                {cancellationReason || "A política do estúdio não permite esta ação."}
+              </p>
+            )}
+          </div>
+        )}
+        {(canReschedule || canCancel) && (
+          <div className="mt-2 space-y-0.5 text-[10px] leading-relaxed text-muted-foreground">
+            {canReschedule && <p>{appointment.policy.rescheduleManageabilityText}</p>}
+            {canCancel &&
+              appointment.policy.manageabilityText !==
+                appointment.policy.rescheduleManageabilityText && (
+                <p>{appointment.policy.manageabilityText}</p>
+              )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function HistoryCard({ appointment }: { appointment: PublicClientAreaPayload["appointments"][number] }) {
     const isReviewed = reviewedApptIds.has(appointment.id);
     const isReviewable = appointment.status === "completed" && appointment.paidAmount > 0;
@@ -6633,6 +6735,7 @@ function ClientAccountArea({
                           )}
                         </div>
                       )}
+                      <ReservationManagementActions appointment={appointment} />
                     </div>
                   )}
                 />

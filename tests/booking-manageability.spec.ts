@@ -70,6 +70,49 @@ test.describe("booking manageability", () => {
     expect(result.rescheduleStatusReason).toBe("deadline_expired");
   });
 
+  test("respects independent studio switches for cancellation and reschedule", () => {
+    const result = getBookingManageability(
+      {
+        startsAt: "2026-07-03T09:00:00+01:00",
+        endsAt: "2026-07-03T10:00:00+01:00",
+        createdAt: "2026-07-01T12:45:00+01:00",
+        status: "confirmed",
+      },
+      {
+        ...policy,
+        cancellationEnabled: false,
+        rescheduleEnabled: true,
+      },
+      "Europe/Lisbon",
+      "2026-07-02T08:30:00+01:00",
+    );
+
+    expect(result.canCancel).toBe(false);
+    expect(result.canReschedule).toBe(true);
+    expect(result.statusReason).toBe("disabled_by_studio");
+    expect(result.blockReason).toBe("O estúdio não permite cancelamentos online.");
+  });
+
+  test("never allows completed or no-show reservations to be changed", () => {
+    for (const status of ["completed", "no_show"]) {
+      const result = getBookingManageability(
+        {
+          startsAt: "2026-07-03T09:00:00+01:00",
+          endsAt: "2026-07-03T10:00:00+01:00",
+          createdAt: "2026-07-01T12:45:00+01:00",
+          status,
+        },
+        policy,
+        "Europe/Lisbon",
+        "2026-07-02T08:30:00+01:00",
+      );
+
+      expect(result.canCancel).toBe(false);
+      expect(result.canReschedule).toBe(false);
+      expect(result.statusReason).toBe("status_not_manageable");
+    }
+  });
+
   test("blocks when now is after the deadline even if the booking was created before it", () => {
     const result = getBookingManageability(
       {

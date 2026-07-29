@@ -2,6 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { sortAppointmentsChronologically } from "@/lib/appointment-ordering";
+import {
+  getBookingManageability,
+  getStudioBookingActionSetting,
+} from "@/lib/booking-manageability";
 import { loadCustomerLoyaltySummaryForClient } from "@/lib/customer-loyalty.functions";
 import { canAttachAppointmentClientToSession, normalizePublicClientEmail } from "@/lib/public-client-identity";
 import { getAdminClient } from "@/lib/supabase-admin.server";
@@ -41,6 +45,7 @@ type AppointmentRow = {
   id: string;
   studio_id?: string | null;
   public_token: string | null;
+  created_at: string;
   starts_at: string;
   ends_at: string | null;
   status: string;
@@ -219,7 +224,9 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     const sb = getAdminClient();
     const { data: studio, error: studioError } = await sb
       .from("studios")
-      .select("id,name,slug")
+      .select(
+        "id,name,slug,timezone,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,payment_policy,deposit_percent,studio_policy_settings",
+      )
       .eq("id", data.studioId)
       .eq("is_active", true)
       .maybeSingle();
@@ -290,7 +297,7 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     const { data: appointments, error: appointmentError } = await sb
       .from("appointments")
       .select(
-        "id,public_token,starts_at,ends_at,status,total_price,clients(id,name,phone,email),staff(name)",
+        "id,public_token,created_at,starts_at,ends_at,status,total_price,clients(id,name,phone,email),staff(name)",
       )
       .eq("studio_id", data.studioId)
       .in("client_id", clientIds)
@@ -314,6 +321,14 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     }
 
     const now = Date.now();
+    const cancellationSetting = getStudioBookingActionSetting(
+      studio.studio_policy_settings,
+      "cancellation",
+    );
+    const rescheduleSetting = getStudioBookingActionSetting(
+      studio.studio_policy_settings,
+      "reschedule",
+    );
     const normalizedAppointments = sortAppointmentsChronologically(appointmentRows.map((appointment) => {
       const appointmentPayments = paymentMap.get(appointment.id) ?? [];
       const paidCents = appointmentPayments
@@ -334,6 +349,26 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
         staffName: appointment.staff?.name ?? "Profissional",
         services: servicesByAppointment.get(appointment.id) ?? [],
         canOpen: Boolean(appointment.public_token),
+        policy: getBookingManageability(
+          {
+            startsAt: appointment.starts_at,
+            endsAt: appointment.ends_at,
+            createdAt: appointment.created_at,
+            status: appointment.status,
+          },
+          {
+            cancellationEnabled: cancellationSetting.enabled,
+            rescheduleEnabled: rescheduleSetting.enabled,
+            cancellationNoticeHours:
+              cancellationSetting.noticeHours ?? studio.cancellation_min_notice_hours,
+            rescheduleNoticeHours: rescheduleSetting.noticeHours,
+            afterDeadlinePolicy: studio.cancellation_after_deadline_policy,
+            refundRequestsEnabled: studio.refund_requests_enabled,
+            paymentPolicy: studio.payment_policy,
+            depositPercent: studio.deposit_percent,
+          },
+          studio.timezone,
+        ),
         // Upcoming = appointment hasn't ended yet (or hasn't started if no end time)
         isUpcoming: new Date(appointment.ends_at ?? appointment.starts_at).getTime() >= now,
       };
@@ -630,7 +665,7 @@ export async function dispatchPendingClientPushNotifications(options?: { studioI
   const until = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
   let query = sb
     .from("appointments")
-    .select("id,public_token,studio_id,starts_at,ends_at,status,total_price,clients(id,name,phone,email,auth_user_id),staff(name)")
+    .select("id,public_token,studio_id,created_at,starts_at,ends_at,status,total_price,clients(id,name,phone,email,auth_user_id),staff(name)")
     .gte("starts_at", since)
     .lte("starts_at", until)
     .in("status", ["confirmed", "completed", "cancelled", "no_show"])
@@ -1167,7 +1202,7 @@ async function ensureClientNotificationsForAppointment(
 ) {
   const { data: appointment, error } = await sb
     .from("appointments")
-    .select("id,public_token,starts_at,ends_at,status,total_price,clients(id,name,phone,email),staff(name)")
+    .select("id,public_token,created_at,starts_at,ends_at,status,total_price,clients(id,name,phone,email),staff(name)")
     .eq("id", appointmentId)
     .eq("studio_id", studioId)
     .maybeSingle();
