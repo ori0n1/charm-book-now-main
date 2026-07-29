@@ -11,6 +11,7 @@ import {
   requestClientRefund,
   rescheduleClientAppointment,
 } from "@/lib/client-appointment.functions";
+import { getRescheduleUserMessage } from "@/lib/appointment-reschedule-errors";
 import { formatStudioDate, formatStudioTimeRange } from "@/lib/studio-time";
 
 export const Route = createFileRoute("/marcacao/$token")({
@@ -190,7 +191,12 @@ function ClientAppointmentPage() {
           error,
         });
       }
-      toast.error("Não foi possível remarcar o agendamento. Tente novamente em alguns instantes.");
+      toast.error(
+        getRescheduleUserMessage(
+          error,
+          appointment.policy.rescheduleBlockReason,
+        ),
+      );
     } finally {
       setBusy("");
     }

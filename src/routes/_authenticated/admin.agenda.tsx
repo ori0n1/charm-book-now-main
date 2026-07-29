@@ -46,7 +46,9 @@ import { ExpandableList } from "@/components/ui/expandable-list";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { sortAppointmentsChronologically as sortAppointmentsChronologicallyShared } from "@/lib/appointment-ordering";
+import { getRescheduleUserMessage } from "@/lib/appointment-reschedule-errors";
 import { getPublicReservationCode } from "@/lib/reservation-code";
+import { rescheduleStudioAppointment } from "@/lib/studio-appointment.functions";
 import {
   computeAttendanceRevenue,
   computeFinancialSplit,
@@ -1873,6 +1875,7 @@ function RescheduleModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const rescheduleAppointment = useServerFn(rescheduleStudioAppointment);
   const durationMin = Math.round(
     (new Date(appt.ends_at).getTime() - new Date(appt.starts_at).getTime()) / 60000,
   );
@@ -1891,22 +1894,18 @@ function RescheduleModal({
     }
     setSaving(true);
     try {
-      const startsAt = new Date(`${date}T${time}:00`);
-      const endsAt = new Date(startsAt.getTime() + durationMin * 60000);
-      const { error } = await supabase
-        .from("appointments" as any)
-        .update({
-          starts_at: startsAt.toISOString(),
-          ends_at: endsAt.toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", appt.id)
-        .eq("studio_id", studioId);
-      if (error) throw error;
+      await rescheduleAppointment({
+        data: {
+          studioId,
+          appointmentId: appt.id,
+          date,
+          time,
+        },
+      });
       toast.success("Marcação reagendada.");
       onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erro ao reagendar.");
+      toast.error(getRescheduleUserMessage(err));
     } finally {
       setSaving(false);
     }

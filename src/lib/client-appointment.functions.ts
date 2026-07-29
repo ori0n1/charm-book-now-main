@@ -93,17 +93,38 @@ export const rescheduleClientAppointment = createServerFn({ method: "POST" })
       await logClientAction(sb, appt, "reschedule", "blocked", policy.rescheduleBlockReason);
       throw new Error(policy.rescheduleBlockReason);
     }
-    const { error } = await sb.rpc("reschedule_public_appointment", {
+    const { data: mutation, error } = await sb.rpc("reschedule_public_appointment", {
       p_public_token: data.token,
       p_staff_id: data.staffId,
       p_starts_at: data.startsAt,
     });
     if (error) {
-      await logClientAction(sb, appt, "reschedule", "failed", error.message, { starts_at: data.startsAt });
-      throw new Error(translateActionError(error.message));
+      console.error("[client-reschedule] database mutation failed", {
+        appointmentId: appt.id,
+        studioId: appt.studio_id,
+        staffId: data.staffId,
+        startsAt: data.startsAt,
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      });
+      await logClientAction(sb, appt, "reschedule", "failed", error.message, {
+        starts_at: data.startsAt,
+        staff_id: data.staffId,
+        error_code: error.code,
+      });
+      throw new Error(translateActionError(error));
     }
 
     const fresh = await loadAppointmentByToken(sb, data.token);
+    console.info("[client-reschedule] appointment updated", {
+      appointmentId: appt.id,
+      studioId: appt.studio_id,
+      staffId: data.staffId,
+      startsAt: fresh?.starts_at ?? data.startsAt,
+      mutationReturned: Array.isArray(mutation) ? mutation.length : mutation ? 1 : 0,
+    });
     await logClientAction(sb, fresh ?? appt, "reschedule", "succeeded", "rescheduled", {
       previous_starts_at: appt.starts_at,
       starts_at: fresh?.starts_at ?? data.startsAt,
@@ -383,10 +404,25 @@ async function sha256(value: string) {
     .join("");
 }
 
-function translateActionError(message: string) {
-  const text = message.toLowerCase();
-  if (text.includes("slot_unavailable")) return "Este horário acabou de ficar indisponível. Escolha outro.";
+function translateActionError(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}) {
+  const text = [error.code, error.message, error.details, error.hint]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (
+    text.includes("slot_unavailable") ||
+    text.includes("23p01") ||
+    text.includes("exclusion")
+  ) {
+    return "Este horário acabou de ficar indisponível. Escolha outro.";
+  }
   if (text.includes("appointment_not_reschedulable")) return "Esta marcação já não pode ser remarcada.";
   if (text.includes("appointment_not_found")) return "Não encontrámos esta marcação.";
-  return "Não foi possível concluir a ação. Tente novamente.";
+  if (text.includes("invalid_reschedule_datetime")) return "A data ou o horário selecionado não é válido.";
+  return "Não foi possível remarcar. Tente novamente mais tarde.";
 }
