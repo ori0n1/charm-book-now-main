@@ -59,6 +59,7 @@ import { Route as AuthenticatedAdminCentralRouteImport } from './routes/_authent
 import { Route as AuthenticatedAdminBalcaoRouteImport } from './routes/_authenticated/admin.balcao'
 import { Route as AuthenticatedAdminAgendaRouteImport } from './routes/_authenticated/admin.agenda'
 import { Route as ApiPublicStudioManifestSlugRouteImport } from './routes/api/public/studio-manifest.$slug'
+import { Route as ApiPublicPushReceiptRouteImport } from './routes/api/public/push/receipt'
 import { Route as ApiPublicPaymentsWebhookRouteImport } from './routes/api/public/payments/webhook'
 
 const TermosRoute = TermosRouteImport.update({
@@ -331,6 +332,11 @@ const ApiPublicStudioManifestSlugRoute =
     path: '/api/public/studio-manifest/$slug',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicPushReceiptRoute = ApiPublicPushReceiptRouteImport.update({
+  id: '/api/public/push/receipt',
+  path: '/api/public/push/receipt',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicPaymentsWebhookRoute =
   ApiPublicPaymentsWebhookRouteImport.update({
     id: '/api/public/payments/webhook',
@@ -388,6 +394,7 @@ export interface FileRoutesByFullPath {
   '/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
   '/api/public/payments/webhook': typeof ApiPublicPaymentsWebhookRoute
+  '/api/public/push/receipt': typeof ApiPublicPushReceiptRoute
   '/api/public/studio-manifest/$slug': typeof ApiPublicStudioManifestSlugRoute
 }
 export interface FileRoutesByTo {
@@ -438,6 +445,7 @@ export interface FileRoutesByTo {
   '/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
   '/api/public/payments/webhook': typeof ApiPublicPaymentsWebhookRoute
+  '/api/public/push/receipt': typeof ApiPublicPushReceiptRoute
   '/api/public/studio-manifest/$slug': typeof ApiPublicStudioManifestSlugRoute
 }
 export interface FileRoutesById {
@@ -492,6 +500,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
   '/api/public/payments/webhook': typeof ApiPublicPaymentsWebhookRoute
+  '/api/public/push/receipt': typeof ApiPublicPushReceiptRoute
   '/api/public/studio-manifest/$slug': typeof ApiPublicStudioManifestSlugRoute
 }
 export interface FileRouteTypes {
@@ -546,6 +555,7 @@ export interface FileRouteTypes {
     | '/admin/whatsapp'
     | '/admin/'
     | '/api/public/payments/webhook'
+    | '/api/public/push/receipt'
     | '/api/public/studio-manifest/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -596,6 +606,7 @@ export interface FileRouteTypes {
     | '/admin/whatsapp'
     | '/admin'
     | '/api/public/payments/webhook'
+    | '/api/public/push/receipt'
     | '/api/public/studio-manifest/$slug'
   id:
     | '__root__'
@@ -649,6 +660,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/whatsapp'
     | '/_authenticated/admin/'
     | '/api/public/payments/webhook'
+    | '/api/public/push/receipt'
     | '/api/public/studio-manifest/$slug'
   fileRoutesById: FileRoutesById
 }
@@ -677,6 +689,7 @@ export interface RootRouteChildren {
   ROrderIdRoute: typeof ROrderIdRoute
   SSlugRoute: typeof SSlugRoute
   ApiPublicPaymentsWebhookRoute: typeof ApiPublicPaymentsWebhookRoute
+  ApiPublicPushReceiptRoute: typeof ApiPublicPushReceiptRoute
   ApiPublicStudioManifestSlugRoute: typeof ApiPublicStudioManifestSlugRoute
 }
 
@@ -1032,6 +1045,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicStudioManifestSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/push/receipt': {
+      id: '/api/public/push/receipt'
+      path: '/api/public/push/receipt'
+      fullPath: '/api/public/push/receipt'
+      preLoaderRoute: typeof ApiPublicPushReceiptRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/payments/webhook': {
       id: '/api/public/payments/webhook'
       path: '/api/public/payments/webhook'
@@ -1148,6 +1168,7 @@ const rootRouteChildren: RootRouteChildren = {
   ROrderIdRoute: ROrderIdRoute,
   SSlugRoute: SSlugRoute,
   ApiPublicPaymentsWebhookRoute: ApiPublicPaymentsWebhookRoute,
+  ApiPublicPushReceiptRoute: ApiPublicPushReceiptRoute,
   ApiPublicStudioManifestSlugRoute: ApiPublicStudioManifestSlugRoute,
 }
 export const routeTree = rootRouteImport

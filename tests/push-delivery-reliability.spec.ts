@@ -140,3 +140,51 @@ test("client push prioritizes the most recently active subscriptions before limi
     activeClientSubscriptions?.indexOf(".limit(8)") ?? -1,
   );
 });
+
+test("studio registration renews the browser endpoint when the database has no active device", async () => {
+  const [admin, subscriptions] = await Promise.all([
+    readFile("src/components/admin-notifications.tsx", "utf8"),
+    readFile("src/lib/push-subscriptions.functions.ts", "utf8"),
+  ]);
+
+  expect(admin).toContain("getStudioPushHealth");
+  expect(admin).toContain("Number(health.activeDevices ?? 0) === 0");
+  expect(subscriptions).toContain("activeDevices: active.length");
+  expect(subscriptions).toContain('.in("audience", ["studio", "both"])');
+});
+
+test("studio push fanout and send both revalidate current studio membership", async () => {
+  const [dispatcher, migration] = await Promise.all([
+    readFile("src/lib/notification-dispatcher.server.ts", "utf8"),
+    readFile(
+      "supabase/migrations/20260729193000_push_device_receipts_and_membership_scope.sql",
+      "utf8",
+    ),
+  ]);
+
+  expect(dispatcher).toContain("subscription_user_not_studio_member");
+  expect(dispatcher).toContain('.from("user_roles")');
+  expect(migration).toContain("studio_membership_removed");
+  expect(migration).toContain("where ur.user_id = ps.user_id");
+  expect(migration).toContain("and ur.studio_id = new.studio_id");
+});
+
+test("provider acceptance is distinct from device receipt and notification display", async () => {
+  const [dispatcher, worker, route, migration] = await Promise.all([
+    readFile("src/lib/notification-dispatcher.server.ts", "utf8"),
+    readFile("public/sw.js", "utf8"),
+    readFile("src/routes/api/public/push/receipt.ts", "utf8"),
+    readFile(
+      "supabase/migrations/20260729193000_push_device_receipts_and_membership_scope.sql",
+      "utf8",
+    ),
+  ]);
+
+  expect(dispatcher).toContain("receiptToken");
+  expect(worker).toContain('acknowledgePushReceipt(receipt, "received")');
+  expect(worker).toContain('acknowledgePushReceipt(receipt, "displayed")');
+  expect(route).toContain("acknowledge_studio_notification_delivery");
+  expect(migration).toContain("received_at timestamptz");
+  expect(migration).toContain("displayed_at timestamptz");
+  expect(migration).toContain("studio_notification_device_receipt");
+});

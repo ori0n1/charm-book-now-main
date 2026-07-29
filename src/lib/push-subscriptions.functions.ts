@@ -24,11 +24,50 @@ const TestPushInput = z.object({
   studioId: z.string().uuid().optional(),
 });
 
+const StudioPushHealthInput = z.object({
+  studioId: z.string().uuid(),
+});
+
 const RevokeCurrentDeviceInput = z.object({
   endpoint: z.string().url(),
 });
 
 const MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_STUDIO_USER = 12;
+
+export const getStudioPushHealth = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => StudioPushHealthInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const userId = String((context as any).userId ?? "").trim();
+    if (!userId) throw new Response("Unauthorized", { status: 401 });
+
+    const sb = getAdminClient();
+    const studioId = await resolvePrimaryStudioId(sb, userId, data.studioId);
+    if (!studioId) throw new Response("forbidden", { status: 403 });
+
+    const now = Date.now();
+    const { data: subscriptions, error } = await (sb as any)
+      .from("push_subscriptions")
+      .select("id,expiration_time,last_seen_at,updated_at")
+      .eq("user_id", userId)
+      .eq("studio_id", studioId)
+      .in("audience", ["studio", "both"])
+      .is("revoked_at", null)
+      .order("updated_at", { ascending: false })
+      .limit(MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_STUDIO_USER);
+    if (error) throw new Error(error.message);
+
+    const active = (subscriptions ?? []).filter(
+      (row: { expiration_time: number | null }) =>
+        row.expiration_time === null || row.expiration_time > now,
+    );
+
+    return {
+      ok: true,
+      activeDevices: active.length,
+      lastSeenAt: active[0]?.last_seen_at ?? null,
+    };
+  });
 
 export const savePushSubscription = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

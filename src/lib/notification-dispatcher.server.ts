@@ -146,6 +146,7 @@ async function deliverStudioPush(
         studioId: delivery.studio_id,
         notificationId: delivery.notification_id,
         deliveryId: delivery.delivery_id,
+        receiptToken: readPayloadString(delivery.payload, "delivery_receipt_token"),
         url: actionUrl,
       },
     });
@@ -261,6 +262,18 @@ async function validateStudioNotificationScope(
   sb: ReturnType<typeof getAdminClient>,
   notification: ClaimedDelivery,
 ) {
+  const { data: currentMembership, error: membershipError } = await (sb as any)
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", notification.user_id)
+    .eq("studio_id", notification.studio_id)
+    .limit(1)
+    .maybeSingle();
+  if (membershipError) throw new Error(membershipError.message);
+  if (!currentMembership?.role) {
+    return { ok: false as const, reason: "subscription_user_not_studio_member" };
+  }
+
   const payloadStudioId = readPayloadString(notification.payload, "studio_id");
   if (payloadStudioId && payloadStudioId !== notification.studio_id) {
     return { ok: false as const, reason: "payload_studio_mismatch" };

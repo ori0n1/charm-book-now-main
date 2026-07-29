@@ -1,4 +1,4 @@
-const CACHE_VERSION = "bellza-pwa-v20260724-force-client-refresh";
+const CACHE_VERSION = "bellza-pwa-v20260729-push-receipts";
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const IS_UPDATE = Boolean(self.registration.active);
 const STATIC_ASSETS = [
@@ -101,7 +101,16 @@ self.addEventListener("push", (event) => {
     renotify: Boolean(payload.renotify),
   };
 
-  event.waitUntil(self.registration.showNotification(title, options));
+  const receipt = {
+    deliveryId: payload.data?.deliveryId,
+    receiptToken: payload.data?.receiptToken,
+  };
+  const received = acknowledgePushReceipt(receipt, "received");
+  const displayed = self.registration
+    .showNotification(title, options)
+    .then(() => acknowledgePushReceipt(receipt, "displayed"));
+
+  event.waitUntil(Promise.allSettled([received, displayed]));
 });
 
 self.addEventListener("pushsubscriptionchange", (event) => {
@@ -167,6 +176,25 @@ function readPushPayload(event) {
     return event.data.json();
   } catch {
     return { title: "Bellza", body: event.data.text() };
+  }
+}
+
+async function acknowledgePushReceipt(receipt, stage) {
+  if (!receipt.deliveryId || !receipt.receiptToken) return;
+  try {
+    await fetch("/api/public/push/receipt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        deliveryId: receipt.deliveryId,
+        receiptToken: receipt.receiptToken,
+        stage,
+      }),
+      credentials: "omit",
+      cache: "no-store",
+    });
+  } catch (error) {
+    console.warn("[push] receipt_ack_failed", stage);
   }
 }
 

@@ -22,7 +22,11 @@ import { toast } from "sonner";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { supabase } from "@/integrations/supabase/client";
 import { reconcileStudioBookingPayments } from "@/lib/payments.functions";
-import { savePushSubscription, sendTestPushNotification } from "@/lib/push-subscriptions.functions";
+import {
+  getStudioPushHealth,
+  savePushSubscription,
+  sendTestPushNotification,
+} from "@/lib/push-subscriptions.functions";
 import {
   requestPushSubscription,
   shouldRefreshStoredPushSubscription,
@@ -70,6 +74,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   const syncPushNotifications = useServerFn(syncStudioPushNotifications);
   const persistPushSubscription = useServerFn(savePushSubscription);
   const sendTestPush = useServerFn(sendTestPushNotification);
+  const loadPushHealth = useServerFn(getStudioPushHealth);
   const pushRegistrationRef = useRef<Promise<boolean> | null>(null);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
     "unsupported",
@@ -134,8 +139,19 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     if (typeof window === "undefined" || !("Notification" in window) || !studioId) return;
     setPermission(Notification.permission);
     setPushNeedsAttention(Notification.permission !== "granted");
-    if (Notification.permission === "granted") void registerStudioPush();
-  }, [registerStudioPush, studioId]);
+    if (Notification.permission === "granted") {
+      void loadPushHealth({ data: { studioId } })
+        .then((health) =>
+          registerStudioPush({
+            forceRenew: Number(health.activeDevices ?? 0) === 0,
+          }),
+        )
+        .catch((error) => {
+          console.warn("studio_push_health_check_failed", error);
+          return registerStudioPush();
+        });
+    }
+  }, [loadPushHealth, registerStudioPush, studioId]);
 
   useEffect(() => {
     if (
