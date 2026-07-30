@@ -49,16 +49,24 @@ export const Route = createFileRoute("/_authenticated/admin")({
 
 const NAV = [
   {
+    to: "/admin/agenda",
+    label: "Agenda",
+    mobileLabel: "Agenda",
+    icon: Calendar,
+    exact: false,
+    group: "Operação",
+    primary: true,
+  },
+  {
     to: "/admin",
-    label: "Início",
-    mobileLabel: "Início",
+    label: "Resumo",
+    mobileLabel: "Resumo",
     icon: LayoutDashboard,
     exact: true,
     group: "Operação",
     primary: true,
   },
   { to: "/admin/balcao", label: "Balcão", mobileLabel: "Balcão", icon: CalendarPlus, exact: false, group: "Operação", primary: true },
-  { to: "/admin/agenda", label: "Agenda", mobileLabel: "Agenda", icon: Calendar, exact: false, group: "Operação", primary: true },
   {
     to: "/admin/clientes",
     label: "Clientes",
@@ -159,22 +167,16 @@ const ADMIN_TOUR_STORAGE_PREFIX = "bellza:admin-quick-tour";
 
 const ADMIN_TOUR_STEPS = [
   {
-    target: "admin-header",
-    route: "/admin",
-    title: "O painel abre sempre com o essencial",
-    body: "Veja o estúdio, notificações e ações principais.",
+    target: "nav-agenda",
+    route: "/admin/agenda",
+    title: "A agenda abre com o essencial",
+    body: "Veja imediatamente os horários, clientes e próximos atendimentos.",
   },
   {
     target: "nav-dashboard",
     route: "/admin",
-    title: "Comece pelo resumo",
-    body: "Acompanhe o dia e o que precisa de atenção.",
-  },
-  {
-    target: "nav-agenda",
-    route: "/admin/agenda",
-    title: "A agenda é o centro da operação",
-    body: "Consulte reservas, horários e estados das marcações.",
+    title: "O resumo continua disponível",
+    body: "Acompanhe indicadores e tudo o que precisa de atenção.",
   },
   {
     target: "nav-services",

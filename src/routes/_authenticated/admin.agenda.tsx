@@ -3,10 +3,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   CalendarClock,
   CalendarDays,
+  CalendarRange,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   CreditCard,
   Download,
@@ -16,6 +20,7 @@ import {
   FileText,
   Filter,
   Loader2,
+  List,
   MessageCircle,
   MoreHorizontal,
   Pencil,
@@ -73,6 +78,14 @@ import {
   createInPersonMbWayPayment,
   getInPersonMbWaySettings,
 } from "@/lib/in-person-mbway.functions";
+import {
+  AgendaTimeline,
+  AgendaWeekBoard,
+} from "@/components/agenda/agenda-timeline";
+import {
+  hasAgendaConflict,
+  type AgendaTimelineItem,
+} from "@/components/agenda/agenda-timeline-utils";
 
 export const Route = createFileRoute("/_authenticated/admin/agenda")({
   component: AgendaPage,
@@ -180,6 +193,8 @@ function AgendaPage() {
   const [exporting, setExporting] = useState<"csv" | "excel" | "pdf" | null>(null);
   const [enableInPersonMbWay, setEnableInPersonMbWay] = useState(false);
   const [agendaNow, setAgendaNow] = useState(() => new Date());
+  const [calendarView, setCalendarView] = useState<"day" | "week" | "list">("day");
+  const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
 
   useEffect(() => {
     setShowDepositSplit(localStorage.getItem("agenda-show-deposit-split") === "true");
@@ -437,6 +452,44 @@ function AgendaPage() {
   // ascending order; historical dates follow with the most recent day first.
   const dayGroups = buildAgendaDayGroups(filteredAppts, now);
   const nextAppointmentId = findNextOperationalAppointmentId(filteredAppts, now);
+  const timelineItems: AgendaTimelineItem[] = filteredAppts.map((a) => {
+    const canSeeSensitive = canViewSensitiveAppointment(a, studio);
+    const canSeeBasic = canSeeSensitive || canStaffViewBasicDetails;
+    return {
+      id: a.id,
+      startsAt: a.starts_at,
+      endsAt: a.ends_at,
+      status: a.status,
+      clientName: canSeeSensitive ? a.clients?.name ?? "Sem cliente" : "Horário ocupado",
+      serviceName: canSeeBasic ? appointmentServiceLabel(a) : "Ocupado",
+      staffId: a.staff?.id ?? null,
+      staffName: a.staff?.name ?? "",
+      durationLabel: formatDurationBetween(a.starts_at, a.ends_at, a.total_duration_min),
+      privateDetails: canSeeSensitive,
+    };
+  });
+  const selectedDayTimelineItems = timelineItems.filter((item) =>
+    isSameLocalDay(new Date(item.startsAt), selectedDate),
+  );
+  const weekDays = getWeekDays(selectedDate);
+  const selectedDayAppts = filteredAppts.filter((a) =>
+    isSameLocalDay(new Date(a.starts_at), selectedDate),
+  );
+  const selectedDayConflicts = selectedDayTimelineItems.filter((item) =>
+    hasAgendaConflict(item, selectedDayTimelineItems),
+  ).length;
+  const nextSelectedAppointment = selectedDayAppts.find(
+    (a) => a.status !== "cancelled" && new Date(a.ends_at).getTime() >= now.getTime(),
+  );
+  const selectedDayGapCount = countAgendaGaps(selectedDayAppts);
+  const timelineMenuAppt =
+    calendarView !== "list" && menuOpenId
+      ? (appts.find((a) => a.id === menuOpenId) ?? null)
+      : null;
+  const timelineCancelAppt =
+    calendarView !== "list" && confirmCancelId
+      ? (appts.find((a) => a.id === confirmCancelId) ?? null)
+      : null;
 
   function toggleGroup(key: string, defaultCollapsed: boolean) {
     setGroupCollapseOverrides((prev) => {
@@ -692,13 +745,15 @@ function AgendaPage() {
       }}
     >
       {/* Header */}
-      <header className="flex flex-col gap-3 rounded-[1.25rem] border border-border/80 bg-card/95 px-4 py-3.5 shadow-sm md:flex-row md:items-center md:justify-between md:px-5 md:py-4">
+      <header className="flex flex-col gap-3 rounded-[1.4rem] border border-border/80 bg-card/95 px-4 py-3.5 shadow-sm md:flex-row md:items-center md:justify-between md:px-5 md:py-4">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-            Agenda
+          <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+            {agendaNow.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
+            <span className="normal-case tracking-normal">· atualizada em tempo real</span>
           </p>
-          <h1 className="mt-0.5 truncate text-xl font-semibold tracking-tight md:text-2xl">
-            Marcações
+          <h1 className="mt-1 truncate text-xl font-semibold tracking-tight md:text-2xl">
+            {formatAgendaDateTitle(selectedDate)}
           </h1>
         </div>
         <div className="bellza-panel-actions md:min-w-[22rem]">
@@ -738,42 +793,154 @@ function AgendaPage() {
         </div>
       </header>
 
-      {/* KPI Cards */}
-      <div className="flex gap-2.5 overflow-x-auto pb-0.5 [scrollbar-width:none] md:grid md:grid-cols-4 md:gap-3 md:overflow-visible [&::-webkit-scrollbar]:hidden">
-        <KpiCard
-          icon={<CalendarDays className="h-4 w-4" />}
-          label="Hoje"
-          value={loading ? null : todayAppts.length}
-          pct={loading ? null : pctChange(todayAppts.length, yesterdayAppts.length)}
-          hint="vs. ontem"
-          color="violet"
-        />
-        <KpiCard
-          icon={<Clock className="h-4 w-4" />}
-          label="Esta Semana"
-          value={loading ? null : weekAppts.length}
-          pct={loading ? null : pctChange(weekAppts.length, lastWeekAppts.length)}
-          hint="vs. semana anterior"
-          color="blue"
-        />
-        <KpiCard
-          icon={<Users className="h-4 w-4" />}
-          label="Clientes"
-          value={loading ? null : activeClients}
-          pct={loading ? null : pctChange(activeClients, lastWeekClients)}
-          hint="vs. semana anterior"
-          color="amber"
-        />
-        <KpiCard
-          icon={<Euro className="h-4 w-4" />}
-          label="Faturação"
-          value={loading ? null : formatEUR(totalRevenue)}
-          pct={loading ? null : pctChange(totalRevenue, lastWeekRevenue)}
-          hint="vs. semana anterior"
-          color="emerald"
-          money
-        />
-      </div>
+      {/* Navegação principal da agenda */}
+      <section className="rounded-[1.4rem] border border-border/80 bg-card/95 p-3 shadow-sm md:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <button
+              type="button"
+              onClick={() => setSelectedDate(addLocalDays(selectedDate, calendarView === "week" ? -7 : -1))}
+              className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              aria-label={calendarView === "week" ? "Semana anterior" : "Dia anterior"}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedDate(startOfLocalDay(new Date()))}
+              className={`h-9 shrink-0 rounded-xl border px-3 text-xs font-bold transition ${
+                isSameLocalDay(selectedDate, new Date())
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border bg-background/70 text-foreground hover:bg-muted"
+              }`}
+            >
+              Hoje
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedDate(addLocalDays(startOfLocalDay(new Date()), 1))}
+              className={`h-9 shrink-0 rounded-xl border px-3 text-xs font-bold transition ${
+                isSameLocalDay(selectedDate, addLocalDays(startOfLocalDay(new Date()), 1))
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border bg-background/70 text-foreground hover:bg-muted"
+              }`}
+            >
+              Amanhã
+            </button>
+            <label className="relative inline-flex h-9 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-border bg-background/70 px-3 text-xs font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground">
+              <CalendarDays className="h-3.5 w-3.5" />
+              Dia específico
+              <input
+                type="date"
+                value={toDateInputValue(selectedDate)}
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  setSelectedDate(dateFromInputValue(event.target.value));
+                  setCalendarView("day");
+                }}
+                className="absolute inset-0 cursor-pointer opacity-0"
+                aria-label="Escolher dia específico"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setSelectedDate(addLocalDays(selectedDate, calendarView === "week" ? 7 : 1))}
+              className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              aria-label={calendarView === "week" ? "Semana seguinte" : "Dia seguinte"}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted/70 p-1">
+            <AgendaViewButton
+              active={calendarView === "day"}
+              onClick={() => setCalendarView("day")}
+              icon={<Clock className="h-3.5 w-3.5" />}
+            >
+              Dia
+            </AgendaViewButton>
+            <AgendaViewButton
+              active={calendarView === "week"}
+              onClick={() => setCalendarView("week")}
+              icon={<CalendarRange className="h-3.5 w-3.5" />}
+            >
+              Semana
+            </AgendaViewButton>
+            <AgendaViewButton
+              active={calendarView === "list"}
+              onClick={() => setCalendarView("list")}
+              icon={<List className="h-3.5 w-3.5" />}
+            >
+              Lista
+            </AgendaViewButton>
+          </div>
+        </div>
+
+        {filterOptions.professionals.length > 1 && (
+          <div className="mt-3 flex items-center gap-2 border-t border-border/60 pt-3">
+            <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <label htmlFor="agenda-professional" className="sr-only">
+              Profissional
+            </label>
+            <select
+              id="agenda-professional"
+              value={filters.staffId}
+              onChange={(event) => updateFilter("staffId", event.target.value)}
+              className="h-9 min-w-0 flex-1 rounded-xl border border-border bg-background/70 px-3 text-xs font-semibold outline-none transition focus:border-foreground/30 md:max-w-xs"
+            >
+              <option value="all">Todos os profissionais</option>
+              {filterOptions.professionals.map(([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            {filters.staffId !== "all" && (
+              <button
+                type="button"
+                onClick={() => updateFilter("staffId", "all")}
+                className="shrink-0 text-[10px] font-semibold text-muted-foreground hover:text-foreground"
+              >
+                Limpar
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+
+      {calendarView !== "list" && !loading && (
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          <AgendaSummaryCard
+            label="Marcações"
+            value={selectedDayAppts.length}
+            detail={selectedDayAppts.length === 1 ? "atendimento no dia" : "atendimentos no dia"}
+          />
+          <AgendaSummaryCard
+            label="Próximo"
+            value={
+              nextSelectedAppointment
+                ? new Date(nextSelectedAppointment.starts_at).toLocaleTimeString("pt-PT", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "—"
+            }
+            detail={nextSelectedAppointment?.clients?.name ?? "sem próximo atendimento"}
+          />
+          <AgendaSummaryCard
+            label="Janelas"
+            value={selectedDayGapCount}
+            detail="intervalos entre marcações"
+          />
+          <AgendaSummaryCard
+            label="Conflitos"
+            value={selectedDayConflicts}
+            detail={selectedDayConflicts ? "requer atenção" : "agenda organizada"}
+            alert={selectedDayConflicts > 0}
+          />
+        </div>
+      )}
 
       {/* Search + Filter */}
       <div className="flex flex-col gap-2 md:rounded-[1.25rem] md:border md:border-border/80 md:bg-card/95 md:p-3 md:shadow-sm">
@@ -910,6 +1077,32 @@ function AgendaPage() {
             </button>
           }
         />
+      ) : calendarView === "day" ? (
+        <AgendaTimeline
+          date={selectedDate}
+          items={selectedDayTimelineItems}
+          now={agendaNow}
+          onOpen={(item, anchor) => {
+            if (!item.privateDetails) return;
+            setMenuOpenId(item.id);
+            setMenuAnchorEl(anchor);
+          }}
+        />
+      ) : calendarView === "week" ? (
+        <AgendaWeekBoard
+          weekDays={weekDays}
+          items={timelineItems}
+          selectedDate={selectedDate}
+          onSelectDate={(date) => {
+            setSelectedDate(startOfLocalDay(date));
+            setCalendarView("day");
+          }}
+          onOpen={(item, anchor) => {
+            if (!item.privateDetails) return;
+            setMenuOpenId(item.id);
+            setMenuAnchorEl(anchor);
+          }}
+        />
       ) : (
         <div className="flex flex-col gap-3 md:gap-4">
           {dayGroups.map((group) => {
@@ -1015,6 +1208,117 @@ function AgendaPage() {
           })}
         </div>
       )}
+
+      {timelineMenuAppt &&
+        (() => {
+          const paid = paidByAppointment.get(timelineMenuAppt.id) ?? 0;
+          const revenue = computeAttendanceRevenue(
+            timelineMenuAppt.total_price,
+            paid,
+            timelineMenuAppt.status,
+          );
+          const split = computeAppointmentSplit(timelineMenuAppt, studio, paid);
+          const financialSummary = getAppointmentFinancialSummary(
+            timelineMenuAppt,
+            split,
+            paid,
+          );
+          const msgState = formatMessageState(
+            timelineMenuAppt,
+            paid,
+            latestMessageByAppointment.get(timelineMenuAppt.id),
+          );
+          const canResend =
+            msgState?.tone === "danger" ||
+            (isPastAppointment(timelineMenuAppt.ends_at) &&
+              Boolean(
+                timelineMenuAppt.clients?.phone &&
+                  normalizePhoneForDisplay(timelineMenuAppt.clients.phone),
+              ));
+          return (
+            <PortalActionMenu
+              anchorEl={menuAnchorEl}
+              appt={timelineMenuAppt}
+              canResendMessage={canResend}
+              canReceivePayment={financialSummary.needsStudioPaymentConfirmation}
+              canComplete={revenue.isOnlinePaid && timelineMenuAppt.status !== "cancelled"}
+              resendingMessageId={resendingMessageId}
+              onViewDetails={() => {
+                setCalendarView("list");
+                setExpandedId(timelineMenuAppt.id);
+                closeMenu();
+              }}
+              onEdit={() => {
+                setEditApptId(timelineMenuAppt.id);
+                closeMenu();
+              }}
+              onReschedule={() => {
+                setRescheduleApptId(timelineMenuAppt.id);
+                closeMenu();
+              }}
+              onReceivePayment={() => {
+                setPaymentDialogAppt(timelineMenuAppt);
+                closeMenu();
+              }}
+              onComplete={() => {
+                markPresence(timelineMenuAppt, "completed");
+                closeMenu();
+              }}
+              onResendMessage={() => {
+                resendMessage(timelineMenuAppt);
+                closeMenu();
+              }}
+              onRequestCancel={() => {
+                setConfirmCancelId(timelineMenuAppt.id);
+                closeMenu();
+              }}
+              onClose={closeMenu}
+            />
+          );
+        })()}
+
+      {timelineCancelAppt &&
+        createPortal(
+          <div className="fixed inset-0 z-[10000] grid place-items-end bg-black/45 p-3 backdrop-blur-sm sm:place-items-center">
+            <button
+              type="button"
+              aria-label="Fechar confirmação"
+              className="absolute inset-0"
+              onClick={() => setConfirmCancelId(null)}
+            />
+            <div className="relative w-full max-w-sm rounded-[1.4rem] border border-border bg-card p-5 text-center shadow-2xl">
+              <span className="mx-auto grid size-11 place-items-center rounded-2xl bg-rose-500/10 text-rose-600">
+                <AlertTriangle className="h-5 w-5" />
+              </span>
+              <p className="mt-3 text-base font-bold">Cancelar esta marcação?</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {timelineCancelAppt.clients?.name ?? "Esta reserva"} será cancelada. Esta ação não
+                pode ser desfeita.
+              </p>
+              <div className="mt-5 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmCancelId(null)}
+                  className="h-10 rounded-xl border border-border text-xs font-semibold text-muted-foreground transition hover:bg-muted"
+                >
+                  Manter reserva
+                </button>
+                <button
+                  type="button"
+                  onClick={() => cancelAppointment(timelineCancelAppt.id)}
+                  disabled={cancellingId === timelineCancelAppt.id}
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-3 text-xs font-bold text-white transition hover:bg-rose-700 disabled:opacity-60"
+                >
+                  {cancellingId === timelineCancelAppt.id && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Sim, cancelar
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {/* Mobile FAB */}
       <button
@@ -2161,6 +2465,70 @@ function ClientAvatar({
 
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
 
+function AgendaViewButton({
+  active,
+  icon,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition ${
+        active
+          ? "bg-card text-foreground shadow-sm ring-1 ring-border/70"
+          : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {icon}
+      <span className="truncate">{children}</span>
+    </button>
+  );
+}
+
+function AgendaSummaryCard({
+  label,
+  value,
+  detail,
+  alert,
+}: {
+  label: string;
+  value: React.ReactNode;
+  detail: string;
+  alert?: boolean;
+}) {
+  return (
+    <div
+      className={`min-w-0 rounded-2xl border bg-card/95 px-3 py-2.5 shadow-sm ${
+        alert ? "border-rose-300/70 dark:border-rose-500/30" : "border-border/80"
+      }`}
+    >
+      <p className="truncate text-[9px] font-bold uppercase tracking-[0.16em] text-muted-foreground">
+        {label}
+      </p>
+      <div className="mt-0.5 flex min-w-0 items-baseline gap-1.5">
+        <p
+          className={`shrink-0 whitespace-nowrap text-lg font-black tabular-nums ${
+            alert ? "text-rose-600 dark:text-rose-400" : "text-foreground"
+          }`}
+        >
+          {value}
+        </p>
+        {alert && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-rose-500" />}
+      </div>
+      <p className="truncate text-[9px] text-muted-foreground" title={detail}>
+        {detail}
+      </p>
+    </div>
+  );
+}
+
 function KpiCard({
   icon,
   label,
@@ -2838,6 +3206,7 @@ function AppointmentCard({
           appt={a}
           canResendMessage={canResendMessage}
           canReceivePayment={financialSummary.needsStudioPaymentConfirmation}
+          canComplete={canConfirmPresence}
           resendingMessageId={resendingMessageId}
           onViewDetails={() => {
             onExpand();
@@ -2851,6 +3220,10 @@ function AppointmentCard({
           }}
           onReceivePayment={() => {
             onRequestReceivePayment();
+            onMenuClose();
+          }}
+          onComplete={() => {
+            onMarkPresence("completed");
             onMenuClose();
           }}
           onResendMessage={() => {
@@ -2874,11 +3247,13 @@ function PortalActionMenu({
   appt: a,
   canResendMessage,
   canReceivePayment,
+  canComplete,
   resendingMessageId,
   onViewDetails,
   onEdit,
   onReschedule,
   onReceivePayment,
+  onComplete,
   onResendMessage,
   onRequestCancel,
   onClose,
@@ -2887,11 +3262,13 @@ function PortalActionMenu({
   appt: Appt;
   canResendMessage: boolean;
   canReceivePayment: boolean;
+  canComplete: boolean;
   resendingMessageId: string | null;
   onViewDetails: () => void;
   onEdit: () => void;
   onReschedule: () => void;
   onReceivePayment: () => void;
+  onComplete: () => void;
   onResendMessage: () => void;
   onRequestCancel: () => void;
   onClose: () => void;
@@ -2981,6 +3358,11 @@ function PortalActionMenu({
                 Receber pagamento
               </SheetItem>
             )}
+            {canComplete && !["cancelled", "completed"].includes(a.status) && (
+              <SheetItem icon={<Check className="h-4 w-4" />} onClick={onComplete}>
+                Concluir atendimento
+              </SheetItem>
+            )}
             {a.clients?.phone && (
               <SheetItem
                 icon={<Phone className="h-4 w-4" />}
@@ -3043,6 +3425,11 @@ function PortalActionMenu({
           {canReceivePayment && (
             <DropMenuItem icon={<Euro className="h-3.5 w-3.5" />} onClick={onReceivePayment}>
               Receber pagamento
+            </DropMenuItem>
+          )}
+          {canComplete && !["cancelled", "completed"].includes(a.status) && (
+            <DropMenuItem icon={<Check className="h-3.5 w-3.5" />} onClick={onComplete}>
+              Concluir atendimento
             </DropMenuItem>
           )}
           {a.clients?.phone && (
@@ -3856,6 +4243,58 @@ function normalizeFilterText(v: string) {
 }
 function toDateInputValue(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function startOfLocalDay(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+function addLocalDays(value: Date, amount: number) {
+  const result = startOfLocalDay(value);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+function dateFromInputValue(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+function isSameLocalDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+function getWeekDays(value: Date) {
+  const date = startOfLocalDay(value);
+  const mondayOffset = (date.getDay() + 6) % 7;
+  const monday = addLocalDays(date, -mondayOffset);
+  return Array.from({ length: 7 }, (_, index) => addLocalDays(monday, index));
+}
+function formatAgendaDateTitle(value: Date) {
+  const today = startOfLocalDay(new Date());
+  const prefix = isSameLocalDay(value, today)
+    ? "Hoje"
+    : isSameLocalDay(value, addLocalDays(today, 1))
+      ? "Amanhã"
+      : null;
+  const complete = value.toLocaleDateString("pt-PT", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+  const normalized = complete.charAt(0).toUpperCase() + complete.slice(1);
+  return prefix ? `${prefix} · ${normalized}` : normalized;
+}
+function countAgendaGaps(items: Appt[]) {
+  const active = items
+    .filter((item) => item.status !== "cancelled")
+    .sort((a, b) => new Date(a.starts_at).getTime() - new Date(b.starts_at).getTime());
+  let gaps = 0;
+  for (let index = 1; index < active.length; index += 1) {
+    const previousEnd = new Date(active[index - 1].ends_at).getTime();
+    const currentStart = new Date(active[index].starts_at).getTime();
+    if (currentStart - previousEnd >= 15 * 60_000) gaps += 1;
+  }
+  return gaps;
 }
 function canViewSensitiveAppointment(
   a: Appt,
