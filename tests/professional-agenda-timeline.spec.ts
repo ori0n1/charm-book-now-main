@@ -72,6 +72,38 @@ test("mantém limites úteis num dia vazio ou com horários extremos", () => {
   ).toEqual({ startHour: 5, endHour: 23 });
 });
 
+test("mantém escala proporcional de 15 a 120 minutos", () => {
+  for (const duration of [15, 30, 45, 60, 90, 120]) {
+    const startsAt = new Date("2026-07-30T09:00:00+01:00");
+    const endsAt = new Date(startsAt.getTime() + duration * 60_000);
+    const [positioned] = layoutProfessionalAppointments(
+      [appointment(`duration-${duration}`, "staff-a", startsAt.toISOString(), endsAt.toISOString())],
+      8,
+      82,
+    );
+    expect(positioned.height).toBeCloseTo((duration / 60) * 82, 5);
+  }
+});
+
+test("reutiliza o modal atual ao tocar num horário livre", async () => {
+  const timelineSource = await readFile(
+    resolve(process.cwd(), "src/components/agenda/professional-timeline.tsx"),
+    "utf8",
+  );
+  const agendaSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/admin.agenda.tsx"),
+    "utf8",
+  );
+
+  expect(timelineSource).toContain("Math.round(rawMinutes / 15) * 15");
+  expect(timelineSource).toContain('label="Novo agendamento"');
+  expect(timelineSource).toContain('label="Fazer encaixe"');
+  expect(timelineSource).toContain('label="Bloquear horário"');
+  expect(agendaSource).toContain("initialStaffId={newApptDefaults?.staffId}");
+  expect(agendaSource).toContain("initialDate={newApptDefaults?.date}");
+  expect(agendaSource).toContain("initialTime={newApptDefaults?.time}");
+});
+
 test("configura a agenda como início sem alterar ações existentes", async () => {
   const agendaSource = await readFile(
     resolve(process.cwd(), "src/routes/_authenticated/admin.agenda.tsx"),

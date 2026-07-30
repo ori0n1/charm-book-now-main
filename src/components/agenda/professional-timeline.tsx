@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Clock3, UserRound } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { CalendarPlus, Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
 import {
   getProfessionalTimelineBounds,
   layoutProfessionalAppointments,
@@ -16,18 +16,21 @@ export function ProfessionalTimeline({
   professionals,
   appointments,
   onOpenAppointment,
+  onCreateAtSlot,
 }: {
   date: Date;
   now: Date;
   professionals: ProfessionalTimelinePerson[];
   appointments: ProfessionalTimelineAppointment[];
   onOpenAppointment: (appointment: ProfessionalTimelineAppointment) => void;
+  onCreateAtSlot: (staffId: string, minutes: number, mode: "standard" | "fit") => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [mobile, setMobile] = useState(false);
   const [mobileProfessionalId, setMobileProfessionalId] = useState(
     professionals[0]?.id ?? "unassigned",
   );
+  const [slotMenu, setSlotMenu] = useState<{ staffId: string; minutes: number } | null>(null);
   const bounds = getProfessionalTimelineBounds(appointments);
   const timelineHeight = (bounds.endHour - bounds.startHour) * HOUR_HEIGHT;
   const hours = Array.from(
@@ -80,15 +83,15 @@ export function ProfessionalTimeline({
   }, [currentTop, dateKey, showCurrentTime]);
 
   return (
-    <section className="overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm">
-      {mobile && displayProfessionals.length > 1 && (
+    <section className="relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+      {mobile && (
         <div className="flex gap-2 overflow-x-auto border-b border-border/70 bg-card px-3 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {displayProfessionals.map((person) => (
             <button
               key={person.id}
               type="button"
               onClick={() => setMobileProfessionalId(person.id)}
-              className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-bold transition ${
+              className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-bold transition ${
                 person.id === mobileProfessionalId
                   ? "bg-foreground text-background"
                   : "bg-muted/70 text-muted-foreground"
@@ -96,6 +99,9 @@ export function ProfessionalTimeline({
             >
               <ProfessionalAvatar person={person} compact />
               <span className="max-w-32 truncate">{person.name}</span>
+              <span className="rounded-full bg-background/15 px-1.5 py-0.5 text-[9px] tabular-nums">
+                {appointments.filter((appointment) => appointment.staffId === person.id).length}
+              </span>
             </button>
           ))}
         </div>
@@ -116,7 +122,7 @@ export function ProfessionalTimeline({
             className="sticky top-0 z-40 grid border-b border-border/80 bg-card/95 backdrop-blur-xl"
             style={{ gridTemplateColumns: gridColumns }}
           >
-            <div className="sticky left-0 z-50 grid h-[4.5rem] place-items-center border-r border-border/70 bg-card/95">
+            <div className="sticky left-0 z-50 grid h-14 place-items-center border-r border-border/70 bg-card/95">
               <Clock3 className="h-4 w-4 text-muted-foreground" />
             </div>
             {safeVisibleProfessionals.map((person) => {
@@ -126,7 +132,7 @@ export function ProfessionalTimeline({
               return (
                 <div
                   key={person.id}
-                  className="flex min-w-0 items-center gap-2.5 border-r border-border/60 px-3"
+                  className={`min-w-0 items-center gap-2.5 border-r border-border/60 px-3 ${mobile ? "hidden" : "flex"}`}
                 >
                   <ProfessionalAvatar person={person} />
                   <div className="min-w-0">
@@ -170,7 +176,19 @@ export function ProfessionalTimeline({
               return (
                 <div
                   key={person.id}
-                  className="relative min-w-0 border-r border-border/60 bg-background/25"
+                  className="relative min-w-0 cursor-crosshair border-r border-border/60 bg-background/20"
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const rawMinutes =
+                      bounds.startHour * 60 +
+                      ((event.clientY - rect.top) / HOUR_HEIGHT) * 60;
+                    const minutes = Math.max(
+                      bounds.startHour * 60,
+                      Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15),
+                    );
+                    setSlotMenu({ staffId: person.id, minutes });
+                  }}
                 >
                   {hours.map((hour) => (
                     <div
@@ -195,8 +213,8 @@ export function ProfessionalTimeline({
                         onClick={() => onOpenAppointment(appointment)}
                         className={`absolute z-10 overflow-hidden rounded-lg border px-2.5 py-2 text-left shadow-sm transition hover:z-20 hover:-translate-y-0.5 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${appointmentTone(appointment.status, appointment.id)}`}
                         style={{
-                          top: appointment.top + 3,
-                          height: Math.max(38, appointment.height - 6),
+                          top: appointment.top,
+                          height: Math.max(16, appointment.height),
                           left: `calc(${left}% + 3px)`,
                           width: `calc(${width}% - 6px)`,
                         }}
@@ -245,15 +263,95 @@ export function ProfessionalTimeline({
         </div>
       </div>
 
+      {slotMenu && (
+        <div className="absolute inset-x-3 bottom-3 z-50 rounded-2xl border border-border bg-card p-2 shadow-2xl md:left-auto md:right-4 md:w-72">
+          <div className="flex items-center justify-between px-2 py-1.5">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">
+                Horário livre
+              </p>
+              <p className="font-mono text-sm font-black tabular-nums">
+                {formatMinutes(slotMenu.minutes)}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSlotMenu(null)}
+              className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted"
+              aria-label="Fechar ações do horário"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+          <div className="grid gap-1">
+            <SlotAction
+              icon={<CalendarPlus className="size-4" />}
+              label="Novo agendamento"
+              onClick={() => {
+                onCreateAtSlot(slotMenu.staffId, slotMenu.minutes, "standard");
+                setSlotMenu(null);
+              }}
+            />
+            <SlotAction
+              icon={<Sparkles className="size-4" />}
+              label="Fazer encaixe"
+              onClick={() => {
+                onCreateAtSlot(slotMenu.staffId, slotMenu.minutes, "fit");
+                setSlotMenu(null);
+              }}
+            />
+            <SlotAction
+              icon={<LockKeyhole className="size-4" />}
+              label="Bloquear horário"
+              disabled
+              hint="Ainda não disponível"
+            />
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/70 bg-muted/25 px-3 py-2 text-[9px] font-semibold text-muted-foreground">
         <Legend tone="bg-sky-300" label="Confirmada" />
         <Legend tone="bg-amber-300" label="Pendente" />
         <Legend tone="bg-emerald-300" label="Concluída" />
         <Legend tone="bg-rose-300" label="Cancelada / falta" />
-        <span className="ml-auto whitespace-nowrap">Espaços vazios indicam períodos livres</span>
+        <span className="ml-auto hidden whitespace-nowrap sm:inline">
+          Toque num espaço vazio para criar
+        </span>
       </div>
     </section>
   );
+}
+
+function SlotAction({
+  icon,
+  label,
+  hint,
+  disabled,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="flex min-h-11 items-center gap-3 rounded-xl px-3 text-left text-xs font-bold transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45"
+    >
+      {icon}
+      <span>{label}</span>
+      {hint && <span className="ml-auto text-[9px] font-semibold text-muted-foreground">{hint}</span>}
+    </button>
+  );
+}
+
+function formatMinutes(minutes: number) {
+  return `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
 function ProfessionalAvatar({

@@ -185,6 +185,11 @@ function AgendaPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [agendaScope, setAgendaScope] = useState<"mine" | "team">("mine");
   const [newApptOpen, setNewApptOpen] = useState(false);
+  const [newApptDefaults, setNewApptDefaults] = useState<{
+    staffId?: string;
+    date?: string;
+    time?: string;
+  } | null>(null);
   const [editApptId, setEditApptId] = useState<string | null>(null);
   const [rescheduleApptId, setRescheduleApptId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -822,7 +827,10 @@ function AgendaPage() {
           )}
           <button
             type="button"
-            onClick={() => setNewApptOpen(true)}
+            onClick={() => {
+              setNewApptDefaults(null);
+              setNewApptOpen(true);
+            }}
             className="bellza-panel-action bellza-panel-action-primary"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -1011,6 +1019,14 @@ function AgendaPage() {
           onOpenAppointment={(appointment) => {
             if (appointment.privateDetails) setTimelineDetailId(appointment.id);
           }}
+          onCreateAtSlot={(staffId, minutes) => {
+            setNewApptDefaults({
+              staffId: staffId === "unassigned" ? undefined : staffId,
+              date: toDateInputValue(selectedDate),
+              time: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
+            });
+            setNewApptOpen(true);
+          }}
         />
       )}
 
@@ -1145,15 +1161,6 @@ function AgendaPage() {
           );
         })()}
 
-      {/* Mobile FAB */}
-      <button
-        type="button"
-        onClick={() => setNewApptOpen(true)}
-        className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-lg shadow-black/25 transition-all hover:opacity-90 active:scale-95 md:hidden"
-      >
-        <Plus className="h-6 w-6" />
-      </button>
-
       {/* Mobile Filter Bottom Sheet */}
       {mobileFiltersOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
@@ -1212,9 +1219,16 @@ function AgendaPage() {
         <NewAppointmentModal
           studioId={studio.id}
           staffId={studio.role === "staff" ? studio.staff_id : null}
-          onClose={() => setNewApptOpen(false)}
+          initialStaffId={newApptDefaults?.staffId}
+          initialDate={newApptDefaults?.date}
+          initialTime={newApptDefaults?.time}
+          onClose={() => {
+            setNewApptOpen(false);
+            setNewApptDefaults(null);
+          }}
           onCreated={() => {
             setNewApptOpen(false);
+            setNewApptDefaults(null);
             loadData();
           }}
         />
@@ -1460,11 +1474,17 @@ function PortalExportMenu({
 function NewAppointmentModal({
   studioId,
   staffId,
+  initialStaffId,
+  initialDate,
+  initialTime,
   onClose,
   onCreated,
 }: {
   studioId: string;
   staffId?: string | null;
+  initialStaffId?: string;
+  initialDate?: string;
+  initialTime?: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -1478,9 +1498,9 @@ function NewAppointmentModal({
   const [newClientPhone, setNewClientPhone] = useState("");
   const [isNewClient, setIsNewClient] = useState(false);
   const [selectedService, setSelectedService] = useState("");
-  const [selectedStaff, setSelectedStaff] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("09:00");
+  const [selectedStaff, setSelectedStaff] = useState(initialStaffId ?? "");
+  const [date, setDate] = useState(initialDate ?? "");
+  const [time, setTime] = useState(initialTime ?? "09:00");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1517,11 +1537,11 @@ function NewAppointmentModal({
       setServices((svcs ?? []) as unknown as StudioService[]);
       const staffRows = (stf ?? []) as unknown as StudioStaff[];
       setStaffList(staffRows);
-      if (staffRows[0]) setSelectedStaff(staffRows[0].id);
+      if (!initialStaffId && staffRows[0]) setSelectedStaff(staffRows[0].id);
       setClients(normalizeAppointmentClients(cls ?? [], Boolean(staffId)));
       setLoadingData(false);
     })();
-  }, [staffId, studioId]);
+  }, [initialStaffId, staffId, studioId]);
 
   const filteredClients = clients.filter((c) => {
     if (!clientSearch.trim()) return true;
