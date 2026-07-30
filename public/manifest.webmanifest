@@ -3,7 +3,7 @@
   "short_name": "Bellza",
   "description": "Reserve servicos, acompanhe marcacoes e gira o estudio com a Bellza.",
   "id": "/admin",
-  "start_url": "/admin/agenda",
+  "start_url": "/admin",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f7f3ed",
