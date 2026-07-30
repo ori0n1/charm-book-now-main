@@ -131,7 +131,7 @@ export async function resolveAuthLanding(userId: string): Promise<AuthLandingPat
   const studioRoles = normalizeRoleRows(roles).filter((row) => row.studio_id && row.studios?.id);
   if (studioRoles.length === 0) {
     const subscription = await loadCurrentSubscription(userId);
-    return hasUsableSubscription(subscription) ? "/admin" : "/onboarding";
+    return hasUsableSubscription(subscription) ? "/admin/agenda" : "/onboarding";
   }
 
   const primary = studioRoles[0];
@@ -211,7 +211,7 @@ function resolveRoleLanding(roles: RoleRow[]): AuthLandingPath {
   if (roleNames.length > 0 && roleNames.every((role) => role === "staff" || role === "desk_staff")) {
     return "/admin/agenda";
   }
-  return "/admin";
+  return "/admin/agenda";
 }
 
 function time(value?: string | null) {

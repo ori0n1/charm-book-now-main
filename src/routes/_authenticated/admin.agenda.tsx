@@ -7,6 +7,8 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   CreditCard,
   Download,
@@ -73,6 +75,15 @@ import {
   createInPersonMbWayPayment,
   getInPersonMbWaySettings,
 } from "@/lib/in-person-mbway.functions";
+import { ProfessionalTimeline } from "@/components/agenda/professional-timeline";
+import type {
+  ProfessionalTimelineAppointment,
+  ProfessionalTimelinePerson,
+} from "@/components/agenda/professional-timeline-utils";
+import {
+  TimelineAppointmentDrawer,
+  type TimelineDrawerAction,
+} from "@/components/agenda/timeline-appointment-drawer";
 
 export const Route = createFileRoute("/_authenticated/admin/agenda")({
   component: AgendaPage,
@@ -124,7 +135,7 @@ type AgendaFilters = {
 };
 
 type StudioService = { id: string; name: string; price: number; duration_min: number };
-type StudioStaff = { id: string; name: string };
+type StudioStaff = { id: string; name: string; photo_url?: string | null; is_active?: boolean };
 type StudioClient = { id: string; name: string; phone: string };
 type StudioPaymentMethod = "cash" | "card" | "mb_way" | "other";
 type StaffAgendaVisibility = "private" | "team_busy" | "team_basic";
@@ -180,6 +191,9 @@ function AgendaPage() {
   const [exporting, setExporting] = useState<"csv" | "excel" | "pdf" | null>(null);
   const [enableInPersonMbWay, setEnableInPersonMbWay] = useState(false);
   const [agendaNow, setAgendaNow] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
+  const [timelineDetailId, setTimelineDetailId] = useState<string | null>(null);
+  const [agendaStaff, setAgendaStaff] = useState<StudioStaff[]>([]);
 
   useEffect(() => {
     setShowDepositSplit(localStorage.getItem("agenda-show-deposit-split") === "true");
@@ -224,7 +238,16 @@ function AgendaPage() {
     const canStaffLoadTeamAgenda = studio.role === "staff" && staffAgendaVisibility !== "private";
     const staffDataFilter =
       studio.role === "staff" && !canStaffLoadTeamAgenda ? studio.staff_id : null;
-    const { data } = await fetchAgendaAppointments(studio.id, staffDataFilter);
+    const [{ data }, staffResult] = await Promise.all([
+      fetchAgendaAppointments(studio.id, staffDataFilter),
+      supabase
+        .from("staff")
+        .select("id,name,photo_url,is_active")
+        .eq("studio_id", studio.id)
+        .eq("is_active", true)
+        .order("sort_order")
+        .order("name"),
+    ]);
     const appointmentRows = sortAppointmentsChronologically((data ?? []) as unknown as Appt[]);
     const sensitiveAppointmentIds =
       studio.role === "staff"
@@ -261,6 +284,7 @@ function AgendaPage() {
         ])
       : [{ data: [] }, { data: [] }, { data: [] }];
     setAppts(appointmentRows);
+    setAgendaStaff((staffResult.data ?? []) as StudioStaff[]);
     setPaidRows((paymentsResult.data ?? []) as PaidRow[]);
     setCashPaymentRows((cashPaymentsResult.data ?? []) as CashPaymentRow[]);
     setMessageLogs((logsResult.data ?? []) as MessageLog[]);
@@ -437,6 +461,59 @@ function AgendaPage() {
   // ascending order; historical dates follow with the most recent day first.
   const dayGroups = buildAgendaDayGroups(filteredAppts, now);
   const nextAppointmentId = findNextOperationalAppointmentId(filteredAppts, now);
+  const visibleAgendaStaff = agendaStaff.filter((person) => {
+    if (
+      isProfessionalPanel &&
+      (!canStaffViewTeamAgenda || agendaScope === "mine") &&
+      person.id !== studio?.staff_id
+    ) {
+      return false;
+    }
+    return filters.staffId === "all" || filters.staffId === person.id;
+  });
+  const timelineProfessionals: ProfessionalTimelinePerson[] = visibleAgendaStaff.map(
+    (person) => ({
+      id: person.id,
+      name: person.name,
+      avatarUrl: person.photo_url,
+    }),
+  );
+  for (const [id, name] of filterOptions.professionals) {
+    if (filters.staffId !== "all" && filters.staffId !== id) continue;
+    if (!timelineProfessionals.some((person) => person.id === id)) {
+      timelineProfessionals.push({ id, name });
+    }
+  }
+  const hasUnassignedAppointments = filteredAppts.some((appointment) => !appointment.staff?.id);
+  if (hasUnassignedAppointments) {
+    timelineProfessionals.push({ id: "unassigned", name: "Sem profissional" });
+  }
+  const timelineAppointments: ProfessionalTimelineAppointment[] = filteredAppts
+    .filter((appointment) => isSameLocalDay(new Date(appointment.starts_at), selectedDate))
+    .map((appointment) => {
+      const canSeeSensitive = canViewSensitiveAppointment(appointment, studio);
+      const canSeeBasic = canSeeSensitive || canStaffViewBasicDetails;
+      return {
+        id: appointment.id,
+        staffId: appointment.staff?.id ?? "unassigned",
+        startsAt: appointment.starts_at,
+        endsAt: appointment.ends_at,
+        status: appointment.status,
+        clientName: canSeeSensitive
+          ? appointment.clients?.name ?? "Sem cliente"
+          : "Horário ocupado",
+        serviceName: canSeeBasic ? appointmentServiceLabel(appointment) : "Ocupado",
+        durationLabel: formatDurationBetween(
+          appointment.starts_at,
+          appointment.ends_at,
+          appointment.total_duration_min,
+        ),
+        privateDetails: canSeeSensitive,
+      };
+    });
+  const timelineDetailAppt = timelineDetailId
+    ? (appts.find((appointment) => appointment.id === timelineDetailId) ?? null)
+    : null;
 
   function toggleGroup(key: string, defaultCollapsed: boolean) {
     setGroupCollapseOverrides((prev) => {
@@ -448,11 +525,21 @@ function AgendaPage() {
   }
   function updateFilter<K extends keyof AgendaFilters>(key: K, value: AgendaFilters[K]) {
     setFilters((c) => ({ ...c, [key]: value }));
+    if (key === "date" && typeof value === "string" && value) {
+      setSelectedDate(dateFromInputValue(value));
+    }
+    if (key === "dateMode" && (value === "today" || value === "upcoming")) {
+      setSelectedDate(startOfLocalDay(new Date()));
+    }
   }
   function resetFilters() {
     setFilters(EMPTY_FILTERS);
     setFiltersOpen(false);
     setMobileFiltersOpen(false);
+  }
+  function navigateToAgendaDate(date: Date) {
+    setSelectedDate(startOfLocalDay(date));
+    setFilters((current) => ({ ...current, dateMode: "all", date: "" }));
   }
 
   function closeMenu() {
@@ -691,15 +778,21 @@ function AgendaPage() {
         if (exportOpen) setExportOpen(false);
       }}
     >
-      {/* Header */}
-      <header className="flex flex-col gap-3 rounded-[1.25rem] border border-border/80 bg-card/95 px-4 py-3.5 shadow-sm md:flex-row md:items-center md:justify-between md:px-5 md:py-4">
+      {/* Cabeçalho da agenda profissional */}
+      <header className="flex flex-col gap-3 rounded-[1.35rem] border border-border/80 bg-card/95 px-4 py-3.5 shadow-sm md:flex-row md:items-center md:justify-between md:px-5 md:py-4">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-            Agenda
+          <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">
+            <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+            Agenda em tempo real
           </p>
-          <h1 className="mt-0.5 truncate text-xl font-semibold tracking-tight md:text-2xl">
-            Marcações
+          <h1 className="mt-1 truncate text-xl font-black tracking-tight md:text-2xl">
+            {formatAgendaDateTitle(selectedDate)}
           </h1>
+          <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+            {agendaNow.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })} ·{" "}
+            {timelineAppointments.length}{" "}
+            {timelineAppointments.length === 1 ? "marcação" : "marcações"}
+          </p>
         </div>
         <div className="bellza-panel-actions md:min-w-[22rem]">
           <button
@@ -738,42 +831,56 @@ function AgendaPage() {
         </div>
       </header>
 
-      {/* KPI Cards */}
-      <div className="flex gap-2.5 overflow-x-auto pb-0.5 [scrollbar-width:none] md:grid md:grid-cols-4 md:gap-3 md:overflow-visible [&::-webkit-scrollbar]:hidden">
-        <KpiCard
-          icon={<CalendarDays className="h-4 w-4" />}
-          label="Hoje"
-          value={loading ? null : todayAppts.length}
-          pct={loading ? null : pctChange(todayAppts.length, yesterdayAppts.length)}
-          hint="vs. ontem"
-          color="violet"
-        />
-        <KpiCard
-          icon={<Clock className="h-4 w-4" />}
-          label="Esta Semana"
-          value={loading ? null : weekAppts.length}
-          pct={loading ? null : pctChange(weekAppts.length, lastWeekAppts.length)}
-          hint="vs. semana anterior"
-          color="blue"
-        />
-        <KpiCard
-          icon={<Users className="h-4 w-4" />}
-          label="Clientes"
-          value={loading ? null : activeClients}
-          pct={loading ? null : pctChange(activeClients, lastWeekClients)}
-          hint="vs. semana anterior"
-          color="amber"
-        />
-        <KpiCard
-          icon={<Euro className="h-4 w-4" />}
-          label="Faturação"
-          value={loading ? null : formatEUR(totalRevenue)}
-          pct={loading ? null : pctChange(totalRevenue, lastWeekRevenue)}
-          hint="vs. semana anterior"
-          color="emerald"
-          money
-        />
-      </div>
+      <nav
+        className="flex items-center gap-1.5 overflow-x-auto rounded-[1.15rem] border border-border/80 bg-card/95 p-2 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        aria-label="Navegação da agenda"
+      >
+        <button
+          type="button"
+          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, -1))}
+          className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          aria-label="Dia anterior"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => navigateToAgendaDate(new Date())}
+          className={`h-10 shrink-0 rounded-xl px-4 text-xs font-black transition ${
+            isSameLocalDay(selectedDate, new Date())
+              ? "bg-foreground text-background"
+              : "border border-border bg-background/70 text-foreground hover:bg-muted"
+          }`}
+        >
+          Hoje
+        </button>
+        <label className="relative inline-flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-border bg-background/70 px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted hover:text-foreground">
+          <CalendarDays className="h-4 w-4" />
+          <span className="whitespace-nowrap">
+            {selectedDate.toLocaleDateString("pt-PT", { day: "2-digit", month: "short" })}
+          </span>
+          <input
+            type="date"
+            value={toDateInputValue(selectedDate)}
+            onChange={(event) => {
+              if (event.target.value) navigateToAgendaDate(dateFromInputValue(event.target.value));
+            }}
+            className="absolute inset-0 cursor-pointer opacity-0"
+            aria-label="Escolher data"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, 1))}
+          className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          aria-label="Próximo dia"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        <span className="ml-auto hidden whitespace-nowrap px-2 text-[10px] font-semibold text-muted-foreground md:block">
+          Arraste horizontalmente para ver a equipa
+        </span>
+      </nav>
 
       {/* Search + Filter */}
       <div className="flex flex-col gap-2 md:rounded-[1.25rem] md:border md:border-border/80 md:bg-card/95 md:p-3 md:shadow-sm">
@@ -844,8 +951,6 @@ function AgendaPage() {
           </div>
         )}
 
-        <QuickChips filters={filters} setFilters={setFilters} resetFilters={resetFilters} />
-
         {filtersOpen && (
           <div className="hidden animate-in fade-in slide-in-from-top-1 duration-200 md:block">
             <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
@@ -888,139 +993,163 @@ function AgendaPage() {
         )}
       </div>
 
-      {/* Content */}
+      {/* Agenda profissional em linha do tempo */}
       {loading ? (
-        <SkeletonList />
-      ) : appts.length === 0 ? (
-        <EmptyState
-          title="Ainda não existem marcações"
-          description="Assim que uma pessoa cliente marcar online, a reserva aparece aqui."
-        />
-      ) : filteredAppts.length === 0 ? (
-        <EmptyState
-          title="Nenhuma marcação encontrada"
-          description="Ajuste os filtros ou limpe a pesquisa."
-          action={
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="mt-4 h-9 rounded-xl bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-90"
-            >
-              Limpar filtros
-            </button>
-          }
-        />
-      ) : (
-        <div className="flex flex-col gap-3 md:gap-4">
-          {dayGroups.map((group) => {
-            const list = group.appointments;
-            const defaultCollapsed = group.isPast;
-            const collapsed = groupCollapseOverrides.get(group.key) ?? defaultCollapsed;
-            return (
-              <DayGroup
-                key={group.key}
-                label={group.title}
-                count={list.length}
-                collapsed={collapsed}
-                isToday={group.isToday}
-                isTomorrow={group.isTomorrow}
-                isPast={group.isPast}
-                onToggle={() => toggleGroup(group.key, defaultCollapsed)}
-              >
-                <ExpandableList
-                  items={list}
-                  initialCount={5}
-                  className="space-y-2"
-                  getKey={(a) => a.id}
-                  moreLabel={(hidden) => `Ver mais ${hidden} marcação${hidden !== 1 ? "ões" : ""}`}
-                  renderItem={(a) => {
-                    const paid = paidByAppointment.get(a.id) ?? 0;
-                    const split = computeAppointmentSplit(a, studio, paid);
-                    const revenue = computeAttendanceRevenue(a.total_price, paid, a.status);
-                    const payLabel = formatPaymentState(a, paid);
-                    const msgState = formatMessageState(
-                      a,
-                      paid,
-                      latestMessageByAppointment.get(a.id),
-                    );
-                    const canViewSensitive = canViewSensitiveAppointment(a, studio);
-                    const canViewBasic = canViewSensitive || canStaffViewBasicDetails;
-                    const canConfirm =
-                      canViewSensitive && revenue.isOnlinePaid && a.status !== "cancelled";
-                    const canResend =
-                      canViewSensitive &&
-                      (msgState?.tone === "danger" ||
-                        (isPastAppointment(a.ends_at) &&
-                          Boolean(
-                            a.clients?.phone && normalizePhoneForDisplay(a.clients.phone),
-                          )));
-                    return (
-                      <AppointmentCard
-                        appt={a}
-                        timelineState={getAgendaTimelineState(a, now)}
-                        isNextAppointment={a.id === nextAppointmentId}
-                        split={split}
-                        paidAmount={paid}
-                        paymentLabel={payLabel}
-                        messageState={msgState}
-                        canViewSensitiveDetails={canViewSensitive}
-                        canViewBasicDetails={canViewBasic}
-                        canUseActions={canViewSensitive}
-                        canConfirmPresence={canConfirm}
-                        canResendMessage={canResend}
-                        savingPresenceId={savingPresenceId}
-                        resendingMessageId={resendingMessageId}
-                        cancellingId={cancellingId}
-                        confirmCancelId={confirmCancelId}
-                        showDepositSplit={showDepositSplit}
-                        setShowDepositSplit={setShowDepositSplit}
-                        isExpanded={expandedId === a.id}
-                        isMenuOpen={menuOpenId === a.id}
-                        onExpand={() => setExpandedId(expandedId === a.id ? null : a.id)}
-                        onMenuToggle={(e, el) => {
-                          e.stopPropagation();
-                          if (menuOpenId === a.id) {
-                            closeMenu();
-                          } else {
-                            setMenuOpenId(a.id);
-                            setMenuAnchorEl(el);
-                          }
-                        }}
-                        onMenuClose={closeMenu}
-                        onMarkPresence={(s) => markPresence(a, s)}
-                        onRequestReceivePayment={() => setPaymentDialogAppt(a)}
-                        onResendMessage={() => resendMessage(a)}
-                        onRequestCancel={() => {
-                          setConfirmCancelId(a.id);
-                          closeMenu();
-                        }}
-                        onConfirmCancel={() => cancelAppointment(a.id)}
-                        onDismissCancel={() => setConfirmCancelId(null)}
-                        onRequestEdit={() => {
-                          setEditApptId(a.id);
-                          closeMenu();
-                        }}
-                        onRequestReschedule={() => {
-                          setRescheduleApptId(a.id);
-                          closeMenu();
-                        }}
-                        receivingPaymentId={receivingPaymentId}
-                        menuAnchorEl={menuAnchorEl}
-                      />
-                    );
-                  }}
-                />
-              </DayGroup>
-            );
-          })}
+        <div className="overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm">
+          <div className="h-[4.5rem] animate-pulse border-b border-border bg-muted/45" />
+          <div className="grid h-[60dvh] grid-cols-[3.6rem_1fr]">
+            <div className="border-r border-border bg-muted/20" />
+            <div className="bg-[linear-gradient(to_bottom,transparent_80px,hsl(var(--border)/0.45)_81px)] bg-[length:100%_82px]" />
+          </div>
         </div>
+      ) : (
+        <ProfessionalTimeline
+          date={selectedDate}
+          now={agendaNow}
+          professionals={timelineProfessionals}
+          appointments={timelineAppointments}
+          onOpenAppointment={(appointment) => {
+            if (appointment.privateDetails) setTimelineDetailId(appointment.id);
+          }}
+        />
       )}
+
+      {timelineDetailAppt &&
+        canViewSensitiveAppointment(timelineDetailAppt, studio) &&
+        (() => {
+          const paid = paidByAppointment.get(timelineDetailAppt.id) ?? 0;
+          const split = computeAppointmentSplit(timelineDetailAppt, studio, paid);
+          const revenue = computeAttendanceRevenue(
+            timelineDetailAppt.total_price,
+            paid,
+            timelineDetailAppt.status,
+          );
+          const financialSummary = getAppointmentFinancialSummary(
+            timelineDetailAppt,
+            split,
+            paid,
+          );
+          const messageState = formatMessageState(
+            timelineDetailAppt,
+            paid,
+            latestMessageByAppointment.get(timelineDetailAppt.id),
+          );
+          const canConfirm =
+            revenue.isOnlinePaid && timelineDetailAppt.status !== "cancelled";
+          const canResend =
+            messageState?.tone === "danger" ||
+            (isPastAppointment(timelineDetailAppt.ends_at) &&
+              Boolean(
+                timelineDetailAppt.clients?.phone &&
+                  normalizePhoneForDisplay(timelineDetailAppt.clients.phone),
+              ));
+          const actions: TimelineDrawerAction[] = [
+            {
+              id: "edit",
+              label: "Editar",
+              icon: <Pencil className="h-3.5 w-3.5" />,
+              onClick: () => {
+                setEditApptId(timelineDetailAppt.id);
+                setTimelineDetailId(null);
+              },
+            },
+            {
+              id: "reschedule",
+              label: "Reagendar",
+              icon: <CalendarClock className="h-3.5 w-3.5" />,
+              onClick: () => {
+                setRescheduleApptId(timelineDetailAppt.id);
+                setTimelineDetailId(null);
+              },
+            },
+          ];
+          if (financialSummary.needsStudioPaymentConfirmation) {
+            actions.push({
+              id: "payment",
+              label: "Receber pagamento",
+              icon: <Euro className="h-3.5 w-3.5" />,
+              onClick: () => {
+                setPaymentDialogAppt(timelineDetailAppt);
+                setTimelineDetailId(null);
+              },
+            });
+          }
+          if (canConfirm) {
+            actions.push(
+              {
+                id: "complete",
+                label: "Compareceu",
+                icon: <Check className="h-3.5 w-3.5" />,
+                onClick: () => markPresence(timelineDetailAppt, "completed"),
+                disabled: savingPresenceId === timelineDetailAppt.id,
+              },
+              {
+                id: "no-show",
+                label: "Não compareceu",
+                icon: <X className="h-3.5 w-3.5" />,
+                onClick: () => markPresence(timelineDetailAppt, "no_show"),
+                disabled: savingPresenceId === timelineDetailAppt.id,
+              },
+            );
+          }
+          if (canResend) {
+            actions.push({
+              id: "whatsapp",
+              label: isPastAppointment(timelineDetailAppt.ends_at)
+                ? "Contactar no WhatsApp"
+                : "Reenviar WhatsApp",
+              icon: <MessageCircle className="h-3.5 w-3.5" />,
+              onClick: () => resendMessage(timelineDetailAppt),
+              disabled: resendingMessageId === timelineDetailAppt.id,
+            });
+          }
+          if (timelineDetailAppt.status !== "cancelled") {
+            actions.push({
+              id: "cancel",
+              label: "Cancelar marcação",
+              icon: <X className="h-3.5 w-3.5" />,
+              onClick: () => undefined,
+              danger: true,
+              disabled: cancellingId === timelineDetailAppt.id,
+            });
+          }
+          return (
+            <TimelineAppointmentDrawer
+              details={{
+                clientName: timelineDetailAppt.clients?.name ?? "Sem cliente",
+                clientPhone: timelineDetailAppt.clients?.phone,
+                serviceName: appointmentServiceLabel(timelineDetailAppt),
+                professionalName: timelineDetailAppt.staff?.name ?? "Não definido",
+                startsAt: timelineDetailAppt.starts_at,
+                endsAt: timelineDetailAppt.ends_at,
+                durationLabel: formatDurationBetween(
+                  timelineDetailAppt.starts_at,
+                  timelineDetailAppt.ends_at,
+                  timelineDetailAppt.total_duration_min,
+                ),
+                statusLabel: formatAppointmentStatus(timelineDetailAppt.status),
+                paymentLabel: formatPaymentState(timelineDetailAppt, paid),
+                messageLabel: messageState?.label ?? null,
+                notes: timelineDetailAppt.notes,
+                valueLabel: formatEUR(split.serviceTotal),
+              }}
+              actions={actions}
+              onClose={() => setTimelineDetailId(null)}
+              onConfirmCancel={() => {
+                void cancelAppointment(timelineDetailAppt.id).then(() =>
+                  setTimelineDetailId(null),
+                );
+              }}
+              cancelling={cancellingId === timelineDetailAppt.id}
+            />
+          );
+        })()}
 
       {/* Mobile FAB */}
       <button
         type="button"
         onClick={() => setNewApptOpen(true)}
-        className="fixed bottom-6 right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-lg shadow-black/25 transition-all hover:opacity-90 active:scale-95 md:hidden"
+        className="fixed bottom-[calc(env(safe-area-inset-bottom)+5.75rem)] right-4 z-40 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-foreground text-background shadow-lg shadow-black/25 transition-all hover:opacity-90 active:scale-95 md:hidden"
       >
         <Plus className="h-6 w-6" />
       </button>
@@ -3856,6 +3985,40 @@ function normalizeFilterText(v: string) {
 }
 function toDateInputValue(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function startOfLocalDay(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+function addLocalDays(value: Date, amount: number) {
+  const result = startOfLocalDay(value);
+  result.setDate(result.getDate() + amount);
+  return result;
+}
+function dateFromInputValue(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+function isSameLocalDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+function formatAgendaDateTitle(value: Date) {
+  const today = startOfLocalDay(new Date());
+  const prefix = isSameLocalDay(value, today)
+    ? "Hoje"
+    : isSameLocalDay(value, addLocalDays(today, 1))
+      ? "Amanhã"
+      : null;
+  const complete = value.toLocaleDateString("pt-PT", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+  const normalized = complete.charAt(0).toUpperCase() + complete.slice(1);
+  return prefix ? `${prefix} · ${normalized}` : normalized;
 }
 function canViewSensitiveAppointment(
   a: Appt,
