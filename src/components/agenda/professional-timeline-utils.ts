@@ -12,6 +12,8 @@ export type ProfessionalTimelineAppointment = {
   status: string;
   clientName: string;
   serviceName: string;
+  professionalName: string;
+  valueLabel?: string;
   durationLabel: string;
   privateDetails: boolean;
 };

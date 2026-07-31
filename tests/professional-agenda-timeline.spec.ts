@@ -21,6 +21,7 @@ function appointment(
     status: "confirmed",
     clientName: `Cliente ${id}`,
     serviceName: "Serviço",
+    professionalName: "Profissional",
     durationLabel: "60 min",
     privateDetails: true,
   };
@@ -99,9 +100,12 @@ test("reutiliza o modal atual ao tocar num horário livre", async () => {
   expect(timelineSource).toContain('label="Novo agendamento"');
   expect(timelineSource).toContain('label="Fazer encaixe"');
   expect(timelineSource).toContain('label="Bloquear horário"');
+  expect(timelineSource).toContain('label="Intervalo"');
+  expect(timelineSource).toContain('label="Evento interno"');
   expect(agendaSource).toContain("initialStaffId={newApptDefaults?.staffId}");
   expect(agendaSource).toContain("initialDate={newApptDefaults?.date}");
   expect(agendaSource).toContain("initialTime={newApptDefaults?.time}");
+  expect(agendaSource).toContain("getAgendaWeekDays(selectedDate)");
 });
 
 test("configura a agenda como início sem alterar ações existentes", async () => {

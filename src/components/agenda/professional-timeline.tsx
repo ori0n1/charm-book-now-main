@@ -26,6 +26,7 @@ export function ProfessionalTimeline({
   onCreateAtSlot: (staffId: string, minutes: number, mode: "standard" | "fit") => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const longPressTimerRef = useRef<number | null>(null);
   const [mobile, setMobile] = useState(false);
   const [mobileProfessionalId, setMobileProfessionalId] = useState(
     professionals[0]?.id ?? "unassigned",
@@ -49,7 +50,7 @@ export function ProfessionalTimeline({
     : displayProfessionals;
   const safeVisibleProfessionals =
     visibleProfessionals.length > 0 ? visibleProfessionals : [displayProfessionals[0]];
-  const columnWidth = mobile ? "minmax(15rem, 1fr)" : "minmax(13rem, 1fr)";
+  const columnWidth = mobile ? "minmax(0, 1fr)" : "minmax(13rem, 1fr)";
   const gridColumns = `${TIME_GUTTER}px repeat(${safeVisibleProfessionals.length}, ${columnWidth})`;
   const today = sameLocalDay(date, now);
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -189,6 +190,24 @@ export function ProfessionalTimeline({
                     );
                     setSlotMenu({ staffId: person.id, minutes });
                   }}
+                  onPointerDown={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const rawMinutes = bounds.startHour * 60 + ((event.clientY - rect.top) / HOUR_HEIGHT) * 60;
+                    const minutes = Math.max(bounds.startHour * 60, Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15));
+                    longPressTimerRef.current = window.setTimeout(
+                      () => setSlotMenu({ staffId: person.id, minutes }),
+                      480,
+                    );
+                  }}
+                  onPointerUp={() => {
+                    if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }}
+                  onPointerCancel={() => {
+                    if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }}
                 >
                   {hours.map((hour) => (
                     <div
@@ -211,7 +230,7 @@ export function ProfessionalTimeline({
                         key={appointment.id}
                         type="button"
                         onClick={() => onOpenAppointment(appointment)}
-                        className={`absolute z-10 overflow-hidden rounded-lg border px-2.5 py-2 text-left shadow-sm transition hover:z-20 hover:-translate-y-0.5 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${appointmentTone(appointment.status, appointment.id)}`}
+                        className={`absolute z-10 overflow-hidden rounded-xl border border-l-[3px] px-2.5 py-1.5 text-left shadow-sm transition hover:z-20 hover:-translate-y-0.5 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${appointmentTone(appointment.status, appointment.id)}`}
                         style={{
                           top: appointment.top,
                           height: Math.max(16, appointment.height),
@@ -222,10 +241,10 @@ export function ProfessionalTimeline({
                       >
                         <span className="flex min-w-0 items-center justify-between gap-1">
                           <span className="shrink-0 whitespace-nowrap font-mono text-[10px] font-black tabular-nums">
-                            {formatTime(appointment.startsAt)}
+                            {formatTime(appointment.startsAt)} – {formatTime(appointment.endsAt)}
                           </span>
-                          <span className="truncate text-[8px] font-bold uppercase tracking-[0.08em] opacity-65">
-                            {statusLabel(appointment.status)}
+                          <span className="shrink-0 text-xs font-black leading-none opacity-60" aria-hidden="true">
+                            ···
                           </span>
                         </span>
                         <span className="mt-1 block truncate text-xs font-black leading-tight">
@@ -237,8 +256,14 @@ export function ProfessionalTimeline({
                           </span>
                         )}
                         {appointment.height >= 76 && (
-                          <span className="mt-1 block truncate text-[9px] font-semibold opacity-60">
-                            {appointment.durationLabel}
+                          <span className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[9px] font-semibold opacity-70">
+                            <span className="truncate">{appointment.professionalName} · {appointment.durationLabel}</span>
+                            {appointment.valueLabel && <span className="shrink-0 whitespace-nowrap">{appointment.valueLabel}</span>}
+                          </span>
+                        )}
+                        {appointment.height >= 96 && (
+                          <span className="mt-1 inline-flex rounded-full bg-background/55 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.06em]">
+                            {statusLabel(appointment.status)}
                           </span>
                         )}
                       </button>
@@ -303,6 +328,18 @@ export function ProfessionalTimeline({
             <SlotAction
               icon={<LockKeyhole className="size-4" />}
               label="Bloquear horário"
+              disabled
+              hint="Ainda não disponível"
+            />
+            <SlotAction
+              icon={<Clock3 className="size-4" />}
+              label="Intervalo"
+              disabled
+              hint="Ainda não disponível"
+            />
+            <SlotAction
+              icon={<CalendarPlus className="size-4" />}
+              label="Evento interno"
               disabled
               hint="Ainda não disponível"
             />

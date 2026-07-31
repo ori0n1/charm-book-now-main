@@ -178,6 +178,7 @@ function AgendaPage() {
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
   const [filters, setFilters] = useState<AgendaFilters>(EMPTY_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [agendaToolsOpen, setAgendaToolsOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [showDepositSplit, setShowDepositSplit] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -508,6 +509,8 @@ function AgendaPage() {
           ? appointment.clients?.name ?? "Sem cliente"
           : "Horário ocupado",
         serviceName: canSeeBasic ? appointmentServiceLabel(appointment) : "Ocupado",
+        professionalName: appointment.staff?.name ?? "Sem profissional",
+        valueLabel: canSeeSensitive ? formatEUR(appointment.total_price) : undefined,
         durationLabel: formatDurationBetween(
           appointment.starts_at,
           appointment.ends_at,
@@ -783,23 +786,23 @@ function AgendaPage() {
         if (exportOpen) setExportOpen(false);
       }}
     >
-      {/* Cabeçalho da agenda profissional */}
-      <header className="flex flex-col gap-3 rounded-[1.35rem] border border-border/80 bg-card/95 px-4 py-3.5 shadow-sm md:flex-row md:items-center md:justify-between md:px-5 md:py-4">
+      <header className="flex items-center justify-between gap-3 px-1 py-1 md:px-2">
         <div className="min-w-0">
-          <p className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">
-            <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-            Agenda em tempo real
-          </p>
-          <h1 className="mt-1 truncate text-xl font-black tracking-tight md:text-2xl">
-            {formatAgendaDateTitle(selectedDate)}
-          </h1>
-          <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">
-            {agendaNow.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })} ·{" "}
-            {timelineAppointments.length}{" "}
-            {timelineAppointments.length === 1 ? "marcação" : "marcações"}
+          <h1 className="truncate text-2xl font-black tracking-[-0.035em] md:text-3xl">Agenda</h1>
+          <p className="mt-0.5 truncate text-[11px] font-semibold text-muted-foreground">
+            {timelineAppointments.length} {timelineAppointments.length === 1 ? "marcação" : "marcações"} hoje
           </p>
         </div>
-        <div className="bellza-panel-actions md:min-w-[22rem]">
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => navigateToAgendaDate(new Date())}
+            className="inline-flex h-11 items-center gap-2 rounded-2xl border border-border bg-card px-3 text-xs font-black shadow-sm transition hover:bg-muted md:px-4"
+          >
+            <CalendarDays className="size-4" />
+            Hoje
+          </button>
+          <div className="hidden md:block">
           <button
             ref={exportBtnRef}
             type="button"
@@ -825,73 +828,84 @@ function AgendaPage() {
               exporting={exporting}
             />
           )}
+          </div>
           <button
             type="button"
             onClick={() => {
               setNewApptDefaults(null);
               setNewApptOpen(true);
             }}
-            className="bellza-panel-action bellza-panel-action-primary"
+            className="inline-flex h-11 items-center gap-2 rounded-2xl bg-foreground px-3.5 text-xs font-black text-background shadow-lg shadow-black/10 transition hover:opacity-90 md:px-5"
           >
-            <Plus className="h-3.5 w-3.5" />
-            Nova marcação
+            <Plus className="size-4" />
+            <span className="hidden min-[360px]:inline">Nova marcação</span>
           </button>
         </div>
       </header>
 
-      <nav
-        className="flex items-center gap-1.5 overflow-x-auto rounded-[1.15rem] border border-border/80 bg-card/95 p-2 shadow-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        aria-label="Navegação da agenda"
-      >
+      <nav className="rounded-2xl border border-border/80 bg-card px-1 py-2 shadow-sm" aria-label="Navegação semanal">
+        <div className="grid grid-cols-[2rem_repeat(7,minmax(2rem,1fr))_2rem] items-center md:grid-cols-[2.5rem_repeat(7,minmax(2.5rem,1fr))_2.5rem]">
         <button
           type="button"
-          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, -1))}
-          className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          aria-label="Dia anterior"
+          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, -7))}
+          className="grid size-8 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground md:size-10"
+          aria-label="Semana anterior"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
+        {getAgendaWeekDays(selectedDate).map((day) => {
+          const selected = isSameLocalDay(day, selectedDate);
+          const today = isSameLocalDay(day, new Date());
+          return (
+            <button
+              key={day.toISOString()}
+              type="button"
+              onClick={() => navigateToAgendaDate(day)}
+              className="group flex min-w-0 flex-col items-center gap-1"
+              aria-current={selected ? "date" : undefined}
+            >
+              <span className="text-[9px] font-black uppercase tracking-[0.08em] text-muted-foreground">
+                {day.toLocaleDateString("pt-PT", { weekday: "short" }).replace(".", "")}
+              </span>
+              <span className={`grid size-8 place-items-center rounded-full text-sm font-black transition md:size-9 ${selected ? "bg-foreground text-background shadow-md" : "group-hover:bg-muted"}`}>
+                {day.getDate()}
+              </span>
+              <span className={`size-1 rounded-full ${today ? "bg-emerald-500" : "bg-transparent"}`} />
+            </button>
+          );
+        })}
         <button
           type="button"
-          onClick={() => navigateToAgendaDate(new Date())}
-          className={`h-10 shrink-0 rounded-xl px-4 text-xs font-black transition ${
-            isSameLocalDay(selectedDate, new Date())
-              ? "bg-foreground text-background"
-              : "border border-border bg-background/70 text-foreground hover:bg-muted"
-          }`}
-        >
-          Hoje
-        </button>
-        <label className="relative inline-flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-border bg-background/70 px-3 text-xs font-bold text-muted-foreground transition hover:bg-muted hover:text-foreground">
-          <CalendarDays className="h-4 w-4" />
-          <span className="whitespace-nowrap">
-            {selectedDate.toLocaleDateString("pt-PT", { day: "2-digit", month: "short" })}
-          </span>
-          <input
-            type="date"
-            value={toDateInputValue(selectedDate)}
-            onChange={(event) => {
-              if (event.target.value) navigateToAgendaDate(dateFromInputValue(event.target.value));
-            }}
-            className="absolute inset-0 cursor-pointer opacity-0"
-            aria-label="Escolher data"
-          />
-        </label>
-        <button
-          type="button"
-          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, 1))}
-          className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          aria-label="Próximo dia"
+          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, 7))}
+          className="grid size-8 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground md:size-10"
+          aria-label="Próxima semana"
         >
           <ChevronRight className="h-4 w-4" />
         </button>
-        <span className="ml-auto hidden whitespace-nowrap px-2 text-[10px] font-semibold text-muted-foreground md:block">
-          Arraste horizontalmente para ver a equipa
-        </span>
+        </div>
       </nav>
 
+      <div className="flex items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card px-3 py-2.5 shadow-sm">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-black">{formatAgendaDateTitle(selectedDate)}</p>
+          <p className="font-mono text-[10px] font-semibold tabular-nums text-muted-foreground">
+            {agendaNow.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <label className="relative inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl border border-border px-3 text-[11px] font-bold">
+            <CalendarDays className="size-3.5" /> Data
+            <input type="date" value={toDateInputValue(selectedDate)} onChange={(event) => event.target.value && navigateToAgendaDate(dateFromInputValue(event.target.value))} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Escolher data" />
+          </label>
+          <button type="button" disabled className="h-9 rounded-xl border border-border px-3 text-[11px] font-bold">Dia</button>
+          <button type="button" onClick={() => setAgendaToolsOpen((value) => !value)} className={`grid size-9 place-items-center rounded-xl border ${agendaToolsOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border"}`} aria-label="Pesquisa e filtros">
+            <Filter className="size-3.5" />
+          </button>
+        </div>
+      </div>
+
       {/* Search + Filter */}
-      <div className="flex flex-col gap-2 md:rounded-[1.25rem] md:border md:border-border/80 md:bg-card/95 md:p-3 md:shadow-sm">
+      {agendaToolsOpen && <div className="flex flex-col gap-2 rounded-[1.25rem] border border-border/80 bg-card/95 p-3 shadow-sm">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -999,7 +1013,7 @@ function AgendaPage() {
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Agenda profissional em linha do tempo */}
       {loading ? (
@@ -4013,6 +4027,12 @@ function addLocalDays(value: Date, amount: number) {
   const result = startOfLocalDay(value);
   result.setDate(result.getDate() + amount);
   return result;
+}
+function getAgendaWeekDays(value: Date) {
+  const selected = startOfLocalDay(value);
+  const mondayOffset = (selected.getDay() + 6) % 7;
+  const monday = addLocalDays(selected, -mondayOffset);
+  return Array.from({ length: 7 }, (_, index) => addLocalDays(monday, index));
 }
 function dateFromInputValue(value: string) {
   const [year, month, day] = value.split("-").map(Number);
