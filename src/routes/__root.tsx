@@ -13,6 +13,7 @@ import { Toaster } from "sonner";
 
 import { ThemeProvider } from "@/components/theme-provider";
 import { APP_BRAND } from "@/lib/app-brand";
+import { CRITICAL_PAINT_CSS, PWA_STARTUP_SCRIPT } from "@/lib/pwa-startup";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
 import appCss from "../styles.css?url";
 
@@ -175,7 +176,9 @@ function RootShell({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-PT" suppressHydrationWarning>
       <head>
+        <style dangerouslySetInnerHTML={{ __html: CRITICAL_PAINT_CSS }} />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: PWA_STARTUP_SCRIPT }} />
         <HeadContent />
       </head>
       <body>
