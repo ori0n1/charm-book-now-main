@@ -801,7 +801,7 @@ function AgendaPage() {
         if (exportOpen) setExportOpen(false);
       }}
     >
-      <header className="flex min-h-14 items-center justify-between gap-2 px-3 py-1.5 md:min-h-0 md:px-2 md:py-1">
+      <header className="flex min-h-12 items-center justify-between gap-2 px-3 py-1 md:min-h-0 md:px-2 md:py-1">
         <div className="min-w-0">
           <h1 className="truncate text-xl font-black tracking-[-0.035em] md:text-3xl">Agenda</h1>
           <p className="truncate text-[10px] font-semibold text-muted-foreground md:mt-0.5 md:text-[11px]">
@@ -812,10 +812,11 @@ function AgendaPage() {
           <button
             type="button"
             onClick={() => navigateToAgendaDate(new Date())}
-            className="hidden h-11 items-center gap-2 rounded-2xl border border-border bg-card px-3 text-xs font-black shadow-sm transition hover:bg-muted min-[390px]:inline-flex md:px-4"
+            className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-card text-xs font-black shadow-sm transition hover:bg-muted md:h-11 md:w-auto md:gap-2 md:rounded-2xl md:px-4"
+            aria-label="Voltar para hoje"
           >
             <CalendarDays className="size-4" />
-            Hoje
+            <span className="hidden md:inline">Hoje</span>
           </button>
           <div className="hidden md:block">
           <button
@@ -850,7 +851,7 @@ function AgendaPage() {
               setNewApptDefaults(null);
               setNewApptOpen(true);
             }}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-foreground px-3 text-xs font-black text-background shadow-lg shadow-black/10 transition hover:opacity-90 md:h-11 md:rounded-2xl md:px-5"
+            className="hidden h-11 items-center gap-2 rounded-2xl bg-foreground px-5 text-xs font-black text-background shadow-lg shadow-black/10 transition hover:opacity-90 md:inline-flex"
           >
             <Plus className="size-4" />
             <span className="hidden min-[360px]:inline">Nova marcação</span>
@@ -925,7 +926,7 @@ function AgendaPage() {
         </div>
       </nav>
 
-      <div className="flex min-h-11 items-center justify-between gap-2 border-b border-border/70 bg-card px-3 py-1.5 shadow-sm md:rounded-2xl md:border md:py-2.5">
+      <div className="hidden min-h-11 items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card px-3 py-2.5 shadow-sm md:flex">
         <div className="min-w-0">
           <p className="truncate text-xs font-black md:text-sm">{formatAgendaDateTitle(selectedDate)}</p>
           <p className="hidden font-mono text-[10px] font-semibold tabular-nums text-muted-foreground min-[390px]:block">

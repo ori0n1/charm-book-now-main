@@ -28,6 +28,7 @@ export function ProfessionalTimeline({
   onBlockAtSlot: (staffId: string, minutes: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastAutoScrollKeyRef = useRef("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const suppressClickRef = useRef(false);
@@ -84,15 +85,26 @@ export function ProfessionalTimeline({
   }, [displayProfessionals, mobileProfessionalId]);
 
   useEffect(() => {
+    const autoScrollKey = `${dateKey}:${mobile ? "mobile" : "desktop"}:${mobileProfessionalId}`;
+    if (lastAutoScrollKeyRef.current === autoScrollKey) return;
+    lastAutoScrollKeyRef.current = autoScrollKey;
     const frame = window.requestAnimationFrame(() => {
       if (!scrollRef.current) return;
       const target = showCurrentTime
         ? currentTop - scrollRef.current.clientHeight * 0.32
         : 0;
+      if (mobile) {
+        const timelineTop = scrollRef.current.getBoundingClientRect().top + window.scrollY;
+        window.scrollTo({
+          top: Math.max(0, timelineTop + (showCurrentTime ? currentTop : 0) - window.innerHeight * 0.32),
+          behavior: "smooth",
+        });
+        return;
+      }
       scrollRef.current.scrollTop = Math.max(0, target);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [currentTop, dateKey, showCurrentTime]);
+  }, [currentTop, dateKey, mobile, mobileProfessionalId, showCurrentTime]);
 
   useEffect(
     () => () => {
@@ -112,9 +124,9 @@ export function ProfessionalTimeline({
   }
 
   return (
-    <section className="relative overflow-hidden border-y border-border/80 bg-card md:rounded-2xl md:border md:shadow-sm">
+    <section className="relative overflow-visible border-y border-border/80 bg-card md:overflow-hidden md:rounded-2xl md:border md:shadow-sm">
       {mobile && displayProfessionals.length > 1 && (
-        <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto border-b border-border/70 bg-card px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="sticky top-[7.9rem] z-10 flex snap-x snap-mandatory gap-2 overflow-x-auto border-b border-border/70 bg-card/95 px-3 py-1.5 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {displayProfessionals.map((person) => (
             <button
               key={person.id}
@@ -139,7 +151,7 @@ export function ProfessionalTimeline({
 
       <div
         ref={scrollRef}
-        className={`${displayProfessionals.length > 1 ? "h-[calc(100dvh-18.1rem-env(safe-area-inset-bottom))]" : "h-[calc(100dvh-14.6rem-env(safe-area-inset-bottom))]"} min-h-[22rem] max-h-[70dvh] overflow-auto overscroll-contain scroll-smooth [scrollbar-width:thin] md:h-auto md:max-h-[72dvh]`}
+        className="h-auto max-h-none overflow-visible md:max-h-[72dvh] md:overflow-auto md:overscroll-contain md:scroll-smooth md:[scrollbar-width:thin]"
         data-testid="professional-timeline-scroll"
       >
         <div
@@ -149,7 +161,7 @@ export function ProfessionalTimeline({
           }}
         >
           <div
-            className="sticky top-0 z-40 grid border-b border-border/80 bg-card/95 backdrop-blur-xl"
+            className="sticky top-0 z-40 hidden border-b border-border/80 bg-card/95 backdrop-blur-xl md:grid"
             style={{ gridTemplateColumns: gridColumns }}
           >
             <div className="sticky left-0 z-50 grid h-14 place-items-center border-r border-border/70 bg-card/95">
@@ -328,7 +340,7 @@ export function ProfessionalTimeline({
       </div>
 
       {slotMenu && (
-        <div className="absolute inset-x-3 bottom-3 z-50 rounded-2xl border border-border bg-card p-2 shadow-2xl md:left-auto md:right-4 md:w-72">
+        <div className="fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)] z-[60] max-h-[min(20rem,calc(100dvh-8rem))] overflow-y-auto rounded-2xl border border-border bg-card p-2 shadow-2xl md:absolute md:bottom-3 md:left-auto md:right-4 md:w-72">
           <div className="flex items-center justify-between px-2 py-1.5">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">
@@ -376,7 +388,7 @@ export function ProfessionalTimeline({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/70 bg-muted/25 px-3 py-2 text-[9px] font-semibold text-muted-foreground">
+      <div className="hidden flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/70 bg-muted/25 px-3 py-2 text-[9px] font-semibold text-muted-foreground md:flex">
         <Legend tone="bg-sky-300" label="Confirmada" />
         <Legend tone="bg-amber-300" label="Pendente" />
         <Legend tone="bg-emerald-300" label="Concluída" />

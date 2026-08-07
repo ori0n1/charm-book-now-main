@@ -119,6 +119,23 @@ test("mantém o teste gratuito apenas na página inicial", async () => {
   expect(adminSource).toContain("isPureTrialBilling(billingQuery.data) &&\n      isDashboardPage");
 });
 
+test("usa uma única rolagem vertical no mobile", async () => {
+  const timelineSource = await readFile(
+    resolve(process.cwd(), "src/components/agenda/professional-timeline.tsx"),
+    "utf8",
+  );
+  const agendaSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/admin.agenda.tsx"),
+    "utf8",
+  );
+
+  expect(timelineSource).toContain("h-auto max-h-none overflow-visible");
+  expect(timelineSource).toContain("md:max-h-[72dvh] md:overflow-auto");
+  expect(timelineSource).toContain("fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)]");
+  expect(timelineSource).toContain("hidden border-b border-border/80 bg-card/95 backdrop-blur-xl md:grid");
+  expect(agendaSource).toContain('className="hidden min-h-11 items-center justify-between');
+});
+
 test("configura a agenda como início sem alterar ações existentes", async () => {
   const agendaSource = await readFile(
     resolve(process.cwd(), "src/routes/_authenticated/admin.agenda.tsx"),
