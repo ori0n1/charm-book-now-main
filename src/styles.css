@@ -485,6 +485,10 @@
   }
 
   @media (max-width: 767px) {
+    .admin-shell-agenda {
+      --admin-mobile-header-height: 3rem;
+    }
+
     .admin-shell {
       width: 100%;
       max-width: 100vw;
@@ -504,6 +508,14 @@
       width: 100%;
       max-width: 100vw;
       overflow-x: hidden;
+    }
+
+    .admin-shell-agenda .admin-content {
+      padding-top: 0;
+    }
+
+    .admin-shell-agenda .agenda-timeline-page {
+      margin-top: 0;
     }
 
     .admin-content > div {

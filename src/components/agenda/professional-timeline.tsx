@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CalendarPlus, Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
+import { Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
 import {
   getProfessionalTimelineBounds,
   layoutProfessionalAppointments,
@@ -18,7 +18,9 @@ export function ProfessionalTimeline({
   professionals,
   appointments,
   availability,
+  focusRequestKey = 0,
   onOpenAppointment,
+  onOpenBlock,
   onCreateAtSlot,
   onBlockAtSlot,
 }: {
@@ -27,7 +29,9 @@ export function ProfessionalTimeline({
   professionals: ProfessionalTimelinePerson[];
   appointments: ProfessionalTimelineAppointment[];
   availability?: Array<{ startMinutes: number; endMinutes: number }>;
+  focusRequestKey?: number;
   onOpenAppointment: (appointment: ProfessionalTimelineAppointment) => void;
+  onOpenBlock: (block: ProfessionalTimelineAppointment) => void;
   onCreateAtSlot: (staffId: string, minutes: number, mode: "standard" | "fit") => void;
   onBlockAtSlot: (staffId: string, minutes: number) => void;
 }) {
@@ -59,7 +63,7 @@ export function ProfessionalTimeline({
   const appointmentCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const appointment of appointments) {
-      if (appointment.kind === "block") continue;
+      if (appointment.kind === "block" || appointment.status === "cancelled") continue;
       counts.set(appointment.staffId, (counts.get(appointment.staffId) ?? 0) + 1);
     }
     return counts;
@@ -92,7 +96,7 @@ export function ProfessionalTimeline({
   }, [displayProfessionals, mobileProfessionalId]);
 
   useEffect(() => {
-    const autoScrollKey = `${dateKey}:${mobile ? "mobile" : "desktop"}:${mobileProfessionalId}`;
+    const autoScrollKey = `${dateKey}:${mobile ? "mobile" : "desktop"}:${mobileProfessionalId}:${focusRequestKey}`;
     if (lastAutoScrollKeyRef.current === autoScrollKey) return;
     lastAutoScrollKeyRef.current = autoScrollKey;
     const frame = window.requestAnimationFrame(() => {
@@ -112,7 +116,7 @@ export function ProfessionalTimeline({
       scrollRef.current.scrollTop = Math.max(0, target);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [currentTop, dateKey, mobile, mobileProfessionalId, showCurrentTime]);
+  }, [currentTop, dateKey, focusRequestKey, mobile, mobileProfessionalId, showCurrentTime]);
 
   useEffect(
     () => () => {
@@ -133,8 +137,13 @@ export function ProfessionalTimeline({
 
   return (
     <section className="agenda-timeline relative overflow-visible bg-background md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm">
-      {mobile && displayProfessionals.length > 1 && (
-        <div className="agenda-professionals flex snap-x snap-mandatory gap-1.5 overflow-x-auto border-b border-border/60 bg-card/95 px-2 py-1 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {mobile && (
+        <div
+          className={`agenda-professionals flex snap-x snap-mandatory gap-1.5 overflow-x-auto border-b border-border/60 bg-card/95 px-2 py-1 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+            displayProfessionals.length <= 2 ? "justify-center" : "justify-start"
+          }`}
+          aria-label="Profissionais da agenda"
+        >
           {displayProfessionals.map((person) => (
             <button
               key={person.id}
@@ -144,12 +153,27 @@ export function ProfessionalTimeline({
                 person.id === mobileProfessionalId
                   ? "border-foreground bg-foreground text-background shadow-sm"
                   : "border-border/70 bg-muted/45 text-muted-foreground"
+              } ${
+                displayProfessionals.length === 1
+                  ? "max-w-[min(100%,16rem)]"
+                  : displayProfessionals.length === 2
+                    ? "max-w-[calc(50%_-_0.25rem)]"
+                    : "max-w-[11rem]"
               }`}
               aria-pressed={person.id === mobileProfessionalId}
+              aria-label={`${person.name}, ${appointmentCounts.get(person.id) ?? 0} ${
+                (appointmentCounts.get(person.id) ?? 0) === 1 ? "marcação" : "marcações"
+              }`}
             >
               <ProfessionalAvatar person={person} compact />
-              <span className="max-w-28 truncate">{person.name}</span>
-              <span className="rounded-full bg-background/15 px-1.5 py-0.5 text-[9px] tabular-nums">
+              <span className="min-w-0 max-w-28 truncate">{person.name}</span>
+              <span
+                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] tabular-nums ${
+                  person.id === mobileProfessionalId
+                    ? "bg-background/15 text-background"
+                    : "bg-background text-foreground"
+                }`}
+              >
                 {appointmentCounts.get(person.id) ?? 0}
               </span>
             </button>
@@ -303,9 +327,11 @@ export function ProfessionalTimeline({
                     const width = 100 / appointment.laneCount;
                     const blocked = appointment.kind === "block";
                     return blocked ? (
-                      <div
+                      <button
                         key={appointment.id}
-                        className="absolute z-10 overflow-hidden rounded-md border border-slate-300/80 border-l-[3px] bg-slate-100/95 px-1.5 py-0.5 text-left text-slate-800 dark:border-slate-500/30 dark:bg-slate-500/15 dark:text-slate-100"
+                        type="button"
+                        onClick={() => onOpenBlock(appointment)}
+                        className="absolute z-10 overflow-hidden rounded-md border border-slate-300/80 border-l-[3px] bg-slate-100/95 px-1.5 py-0.5 text-left text-slate-800 transition hover:z-20 hover:bg-slate-200/90 focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-500/30 dark:bg-slate-500/15 dark:text-slate-100 dark:hover:bg-slate-500/25"
                         style={{
                           top: appointment.top,
                           height: appointment.height,
@@ -326,7 +352,7 @@ export function ProfessionalTimeline({
                             {appointment.clientName}
                           </span>
                         )}
-                      </div>
+                      </button>
                     ) : (
                       <button
                         key={appointment.id}
@@ -431,16 +457,8 @@ export function ProfessionalTimeline({
           </div>
           <div className="grid gap-1">
             <SlotAction
-              icon={<CalendarPlus className="size-4" />}
-              label="Novo agendamento"
-              onClick={() => {
-                onCreateAtSlot(slotMenu.staffId, slotMenu.minutes, "standard");
-                setSlotMenu(null);
-              }}
-            />
-            <SlotAction
               icon={<Sparkles className="size-4" />}
-              label="Fazer encaixe"
+              label="Criar encaixe"
               onClick={() => {
                 onCreateAtSlot(slotMenu.staffId, slotMenu.minutes, "fit");
                 setSlotMenu(null);
@@ -453,6 +471,11 @@ export function ProfessionalTimeline({
                 onBlockAtSlot(slotMenu.staffId, slotMenu.minutes);
                 setSlotMenu(null);
               }}
+            />
+            <SlotAction
+              icon={<X className="size-4" />}
+              label="Cancelar"
+              onClick={() => setSlotMenu(null)}
             />
           </div>
         </div>

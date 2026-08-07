@@ -6,6 +6,7 @@ export type ProfessionalTimelinePerson = {
 
 export type ProfessionalTimelineAppointment = {
   id: string;
+  sourceId?: string;
   staffId: string;
   startsAt: string;
   endsAt: string;

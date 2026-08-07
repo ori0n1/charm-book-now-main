@@ -218,6 +218,7 @@ function AgendaPage() {
     date: string;
     time: string;
   } | null>(null);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [editApptId, setEditApptId] = useState<string | null>(null);
   const [rescheduleApptId, setRescheduleApptId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -225,6 +226,7 @@ function AgendaPage() {
   const [enableInPersonMbWay, setEnableInPersonMbWay] = useState(false);
   const [agendaNow, setAgendaNow] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
+  const [timelineFocusRequest, setTimelineFocusRequest] = useState(0);
   const [timelineDetailId, setTimelineDetailId] = useState<string | null>(null);
   const [agendaStaff, setAgendaStaff] = useState<StudioStaff[]>([]);
   const [staffAvailability, setStaffAvailability] = useState<StaffAvailabilityRow[]>([]);
@@ -673,6 +675,7 @@ function AgendaPage() {
       const clippedEnd = new Date(Math.min(new Date(block.ends_at).getTime(), selectedDayEnd - 1));
       return {
         id: `block-${block.id}`,
+        sourceId: block.id,
         staffId: block.staff_id,
         startsAt: clippedStart.toISOString(),
         endsAt: clippedEnd.toISOString(),
@@ -699,6 +702,9 @@ function AgendaPage() {
   const timelineEntries = [...timelineAppointments, ...timelineBlocks];
   const timelineDetailAppt = timelineDetailId
     ? (appts.find((appointment) => appointment.id === timelineDetailId) ?? null)
+    : null;
+  const selectedBlock = selectedBlockId
+    ? (staffTimeOff.find((block) => block.id === selectedBlockId) ?? null)
     : null;
 
   function toggleGroup(key: string, defaultCollapsed: boolean) {
@@ -731,6 +737,7 @@ function AgendaPage() {
   }
   function navigateToAgendaDate(date: Date) {
     selectedDateScrollPendingRef.current = true;
+    setTimelineFocusRequest((current) => current + 1);
     const nextDate = startOfLocalDay(date);
     setSelectedDate(nextDate);
     setMobileCalendarMonth(nextDate);
@@ -1343,8 +1350,12 @@ function AgendaPage() {
           professionals={timelineProfessionals}
           appointments={timelineEntries}
           availability={selectedAvailability}
+          focusRequestKey={timelineFocusRequest}
           onOpenAppointment={(appointment) => {
             if (appointment.privateDetails) setTimelineDetailId(appointment.id);
+          }}
+          onOpenBlock={(block) => {
+            if (block.sourceId) setSelectedBlockId(block.sourceId);
           }}
           onCreateAtSlot={(staffId, minutes) => {
             setNewApptDefaults({
@@ -1528,7 +1539,7 @@ function AgendaPage() {
                 options={filterOptions}
                 onChange={updateFilter}
                 mobile
-                hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda}
+                hideProfessional
               />
             </div>
             <div className="grid grid-cols-2 gap-2 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
@@ -1585,6 +1596,21 @@ function AgendaPage() {
           onCreated={() => {
             setBlockTimeDefaults(null);
             void Promise.all([loadData({ silent: true }), loadStaffTimeOffForDate(selectedDate)]);
+          }}
+        />
+      )}
+
+      {selectedBlock && studio && (
+        <ManageBlockTimeModal
+          studioId={studio.id}
+          block={selectedBlock}
+          staffName={
+            agendaStaff.find((person) => person.id === selectedBlock.staff_id)?.name ??
+            "Profissional"
+          }
+          onClose={() => setSelectedBlockId(null)}
+          onChanged={async () => {
+            await Promise.all([loadData({ silent: true }), loadStaffTimeOffForDate(selectedDate)]);
           }}
         />
       )}
@@ -1905,7 +1931,7 @@ function BlockTimeModal({
         </div>
         <div className="space-y-3">
           <ModalField label="Início do bloqueio">
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
+            <div className="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
               <input
                 type="date"
                 value={starts.slice(0, 10)}
@@ -1927,7 +1953,7 @@ function BlockTimeModal({
             </div>
           </ModalField>
           <ModalField label="Fim do bloqueio">
-            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
+            <div className="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
               <input
                 type="date"
                 value={ends.slice(0, 10)}
@@ -1962,6 +1988,258 @@ function BlockTimeModal({
         label="Bloquear horário"
       />
     </ModalShell>
+  );
+}
+
+function ManageBlockTimeModal({
+  studioId,
+  block,
+  staffName,
+  onClose,
+  onChanged,
+}: {
+  studioId: string;
+  block: StaffTimeOffRow;
+  staffName: string;
+  onClose: () => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [mode, setMode] = useState<"actions" | "edit" | "confirm-delete">("actions");
+  const [starts, setStarts] = useState(() => toLocalDateTimeValue(block.starts_at));
+  const [ends, setEnds] = useState(() => toLocalDateTimeValue(block.ends_at));
+  const [reason, setReason] = useState(block.reason ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function handleUpdate() {
+    if (!isValidLocalDateTime(starts) || !isValidLocalDateTime(ends)) {
+      toast.error("Preencha uma data e um horário válidos.");
+      return;
+    }
+    const startsAt = new Date(starts);
+    const endsAt = new Date(ends);
+    if (endsAt.getTime() <= startsAt.getTime()) {
+      toast.error("O fim do bloqueio deve ser posterior ao início.");
+      return;
+    }
+    setSaving(true);
+    const { error } = await supabase
+      .from("staff_time_off")
+      .update({
+        starts_at: startsAt.toISOString(),
+        ends_at: endsAt.toISOString(),
+        reason: reason.trim() || null,
+      })
+      .eq("id", block.id)
+      .eq("studio_id", studioId);
+    if (error) {
+      setSaving(false);
+      console.error("agenda_block_update_failed", {
+        blockId: block.id,
+        studioId,
+        message: error.message,
+      });
+      toast.error("Não foi possível atualizar o bloqueio. Tente novamente.");
+      return;
+    }
+    await onChanged();
+    setSaving(false);
+    toast.success("Bloqueio atualizado.");
+    onClose();
+  }
+
+  async function handleDelete() {
+    setSaving(true);
+    const { error } = await supabase
+      .from("staff_time_off")
+      .delete()
+      .eq("id", block.id)
+      .eq("studio_id", studioId);
+    if (error) {
+      setSaving(false);
+      console.error("agenda_block_delete_failed", {
+        blockId: block.id,
+        studioId,
+        message: error.message,
+      });
+      toast.error("Não foi possível desbloquear o horário. Tente novamente.");
+      return;
+    }
+    await onChanged();
+    setSaving(false);
+    toast.success("Horário desbloqueado.");
+    onClose();
+  }
+
+  return (
+    <ModalShell title={mode === "edit" ? "Editar bloqueio" : "Gerir bloqueio"} onClose={onClose}>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {mode === "actions" && (
+          <div className="space-y-3">
+            <BlockSummary block={block} staffName={staffName} />
+            <div className="grid gap-2 min-[360px]:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setMode("edit")}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-border bg-background/70 px-3 text-sm font-semibold transition hover:bg-muted"
+              >
+                <Pencil className="size-4" />
+                Editar bloqueio
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("confirm-delete")}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-rose-300/70 bg-rose-50 px-3 text-sm font-semibold text-rose-700 transition hover:bg-rose-100 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-300"
+              >
+                <LockKeyhole className="size-4" />
+                Desbloquear horário
+              </button>
+            </div>
+          </div>
+        )}
+
+        {mode === "confirm-delete" && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-rose-300/70 bg-rose-50 px-4 py-3 dark:border-rose-500/25 dark:bg-rose-500/10">
+              <p className="text-sm font-black text-rose-700 dark:text-rose-300">
+                Desbloquear horário?
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                O período voltará a ficar disponível na agenda.
+              </p>
+            </div>
+            <BlockSummary block={block} staffName={staffName} />
+          </div>
+        )}
+
+        {mode === "edit" && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2.5">
+              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted">
+                <LockKeyhole className="size-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Profissional
+                </p>
+                <p className="truncate text-sm font-black">{staffName}</p>
+              </div>
+            </div>
+            <ModalField label="Início do bloqueio">
+              <BlockDateTimeFields value={starts} onChange={setStarts} prefix="início" />
+            </ModalField>
+            <ModalField label="Fim do bloqueio">
+              <BlockDateTimeFields value={ends} onChange={setEnds} prefix="fim" />
+            </ModalField>
+            <ModalField label="Motivo (opcional)">
+              <input
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                placeholder="Almoço, reunião, formação..."
+                className={inputCls}
+              />
+            </ModalField>
+          </div>
+        )}
+      </div>
+
+      {mode === "actions" && (
+        <div className="shrink-0 border-t border-border bg-card/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 w-full rounded-xl border border-border text-sm font-semibold text-muted-foreground transition hover:bg-muted"
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
+      {mode === "confirm-delete" && (
+        <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-border bg-card/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={() => setMode("actions")}
+            disabled={saving}
+            className="h-10 rounded-xl border border-border text-sm font-semibold text-muted-foreground transition hover:bg-muted disabled:opacity-60"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleDelete()}
+            disabled={saving}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-rose-600 px-3 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"
+          >
+            {saving && <Loader2 className="size-4 animate-spin" />}
+            Desbloquear
+          </button>
+        </div>
+      )}
+      {mode === "edit" && (
+        <ModalFooter
+          onClose={() => setMode("actions")}
+          onSave={() => void handleUpdate()}
+          saving={saving}
+          disabled={!isValidLocalDateTime(starts) || !isValidLocalDateTime(ends)}
+          label="Guardar bloqueio"
+        />
+      )}
+    </ModalShell>
+  );
+}
+
+function BlockSummary({ block, staffName }: { block: StaffTimeOffRow; staffName: string }) {
+  return (
+    <dl className="grid min-w-0 gap-2 rounded-xl border border-border bg-muted/25 p-3 text-xs">
+      <div className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-2">
+        <dt className="font-semibold text-muted-foreground">Profissional</dt>
+        <dd className="min-w-0 truncate text-right font-black">{staffName}</dd>
+      </div>
+      <div className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-2">
+        <dt className="font-semibold text-muted-foreground">Data</dt>
+        <dd className="min-w-0 text-right font-black">{formatBlockDate(block.starts_at)}</dd>
+      </div>
+      <div className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-2">
+        <dt className="font-semibold text-muted-foreground">Horário</dt>
+        <dd className="min-w-0 whitespace-nowrap text-right font-mono font-black tabular-nums">
+          {formatBlockTime(block.starts_at)} – {formatBlockTime(block.ends_at)}
+        </dd>
+      </div>
+      {block.reason && (
+        <div className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] gap-2">
+          <dt className="font-semibold text-muted-foreground">Motivo</dt>
+          <dd className="min-w-0 break-words text-right font-black">{block.reason}</dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
+function BlockDateTimeFields({
+  value,
+  onChange,
+  prefix,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  prefix: "início" | "fim";
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
+      <input
+        type="date"
+        value={value.slice(0, 10)}
+        onChange={(event) => onChange(mergeLocalDateTime(value, "date", event.target.value))}
+        className={`${inputCls} min-w-0 px-2`}
+        aria-label={`Data de ${prefix} do bloqueio`}
+      />
+      <input
+        type="time"
+        value={value.slice(11, 16)}
+        onChange={(event) => onChange(mergeLocalDateTime(value, "time", event.target.value))}
+        className={`${inputCls} min-w-0 px-2`}
+        aria-label={`Hora de ${prefix} do bloqueio`}
+      />
+    </div>
   );
 }
 
@@ -4500,6 +4778,26 @@ function normalizeFilterText(v: string) {
 }
 function toDateInputValue(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function toLocalDateTimeValue(value: string) {
+  const date = new Date(value);
+  return `${toDateInputValue(date)}T${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes(),
+  ).padStart(2, "0")}`;
+}
+function formatBlockDate(value: string) {
+  return new Date(value).toLocaleDateString("pt-PT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+function formatBlockTime(value: string) {
+  return new Date(value).toLocaleTimeString("pt-PT", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 function startOfLocalDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
