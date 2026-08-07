@@ -6,6 +6,7 @@ import {
   useState,
   type ButtonHTMLAttributes,
 } from "react";
+import { createPortal } from "react-dom";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Bell,
@@ -84,6 +85,18 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   const [pushNeedsAttention, setPushNeedsAttention] = useState(false);
   const [pushActivating, setPushActivating] = useState(false);
   const [pushActivationCode, setPushActivationCode] = useState<PushActivationCode | null>(null);
+
+  useEffect(() => {
+    if (!open || !isMobile) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscrollBehavior = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscrollBehavior;
+    };
+  }, [isMobile, open]);
 
   const registerStudioPush = useCallback(
     async (options: { forceRenew?: boolean } = {}): Promise<boolean> => {
@@ -532,7 +545,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         )}
       </div>
 
-      <div className="max-h-[min(70vh,26rem)] overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
         {items.length === 0 ? (
           <div className="px-5 py-8 text-center">
             <div className="mx-auto grid size-12 place-items-center rounded-3xl bg-muted text-muted-foreground">
@@ -641,18 +654,24 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
           pushNeedsAttention={pushNeedsAttention}
           onClick={() => setOpen((current) => !current)}
         />
-        {open && (
-          <div className="fixed inset-0 z-50 md:hidden">
+        {open && createPortal(
+          <div
+            className="fixed inset-0 z-[120] isolate md:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Central de notificações"
+          >
             <button
               type="button"
-              className="absolute inset-0 bg-background/10 backdrop-blur-[1px]"
+              className="absolute inset-0 touch-none bg-background/65 backdrop-blur-sm"
               aria-label="Fechar notificações"
               onClick={() => setOpen(false)}
             />
-            <div className="absolute left-4 right-4 top-[calc(env(safe-area-inset-top)+5.65rem)] max-h-[calc(100vh-8rem)] overflow-hidden rounded-[1.35rem] border border-border/80 bg-popover/98 text-popover-foreground shadow-2xl shadow-black/20 duration-200 animate-in fade-in-0 zoom-in-95 slide-in-from-top-2">
+            <div className="absolute inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+0.75rem)] top-[calc(max(env(safe-area-inset-top),0px)+4.75rem)] flex min-h-0 flex-col overflow-hidden rounded-[1.35rem] border border-border/80 bg-popover text-popover-foreground shadow-2xl shadow-black/25 duration-200 animate-in fade-in-0 zoom-in-95 slide-in-from-top-2">
               {panel}
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
       </>
     );
@@ -671,7 +690,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
         align="end"
         collisionPadding={16}
         sideOffset={12}
-        className="z-[80] w-[min(calc(100vw-1rem),24.5rem)] overflow-hidden rounded-[1.35rem] border-border/80 bg-popover/98 p-0 shadow-2xl shadow-black/18 backdrop-blur-xl duration-200 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-top-1"
+        className="z-[100] flex max-h-[min(70vh,32rem)] w-[min(calc(100vw-1rem),24.5rem)] flex-col overflow-hidden rounded-[1.35rem] border-border/80 bg-popover/98 p-0 shadow-2xl shadow-black/18 backdrop-blur-xl duration-200 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-top-1"
       >
         {panel}
       </PopoverContent>

@@ -126,7 +126,7 @@ test("reutiliza o modal atual ao tocar num horário livre", async () => {
   expect(agendaSource).toContain("initialDate={newApptDefaults?.date}");
   expect(agendaSource).toContain("initialTime={newApptDefaults?.time}");
   expect(agendaSource).toContain("getAgendaWeekDays(selectedDate)");
-  expect(agendaSource).toContain("getMobileAgendaDays(selectedDate)");
+  expect(agendaSource).toContain("mobileAgendaDays.map((day)");
   expect(agendaSource).toContain("<BlockTimeModal");
 });
 
@@ -158,6 +158,29 @@ test("usa uma única rolagem vertical no mobile", async () => {
   expect(timelineSource).toContain("fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)]");
   expect(timelineSource).toContain("hidden border-b border-border/80 bg-card/95 backdrop-blur-xl md:grid");
   expect(agendaSource).toContain('className="hidden min-h-11 items-center justify-between');
+});
+
+test("mantém datas contínuas e notificações acima da timeline", async () => {
+  const agendaSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/admin.agenda.tsx"),
+    "utf8",
+  );
+  const notificationsSource = await readFile(
+    resolve(process.cwd(), "src/components/admin-notifications.tsx"),
+    "utf8",
+  );
+
+  expect(agendaSource).toContain("const [mobileDateRange, setMobileDateRange]");
+  expect(agendaSource).toContain("onScroll={extendMobileDateRange}");
+  expect(agendaSource).toContain("start: current.start - 14");
+  expect(agendaSource).toContain("end: current.end + 14");
+  expect(agendaSource).toContain("scroller.scrollLeft += scroller.scrollWidth - previousWidth");
+  expect(agendaSource).toContain('className="hidden min-h-12');
+  expect(notificationsSource).toContain("createPortal(");
+  expect(notificationsSource).toContain("fixed inset-0 z-[120] isolate");
+  expect(notificationsSource).toContain('aria-modal="true"');
+  expect(notificationsSource).toContain('document.body.style.overflow = "hidden"');
+  expect(notificationsSource).toContain("min-h-0 flex-1 overflow-y-auto overscroll-contain");
 });
 
 test("configura a agenda como início sem alterar ações existentes", async () => {

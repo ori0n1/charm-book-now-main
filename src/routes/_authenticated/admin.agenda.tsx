@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import {
   CalendarClock,
   CalendarDays,
@@ -207,6 +207,16 @@ function AgendaPage() {
   const [timelineDetailId, setTimelineDetailId] = useState<string | null>(null);
   const [agendaStaff, setAgendaStaff] = useState<StudioStaff[]>([]);
   const selectedDayButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileDateScrollerRef = useRef<HTMLDivElement>(null);
+  const mobileDateAnchorRef = useRef(startOfLocalDay(new Date()));
+  const prependScrollWidthRef = useRef<number | null>(null);
+  const dateRangeLoadingRef = useRef(false);
+  const selectedDateScrollPendingRef = useRef(true);
+  const [mobileDateRange, setMobileDateRange] = useState({ start: -21, end: 21 });
+  const mobileAgendaDays = useMemo(
+    () => getMobileAgendaDays(mobileDateAnchorRef.current, mobileDateRange.start, mobileDateRange.end),
+    [mobileDateRange.end, mobileDateRange.start],
+  );
 
   useEffect(() => {
     setShowDepositSplit(localStorage.getItem("agenda-show-deposit-split") === "true");
@@ -220,12 +230,36 @@ function AgendaPage() {
   }, []);
 
   useEffect(() => {
-    selectedDayButtonRef.current?.scrollIntoView({
-      behavior: "smooth",
-      block: "nearest",
-      inline: "center",
+    const selectedOffset = differenceInLocalCalendarDays(
+      selectedDate,
+      mobileDateAnchorRef.current,
+    );
+    setMobileDateRange((current) => {
+      if (selectedOffset >= current.start && selectedOffset <= current.end) return current;
+      return {
+        start: Math.min(current.start, selectedOffset - 14),
+        end: Math.max(current.end, selectedOffset + 14),
+      };
     });
   }, [selectedDate]);
+
+  useLayoutEffect(() => {
+    const scroller = mobileDateScrollerRef.current;
+    const previousWidth = prependScrollWidthRef.current;
+    if (scroller && previousWidth !== null) {
+      scroller.scrollLeft += scroller.scrollWidth - previousWidth;
+    }
+    prependScrollWidthRef.current = null;
+    dateRangeLoadingRef.current = false;
+    if (selectedDateScrollPendingRef.current && selectedDayButtonRef.current) {
+      selectedDayButtonRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
+      selectedDateScrollPendingRef.current = false;
+    }
+  }, [mobileDateRange.end, mobileDateRange.start, selectedDate]);
 
   useEffect(() => {
     if (!studio) return;
@@ -549,9 +583,11 @@ function AgendaPage() {
   function updateFilter<K extends keyof AgendaFilters>(key: K, value: AgendaFilters[K]) {
     setFilters((c) => ({ ...c, [key]: value }));
     if (key === "date" && typeof value === "string" && value) {
+      selectedDateScrollPendingRef.current = true;
       setSelectedDate(dateFromInputValue(value));
     }
     if (key === "dateMode" && (value === "today" || value === "upcoming")) {
+      selectedDateScrollPendingRef.current = true;
       setSelectedDate(startOfLocalDay(new Date()));
     }
   }
@@ -561,8 +597,25 @@ function AgendaPage() {
     setMobileFiltersOpen(false);
   }
   function navigateToAgendaDate(date: Date) {
+    selectedDateScrollPendingRef.current = true;
     setSelectedDate(startOfLocalDay(date));
     setFilters((current) => ({ ...current, dateMode: "all", date: "" }));
+  }
+
+  function extendMobileDateRange(event: UIEvent<HTMLDivElement>) {
+    if (dateRangeLoadingRef.current) return;
+    const scroller = event.currentTarget;
+    const remaining = scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft;
+    if (scroller.scrollLeft <= 96) {
+      dateRangeLoadingRef.current = true;
+      prependScrollWidthRef.current = scroller.scrollWidth;
+      setMobileDateRange((current) => ({ ...current, start: current.start - 14 }));
+      return;
+    }
+    if (remaining <= 96) {
+      dateRangeLoadingRef.current = true;
+      setMobileDateRange((current) => ({ ...current, end: current.end + 14 }));
+    }
   }
 
   function closeMenu() {
@@ -801,7 +854,7 @@ function AgendaPage() {
         if (exportOpen) setExportOpen(false);
       }}
     >
-      <header className="flex min-h-12 items-center justify-between gap-2 px-3 py-1 md:min-h-0 md:px-2 md:py-1">
+      <header className="hidden min-h-12 items-center justify-between gap-2 px-3 py-1 md:flex md:min-h-0 md:px-2 md:py-1">
         <div className="min-w-0">
           <h1 className="truncate text-xl font-black tracking-[-0.035em] md:text-3xl">Agenda</h1>
           <p className="truncate text-[10px] font-semibold text-muted-foreground md:mt-0.5 md:text-[11px]">
@@ -859,15 +912,42 @@ function AgendaPage() {
         </div>
       </header>
 
-      <nav className="sticky top-[3.55rem] z-10 border-y border-border/80 bg-card/95 py-1.5 shadow-sm backdrop-blur-xl md:static md:rounded-2xl md:border md:px-1 md:py-2" aria-label="Navegação semanal">
-        <div className="flex snap-x snap-mandatory gap-1 overflow-x-auto px-[calc(50%-1.55rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:hidden">
-          {getMobileAgendaDays(selectedDate).map((day) => {
+      <nav className="sticky top-[3.55rem] z-10 border-y border-border/80 bg-card/95 py-1 shadow-sm backdrop-blur-xl md:static md:rounded-2xl md:border md:px-1 md:py-2" aria-label="Navegação semanal">
+        <div className="flex h-7 items-center justify-between px-3 md:hidden">
+          <p className="whitespace-nowrap text-[10px] font-black capitalize tracking-[0.04em] text-muted-foreground">
+            {selectedDate.toLocaleDateString("pt-PT", { month: "long", year: "numeric" })}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => navigateToAgendaDate(new Date())}
+              className="h-7 rounded-lg border border-border bg-background/70 px-2 text-[9px] font-black"
+            >
+              Hoje
+            </button>
+            <button
+              type="button"
+              onClick={() => setAgendaToolsOpen((value) => !value)}
+              className={`grid size-7 place-items-center rounded-lg border ${agendaToolsOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border bg-background/70"}`}
+              aria-label="Pesquisa e filtros"
+            >
+              <Filter className="size-3" />
+            </button>
+          </div>
+        </div>
+        <div
+          ref={mobileDateScrollerRef}
+          onScroll={extendMobileDateRange}
+          className="flex snap-x snap-mandatory gap-1 overflow-x-auto overscroll-x-contain px-[calc(50%-1.55rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:hidden"
+        >
+          {mobileAgendaDays.map((day) => {
             const selected = isSameLocalDay(day, selectedDate);
             const today = isSameLocalDay(day, new Date());
             return (
               <button
                 key={day.toISOString()}
                 ref={selected ? selectedDayButtonRef : undefined}
+                data-agenda-date={toDateInputValue(day)}
                 type="button"
                 onClick={() => navigateToAgendaDate(day)}
                 className="flex w-[3.1rem] shrink-0 snap-center flex-col items-center gap-0.5 rounded-xl py-1"
@@ -4213,8 +4293,16 @@ function getAgendaWeekDays(value: Date) {
   const monday = addLocalDays(selected, -mondayOffset);
   return Array.from({ length: 7 }, (_, index) => addLocalDays(monday, index));
 }
-function getMobileAgendaDays(value: Date) {
-  return Array.from({ length: 15 }, (_, index) => addLocalDays(value, index - 7));
+function getMobileAgendaDays(anchor: Date, startOffset: number, endOffset: number) {
+  return Array.from(
+    { length: endOffset - startOffset + 1 },
+    (_, index) => addLocalDays(anchor, startOffset + index),
+  );
+}
+function differenceInLocalCalendarDays(value: Date, anchor: Date) {
+  const valueUtc = Date.UTC(value.getFullYear(), value.getMonth(), value.getDate());
+  const anchorUtc = Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  return Math.round((valueUtc - anchorUtc) / 86_400_000);
 }
 function dateFromInputValue(value: string) {
   const [year, month, day] = value.split("-").map(Number);

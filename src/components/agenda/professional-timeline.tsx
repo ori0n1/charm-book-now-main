@@ -130,7 +130,7 @@ export function ProfessionalTimeline({
   return (
     <section className="relative overflow-visible border-y border-border/80 bg-card md:overflow-hidden md:rounded-2xl md:border md:shadow-sm">
       {mobile && displayProfessionals.length > 1 && (
-        <div className="sticky top-[7.9rem] z-10 flex snap-x snap-mandatory gap-2 overflow-x-auto border-b border-border/70 bg-card/95 px-3 py-1.5 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="sticky top-[8.7rem] z-10 flex snap-x snap-mandatory gap-2 overflow-x-auto border-b border-border/70 bg-card/95 px-3 py-1.5 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {displayProfessionals.map((person) => (
             <button
               key={person.id}
