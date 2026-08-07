@@ -486,7 +486,7 @@
 
   @media (max-width: 767px) {
     .admin-shell-agenda {
-      --admin-mobile-header-height: 3rem;
+      --admin-mobile-header-height: 2.75rem;
     }
 
     .admin-shell {
@@ -516,6 +516,26 @@
 
     .admin-shell-agenda .agenda-timeline-page {
       margin-top: 0;
+    }
+
+    .admin-shell-agenda .agenda-date-navigation,
+    .admin-shell-agenda .agenda-professionals,
+    .admin-shell-agenda .agenda-timeline {
+      position: relative;
+      margin-block: 0;
+    }
+
+    .admin-shell-agenda .agenda-date-navigation {
+      z-index: 30;
+    }
+
+    .admin-shell-agenda .agenda-professionals {
+      z-index: 20;
+    }
+
+    .admin-shell-agenda .agenda-timeline {
+      z-index: 0;
+      isolation: isolate;
     }
 
     .admin-content > div {

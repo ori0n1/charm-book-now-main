@@ -136,12 +136,13 @@ export function ProfessionalTimeline({
   }
 
   return (
-    <section className="agenda-timeline relative overflow-visible bg-background md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm">
+    <section className="agenda-timeline relative z-0 isolate overflow-visible bg-background md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm">
       <div
-        className={`agenda-professionals flex snap-x snap-mandatory gap-1.5 overflow-x-auto border-b border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-xl [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden ${
+        className={`agenda-professionals relative z-20 flex min-h-[4.25rem] snap-x snap-mandatory scroll-px-2 gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-xl touch-pan-x [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden ${
           displayProfessionals.length <= 2 ? "justify-center" : "justify-start"
         }`}
         aria-label="Profissionais da agenda"
+        data-testid="agenda-professionals"
       >
         {displayProfessionals.map((person) => (
           <button
@@ -228,6 +229,7 @@ export function ProfessionalTimeline({
           <div
             className="relative grid"
             style={{ gridTemplateColumns: gridColumns, height: timelineHeight }}
+            data-testid="agenda-timeline-grid"
           >
             <div className="sticky left-0 z-30 border-r border-border/60 bg-background">
               {hours.map((hour, index) => (

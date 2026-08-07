@@ -234,6 +234,10 @@ test("mantém profissionais visíveis, centralizados e com contadores reais", as
     "utf8",
   );
   const stylesSource = await readFile(resolve(process.cwd(), "src/styles.css"), "utf8");
+  const adminSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/admin.tsx"),
+    "utf8",
+  );
 
   expect(timelineSource).toContain('aria-label="Profissionais da agenda"');
   expect(timelineSource).toContain('displayProfessionals.length <= 2 ? "justify-center"');
@@ -247,7 +251,12 @@ test("mantém profissionais visíveis, centralizados e com contadores reais", as
   expect(agendaSource).toContain("setTimelineFocusRequest((current) => current + 1)");
   expect(agendaSource).toContain("mobile\n                hideProfessional");
   expect(stylesSource).toContain(".admin-shell-agenda .admin-content");
-  expect(stylesSource).toContain("--admin-mobile-header-height: 3rem");
+  expect(stylesSource).toContain("--admin-mobile-header-height: 2.75rem");
+  expect(adminSource).toContain("h-[var(--admin-mobile-header-height)] py-1");
+  expect(agendaSource).not.toContain("sticky top-[var(--admin-mobile-header-height)] z-10");
+  expect(agendaSource).toContain('data-testid="agenda-date-navigation"');
+  expect(timelineSource).toContain('data-testid="agenda-professionals"');
+  expect(timelineSource).toContain('data-testid="agenda-timeline-grid"');
 });
 
 test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", async ({ page }) => {
@@ -256,14 +265,14 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
     await page.setContent(`
       <link rel="stylesheet" href="http://127.0.0.1:4178/src/styles.css" />
       <div class="admin-shell admin-shell-agenda min-h-screen overflow-x-hidden bg-background">
-        <header data-testid="admin-header" class="flex h-[var(--admin-mobile-header-height)] items-center justify-between border-b px-3 py-1.5">
+        <header data-testid="admin-header" class="flex h-[var(--admin-mobile-header-height)] items-center justify-between border-b px-3 py-1">
           <span class="min-w-0 truncate">Boa tarde, Ana</span>
           <span class="shrink-0">Notificações Tema</span>
         </header>
         <main class="admin-main">
           <div class="admin-content px-3 pt-0">
             <div class="agenda-timeline-page -mx-3 flex w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 pb-0">
-              <nav data-testid="agenda-start" class="agenda-date-navigation border-y py-1">Agosto de 2026</nav>
+              <nav data-testid="agenda-start" class="agenda-date-navigation relative z-30 border-y py-1">Agosto de 2026</nav>
               <section class="agenda-timeline">
                 <div data-testid="professionals" class="agenda-professionals flex justify-center gap-1.5 overflow-x-auto px-2 py-1.5 md:hidden">
                   <button class="agenda-compact-control inline-flex h-14 w-[calc(50%_-_0.25rem)] min-w-0 shrink-0 items-center gap-2 rounded-xl border px-2.5">
@@ -273,6 +282,7 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
                     <span class="size-8 shrink-0 rounded-full"></span><span class="min-w-0"><span class="block truncate">Paula</span><span class="whitespace-nowrap">1 agendamento</span></span>
                   </button>
                 </div>
+                <div data-testid="timeline-grid" class="relative h-96 border-t"></div>
               </section>
             </div>
           </div>
@@ -312,6 +322,8 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
       const header = rect("admin-header");
       const agenda = rect("agenda-start");
       const modal = rect("modal");
+      const professionals = rect("professionals");
+      const timeline = rect("timeline-grid");
       const startSection = rect("start-section");
       const endSection = rect("end-section");
       const fieldsOverlap = !(
@@ -330,6 +342,8 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
         headerGap: agenda.top - header.bottom,
+        professionalsGap: professionals.top - agenda.bottom,
+        timelineGap: timeline.top - professionals.bottom,
         fieldsOverlap,
         sectionsOverlap,
         modalLeft: modal.left,
@@ -343,6 +357,14 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
     expect(layout.headerGap, `espaço entre cabeçalho e agenda em ${width}px`).toBeLessThanOrEqual(
       1,
     );
+    expect(
+      layout.professionalsGap,
+      `sobreposição entre calendário e profissionais em ${width}px`,
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      layout.timelineGap,
+      `sobreposição entre profissionais e timeline em ${width}px`,
+    ).toBeGreaterThanOrEqual(0);
     expect(layout.fieldsOverlap, `campos sobrepostos em ${width}px`).toBe(false);
     expect(layout.sectionsOverlap, `períodos sobrepostos em ${width}px`).toBe(false);
     expect(layout.modalLeft).toBeGreaterThanOrEqual(0);

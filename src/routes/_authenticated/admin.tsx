@@ -714,7 +714,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
       <header
         data-tour="admin-header"
         className={`sticky top-0 z-20 flex items-center justify-between border-b border-border/70 bg-background/88 px-3 backdrop-blur-2xl transition-[margin] duration-300 ease-out md:px-8 md:py-4 ${
-          isAgendaPage ? "h-[var(--admin-mobile-header-height)] py-1.5" : "py-3"
+          isAgendaPage ? "h-[var(--admin-mobile-header-height)] py-1" : "py-3"
         } ${desktopSidebarCollapsed ? "md:ml-20" : "md:ml-60"}`}
       >
         <div className="min-w-0">
