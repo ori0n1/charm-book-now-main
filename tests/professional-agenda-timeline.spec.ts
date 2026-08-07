@@ -154,6 +154,8 @@ test("usa uma única rolagem vertical no mobile", async () => {
     "style={{ top: (hour - bounds.startHour) * hourHeight + hourHeight / 2 }}",
   );
   expect(timelineSource).toContain("style={{ left: timeGutter }}");
+  expect(timelineSource).not.toContain("style={{ width: timeGutter - 4 }}");
+  expect(timelineSource).toContain("Agora {formatTime(now.toISOString())}");
   expect(timelineSource).not.toContain('label="Livre"');
   expect(timelineSource).toContain(
     "fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)]",
@@ -218,7 +220,8 @@ test("mostra bloqueios reais e mantém o modal seguro no mobile", async () => {
   expect(agendaSource).toContain('.from("staff_time_off")\n      .update({');
   expect(agendaSource).toContain('label="Guardar bloqueio"');
   expect(agendaSource).toContain("Desbloquear horário?");
-  expect(agendaSource).toContain("min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]");
+  expect(agendaSource).toContain("min-[390px]:grid-cols-2");
+  expect(agendaSource).not.toContain("min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]");
 });
 
 test("mantém profissionais visíveis, centralizados e com contadores reais", async () => {
@@ -234,6 +237,8 @@ test("mantém profissionais visíveis, centralizados e com contadores reais", as
 
   expect(timelineSource).toContain('aria-label="Profissionais da agenda"');
   expect(timelineSource).toContain('displayProfessionals.length <= 2 ? "justify-center"');
+  expect(timelineSource).toContain("md:hidden");
+  expect(timelineSource).not.toContain("{mobile && (");
   expect(timelineSource).not.toContain("mobile && displayProfessionals.length > 1");
   expect(timelineSource).toContain('appointment.status === "cancelled"');
   expect(timelineSource).toContain("appointmentCounts.get(person.id) ?? 0");
@@ -260,12 +265,12 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
             <div class="agenda-timeline-page -mx-3 flex w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 pb-0">
               <nav data-testid="agenda-start" class="agenda-date-navigation border-y py-1">Agosto de 2026</nav>
               <section class="agenda-timeline">
-                <div data-testid="professionals" class="agenda-professionals flex justify-center gap-1.5 overflow-x-auto px-2 py-1">
-                  <button class="agenda-compact-control inline-flex h-10 max-w-[calc(50%_-_0.25rem)] shrink-0 items-center gap-2 rounded-xl border px-2">
-                    <span class="size-8 shrink-0 rounded-full"></span><span class="min-w-0 truncate">Ana Silva</span><span class="shrink-0">3</span>
+                <div data-testid="professionals" class="agenda-professionals flex justify-center gap-1.5 overflow-x-auto px-2 py-1.5 md:hidden">
+                  <button class="agenda-compact-control inline-flex h-14 w-[calc(50%_-_0.25rem)] min-w-0 shrink-0 items-center gap-2 rounded-xl border px-2.5">
+                    <span class="size-8 shrink-0 rounded-full"></span><span class="min-w-0"><span class="block truncate">Ana Silva</span><span class="whitespace-nowrap">3 agendamentos</span></span>
                   </button>
-                  <button class="agenda-compact-control inline-flex h-10 max-w-[calc(50%_-_0.25rem)] shrink-0 items-center gap-2 rounded-xl border px-2">
-                    <span class="size-8 shrink-0 rounded-full"></span><span class="min-w-0 truncate">Paula</span><span class="shrink-0">1</span>
+                  <button class="agenda-compact-control inline-flex h-14 w-[calc(50%_-_0.25rem)] min-w-0 shrink-0 items-center gap-2 rounded-xl border px-2.5">
+                    <span class="size-8 shrink-0 rounded-full"></span><span class="min-w-0"><span class="block truncate">Paula</span><span class="whitespace-nowrap">1 agendamento</span></span>
                   </button>
                 </div>
               </section>
@@ -275,18 +280,20 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
         <div data-testid="modal" class="fixed inset-0 flex items-end justify-center overflow-x-hidden px-2 pb-2 pt-2">
           <div class="relative flex max-h-[calc(100dvh-1.5rem)] w-full max-w-xl flex-col overflow-hidden rounded-[1.25rem] border bg-card">
             <div class="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
-              <label class="grid min-w-0 gap-1.5">Início do bloqueio
-                <span data-testid="start-fields" class="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
-                  <input data-testid="start-date" type="date" class="h-10 min-w-0 w-full" />
-                  <input data-testid="start-time" type="time" class="h-10 min-w-0 w-full" />
-                </span>
-              </label>
-              <label class="grid min-w-0 gap-1.5">Fim do bloqueio
-                <span class="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
-                  <input type="date" class="h-10 min-w-0 w-full" />
-                  <input type="time" class="h-10 min-w-0 w-full" />
-                </span>
-              </label>
+              <div class="grid min-w-0 gap-3 min-[390px]:grid-cols-2">
+                <label data-testid="start-section" class="grid min-w-0 gap-1.5">Início do bloqueio
+                  <span data-testid="start-fields" class="grid min-w-0 grid-cols-1 gap-2">
+                    <input data-testid="start-date" type="date" class="h-10 max-w-full min-w-0 w-full appearance-none" />
+                    <input data-testid="start-time" type="time" class="h-10 max-w-full min-w-0 w-full appearance-none" />
+                  </span>
+                </label>
+                <label data-testid="end-section" class="grid min-w-0 gap-1.5">Fim do bloqueio
+                  <span class="grid min-w-0 grid-cols-1 gap-2">
+                    <input type="date" class="h-10 max-w-full min-w-0 w-full appearance-none" />
+                    <input type="time" class="h-10 max-w-full min-w-0 w-full appearance-none" />
+                  </span>
+                </label>
+              </div>
             </div>
             <div class="grid shrink-0 gap-2 p-3 min-[380px]:grid-cols-[0.85fr_1.15fr]"><button>Cancelar</button><button>Bloquear horário</button></div>
           </div>
@@ -305,17 +312,26 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
       const header = rect("admin-header");
       const agenda = rect("agenda-start");
       const modal = rect("modal");
+      const startSection = rect("start-section");
+      const endSection = rect("end-section");
       const fieldsOverlap = !(
         date.right <= time.left ||
         time.right <= date.left ||
         date.bottom <= time.top ||
         time.bottom <= date.top
       );
+      const sectionsOverlap = !(
+        startSection.right <= endSection.left ||
+        endSection.right <= startSection.left ||
+        startSection.bottom <= endSection.top ||
+        endSection.bottom <= startSection.top
+      );
       return {
         documentWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
         headerGap: agenda.top - header.bottom,
         fieldsOverlap,
+        sectionsOverlap,
         modalLeft: modal.left,
         modalRight: modal.right,
       };
@@ -328,6 +344,7 @@ test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", a
       1,
     );
     expect(layout.fieldsOverlap, `campos sobrepostos em ${width}px`).toBe(false);
+    expect(layout.sectionsOverlap, `períodos sobrepostos em ${width}px`).toBe(false);
     expect(layout.modalLeft).toBeGreaterThanOrEqual(0);
     expect(layout.modalRight).toBeLessThanOrEqual(width);
   }

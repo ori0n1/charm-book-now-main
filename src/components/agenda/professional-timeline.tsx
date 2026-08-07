@@ -137,49 +137,52 @@ export function ProfessionalTimeline({
 
   return (
     <section className="agenda-timeline relative overflow-visible bg-background md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm">
-      {mobile && (
-        <div
-          className={`agenda-professionals flex snap-x snap-mandatory gap-1.5 overflow-x-auto border-b border-border/60 bg-card/95 px-2 py-1 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
-            displayProfessionals.length <= 2 ? "justify-center" : "justify-start"
-          }`}
-          aria-label="Profissionais da agenda"
-        >
-          {displayProfessionals.map((person) => (
-            <button
-              key={person.id}
-              type="button"
-              onClick={() => setMobileProfessionalId(person.id)}
-              className={`agenda-compact-control inline-flex h-10 min-h-0 shrink-0 snap-start items-center gap-2 rounded-xl border px-2 text-[11px] font-bold transition ${
-                person.id === mobileProfessionalId
-                  ? "border-foreground bg-foreground text-background shadow-sm"
-                  : "border-border/70 bg-muted/45 text-muted-foreground"
-              } ${
-                displayProfessionals.length === 1
-                  ? "max-w-[min(100%,16rem)]"
-                  : displayProfessionals.length === 2
-                    ? "max-w-[calc(50%_-_0.25rem)]"
-                    : "max-w-[11rem]"
-              }`}
-              aria-pressed={person.id === mobileProfessionalId}
-              aria-label={`${person.name}, ${appointmentCounts.get(person.id) ?? 0} ${
-                (appointmentCounts.get(person.id) ?? 0) === 1 ? "marcação" : "marcações"
-              }`}
-            >
-              <ProfessionalAvatar person={person} compact />
-              <span className="min-w-0 max-w-28 truncate">{person.name}</span>
-              <span
-                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] tabular-nums ${
-                  person.id === mobileProfessionalId
-                    ? "bg-background/15 text-background"
-                    : "bg-background text-foreground"
-                }`}
-              >
-                {appointmentCounts.get(person.id) ?? 0}
+      <div
+        className={`agenda-professionals flex snap-x snap-mandatory gap-1.5 overflow-x-auto border-b border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-xl [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden ${
+          displayProfessionals.length <= 2 ? "justify-center" : "justify-start"
+        }`}
+        aria-label="Profissionais da agenda"
+      >
+        {displayProfessionals.map((person) => (
+          <button
+            key={person.id}
+            type="button"
+            onClick={() => setMobileProfessionalId(person.id)}
+            className={`agenda-compact-control inline-flex h-14 min-h-0 shrink-0 snap-start items-center gap-2 rounded-xl border px-2.5 text-left text-[11px] font-bold transition ${
+              person.id === mobileProfessionalId
+                ? "border-foreground bg-foreground text-background shadow-sm"
+                : "border-border/70 bg-muted/45 text-muted-foreground"
+            } ${
+              displayProfessionals.length === 1
+                ? "w-[min(100%,16rem)]"
+                : displayProfessionals.length === 2
+                  ? "w-[calc(50%_-_0.25rem)] min-w-0"
+                  : "w-[11rem]"
+            }`}
+            aria-pressed={person.id === mobileProfessionalId}
+            aria-label={`${person.name}, ${appointmentCounts.get(person.id) ?? 0} ${
+              (appointmentCounts.get(person.id) ?? 0) === 1 ? "marcação" : "marcações"
+            }`}
+          >
+            <ProfessionalAvatar person={person} compact />
+            <span className="min-w-0 overflow-hidden">
+              <span className="block max-w-28 truncate text-xs">{person.name}</span>
+              <span className="mt-0.5 flex items-center gap-1 whitespace-nowrap text-[9px] font-semibold opacity-80">
+                <span
+                  className={`shrink-0 rounded-full px-1.5 py-0.5 tabular-nums ${
+                    person.id === mobileProfessionalId
+                      ? "bg-background/15 text-background"
+                      : "bg-background text-foreground"
+                  }`}
+                >
+                  {appointmentCounts.get(person.id) ?? 0}
+                </span>
+                {(appointmentCounts.get(person.id) ?? 0) === 1 ? "agendamento" : "agendamentos"}
               </span>
-            </button>
-          ))}
-        </div>
-      )}
+            </span>
+          </button>
+        ))}
+      </div>
 
       <div
         ref={scrollRef}
@@ -418,16 +421,13 @@ export function ProfessionalTimeline({
                 aria-label="Horário atual"
               >
                 <span
-                  className="absolute left-0.5 top-0 inline-flex -translate-y-1/2 justify-center rounded-full bg-rose-500 px-0.5 py-0.5 font-mono text-[8px] font-black leading-none tabular-nums text-white shadow-sm"
-                  style={{ width: timeGutter - 4 }}
-                >
-                  {formatTime(now.toISOString())}
-                </span>
-                <span
                   className="absolute right-0 top-0 border-t border-rose-500/80"
                   style={{ left: timeGutter }}
                 >
                   <span className="absolute left-0 top-0 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500" />
+                  <span className="absolute right-1 top-0 -translate-y-1/2 whitespace-nowrap rounded-full bg-rose-500 px-1.5 py-0.5 font-mono text-[8px] font-black leading-none tabular-nums text-white shadow-sm">
+                    Agora {formatTime(now.toISOString())}
+                  </span>
                 </span>
               </div>
             )}

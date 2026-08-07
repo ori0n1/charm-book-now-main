@@ -1929,46 +1929,12 @@ function BlockTimeModal({
             <p className="truncate text-sm font-black">{staffName}</p>
           </div>
         </div>
-        <div className="space-y-3">
+        <div className="grid min-w-0 gap-3 min-[390px]:grid-cols-2">
           <ModalField label="Início do bloqueio">
-            <div className="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
-              <input
-                type="date"
-                value={starts.slice(0, 10)}
-                onChange={(event) =>
-                  setStarts(mergeLocalDateTime(starts, "date", event.target.value))
-                }
-                className={`${inputCls} min-w-0 px-2`}
-                aria-label="Data de início do bloqueio"
-              />
-              <input
-                type="time"
-                value={starts.slice(11, 16)}
-                onChange={(event) =>
-                  setStarts(mergeLocalDateTime(starts, "time", event.target.value))
-                }
-                className={`${inputCls} min-w-0 px-2`}
-                aria-label="Hora de início do bloqueio"
-              />
-            </div>
+            <BlockDateTimeFields value={starts} onChange={setStarts} prefix="início" />
           </ModalField>
           <ModalField label="Fim do bloqueio">
-            <div className="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
-              <input
-                type="date"
-                value={ends.slice(0, 10)}
-                onChange={(event) => setEnds(mergeLocalDateTime(ends, "date", event.target.value))}
-                className={`${inputCls} min-w-0 px-2`}
-                aria-label="Data de fim do bloqueio"
-              />
-              <input
-                type="time"
-                value={ends.slice(11, 16)}
-                onChange={(event) => setEnds(mergeLocalDateTime(ends, "time", event.target.value))}
-                className={`${inputCls} min-w-0 px-2`}
-                aria-label="Hora de fim do bloqueio"
-              />
-            </div>
+            <BlockDateTimeFields value={ends} onChange={setEnds} prefix="fim" />
           </ModalField>
         </div>
         <ModalField label="Motivo (opcional)">
@@ -2124,12 +2090,14 @@ function ManageBlockTimeModal({
                 <p className="truncate text-sm font-black">{staffName}</p>
               </div>
             </div>
-            <ModalField label="Início do bloqueio">
-              <BlockDateTimeFields value={starts} onChange={setStarts} prefix="início" />
-            </ModalField>
-            <ModalField label="Fim do bloqueio">
-              <BlockDateTimeFields value={ends} onChange={setEnds} prefix="fim" />
-            </ModalField>
+            <div className="grid min-w-0 gap-3 min-[390px]:grid-cols-2">
+              <ModalField label="Início do bloqueio">
+                <BlockDateTimeFields value={starts} onChange={setStarts} prefix="início" />
+              </ModalField>
+              <ModalField label="Fim do bloqueio">
+                <BlockDateTimeFields value={ends} onChange={setEnds} prefix="fim" />
+              </ModalField>
+            </div>
             <ModalField label="Motivo (opcional)">
               <input
                 value={reason}
@@ -2224,19 +2192,19 @@ function BlockDateTimeFields({
   prefix: "início" | "fim";
 }) {
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-2 min-[360px]:grid-cols-[minmax(0,1fr)_5.75rem]">
+    <div className="grid min-w-0 grid-cols-1 gap-2">
       <input
         type="date"
         value={value.slice(0, 10)}
         onChange={(event) => onChange(mergeLocalDateTime(value, "date", event.target.value))}
-        className={`${inputCls} min-w-0 px-2`}
+        className={`${inputCls} max-w-full min-w-0 appearance-none px-2`}
         aria-label={`Data de ${prefix} do bloqueio`}
       />
       <input
         type="time"
         value={value.slice(11, 16)}
         onChange={(event) => onChange(mergeLocalDateTime(value, "time", event.target.value))}
-        className={`${inputCls} min-w-0 px-2`}
+        className={`${timeCls} max-w-full min-w-0 px-2`}
         aria-label={`Hora de ${prefix} do bloqueio`}
       />
     </div>
