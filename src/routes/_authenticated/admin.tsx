@@ -299,14 +299,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     : { title: APP_BRAND.shortName, subtitle: "Bem-vinda ao painel Bellza" };
   const premiumTooltip = getPremiumHeaderTooltip(billingQuery.data);
   const isPremiumPage = pathname.startsWith("/admin/premium");
-  const isDashboardPage = pathname === "/admin";
   const isAgendaPage = pathname.startsWith("/admin/agenda");
-  const showTrialBanner = Boolean(
-    accessMode === "full" &&
-    billingQuery.data &&
-    isPureTrialBilling(billingQuery.data) &&
-    isDashboardPage,
-  );
   const showCancellationBanner = Boolean(
     accessMode === "full" &&
     billingQuery.data &&
@@ -762,7 +755,6 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           {showCancellationBanner && (
             <CancellationScheduledBanner endDate={billingQuery.data!.nextBillingAt} />
           )}
-          {showTrialBanner && <TrialPremiumBanner billing={billingQuery.data!} />}
           <Outlet />
         </div>
       </main>
@@ -1318,84 +1310,8 @@ function CancellationScheduledBanner({ endDate }: { endDate: string | null }) {
   );
 }
 
-function TrialPremiumBanner({ billing }: { billing: BillingSummary }) {
-  if (!isPureTrialBilling(billing)) return null;
-  const remaining = getBillingDaysRemaining(billing);
-  const urgent = remaining !== null && remaining <= 3;
-  const dateLabel = formatBillingDate(billing.trialEndsAt ?? billing.nextBillingAt);
-  const progress =
-    remaining === null ? 35 : Math.min(100, Math.max(6, ((14 - remaining) / 14) * 100));
-  return (
-    <section
-      className={`mb-3 overflow-hidden rounded-xl border px-3.5 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.025)] md:mb-4 ${
-        urgent ? "border-amber-500/25 bg-amber-500/10" : "border-emerald-700/20 bg-emerald-500/10"
-      }`}
-    >
-      <div className="grid gap-2.5 lg:grid-cols-[1fr_auto] lg:items-center">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-            <Sparkles className="h-3.5 w-3.5" />
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em]">
-              Teste gratuito ativo
-            </p>
-          </div>
-          <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold tracking-tight md:text-base">
-                {remaining === 1
-                  ? "Resta 1 dia do teste gratuito"
-                  : `Restam ${remaining ?? "--"} dias do teste gratuito`}
-              </h2>
-              <p className="mt-0.5 max-w-2xl text-[11px] leading-relaxed text-muted-foreground">
-                Após o fim do teste será necessário ativar uma assinatura Premium para continuar a
-                utilizar o painel.
-              </p>
-            </div>
-            <span className="w-fit shrink-0 rounded-full bg-background/55 px-2.5 py-0.5 text-[11px] font-semibold text-foreground ring-1 ring-border/35">
-              {dateLabel}
-            </span>
-          </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background/60 ring-1 ring-border/35">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                urgent ? "bg-amber-500" : "bg-emerald-600"
-              }`}
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-
-        <div className="grid gap-1.5 sm:grid-cols-2 lg:w-56 lg:grid-cols-1">
-          <Link
-            to="/admin/premium"
-            className="flex h-9 items-center justify-center gap-2 rounded-lg bg-foreground px-3.5 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90"
-          >
-            Ativar Premium
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-          <Link
-            to="/admin/premium"
-            className="flex h-9 items-center justify-center rounded-lg border border-border/50 bg-background/45 px-3.5 text-xs font-bold uppercase tracking-wide text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          >
-            Ver planos
-          </Link>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function isStripePlan(plan?: string | null) {
   return plan === "monthly" || plan === "quarterly" || plan === "yearly";
-}
-
-function isPureTrialBilling(billing: BillingSummary) {
-  return Boolean(
-    billing.premiumActive &&
-    billing.status === "trialing" &&
-    !isStripePlan(billing.plan) &&
-    futureBillingDate(billing.trialEndsAt ?? billing.nextBillingAt),
-  );
 }
 
 function isPaidSubscriptionBilling(billing: BillingSummary) {
@@ -1404,28 +1320,4 @@ function isPaidSubscriptionBilling(billing: BillingSummary) {
     billing.status !== "trialing" &&
     billing.status !== "checkout_pending",
   );
-}
-
-function formatBillingDate(value?: string | null) {
-  if (!value) return "A sincronizar";
-  return new Date(value).toLocaleDateString("pt-PT", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function getBillingDaysRemaining(billing: BillingSummary) {
-  if (typeof billing.daysRemaining === "number") return billing.daysRemaining;
-  const target =
-    billing.status === "trialing"
-      ? (billing.trialEndsAt ?? billing.nextBillingAt)
-      : billing.nextBillingAt;
-  if (!target) return null;
-  return Math.max(0, Math.ceil((new Date(target).getTime() - Date.now()) / 86400000));
-}
-
-function futureBillingDate(value?: string | null) {
-  if (!value) return null;
-  return new Date(value).getTime() > Date.now() ? value : null;
 }

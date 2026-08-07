@@ -148,8 +148,15 @@ test("mantém o teste gratuito apenas na página inicial", async () => {
     resolve(process.cwd(), "src/routes/_authenticated/admin.tsx"),
     "utf8",
   );
+  const dashboardSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/admin.index.tsx"),
+    "utf8",
+  );
 
-  expect(adminSource).toMatch(/isPureTrialBilling\(billingQuery\.data\)\s*&&\s*isDashboardPage/);
+  expect(adminSource).not.toContain("TrialPremiumBanner");
+  expect(adminSource).not.toContain("showTrialBanner");
+  expect(dashboardSource.match(/<TrialPremiumBanner/g)).toHaveLength(1);
+  expect(dashboardSource.match(/function TrialPremiumBanner/g)).toHaveLength(1);
 });
 
 test("usa uma única rolagem vertical no mobile", async () => {

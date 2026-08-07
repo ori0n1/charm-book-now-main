@@ -317,6 +317,12 @@ function OverviewPage() {
   const maxDayTotal = Math.max(1, ...chartData.map((d) => d.total));
   return (
     <>
+      <TrialPremiumBanner
+        billing={billing.data ?? null}
+        checkoutPlan={checkoutPlan}
+        onChoosePremiumPlan={() => setPlanChooserOpen(true)}
+      />
+
       <MobileOverview
         today={today}
         upcoming={upcoming}
@@ -324,18 +330,9 @@ function OverviewPage() {
         scheduledCount={periodRows.length}
         paidByAppointment={paidByAppointment}
         studio={studio}
-        billing={billing.data ?? null}
-        checkoutPlan={checkoutPlan}
-        onChoosePremiumPlan={() => setPlanChooserOpen(true)}
       />
 
       <div className="hidden space-y-4 md:block">
-        <TrialPremiumBanner
-          billing={billing.data ?? null}
-          checkoutPlan={checkoutPlan}
-          onChoosePremiumPlan={() => setPlanChooserOpen(true)}
-        />
-
         <ShareStudioCard
           studioName={studio.name}
           studioSlug={studio.slug}
@@ -1020,9 +1017,6 @@ function MobileOverview({
   scheduledCount,
   paidByAppointment,
   studio,
-  billing,
-  checkoutPlan,
-  onChoosePremiumPlan,
 }: {
   today: Appt[];
   upcoming: Appt[];
@@ -1045,9 +1039,6 @@ function MobileOverview({
     deposit_percent: number;
     payment_policy: string;
   };
-  billing: BillingSummary | null;
-  checkoutPlan: PlanId | null;
-  onChoosePremiumPlan: () => void;
 }) {
   const next = upcoming[0];
   const nextSplit = next
@@ -1056,12 +1047,6 @@ function MobileOverview({
 
   return (
     <div className="space-y-4 md:hidden">
-      <TrialPremiumBanner
-        billing={billing}
-        checkoutPlan={checkoutPlan}
-        onChoosePremiumPlan={onChoosePremiumPlan}
-      />
-
       <section className="grid grid-cols-2 gap-3">
         <MobileMiniMetric
           label="Marcações hoje"
@@ -1191,7 +1176,7 @@ function TrialPremiumBanner({
 
   return (
     <section
-      className={`overflow-hidden rounded-[1.35rem] border p-4 shadow-lg md:rounded-[1.6rem] md:p-5 ${
+      className={`mb-4 overflow-hidden rounded-[1.35rem] border p-4 shadow-lg md:rounded-[1.6rem] md:p-5 ${
         urgent
           ? "border-amber-500/35 bg-[linear-gradient(135deg,rgba(245,158,11,0.16),rgba(255,255,255,0.02)_48%,rgba(16,185,129,0.08))] shadow-amber-950/10"
           : "border-emerald-700/25 bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_48%,rgba(16,185,129,0.05))] shadow-black/10"
