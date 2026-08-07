@@ -86,6 +86,26 @@ test("mantém escala proporcional de 15 a 120 minutos", () => {
   }
 });
 
+test("mantém proporção real na escala compacta do mobile", () => {
+  const startsAt = new Date("2026-07-30T13:00:00+01:00");
+  const halfHour = new Date(startsAt.getTime() + 30 * 60_000);
+  const fullHour = new Date(startsAt.getTime() + 60 * 60_000);
+  const [shortAppointment] = layoutProfessionalAppointments(
+    [appointment("mobile-30", "staff-a", startsAt.toISOString(), halfHour.toISOString())],
+    8,
+    58,
+  );
+  const [longAppointment] = layoutProfessionalAppointments(
+    [appointment("mobile-60", "staff-a", startsAt.toISOString(), fullHour.toISOString())],
+    8,
+    58,
+  );
+
+  expect(shortAppointment.height).toBe(29);
+  expect(longAppointment.height).toBe(58);
+  expect(longAppointment.top).toBe(shortAppointment.top);
+});
+
 test("reutiliza o modal atual ao tocar num horário livre", async () => {
   const timelineSource = await readFile(
     resolve(process.cwd(), "src/components/agenda/professional-timeline.tsx"),
@@ -131,6 +151,10 @@ test("usa uma única rolagem vertical no mobile", async () => {
 
   expect(timelineSource).toContain("h-auto max-h-none overflow-visible");
   expect(timelineSource).toContain("md:max-h-[72dvh] md:overflow-auto");
+  expect(timelineSource).toContain("const MOBILE_HOUR_HEIGHT = 58");
+  expect(timelineSource).toContain("style={{ top: (hour - bounds.startHour) * hourHeight + hourHeight / 2 }}");
+  expect(timelineSource).toContain("style={{ left: timeGutter }}");
+  expect(timelineSource).toContain('label="Livre"');
   expect(timelineSource).toContain("fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)]");
   expect(timelineSource).toContain("hidden border-b border-border/80 bg-card/95 backdrop-blur-xl md:grid");
   expect(agendaSource).toContain('className="hidden min-h-11 items-center justify-between');

@@ -7,8 +7,10 @@ import {
   type ProfessionalTimelinePerson,
 } from "./professional-timeline-utils";
 
-const HOUR_HEIGHT = 82;
-const TIME_GUTTER = 58;
+const MOBILE_HOUR_HEIGHT = 58;
+const DESKTOP_HOUR_HEIGHT = 82;
+const MOBILE_TIME_GUTTER = 54;
+const DESKTOP_TIME_GUTTER = 58;
 
 export function ProfessionalTimeline({
   date,
@@ -37,8 +39,10 @@ export function ProfessionalTimeline({
     professionals[0]?.id ?? "unassigned",
   );
   const [slotMenu, setSlotMenu] = useState<{ staffId: string; minutes: number } | null>(null);
+  const hourHeight = mobile ? MOBILE_HOUR_HEIGHT : DESKTOP_HOUR_HEIGHT;
+  const timeGutter = mobile ? MOBILE_TIME_GUTTER : DESKTOP_TIME_GUTTER;
   const bounds = getProfessionalTimelineBounds(appointments);
-  const timelineHeight = (bounds.endHour - bounds.startHour) * HOUR_HEIGHT;
+  const timelineHeight = (bounds.endHour - bounds.startHour) * hourHeight;
   const hours = Array.from(
     { length: bounds.endHour - bounds.startHour + 1 },
     (_, index) => bounds.startHour + index,
@@ -63,10 +67,10 @@ export function ProfessionalTimeline({
   const safeVisibleProfessionals =
     visibleProfessionals.length > 0 ? visibleProfessionals : [displayProfessionals[0]];
   const columnWidth = mobile ? "minmax(0, 1fr)" : "minmax(13rem, 1fr)";
-  const gridColumns = `${TIME_GUTTER}px repeat(${safeVisibleProfessionals.length}, ${columnWidth})`;
+  const gridColumns = `${timeGutter}px repeat(${safeVisibleProfessionals.length}, ${columnWidth})`;
   const today = sameLocalDay(date, now);
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const currentTop = ((nowMinutes - bounds.startHour * 60) / 60) * HOUR_HEIGHT;
+  const currentTop = ((nowMinutes - bounds.startHour * 60) / 60) * hourHeight;
   const showCurrentTime = today && currentTop >= 0 && currentTop <= timelineHeight;
   const dateKey = date.getTime();
 
@@ -157,7 +161,7 @@ export function ProfessionalTimeline({
         <div
           className="relative min-w-full"
           style={{
-            width: mobile ? "100%" : Math.max(760, TIME_GUTTER + safeVisibleProfessionals.length * 220),
+            width: mobile ? "100%" : Math.max(760, timeGutter + safeVisibleProfessionals.length * 220),
           }}
         >
           <div
@@ -193,13 +197,24 @@ export function ProfessionalTimeline({
             style={{ gridTemplateColumns: gridColumns, height: timelineHeight }}
           >
             <div className="sticky left-0 z-30 border-r border-border/70 bg-card">
-              {hours.map((hour) => (
+              {hours.map((hour, index) => (
                 <span
                   key={hour}
-                  className="absolute right-2 -translate-y-1/2 whitespace-nowrap font-mono text-[10px] font-bold tabular-nums text-muted-foreground"
-                  style={{ top: (hour - bounds.startHour) * HOUR_HEIGHT }}
+                  className={`absolute inset-x-1 whitespace-nowrap text-right font-mono text-[10px] font-black leading-none tabular-nums text-foreground/75 ${
+                    index === 0 ? "translate-y-0" : index === hours.length - 1 ? "-translate-y-full" : "-translate-y-1/2"
+                  }`}
+                  style={{ top: (hour - bounds.startHour) * hourHeight }}
                 >
                   {String(hour).padStart(2, "0")}:00
+                </span>
+              ))}
+              {hours.slice(0, -1).map((hour) => (
+                <span
+                  key={`${hour}:30`}
+                  className="absolute inset-x-1 -translate-y-1/2 whitespace-nowrap text-right font-mono text-[8px] font-semibold leading-none tabular-nums text-muted-foreground/70"
+                  style={{ top: (hour - bounds.startHour) * hourHeight + hourHeight / 2 }}
+                >
+                  {String(hour).padStart(2, "0")}:30
                 </span>
               ))}
             </div>
@@ -211,7 +226,7 @@ export function ProfessionalTimeline({
               const positioned = layoutProfessionalAppointments(
                 personAppointments,
                 bounds.startHour,
-                HOUR_HEIGHT,
+                hourHeight,
               );
               return (
                 <div
@@ -226,7 +241,7 @@ export function ProfessionalTimeline({
                     const rect = event.currentTarget.getBoundingClientRect();
                     const rawMinutes =
                       bounds.startHour * 60 +
-                      ((event.clientY - rect.top) / HOUR_HEIGHT) * 60;
+                      ((event.clientY - rect.top) / hourHeight) * 60;
                     const minutes = Math.max(
                       bounds.startHour * 60,
                       Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15),
@@ -238,7 +253,7 @@ export function ProfessionalTimeline({
                     clearLongPress();
                     longPressStartRef.current = { x: event.clientX, y: event.clientY };
                     const rect = event.currentTarget.getBoundingClientRect();
-                    const rawMinutes = bounds.startHour * 60 + ((event.clientY - rect.top) / HOUR_HEIGHT) * 60;
+                    const rawMinutes = bounds.startHour * 60 + ((event.clientY - rect.top) / hourHeight) * 60;
                     const minutes = Math.max(bounds.startHour * 60, Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15));
                     longPressTimerRef.current = window.setTimeout(
                       () => {
@@ -264,11 +279,11 @@ export function ProfessionalTimeline({
                     <div
                       key={hour}
                       className="absolute inset-x-0 border-t border-border/55"
-                      style={{ top: (hour - bounds.startHour) * HOUR_HEIGHT }}
+                      style={{ top: (hour - bounds.startHour) * hourHeight }}
                     >
                       <span
                         className="absolute inset-x-0 border-t border-dashed border-border/25"
-                        style={{ top: HOUR_HEIGHT / 2 }}
+                        style={{ top: hourHeight / 2 }}
                       />
                     </div>
                   ))}
@@ -281,38 +296,38 @@ export function ProfessionalTimeline({
                         key={appointment.id}
                         type="button"
                         onClick={() => onOpenAppointment(appointment)}
-                        className={`absolute z-10 overflow-hidden rounded-xl border border-l-[3px] px-2.5 py-1.5 text-left shadow-sm transition hover:z-20 hover:-translate-y-0.5 hover:shadow-md focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${appointmentTone(appointment.status, appointment.id)}`}
+                        className={`absolute z-10 overflow-hidden rounded-lg border border-l-[3px] px-1.5 py-0.5 text-left shadow-[0_1px_2px_hsl(0_0%_0%/0.06)] transition hover:z-20 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:rounded-xl md:px-2.5 md:py-1.5 ${appointmentTone(appointment.status, appointment.id)}`}
                         style={{
                           top: appointment.top,
-                          height: Math.max(16, appointment.height),
+                          height: appointment.height,
                           left: `calc(${left}% + 3px)`,
                           width: `calc(${width}% - 6px)`,
                         }}
                         aria-label={`${formatTime(appointment.startsAt)}, ${appointment.clientName}, ${appointment.serviceName}`}
                       >
                         <span className="flex min-w-0 items-center justify-between gap-1">
-                          <span className="shrink-0 whitespace-nowrap font-mono text-[10px] font-black tabular-nums">
+                          <span className="shrink-0 whitespace-nowrap font-mono text-[9px] font-black leading-none tabular-nums md:text-[10px]">
                             {formatTime(appointment.startsAt)} – {formatTime(appointment.endsAt)}
                           </span>
                           <span className="shrink-0 text-xs font-black leading-none opacity-60" aria-hidden="true">
                             ···
                           </span>
                         </span>
-                        <span className="mt-1 block truncate text-xs font-black leading-tight">
+                        <span className="mt-0.5 block truncate text-[10px] font-black leading-tight md:mt-1 md:text-xs">
                           {appointment.clientName}
                         </span>
-                        {appointment.height >= 54 && (
-                          <span className="mt-0.5 block truncate text-[10px] font-medium opacity-80">
+                        {appointment.height >= 38 && (
+                          <span className="mt-0.5 block truncate text-[9px] font-medium leading-tight opacity-80 md:text-[10px]">
                             {appointment.serviceName}
                           </span>
                         )}
-                        {appointment.height >= 76 && (
+                        {appointment.height >= 58 && (
                           <span className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[9px] font-semibold opacity-70">
                             <span className="truncate">{appointment.professionalName} · {appointment.durationLabel}</span>
                             {appointment.valueLabel && <span className="shrink-0 whitespace-nowrap">{appointment.valueLabel}</span>}
                           </span>
                         )}
-                        {appointment.height >= 96 && (
+                        {appointment.height >= 82 && (
                           <span className="mt-1 inline-flex rounded-full bg-background/55 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.06em]">
                             {statusLabel(appointment.status)}
                           </span>
@@ -326,12 +341,21 @@ export function ProfessionalTimeline({
 
             {showCurrentTime && (
               <div
-                className="pointer-events-none absolute left-0 right-0 z-20 border-t border-rose-500/80"
+                className="pointer-events-none absolute inset-x-0 z-20"
                 style={{ top: currentTop }}
                 aria-label="Horário atual"
               >
-                <span className="sticky left-12 -top-2.5 inline-flex -translate-y-1/2 rounded-full bg-rose-500 px-1.5 py-0.5 font-mono text-[8px] font-black tabular-nums text-white">
+                <span
+                  className="absolute left-1 top-0 inline-flex -translate-y-1/2 justify-center rounded-full bg-rose-500 px-1 py-0.5 font-mono text-[8px] font-black leading-none tabular-nums text-white shadow-sm"
+                  style={{ width: timeGutter - 8 }}
+                >
                   {formatTime(now.toISOString())}
+                </span>
+                <span
+                  className="absolute right-0 top-0 border-t border-rose-500/80"
+                  style={{ left: timeGutter }}
+                >
+                  <span className="absolute left-0 top-0 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500" />
                 </span>
               </div>
             )}
@@ -388,11 +412,12 @@ export function ProfessionalTimeline({
         </div>
       )}
 
-      <div className="hidden flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border/70 bg-muted/25 px-3 py-2 text-[9px] font-semibold text-muted-foreground md:flex">
+      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-border/60 bg-card px-2.5 py-2 text-[8px] font-semibold text-muted-foreground md:justify-start md:gap-x-4 md:gap-y-1.5 md:bg-muted/25 md:px-3 md:text-[9px]">
         <Legend tone="bg-sky-300" label="Confirmada" />
         <Legend tone="bg-amber-300" label="Pendente" />
         <Legend tone="bg-emerald-300" label="Concluída" />
-        <Legend tone="bg-rose-300" label="Cancelada / falta" />
+        <Legend tone="bg-rose-300" label="Cancelada" />
+        <Legend tone="bg-muted-foreground/25" label="Livre" />
         <span className="ml-auto hidden whitespace-nowrap sm:inline">
           Toque ou mantenha pressionado um horário livre
         </span>

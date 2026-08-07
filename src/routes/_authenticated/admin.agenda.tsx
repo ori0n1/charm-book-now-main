@@ -1060,9 +1060,9 @@ function AgendaPage() {
       {loading ? (
         <div className="overflow-hidden border-y border-border/80 bg-card shadow-sm md:rounded-[1.35rem] md:border">
           <div className="h-[4.5rem] animate-pulse border-b border-border bg-muted/45" />
-          <div className="grid h-[60dvh] grid-cols-[3.6rem_1fr]">
+          <div className="grid h-[60dvh] grid-cols-[3.4rem_1fr] md:grid-cols-[3.6rem_1fr]">
             <div className="border-r border-border bg-muted/20" />
-            <div className="bg-[linear-gradient(to_bottom,transparent_80px,hsl(var(--border)/0.45)_81px)] bg-[length:100%_82px]" />
+            <div className="bg-[linear-gradient(to_bottom,transparent_57px,hsl(var(--border)/0.45)_58px)] bg-[length:100%_58px] md:bg-[linear-gradient(to_bottom,transparent_80px,hsl(var(--border)/0.45)_81px)] md:bg-[length:100%_82px]" />
           </div>
         </div>
       ) : (
