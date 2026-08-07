@@ -17,6 +17,7 @@ export function ProfessionalTimeline({
   appointments,
   onOpenAppointment,
   onCreateAtSlot,
+  onBlockAtSlot,
 }: {
   date: Date;
   now: Date;
@@ -24,9 +25,12 @@ export function ProfessionalTimeline({
   appointments: ProfessionalTimelineAppointment[];
   onOpenAppointment: (appointment: ProfessionalTimelineAppointment) => void;
   onCreateAtSlot: (staffId: string, minutes: number, mode: "standard" | "fit") => void;
+  onBlockAtSlot: (staffId: string, minutes: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const longPressTimerRef = useRef<number | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickRef = useRef(false);
   const [mobile, setMobile] = useState(false);
   const [mobileProfessionalId, setMobileProfessionalId] = useState(
     professionals[0]?.id ?? "unassigned",
@@ -45,6 +49,13 @@ export function ProfessionalTimeline({
         : [{ id: "unassigned", name: "Agenda", avatarUrl: null }],
     [professionals],
   );
+  const appointmentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const appointment of appointments) {
+      counts.set(appointment.staffId, (counts.get(appointment.staffId) ?? 0) + 1);
+    }
+    return counts;
+  }, [appointments]);
   const visibleProfessionals = mobile
     ? displayProfessionals.filter((person) => person.id === mobileProfessionalId)
     : displayProfessionals;
@@ -83,25 +94,43 @@ export function ProfessionalTimeline({
     return () => window.cancelAnimationFrame(frame);
   }, [currentTop, dateKey, showCurrentTime]);
 
+  useEffect(
+    () => () => {
+      if (longPressTimerRef.current !== null) {
+        window.clearTimeout(longPressTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  function clearLongPress() {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+    }
+    longPressTimerRef.current = null;
+    longPressStartRef.current = null;
+  }
+
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
-      {mobile && (
-        <div className="flex gap-2 overflow-x-auto border-b border-border/70 bg-card px-3 py-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <section className="relative overflow-hidden border-y border-border/80 bg-card md:rounded-2xl md:border md:shadow-sm">
+      {mobile && displayProfessionals.length > 1 && (
+        <div className="flex snap-x snap-mandatory gap-2 overflow-x-auto border-b border-border/70 bg-card px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {displayProfessionals.map((person) => (
             <button
               key={person.id}
               type="button"
               onClick={() => setMobileProfessionalId(person.id)}
-              className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-bold transition ${
+              className={`inline-flex h-12 shrink-0 snap-start items-center gap-2.5 rounded-2xl border px-2.5 text-xs font-bold transition ${
                 person.id === mobileProfessionalId
-                  ? "bg-foreground text-background"
-                  : "bg-muted/70 text-muted-foreground"
+                  ? "border-foreground bg-foreground text-background shadow-sm"
+                  : "border-border/70 bg-muted/45 text-muted-foreground"
               }`}
+              aria-pressed={person.id === mobileProfessionalId}
             >
               <ProfessionalAvatar person={person} compact />
               <span className="max-w-32 truncate">{person.name}</span>
               <span className="rounded-full bg-background/15 px-1.5 py-0.5 text-[9px] tabular-nums">
-                {appointments.filter((appointment) => appointment.staffId === person.id).length}
+                {appointmentCounts.get(person.id) ?? 0}
               </span>
             </button>
           ))}
@@ -110,7 +139,7 @@ export function ProfessionalTimeline({
 
       <div
         ref={scrollRef}
-        className="max-h-[68dvh] overflow-auto overscroll-contain [scrollbar-width:thin] md:max-h-[72dvh]"
+        className={`${displayProfessionals.length > 1 ? "h-[calc(100dvh-18.1rem-env(safe-area-inset-bottom))]" : "h-[calc(100dvh-14.6rem-env(safe-area-inset-bottom))]"} min-h-[22rem] max-h-[70dvh] overflow-auto overscroll-contain scroll-smooth [scrollbar-width:thin] md:h-auto md:max-h-[72dvh]`}
         data-testid="professional-timeline-scroll"
       >
         <div
@@ -127,9 +156,7 @@ export function ProfessionalTimeline({
               <Clock3 className="h-4 w-4 text-muted-foreground" />
             </div>
             {safeVisibleProfessionals.map((person) => {
-              const count = appointments.filter(
-                (appointment) => appointment.staffId === person.id,
-              ).length;
+              const count = appointmentCounts.get(person.id) ?? 0;
               return (
                 <div
                   key={person.id}
@@ -180,6 +207,10 @@ export function ProfessionalTimeline({
                   className="relative min-w-0 cursor-crosshair border-r border-border/60 bg-background/20"
                   onClick={(event) => {
                     if ((event.target as HTMLElement).closest("button")) return;
+                    if (suppressClickRef.current) {
+                      suppressClickRef.current = false;
+                      return;
+                    }
                     const rect = event.currentTarget.getBoundingClientRect();
                     const rawMinutes =
                       bounds.startHour * 60 +
@@ -192,22 +223,30 @@ export function ProfessionalTimeline({
                   }}
                   onPointerDown={(event) => {
                     if ((event.target as HTMLElement).closest("button")) return;
+                    clearLongPress();
+                    longPressStartRef.current = { x: event.clientX, y: event.clientY };
                     const rect = event.currentTarget.getBoundingClientRect();
                     const rawMinutes = bounds.startHour * 60 + ((event.clientY - rect.top) / HOUR_HEIGHT) * 60;
                     const minutes = Math.max(bounds.startHour * 60, Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15));
                     longPressTimerRef.current = window.setTimeout(
-                      () => setSlotMenu({ staffId: person.id, minutes }),
+                      () => {
+                        suppressClickRef.current = true;
+                        setSlotMenu({ staffId: person.id, minutes });
+                        if ("vibrate" in navigator) navigator.vibrate(18);
+                      },
                       480,
                     );
                   }}
-                  onPointerUp={() => {
-                    if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current);
-                    longPressTimerRef.current = null;
+                  onPointerMove={(event) => {
+                    const start = longPressStartRef.current;
+                    if (!start) return;
+                    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
+                      clearLongPress();
+                    }
                   }}
-                  onPointerCancel={() => {
-                    if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current);
-                    longPressTimerRef.current = null;
-                  }}
+                  onPointerUp={clearLongPress}
+                  onPointerCancel={clearLongPress}
+                  onPointerLeave={clearLongPress}
                 >
                   {hours.map((hour) => (
                     <div
@@ -328,20 +367,10 @@ export function ProfessionalTimeline({
             <SlotAction
               icon={<LockKeyhole className="size-4" />}
               label="Bloquear horário"
-              disabled
-              hint="Ainda não disponível"
-            />
-            <SlotAction
-              icon={<Clock3 className="size-4" />}
-              label="Intervalo"
-              disabled
-              hint="Ainda não disponível"
-            />
-            <SlotAction
-              icon={<CalendarPlus className="size-4" />}
-              label="Evento interno"
-              disabled
-              hint="Ainda não disponível"
+              onClick={() => {
+                onBlockAtSlot(slotMenu.staffId, slotMenu.minutes);
+                setSlotMenu(null);
+              }}
             />
           </div>
         </div>
@@ -353,7 +382,7 @@ export function ProfessionalTimeline({
         <Legend tone="bg-emerald-300" label="Concluída" />
         <Legend tone="bg-rose-300" label="Cancelada / falta" />
         <span className="ml-auto hidden whitespace-nowrap sm:inline">
-          Toque num espaço vazio para criar
+          Toque ou mantenha pressionado um horário livre
         </span>
       </div>
     </section>
@@ -398,7 +427,7 @@ function ProfessionalAvatar({
   person: ProfessionalTimelinePerson;
   compact?: boolean;
 }) {
-  const size = compact ? "size-5 text-[8px]" : "size-9 text-[10px]";
+  const size = compact ? "size-8 text-[9px]" : "size-9 text-[10px]";
   if (person.avatarUrl) {
     return (
       <img

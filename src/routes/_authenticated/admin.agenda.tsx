@@ -18,6 +18,7 @@ import {
   FileText,
   Filter,
   Loader2,
+  LockKeyhole,
   MessageCircle,
   MoreHorizontal,
   Pencil,
@@ -191,6 +192,11 @@ function AgendaPage() {
     date?: string;
     time?: string;
   } | null>(null);
+  const [blockTimeDefaults, setBlockTimeDefaults] = useState<{
+    staffId: string;
+    date: string;
+    time: string;
+  } | null>(null);
   const [editApptId, setEditApptId] = useState<string | null>(null);
   const [rescheduleApptId, setRescheduleApptId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -200,6 +206,7 @@ function AgendaPage() {
   const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
   const [timelineDetailId, setTimelineDetailId] = useState<string | null>(null);
   const [agendaStaff, setAgendaStaff] = useState<StudioStaff[]>([]);
+  const selectedDayButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setShowDepositSplit(localStorage.getItem("agenda-show-deposit-split") === "true");
@@ -211,6 +218,14 @@ function AgendaPage() {
     const timer = window.setInterval(() => setAgendaNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    selectedDayButtonRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+      inline: "center",
+    });
+  }, [selectedDate]);
 
   useEffect(() => {
     if (!studio) return;
@@ -780,24 +795,24 @@ function AgendaPage() {
 
   return (
     <div
-      className="mx-auto flex w-full max-w-[1320px] flex-col gap-3 pb-24 md:gap-4 md:pb-6"
+      className="-mx-3 flex w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 pb-24 md:mx-auto md:w-full md:max-w-[1320px] md:gap-4 md:pb-6"
       onClick={() => {
         if (menuOpenId) closeMenu();
         if (exportOpen) setExportOpen(false);
       }}
     >
-      <header className="flex items-center justify-between gap-3 px-1 py-1 md:px-2">
+      <header className="flex min-h-14 items-center justify-between gap-2 px-3 py-1.5 md:min-h-0 md:px-2 md:py-1">
         <div className="min-w-0">
-          <h1 className="truncate text-2xl font-black tracking-[-0.035em] md:text-3xl">Agenda</h1>
-          <p className="mt-0.5 truncate text-[11px] font-semibold text-muted-foreground">
-            {timelineAppointments.length} {timelineAppointments.length === 1 ? "marcação" : "marcações"} hoje
+          <h1 className="truncate text-xl font-black tracking-[-0.035em] md:text-3xl">Agenda</h1>
+          <p className="truncate text-[10px] font-semibold text-muted-foreground md:mt-0.5 md:text-[11px]">
+            {timelineAppointments.length} {timelineAppointments.length === 1 ? "marcação" : "marcações"} {isSameLocalDay(selectedDate, new Date()) ? "hoje" : "neste dia"}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => navigateToAgendaDate(new Date())}
-            className="inline-flex h-11 items-center gap-2 rounded-2xl border border-border bg-card px-3 text-xs font-black shadow-sm transition hover:bg-muted md:px-4"
+            className="hidden h-11 items-center gap-2 rounded-2xl border border-border bg-card px-3 text-xs font-black shadow-sm transition hover:bg-muted min-[390px]:inline-flex md:px-4"
           >
             <CalendarDays className="size-4" />
             Hoje
@@ -835,7 +850,7 @@ function AgendaPage() {
               setNewApptDefaults(null);
               setNewApptOpen(true);
             }}
-            className="inline-flex h-11 items-center gap-2 rounded-2xl bg-foreground px-3.5 text-xs font-black text-background shadow-lg shadow-black/10 transition hover:opacity-90 md:px-5"
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-foreground px-3 text-xs font-black text-background shadow-lg shadow-black/10 transition hover:opacity-90 md:h-11 md:rounded-2xl md:px-5"
           >
             <Plus className="size-4" />
             <span className="hidden min-[360px]:inline">Nova marcação</span>
@@ -843,8 +858,33 @@ function AgendaPage() {
         </div>
       </header>
 
-      <nav className="rounded-2xl border border-border/80 bg-card px-1 py-2 shadow-sm" aria-label="Navegação semanal">
-        <div className="grid grid-cols-[2rem_repeat(7,minmax(2rem,1fr))_2rem] items-center md:grid-cols-[2.5rem_repeat(7,minmax(2.5rem,1fr))_2.5rem]">
+      <nav className="sticky top-[3.55rem] z-10 border-y border-border/80 bg-card/95 py-1.5 shadow-sm backdrop-blur-xl md:static md:rounded-2xl md:border md:px-1 md:py-2" aria-label="Navegação semanal">
+        <div className="flex snap-x snap-mandatory gap-1 overflow-x-auto px-[calc(50%-1.55rem)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:hidden">
+          {getMobileAgendaDays(selectedDate).map((day) => {
+            const selected = isSameLocalDay(day, selectedDate);
+            const today = isSameLocalDay(day, new Date());
+            return (
+              <button
+                key={day.toISOString()}
+                ref={selected ? selectedDayButtonRef : undefined}
+                type="button"
+                onClick={() => navigateToAgendaDate(day)}
+                className="flex w-[3.1rem] shrink-0 snap-center flex-col items-center gap-0.5 rounded-xl py-1"
+                aria-current={selected ? "date" : undefined}
+                aria-label={day.toLocaleDateString("pt-PT", { weekday: "long", day: "numeric", month: "long" })}
+              >
+                <span className={`text-[8px] font-black uppercase tracking-[0.08em] ${selected ? "text-foreground" : "text-muted-foreground"}`}>
+                  {day.toLocaleDateString("pt-PT", { weekday: "short" }).replace(".", "")}
+                </span>
+                <span className={`grid size-8 place-items-center rounded-full text-sm font-black transition ${selected ? "bg-foreground text-background shadow-md" : "bg-muted/45"}`}>
+                  {day.getDate()}
+                </span>
+                <span className={`size-1 rounded-full ${today ? "bg-emerald-500" : "bg-transparent"}`} />
+              </button>
+            );
+          })}
+        </div>
+        <div className="hidden grid-cols-[2.5rem_repeat(7,minmax(2.5rem,1fr))_2.5rem] items-center md:grid">
         <button
           type="button"
           onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, -7))}
@@ -885,27 +925,27 @@ function AgendaPage() {
         </div>
       </nav>
 
-      <div className="flex items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card px-3 py-2.5 shadow-sm">
+      <div className="flex min-h-11 items-center justify-between gap-2 border-b border-border/70 bg-card px-3 py-1.5 shadow-sm md:rounded-2xl md:border md:py-2.5">
         <div className="min-w-0">
-          <p className="truncate text-sm font-black">{formatAgendaDateTitle(selectedDate)}</p>
-          <p className="font-mono text-[10px] font-semibold tabular-nums text-muted-foreground">
+          <p className="truncate text-xs font-black md:text-sm">{formatAgendaDateTitle(selectedDate)}</p>
+          <p className="hidden font-mono text-[10px] font-semibold tabular-nums text-muted-foreground min-[390px]:block">
             {agendaNow.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <label className="relative inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl border border-border px-3 text-[11px] font-bold">
-            <CalendarDays className="size-3.5" /> Data
+          <label className="relative inline-flex size-8 cursor-pointer items-center justify-center rounded-lg border border-border text-[11px] font-bold md:h-9 md:w-auto md:gap-1.5 md:rounded-xl md:px-3">
+            <CalendarDays className="size-3.5" /><span className="hidden md:inline">Data</span>
             <input type="date" value={toDateInputValue(selectedDate)} onChange={(event) => event.target.value && navigateToAgendaDate(dateFromInputValue(event.target.value))} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Escolher data" />
           </label>
-          <button type="button" disabled className="h-9 rounded-xl border border-border px-3 text-[11px] font-bold">Dia</button>
-          <button type="button" onClick={() => setAgendaToolsOpen((value) => !value)} className={`grid size-9 place-items-center rounded-xl border ${agendaToolsOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border"}`} aria-label="Pesquisa e filtros">
+          <button type="button" disabled className="hidden h-9 rounded-xl border border-border px-3 text-[11px] font-bold md:block">Dia</button>
+          <button type="button" onClick={() => setAgendaToolsOpen((value) => !value)} className={`grid size-8 place-items-center rounded-lg border md:size-9 md:rounded-xl ${agendaToolsOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border"}`} aria-label="Pesquisa e filtros">
             <Filter className="size-3.5" />
           </button>
         </div>
       </div>
 
       {/* Search + Filter */}
-      {agendaToolsOpen && <div className="flex flex-col gap-2 rounded-[1.25rem] border border-border/80 bg-card/95 p-3 shadow-sm">
+      {agendaToolsOpen && <div className="flex flex-col gap-2 border-b border-border/80 bg-card/95 p-3 shadow-sm md:rounded-[1.25rem] md:border">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1017,7 +1057,7 @@ function AgendaPage() {
 
       {/* Agenda profissional em linha do tempo */}
       {loading ? (
-        <div className="overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm">
+        <div className="overflow-hidden border-y border-border/80 bg-card shadow-sm md:rounded-[1.35rem] md:border">
           <div className="h-[4.5rem] animate-pulse border-b border-border bg-muted/45" />
           <div className="grid h-[60dvh] grid-cols-[3.6rem_1fr]">
             <div className="border-r border-border bg-muted/20" />
@@ -1040,6 +1080,17 @@ function AgendaPage() {
               time: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
             });
             setNewApptOpen(true);
+          }}
+          onBlockAtSlot={(staffId, minutes) => {
+            if (staffId === "unassigned") {
+              toast.error("Escolha um profissional para bloquear o horário.");
+              return;
+            }
+            setBlockTimeDefaults({
+              staffId,
+              date: toDateInputValue(selectedDate),
+              time: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
+            });
           }}
         />
       )}
@@ -1244,6 +1295,24 @@ function AgendaPage() {
             setNewApptOpen(false);
             setNewApptDefaults(null);
             loadData();
+          }}
+        />
+      )}
+
+      {blockTimeDefaults && studio && (
+        <BlockTimeModal
+          studioId={studio.id}
+          staffId={blockTimeDefaults.staffId}
+          staffName={
+            agendaStaff.find((person) => person.id === blockTimeDefaults.staffId)?.name ??
+            "Profissional"
+          }
+          initialDate={blockTimeDefaults.date}
+          initialTime={blockTimeDefaults.time}
+          onClose={() => setBlockTimeDefaults(null)}
+          onCreated={() => {
+            setBlockTimeDefaults(null);
+            void loadData({ silent: true });
           }}
         />
       )}
@@ -1484,6 +1553,115 @@ function PortalExportMenu({
 }
 
 // ─── New Appointment Modal ───────────────────────────────────────────────────
+
+function BlockTimeModal({
+  studioId,
+  staffId,
+  staffName,
+  initialDate,
+  initialTime,
+  onClose,
+  onCreated,
+}: {
+  studioId: string;
+  staffId: string;
+  staffName: string;
+  initialDate: string;
+  initialTime: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const initialStart = `${initialDate}T${initialTime}`;
+  const initialEndDate = new Date(`${initialStart}:00`);
+  initialEndDate.setMinutes(initialEndDate.getMinutes() + 60);
+  const [starts, setStarts] = useState(initialStart);
+  const [ends, setEnds] = useState(
+    `${toDateInputValue(initialEndDate)}T${initialEndDate.toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })}`,
+  );
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!starts || !ends) {
+      toast.error("Preencha o início e o fim do bloqueio.");
+      return;
+    }
+    if (new Date(ends).getTime() <= new Date(starts).getTime()) {
+      toast.error("O fim do bloqueio deve ser posterior ao início.");
+      return;
+    }
+    setSaving(true);
+    const { error } = await supabase.from("staff_time_off").insert({
+      studio_id: studioId,
+      staff_id: staffId,
+      starts_at: new Date(starts).toISOString(),
+      ends_at: new Date(ends).toISOString(),
+      reason: reason.trim() || null,
+    });
+    setSaving(false);
+    if (error) {
+      toast.error("Não foi possível bloquear o horário. Tente novamente.");
+      return;
+    }
+    toast.success("Horário bloqueado.");
+    onCreated();
+  }
+
+  return (
+    <ModalShell title="Bloquear horário" onClose={onClose}>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4">
+        <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2.5">
+          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-muted">
+            <LockKeyhole className="size-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Profissional
+            </p>
+            <p className="truncate text-sm font-black">{staffName}</p>
+          </div>
+        </div>
+        <div className="grid gap-3 min-[390px]:grid-cols-2">
+          <ModalField label="Início do bloqueio">
+            <input
+              type="datetime-local"
+              value={starts}
+              onChange={(event) => setStarts(event.target.value)}
+              className={inputCls}
+            />
+          </ModalField>
+          <ModalField label="Fim do bloqueio">
+            <input
+              type="datetime-local"
+              value={ends}
+              onChange={(event) => setEnds(event.target.value)}
+              className={inputCls}
+            />
+          </ModalField>
+        </div>
+        <ModalField label="Motivo (opcional)">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Almoço, reunião, formação..."
+            className={inputCls}
+          />
+        </ModalField>
+      </div>
+      <ModalFooter
+        onClose={onClose}
+        onSave={() => void handleSave()}
+        saving={saving}
+        disabled={!starts || !ends}
+        label="Bloquear horário"
+      />
+    </ModalShell>
+  );
+}
 
 function NewAppointmentModal({
   studioId,
@@ -4033,6 +4211,9 @@ function getAgendaWeekDays(value: Date) {
   const mondayOffset = (selected.getDay() + 6) % 7;
   const monday = addLocalDays(selected, -mondayOffset);
   return Array.from({ length: 7 }, (_, index) => addLocalDays(monday, index));
+}
+function getMobileAgendaDays(value: Date) {
+  return Array.from({ length: 15 }, (_, index) => addLocalDays(value, index - 7));
 }
 function dateFromInputValue(value: string) {
   const [year, month, day] = value.split("-").map(Number);

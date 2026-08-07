@@ -100,12 +100,23 @@ test("reutiliza o modal atual ao tocar num horário livre", async () => {
   expect(timelineSource).toContain('label="Novo agendamento"');
   expect(timelineSource).toContain('label="Fazer encaixe"');
   expect(timelineSource).toContain('label="Bloquear horário"');
-  expect(timelineSource).toContain('label="Intervalo"');
-  expect(timelineSource).toContain('label="Evento interno"');
+  expect(timelineSource).toContain("onBlockAtSlot(slotMenu.staffId, slotMenu.minutes)");
+  expect(timelineSource).toContain("longPressStartRef");
   expect(agendaSource).toContain("initialStaffId={newApptDefaults?.staffId}");
   expect(agendaSource).toContain("initialDate={newApptDefaults?.date}");
   expect(agendaSource).toContain("initialTime={newApptDefaults?.time}");
   expect(agendaSource).toContain("getAgendaWeekDays(selectedDate)");
+  expect(agendaSource).toContain("getMobileAgendaDays(selectedDate)");
+  expect(agendaSource).toContain("<BlockTimeModal");
+});
+
+test("mantém o teste gratuito apenas na página inicial", async () => {
+  const adminSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/admin.tsx"),
+    "utf8",
+  );
+
+  expect(adminSource).toContain("isPureTrialBilling(billingQuery.data) &&\n      isDashboardPage");
 });
 
 test("configura a agenda como início sem alterar ações existentes", async () => {

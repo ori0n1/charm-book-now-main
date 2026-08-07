@@ -261,8 +261,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     accessMode === "full" &&
       billingQuery.data &&
       isPureTrialBilling(billingQuery.data) &&
-      !isDashboardPage &&
-      !isPremiumPage,
+      isDashboardPage,
   );
   const showCancellationBanner = Boolean(
     accessMode === "full" &&
