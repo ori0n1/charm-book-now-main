@@ -7,9 +7,9 @@ import {
   type ProfessionalTimelinePerson,
 } from "./professional-timeline-utils";
 
-const MOBILE_HOUR_HEIGHT = 58;
+const MOBILE_HOUR_HEIGHT = 56;
 const DESKTOP_HOUR_HEIGHT = 82;
-const MOBILE_TIME_GUTTER = 54;
+const MOBILE_TIME_GUTTER = 46;
 const DESKTOP_TIME_GUTTER = 58;
 
 export function ProfessionalTimeline({
@@ -17,6 +17,7 @@ export function ProfessionalTimeline({
   now,
   professionals,
   appointments,
+  availability,
   onOpenAppointment,
   onCreateAtSlot,
   onBlockAtSlot,
@@ -25,6 +26,7 @@ export function ProfessionalTimeline({
   now: Date;
   professionals: ProfessionalTimelinePerson[];
   appointments: ProfessionalTimelineAppointment[];
+  availability?: Array<{ startMinutes: number; endMinutes: number }>;
   onOpenAppointment: (appointment: ProfessionalTimelineAppointment) => void;
   onCreateAtSlot: (staffId: string, minutes: number, mode: "standard" | "fit") => void;
   onBlockAtSlot: (staffId: string, minutes: number) => void;
@@ -41,7 +43,7 @@ export function ProfessionalTimeline({
   const [slotMenu, setSlotMenu] = useState<{ staffId: string; minutes: number } | null>(null);
   const hourHeight = mobile ? MOBILE_HOUR_HEIGHT : DESKTOP_HOUR_HEIGHT;
   const timeGutter = mobile ? MOBILE_TIME_GUTTER : DESKTOP_TIME_GUTTER;
-  const bounds = getProfessionalTimelineBounds(appointments);
+  const bounds = getProfessionalTimelineBounds(appointments, availability);
   const timelineHeight = (bounds.endHour - bounds.startHour) * hourHeight;
   const hours = Array.from(
     { length: bounds.endHour - bounds.startHour + 1 },
@@ -57,6 +59,7 @@ export function ProfessionalTimeline({
   const appointmentCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const appointment of appointments) {
+      if (appointment.kind === "block") continue;
       counts.set(appointment.staffId, (counts.get(appointment.staffId) ?? 0) + 1);
     }
     return counts;
@@ -94,13 +97,14 @@ export function ProfessionalTimeline({
     lastAutoScrollKeyRef.current = autoScrollKey;
     const frame = window.requestAnimationFrame(() => {
       if (!scrollRef.current) return;
-      const target = showCurrentTime
-        ? currentTop - scrollRef.current.clientHeight * 0.32
-        : 0;
+      const target = showCurrentTime ? currentTop - scrollRef.current.clientHeight * 0.32 : 0;
       if (mobile) {
         const timelineTop = scrollRef.current.getBoundingClientRect().top + window.scrollY;
         window.scrollTo({
-          top: Math.max(0, timelineTop + (showCurrentTime ? currentTop : 0) - window.innerHeight * 0.32),
+          top: Math.max(
+            0,
+            timelineTop + (showCurrentTime ? currentTop : 0) - window.innerHeight * 0.32,
+          ),
           behavior: "smooth",
         });
         return;
@@ -128,15 +132,15 @@ export function ProfessionalTimeline({
   }
 
   return (
-    <section className="relative overflow-visible border-y border-border/80 bg-card md:overflow-hidden md:rounded-2xl md:border md:shadow-sm">
+    <section className="agenda-timeline relative overflow-visible bg-background md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm">
       {mobile && displayProfessionals.length > 1 && (
-        <div className="sticky top-[8.7rem] z-10 flex snap-x snap-mandatory gap-2 overflow-x-auto border-b border-border/70 bg-card/95 px-3 py-1.5 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="agenda-professionals flex snap-x snap-mandatory gap-1.5 overflow-x-auto border-b border-border/60 bg-card/95 px-2 py-1 backdrop-blur-xl [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {displayProfessionals.map((person) => (
             <button
               key={person.id}
               type="button"
               onClick={() => setMobileProfessionalId(person.id)}
-              className={`inline-flex h-12 shrink-0 snap-start items-center gap-2.5 rounded-2xl border px-2.5 text-xs font-bold transition ${
+              className={`agenda-compact-control inline-flex h-10 min-h-0 shrink-0 snap-start items-center gap-2 rounded-xl border px-2 text-[11px] font-bold transition ${
                 person.id === mobileProfessionalId
                   ? "border-foreground bg-foreground text-background shadow-sm"
                   : "border-border/70 bg-muted/45 text-muted-foreground"
@@ -144,7 +148,7 @@ export function ProfessionalTimeline({
               aria-pressed={person.id === mobileProfessionalId}
             >
               <ProfessionalAvatar person={person} compact />
-              <span className="max-w-32 truncate">{person.name}</span>
+              <span className="max-w-28 truncate">{person.name}</span>
               <span className="rounded-full bg-background/15 px-1.5 py-0.5 text-[9px] tabular-nums">
                 {appointmentCounts.get(person.id) ?? 0}
               </span>
@@ -161,7 +165,9 @@ export function ProfessionalTimeline({
         <div
           className="relative min-w-full"
           style={{
-            width: mobile ? "100%" : Math.max(760, timeGutter + safeVisibleProfessionals.length * 220),
+            width: mobile
+              ? "100%"
+              : Math.max(760, timeGutter + safeVisibleProfessionals.length * 220),
           }}
         >
           <div
@@ -196,12 +202,16 @@ export function ProfessionalTimeline({
             className="relative grid"
             style={{ gridTemplateColumns: gridColumns, height: timelineHeight }}
           >
-            <div className="sticky left-0 z-30 border-r border-border/70 bg-card">
+            <div className="sticky left-0 z-30 border-r border-border/60 bg-background">
               {hours.map((hour, index) => (
                 <span
                   key={hour}
                   className={`absolute inset-x-1 whitespace-nowrap text-right font-mono text-[10px] font-black leading-none tabular-nums text-foreground/75 ${
-                    index === 0 ? "translate-y-0" : index === hours.length - 1 ? "-translate-y-full" : "-translate-y-1/2"
+                    index === 0
+                      ? "translate-y-0"
+                      : index === hours.length - 1
+                        ? "-translate-y-full"
+                        : "-translate-y-1/2"
                   }`}
                   style={{ top: (hour - bounds.startHour) * hourHeight }}
                 >
@@ -233,15 +243,14 @@ export function ProfessionalTimeline({
                   key={person.id}
                   className="relative min-w-0 cursor-crosshair border-r border-border/60 bg-background/20"
                   onClick={(event) => {
-                    if ((event.target as HTMLElement).closest("button")) return;
+                    if ((event.target as HTMLElement).closest("[data-timeline-entry]")) return;
                     if (suppressClickRef.current) {
                       suppressClickRef.current = false;
                       return;
                     }
                     const rect = event.currentTarget.getBoundingClientRect();
                     const rawMinutes =
-                      bounds.startHour * 60 +
-                      ((event.clientY - rect.top) / hourHeight) * 60;
+                      bounds.startHour * 60 + ((event.clientY - rect.top) / hourHeight) * 60;
                     const minutes = Math.max(
                       bounds.startHour * 60,
                       Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15),
@@ -249,20 +258,21 @@ export function ProfessionalTimeline({
                     setSlotMenu({ staffId: person.id, minutes });
                   }}
                   onPointerDown={(event) => {
-                    if ((event.target as HTMLElement).closest("button")) return;
+                    if ((event.target as HTMLElement).closest("[data-timeline-entry]")) return;
                     clearLongPress();
                     longPressStartRef.current = { x: event.clientX, y: event.clientY };
                     const rect = event.currentTarget.getBoundingClientRect();
-                    const rawMinutes = bounds.startHour * 60 + ((event.clientY - rect.top) / hourHeight) * 60;
-                    const minutes = Math.max(bounds.startHour * 60, Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15));
-                    longPressTimerRef.current = window.setTimeout(
-                      () => {
-                        suppressClickRef.current = true;
-                        setSlotMenu({ staffId: person.id, minutes });
-                        if ("vibrate" in navigator) navigator.vibrate(18);
-                      },
-                      480,
+                    const rawMinutes =
+                      bounds.startHour * 60 + ((event.clientY - rect.top) / hourHeight) * 60;
+                    const minutes = Math.max(
+                      bounds.startHour * 60,
+                      Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15),
                     );
+                    longPressTimerRef.current = window.setTimeout(() => {
+                      suppressClickRef.current = true;
+                      setSlotMenu({ staffId: person.id, minutes });
+                      if ("vibrate" in navigator) navigator.vibrate(18);
+                    }, 480);
                   }}
                   onPointerMove={(event) => {
                     const start = longPressStartRef.current;
@@ -291,7 +301,33 @@ export function ProfessionalTimeline({
                   {positioned.map((appointment) => {
                     const left = (appointment.lane / appointment.laneCount) * 100;
                     const width = 100 / appointment.laneCount;
-                    return (
+                    const blocked = appointment.kind === "block";
+                    return blocked ? (
+                      <div
+                        key={appointment.id}
+                        className="absolute z-10 overflow-hidden rounded-md border border-slate-300/80 border-l-[3px] bg-slate-100/95 px-1.5 py-0.5 text-left text-slate-800 dark:border-slate-500/30 dark:bg-slate-500/15 dark:text-slate-100"
+                        style={{
+                          top: appointment.top,
+                          height: appointment.height,
+                          left: `calc(${left}% + 3px)`,
+                          width: `calc(${width}% - 6px)`,
+                        }}
+                        aria-label={`Bloqueado, ${formatTime(appointment.startsAt)} a ${formatTime(appointment.endsAt)}, ${appointment.clientName}`}
+                        data-timeline-entry="block"
+                      >
+                        <span className="flex min-w-0 items-center gap-1 font-mono text-[9px] font-black leading-none tabular-nums">
+                          <LockKeyhole className="size-2.5 shrink-0" />
+                          <span className="truncate">
+                            {formatTime(appointment.startsAt)} – {formatTime(appointment.endsAt)}
+                          </span>
+                        </span>
+                        {appointment.height >= 28 && (
+                          <span className="mt-0.5 block truncate text-[10px] font-black leading-tight">
+                            {appointment.clientName}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
                       <button
                         key={appointment.id}
                         type="button"
@@ -304,12 +340,16 @@ export function ProfessionalTimeline({
                           width: `calc(${width}% - 6px)`,
                         }}
                         aria-label={`${formatTime(appointment.startsAt)}, ${appointment.clientName}, ${appointment.serviceName}`}
+                        data-timeline-entry="appointment"
                       >
                         <span className="flex min-w-0 items-center justify-between gap-1">
                           <span className="shrink-0 whitespace-nowrap font-mono text-[9px] font-black leading-none tabular-nums md:text-[10px]">
                             {formatTime(appointment.startsAt)} – {formatTime(appointment.endsAt)}
                           </span>
-                          <span className="shrink-0 text-xs font-black leading-none opacity-60" aria-hidden="true">
+                          <span
+                            className="shrink-0 text-xs font-black leading-none opacity-60"
+                            aria-hidden="true"
+                          >
                             ···
                           </span>
                         </span>
@@ -323,8 +363,14 @@ export function ProfessionalTimeline({
                         )}
                         {appointment.height >= 58 && (
                           <span className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[9px] font-semibold opacity-70">
-                            <span className="truncate">{appointment.professionalName} · {appointment.durationLabel}</span>
-                            {appointment.valueLabel && <span className="shrink-0 whitespace-nowrap">{appointment.valueLabel}</span>}
+                            <span className="truncate">
+                              {appointment.professionalName} · {appointment.durationLabel}
+                            </span>
+                            {appointment.valueLabel && (
+                              <span className="shrink-0 whitespace-nowrap">
+                                {appointment.valueLabel}
+                              </span>
+                            )}
                           </span>
                         )}
                         {appointment.height >= 82 && (
@@ -341,13 +387,13 @@ export function ProfessionalTimeline({
 
             {showCurrentTime && (
               <div
-                className="pointer-events-none absolute inset-x-0 z-20"
+                className="pointer-events-none absolute inset-x-0 z-20 overflow-visible"
                 style={{ top: currentTop }}
                 aria-label="Horário atual"
               >
                 <span
-                  className="absolute left-1 top-0 inline-flex -translate-y-1/2 justify-center rounded-full bg-rose-500 px-1 py-0.5 font-mono text-[8px] font-black leading-none tabular-nums text-white shadow-sm"
-                  style={{ width: timeGutter - 8 }}
+                  className="absolute left-0.5 top-0 inline-flex -translate-y-1/2 justify-center rounded-full bg-rose-500 px-0.5 py-0.5 font-mono text-[8px] font-black leading-none tabular-nums text-white shadow-sm"
+                  style={{ width: timeGutter - 4 }}
                 >
                   {formatTime(now.toISOString())}
                 </span>
@@ -412,12 +458,11 @@ export function ProfessionalTimeline({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-border/60 bg-card px-2.5 py-2 text-[8px] font-semibold text-muted-foreground md:justify-start md:gap-x-4 md:gap-y-1.5 md:bg-muted/25 md:px-3 md:text-[9px]">
+      <div className="flex items-center gap-3 overflow-x-auto border-t border-border/50 bg-card/85 px-2.5 py-1.5 text-[8px] font-semibold text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:gap-4 md:bg-muted/25 md:px-3 md:text-[9px]">
         <Legend tone="bg-sky-300" label="Confirmada" />
         <Legend tone="bg-amber-300" label="Pendente" />
         <Legend tone="bg-emerald-300" label="Concluída" />
         <Legend tone="bg-rose-300" label="Cancelada" />
-        <Legend tone="bg-muted-foreground/25" label="Livre" />
         <span className="ml-auto hidden whitespace-nowrap sm:inline">
           Toque ou mantenha pressionado um horário livre
         </span>
@@ -448,7 +493,9 @@ function SlotAction({
     >
       {icon}
       <span>{label}</span>
-      {hint && <span className="ml-auto text-[9px] font-semibold text-muted-foreground">{hint}</span>}
+      {hint && (
+        <span className="ml-auto text-[9px] font-semibold text-muted-foreground">{hint}</span>
+      )}
     </button>
   );
 }

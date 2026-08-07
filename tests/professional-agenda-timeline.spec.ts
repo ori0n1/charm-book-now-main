@@ -30,18 +30,8 @@ function appointment(
 test("posiciona marcações pela hora e duração reais", () => {
   const result = layoutProfessionalAppointments(
     [
-      appointment(
-        "a",
-        "staff-a",
-        "2026-07-30T09:00:00+01:00",
-        "2026-07-30T10:00:00+01:00",
-      ),
-      appointment(
-        "b",
-        "staff-a",
-        "2026-07-30T09:30:00+01:00",
-        "2026-07-30T10:30:00+01:00",
-      ),
+      appointment("a", "staff-a", "2026-07-30T09:00:00+01:00", "2026-07-30T10:00:00+01:00"),
+      appointment("b", "staff-a", "2026-07-30T09:30:00+01:00", "2026-07-30T10:30:00+01:00"),
     ],
     8,
     82,
@@ -57,20 +47,19 @@ test("mantém limites úteis num dia vazio ou com horários extremos", () => {
   expect(getProfessionalTimelineBounds([])).toEqual({ startHour: 8, endHour: 20 });
   expect(
     getProfessionalTimelineBounds([
-      appointment(
-        "early",
-        "staff-a",
-        "2026-07-30T06:30:00+01:00",
-        "2026-07-30T07:15:00+01:00",
-      ),
-      appointment(
-        "late",
-        "staff-b",
-        "2026-07-30T21:00:00+01:00",
-        "2026-07-30T22:00:00+01:00",
-      ),
+      appointment("early", "staff-a", "2026-07-30T06:30:00+01:00", "2026-07-30T07:15:00+01:00"),
+      appointment("late", "staff-b", "2026-07-30T21:00:00+01:00", "2026-07-30T22:00:00+01:00"),
     ]),
-  ).toEqual({ startHour: 5, endHour: 23 });
+  ).toEqual({ startHour: 6, endHour: 22 });
+});
+
+test("usa o expediente para dimensionar um dia sem marcações", () => {
+  expect(
+    getProfessionalTimelineBounds([], [{ startMinutes: 7 * 60, endMinutes: 18 * 60 + 30 }]),
+  ).toEqual({
+    startHour: 7,
+    endHour: 20,
+  });
 });
 
 test("mantém escala proporcional de 15 a 120 minutos", () => {
@@ -78,7 +67,14 @@ test("mantém escala proporcional de 15 a 120 minutos", () => {
     const startsAt = new Date("2026-07-30T09:00:00+01:00");
     const endsAt = new Date(startsAt.getTime() + duration * 60_000);
     const [positioned] = layoutProfessionalAppointments(
-      [appointment(`duration-${duration}`, "staff-a", startsAt.toISOString(), endsAt.toISOString())],
+      [
+        appointment(
+          `duration-${duration}`,
+          "staff-a",
+          startsAt.toISOString(),
+          endsAt.toISOString(),
+        ),
+      ],
       8,
       82,
     );
@@ -93,16 +89,16 @@ test("mantém proporção real na escala compacta do mobile", () => {
   const [shortAppointment] = layoutProfessionalAppointments(
     [appointment("mobile-30", "staff-a", startsAt.toISOString(), halfHour.toISOString())],
     8,
-    58,
+    56,
   );
   const [longAppointment] = layoutProfessionalAppointments(
     [appointment("mobile-60", "staff-a", startsAt.toISOString(), fullHour.toISOString())],
     8,
-    58,
+    56,
   );
 
-  expect(shortAppointment.height).toBe(29);
-  expect(longAppointment.height).toBe(58);
+  expect(shortAppointment.height).toBe(28);
+  expect(longAppointment.height).toBe(56);
   expect(longAppointment.top).toBe(shortAppointment.top);
 });
 
@@ -151,13 +147,23 @@ test("usa uma única rolagem vertical no mobile", async () => {
 
   expect(timelineSource).toContain("h-auto max-h-none overflow-visible");
   expect(timelineSource).toContain("md:max-h-[72dvh] md:overflow-auto");
-  expect(timelineSource).toContain("const MOBILE_HOUR_HEIGHT = 58");
-  expect(timelineSource).toContain("style={{ top: (hour - bounds.startHour) * hourHeight + hourHeight / 2 }}");
+  expect(timelineSource).toContain("const MOBILE_HOUR_HEIGHT = 56");
+  expect(timelineSource).toContain("const MOBILE_TIME_GUTTER = 46");
+  expect(timelineSource).toContain(
+    "style={{ top: (hour - bounds.startHour) * hourHeight + hourHeight / 2 }}",
+  );
   expect(timelineSource).toContain("style={{ left: timeGutter }}");
-  expect(timelineSource).toContain('label="Livre"');
-  expect(timelineSource).toContain("fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)]");
-  expect(timelineSource).toContain("hidden border-b border-border/80 bg-card/95 backdrop-blur-xl md:grid");
+  expect(timelineSource).not.toContain('label="Livre"');
+  expect(timelineSource).toContain(
+    "fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)]",
+  );
+  expect(timelineSource).toContain(
+    "hidden border-b border-border/80 bg-card/95 backdrop-blur-xl md:grid",
+  );
   expect(agendaSource).toContain('className="hidden min-h-11 items-center justify-between');
+  expect(agendaSource).toContain("agenda-timeline-page");
+  expect(agendaSource).toContain("pb-0");
+  expect(timelineSource).not.toContain("top-[8.7rem]");
 });
 
 test("mantém datas contínuas e notificações acima da timeline", async () => {
@@ -175,12 +181,36 @@ test("mantém datas contínuas e notificações acima da timeline", async () => 
   expect(agendaSource).toContain("start: current.start - 14");
   expect(agendaSource).toContain("end: current.end + 14");
   expect(agendaSource).toContain("scroller.scrollLeft += scroller.scrollWidth - previousWidth");
+  expect(agendaSource).toContain("setMobileCalendarMonth(dateFromInputValue(dateValue))");
+  expect(agendaSource).toContain('aria-label="Abrir filtros da agenda"');
   expect(agendaSource).toContain('className="hidden min-h-12');
   expect(notificationsSource).toContain("createPortal(");
   expect(notificationsSource).toContain("fixed inset-0 z-[120] isolate");
   expect(notificationsSource).toContain('aria-modal="true"');
   expect(notificationsSource).toContain('document.body.style.overflow = "hidden"');
   expect(notificationsSource).toContain("min-h-0 flex-1 overflow-y-auto overscroll-contain");
+});
+
+test("mostra bloqueios reais e mantém o modal seguro no mobile", async () => {
+  const timelineSource = await readFile(
+    resolve(process.cwd(), "src/components/agenda/professional-timeline.tsx"),
+    "utf8",
+  );
+  const agendaSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/admin.agenda.tsx"),
+    "utf8",
+  );
+
+  expect(agendaSource).toContain('.from("staff_time_off")');
+  expect(agendaSource).toContain("const timelineBlocks");
+  expect(agendaSource).toContain('kind: "block"');
+  expect(agendaSource).toContain('type="date"');
+  expect(agendaSource).toContain('type="time"');
+  expect(agendaSource).toContain('aria-label="Data de início do bloqueio"');
+  expect(agendaSource).toContain('aria-label="Hora de fim do bloqueio"');
+  expect(agendaSource).toContain('role="dialog" aria-modal="true"');
+  expect(timelineSource).toContain('data-timeline-entry="block"');
+  expect(timelineSource).toContain('closest("[data-timeline-entry]")');
 });
 
 test("configura a agenda como início sem alterar ações existentes", async () => {
@@ -191,7 +221,10 @@ test("configura a agenda como início sem alterar ações existentes", async () 
   const authSource = await readFile(resolve(process.cwd(), "src/lib/auth-landing.ts"), "utf8");
   const manifest = JSON.parse(
     await readFile(resolve(process.cwd(), "public/manifest.webmanifest"), "utf8"),
-  ) as { id: string; start_url: string };
+  ) as {
+    id: string;
+    start_url: string;
+  };
 
   expect(agendaSource).toContain("<ProfessionalTimeline");
   expect(agendaSource).toContain("<TimelineAppointmentDrawer");

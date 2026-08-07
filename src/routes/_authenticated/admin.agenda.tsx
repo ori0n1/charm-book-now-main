@@ -1,7 +1,15 @@
 import { createPortal } from "react-dom";
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type UIEvent,
+} from "react";
 import {
   CalendarClock,
   CalendarDays,
@@ -138,6 +146,19 @@ type AgendaFilters = {
 type StudioService = { id: string; name: string; price: number; duration_min: number };
 type StudioStaff = { id: string; name: string; photo_url?: string | null; is_active?: boolean };
 type StudioClient = { id: string; name: string; phone: string };
+type StaffAvailabilityRow = {
+  staff_id: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+};
+type StaffTimeOffRow = {
+  id: string;
+  staff_id: string;
+  starts_at: string;
+  ends_at: string;
+  reason: string | null;
+};
 type StudioPaymentMethod = "cash" | "card" | "mb_way" | "other";
 type StaffAgendaVisibility = "private" | "team_busy" | "team_basic";
 
@@ -206,16 +227,37 @@ function AgendaPage() {
   const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
   const [timelineDetailId, setTimelineDetailId] = useState<string | null>(null);
   const [agendaStaff, setAgendaStaff] = useState<StudioStaff[]>([]);
+  const [staffAvailability, setStaffAvailability] = useState<StaffAvailabilityRow[]>([]);
+  const [staffTimeOff, setStaffTimeOff] = useState<StaffTimeOffRow[]>([]);
   const selectedDayButtonRef = useRef<HTMLButtonElement>(null);
   const mobileDateScrollerRef = useRef<HTMLDivElement>(null);
   const mobileDateAnchorRef = useRef(startOfLocalDay(new Date()));
   const prependScrollWidthRef = useRef<number | null>(null);
   const dateRangeLoadingRef = useRef(false);
+  const dateScrollFrameRef = useRef<number | null>(null);
   const selectedDateScrollPendingRef = useRef(true);
   const [mobileDateRange, setMobileDateRange] = useState({ start: -21, end: 21 });
+  const [mobileCalendarMonth, setMobileCalendarMonth] = useState(selectedDate);
   const mobileAgendaDays = useMemo(
-    () => getMobileAgendaDays(mobileDateAnchorRef.current, mobileDateRange.start, mobileDateRange.end),
+    () =>
+      getMobileAgendaDays(mobileDateAnchorRef.current, mobileDateRange.start, mobileDateRange.end),
     [mobileDateRange.end, mobileDateRange.start],
+  );
+  const loadStaffTimeOffForDate = useCallback(
+    async (date: Date) => {
+      if (!studio?.id) return;
+      const dayStart = startOfLocalDay(date);
+      const dayEnd = addLocalDays(dayStart, 1);
+      const { data } = await supabase
+        .from("staff_time_off")
+        .select("id,staff_id,starts_at,ends_at,reason")
+        .eq("studio_id", studio.id)
+        .lt("starts_at", dayEnd.toISOString())
+        .gt("ends_at", dayStart.toISOString())
+        .order("starts_at");
+      setStaffTimeOff((data ?? []) as StaffTimeOffRow[]);
+    },
+    [studio?.id],
   );
 
   useEffect(() => {
@@ -228,12 +270,28 @@ function AgendaPage() {
     const timer = window.setInterval(() => setAgendaNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(
+    () => () => {
+      if (dateScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(dateScrollFrameRef.current);
+      }
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!mobileFiltersOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscroll = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscroll;
+    };
+  }, [mobileFiltersOpen]);
 
   useEffect(() => {
-    const selectedOffset = differenceInLocalCalendarDays(
-      selectedDate,
-      mobileDateAnchorRef.current,
-    );
+    const selectedOffset = differenceInLocalCalendarDays(selectedDate, mobileDateAnchorRef.current);
     setMobileDateRange((current) => {
       if (selectedOffset >= current.start && selectedOffset <= current.end) return current;
       return {
@@ -293,7 +351,7 @@ function AgendaPage() {
     const canStaffLoadTeamAgenda = studio.role === "staff" && staffAgendaVisibility !== "private";
     const staffDataFilter =
       studio.role === "staff" && !canStaffLoadTeamAgenda ? studio.staff_id : null;
-    const [{ data }, staffResult] = await Promise.all([
+    const [{ data }, staffResult, availabilityResult] = await Promise.all([
       fetchAgendaAppointments(studio.id, staffDataFilter),
       supabase
         .from("staff")
@@ -302,6 +360,10 @@ function AgendaPage() {
         .eq("is_active", true)
         .order("sort_order")
         .order("name"),
+      supabase
+        .from("staff_availability")
+        .select("staff_id,weekday,start_time,end_time")
+        .eq("studio_id", studio.id),
     ]);
     const appointmentRows = sortAppointmentsChronologically((data ?? []) as unknown as Appt[]);
     const sensitiveAppointmentIds =
@@ -340,6 +402,7 @@ function AgendaPage() {
       : [{ data: [] }, { data: [] }, { data: [] }];
     setAppts(appointmentRows);
     setAgendaStaff((staffResult.data ?? []) as StudioStaff[]);
+    setStaffAvailability((availabilityResult.data ?? []) as StaffAvailabilityRow[]);
     setPaidRows((paymentsResult.data ?? []) as PaidRow[]);
     setCashPaymentRows((cashPaymentsResult.data ?? []) as CashPaymentRow[]);
     setMessageLogs((logsResult.data ?? []) as MessageLog[]);
@@ -526,19 +589,49 @@ function AgendaPage() {
     }
     return filters.staffId === "all" || filters.staffId === person.id;
   });
-  const timelineProfessionals: ProfessionalTimelinePerson[] = visibleAgendaStaff.map(
-    (person) => ({
-      id: person.id,
-      name: person.name,
-      avatarUrl: person.photo_url,
-    }),
-  );
+  const timelineProfessionals: ProfessionalTimelinePerson[] = visibleAgendaStaff.map((person) => ({
+    id: person.id,
+    name: person.name,
+    avatarUrl: person.photo_url,
+  }));
   for (const [id, name] of filterOptions.professionals) {
     if (filters.staffId !== "all" && filters.staffId !== id) continue;
     if (!timelineProfessionals.some((person) => person.id === id)) {
       timelineProfessionals.push({ id, name });
     }
   }
+
+  useEffect(() => {
+    if (!studio?.id) return;
+    void loadStaffTimeOffForDate(selectedDate);
+  }, [loadStaffTimeOffForDate, selectedDate, studio?.id]);
+
+  useEffect(() => {
+    if (!studio?.id) return;
+    let refreshTimer: number | null = null;
+    const channel = supabase
+      .channel(`admin-agenda-blocks-${studio.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "staff_time_off",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        () => {
+          if (refreshTimer) window.clearTimeout(refreshTimer);
+          refreshTimer = window.setTimeout(() => {
+            void loadStaffTimeOffForDate(selectedDate);
+          }, 300);
+        },
+      )
+      .subscribe();
+    return () => {
+      if (refreshTimer) window.clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [loadStaffTimeOffForDate, selectedDate, studio?.id]);
   const hasUnassignedAppointments = filteredAppts.some((appointment) => !appointment.staff?.id);
   if (hasUnassignedAppointments) {
     timelineProfessionals.push({ id: "unassigned", name: "Sem profissional" });
@@ -555,7 +648,7 @@ function AgendaPage() {
         endsAt: appointment.ends_at,
         status: appointment.status,
         clientName: canSeeSensitive
-          ? appointment.clients?.name ?? "Sem cliente"
+          ? (appointment.clients?.name ?? "Sem cliente")
           : "Horário ocupado",
         serviceName: canSeeBasic ? appointmentServiceLabel(appointment) : "Ocupado",
         professionalName: appointment.staff?.name ?? "Sem profissional",
@@ -568,6 +661,42 @@ function AgendaPage() {
         privateDetails: canSeeSensitive,
       };
     });
+  const visibleProfessionalIds = new Set(timelineProfessionals.map((person) => person.id));
+  const timelineBlocks: ProfessionalTimelineAppointment[] = staffTimeOff
+    .filter((block) => visibleProfessionalIds.has(block.staff_id))
+    .map((block) => {
+      const selectedDayStart = startOfLocalDay(selectedDate).getTime();
+      const selectedDayEnd = addLocalDays(selectedDate, 1).getTime();
+      const clippedStart = new Date(
+        Math.max(new Date(block.starts_at).getTime(), selectedDayStart),
+      );
+      const clippedEnd = new Date(Math.min(new Date(block.ends_at).getTime(), selectedDayEnd - 1));
+      return {
+        id: `block-${block.id}`,
+        staffId: block.staff_id,
+        startsAt: clippedStart.toISOString(),
+        endsAt: clippedEnd.toISOString(),
+        status: "blocked",
+        kind: "block",
+        clientName: block.reason?.trim() || "Bloqueado",
+        serviceName: "Bloqueio",
+        professionalName:
+          agendaStaff.find((person) => person.id === block.staff_id)?.name ?? "Profissional",
+        durationLabel: formatDurationBetween(clippedStart.toISOString(), clippedEnd.toISOString()),
+        privateDetails: false,
+      };
+    });
+  const selectedAvailability = staffAvailability
+    .filter(
+      (period) =>
+        period.weekday === selectedDate.getDay() && visibleProfessionalIds.has(period.staff_id),
+    )
+    .map((period) => ({
+      startMinutes: timeValueToMinutes(period.start_time),
+      endMinutes: timeValueToMinutes(period.end_time),
+    }))
+    .filter((period) => period.endMinutes > period.startMinutes);
+  const timelineEntries = [...timelineAppointments, ...timelineBlocks];
   const timelineDetailAppt = timelineDetailId
     ? (appts.find((appointment) => appointment.id === timelineDetailId) ?? null)
     : null;
@@ -584,11 +713,15 @@ function AgendaPage() {
     setFilters((c) => ({ ...c, [key]: value }));
     if (key === "date" && typeof value === "string" && value) {
       selectedDateScrollPendingRef.current = true;
-      setSelectedDate(dateFromInputValue(value));
+      const nextDate = dateFromInputValue(value);
+      setSelectedDate(nextDate);
+      setMobileCalendarMonth(nextDate);
     }
     if (key === "dateMode" && (value === "today" || value === "upcoming")) {
       selectedDateScrollPendingRef.current = true;
-      setSelectedDate(startOfLocalDay(new Date()));
+      const today = startOfLocalDay(new Date());
+      setSelectedDate(today);
+      setMobileCalendarMonth(today);
     }
   }
   function resetFilters() {
@@ -598,13 +731,35 @@ function AgendaPage() {
   }
   function navigateToAgendaDate(date: Date) {
     selectedDateScrollPendingRef.current = true;
-    setSelectedDate(startOfLocalDay(date));
+    const nextDate = startOfLocalDay(date);
+    setSelectedDate(nextDate);
+    setMobileCalendarMonth(nextDate);
     setFilters((current) => ({ ...current, dateMode: "all", date: "" }));
   }
 
   function extendMobileDateRange(event: UIEvent<HTMLDivElement>) {
-    if (dateRangeLoadingRef.current) return;
     const scroller = event.currentTarget;
+    if (dateScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(dateScrollFrameRef.current);
+    }
+    dateScrollFrameRef.current = window.requestAnimationFrame(() => {
+      const center = scroller.scrollLeft + scroller.clientWidth / 2;
+      let closest: HTMLButtonElement | null = null;
+      let closestDistance = Number.POSITIVE_INFINITY;
+      for (const button of scroller.querySelectorAll<HTMLButtonElement>(
+        "button[data-agenda-date]",
+      )) {
+        const distance = Math.abs(button.offsetLeft + button.offsetWidth / 2 - center);
+        if (distance < closestDistance) {
+          closest = button;
+          closestDistance = distance;
+        }
+      }
+      const dateValue = closest?.dataset.agendaDate;
+      if (dateValue) setMobileCalendarMonth(dateFromInputValue(dateValue));
+      dateScrollFrameRef.current = null;
+    });
+    if (dateRangeLoadingRef.current) return;
     const remaining = scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft;
     if (scroller.scrollLeft <= 96) {
       dateRangeLoadingRef.current = true;
@@ -848,7 +1003,7 @@ function AgendaPage() {
 
   return (
     <div
-      className="-mx-3 flex w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 pb-24 md:mx-auto md:w-full md:max-w-[1320px] md:gap-4 md:pb-6"
+      className="agenda-timeline-page -mx-3 flex w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 pb-0 sm:-mx-4 sm:w-[calc(100%+2rem)] md:mx-auto md:w-full md:max-w-[1320px] md:gap-4 md:pb-6"
       onClick={() => {
         if (menuOpenId) closeMenu();
         if (exportOpen) setExportOpen(false);
@@ -858,7 +1013,9 @@ function AgendaPage() {
         <div className="min-w-0">
           <h1 className="truncate text-xl font-black tracking-[-0.035em] md:text-3xl">Agenda</h1>
           <p className="truncate text-[10px] font-semibold text-muted-foreground md:mt-0.5 md:text-[11px]">
-            {timelineAppointments.length} {timelineAppointments.length === 1 ? "marcação" : "marcações"} {isSameLocalDay(selectedDate, new Date()) ? "hoje" : "neste dia"}
+            {timelineAppointments.length}{" "}
+            {timelineAppointments.length === 1 ? "marcação" : "marcações"}{" "}
+            {isSameLocalDay(selectedDate, new Date()) ? "hoje" : "neste dia"}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -872,31 +1029,31 @@ function AgendaPage() {
             <span className="hidden md:inline">Hoje</span>
           </button>
           <div className="hidden md:block">
-          <button
-            ref={exportBtnRef}
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setExportOpen((v) => !v);
-            }}
-            disabled={exporting !== null}
-            className={`bellza-panel-action ${exportOpen ? "bellza-panel-action-primary" : "bellza-panel-action-secondary"}`}
-          >
-            {exporting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5" />
+            <button
+              ref={exportBtnRef}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setExportOpen((v) => !v);
+              }}
+              disabled={exporting !== null}
+              className={`bellza-panel-action ${exportOpen ? "bellza-panel-action-primary" : "bellza-panel-action-secondary"}`}
+            >
+              {exporting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              <span>{exporting ? "A exportar..." : "Exportar"}</span>
+            </button>
+            {exportOpen && (
+              <PortalExportMenu
+                anchorEl={exportBtnRef.current}
+                onClose={() => setExportOpen(false)}
+                onExport={(type) => handleExport(type)}
+                exporting={exporting}
+              />
             )}
-            <span>{exporting ? "A exportar..." : "Exportar"}</span>
-          </button>
-          {exportOpen && (
-            <PortalExportMenu
-              anchorEl={exportBtnRef.current}
-              onClose={() => setExportOpen(false)}
-              onExport={(type) => handleExport(type)}
-              exporting={exporting}
-            />
-          )}
           </div>
           <button
             type="button"
@@ -912,24 +1069,27 @@ function AgendaPage() {
         </div>
       </header>
 
-      <nav className="sticky top-[3.55rem] z-10 border-y border-border/80 bg-card/95 py-1 shadow-sm backdrop-blur-xl md:static md:rounded-2xl md:border md:px-1 md:py-2" aria-label="Navegação semanal">
+      <nav
+        className="agenda-date-navigation sticky top-[var(--admin-mobile-header-height)] z-10 border-y border-border/70 bg-card/95 py-1 backdrop-blur-xl md:static md:rounded-2xl md:border md:px-1 md:py-2 md:shadow-sm"
+        aria-label="Navegação semanal"
+      >
         <div className="flex h-7 items-center justify-between px-3 md:hidden">
           <p className="whitespace-nowrap text-[10px] font-black capitalize tracking-[0.04em] text-muted-foreground">
-            {selectedDate.toLocaleDateString("pt-PT", { month: "long", year: "numeric" })}
+            {mobileCalendarMonth.toLocaleDateString("pt-PT", { month: "long", year: "numeric" })}
           </p>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={() => navigateToAgendaDate(new Date())}
-              className="h-7 rounded-lg border border-border bg-background/70 px-2 text-[9px] font-black"
+              className="agenda-compact-control h-7 min-h-0 rounded-lg border border-border bg-background/70 px-2 text-[9px] font-black"
             >
               Hoje
             </button>
             <button
               type="button"
-              onClick={() => setAgendaToolsOpen((value) => !value)}
-              className={`grid size-7 place-items-center rounded-lg border ${agendaToolsOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border bg-background/70"}`}
-              aria-label="Pesquisa e filtros"
+              onClick={() => setMobileFiltersOpen(true)}
+              className={`agenda-compact-control grid size-7 min-h-0 place-items-center rounded-lg border ${mobileFiltersOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border bg-background/70"}`}
+              aria-label="Abrir filtros da agenda"
             >
               <Filter className="size-3" />
             </button>
@@ -950,196 +1110,227 @@ function AgendaPage() {
                 data-agenda-date={toDateInputValue(day)}
                 type="button"
                 onClick={() => navigateToAgendaDate(day)}
-                className="flex w-[3.1rem] shrink-0 snap-center flex-col items-center gap-0.5 rounded-xl py-1"
+                className="agenda-compact-control flex min-h-0 w-[3.1rem] shrink-0 snap-center flex-col items-center gap-0.5 rounded-xl py-1"
                 aria-current={selected ? "date" : undefined}
-                aria-label={day.toLocaleDateString("pt-PT", { weekday: "long", day: "numeric", month: "long" })}
+                aria-label={day.toLocaleDateString("pt-PT", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "long",
+                })}
               >
-                <span className={`text-[8px] font-black uppercase tracking-[0.08em] ${selected ? "text-foreground" : "text-muted-foreground"}`}>
+                <span
+                  className={`text-[8px] font-black uppercase tracking-[0.08em] ${selected ? "text-foreground" : "text-muted-foreground"}`}
+                >
                   {day.toLocaleDateString("pt-PT", { weekday: "short" }).replace(".", "")}
                 </span>
-                <span className={`grid size-8 place-items-center rounded-full text-sm font-black transition ${selected ? "bg-foreground text-background shadow-md" : "bg-muted/45"}`}>
+                <span
+                  className={`grid size-8 place-items-center rounded-full text-sm font-black transition ${selected ? "bg-foreground text-background shadow-md" : "bg-muted/45"}`}
+                >
                   {day.getDate()}
                 </span>
-                <span className={`size-1 rounded-full ${today ? "bg-emerald-500" : "bg-transparent"}`} />
+                <span
+                  className={`size-1 rounded-full ${today ? "bg-emerald-500" : "bg-transparent"}`}
+                />
               </button>
             );
           })}
         </div>
         <div className="hidden grid-cols-[2.5rem_repeat(7,minmax(2.5rem,1fr))_2.5rem] items-center md:grid">
-        <button
-          type="button"
-          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, -7))}
-          className="grid size-8 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground md:size-10"
-          aria-label="Semana anterior"
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        {getAgendaWeekDays(selectedDate).map((day) => {
-          const selected = isSameLocalDay(day, selectedDate);
-          const today = isSameLocalDay(day, new Date());
-          return (
-            <button
-              key={day.toISOString()}
-              type="button"
-              onClick={() => navigateToAgendaDate(day)}
-              className="group flex min-w-0 flex-col items-center gap-1"
-              aria-current={selected ? "date" : undefined}
-            >
-              <span className="text-[9px] font-black uppercase tracking-[0.08em] text-muted-foreground">
-                {day.toLocaleDateString("pt-PT", { weekday: "short" }).replace(".", "")}
-              </span>
-              <span className={`grid size-8 place-items-center rounded-full text-sm font-black transition md:size-9 ${selected ? "bg-foreground text-background shadow-md" : "group-hover:bg-muted"}`}>
-                {day.getDate()}
-              </span>
-              <span className={`size-1 rounded-full ${today ? "bg-emerald-500" : "bg-transparent"}`} />
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, 7))}
-          className="grid size-8 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground md:size-10"
-          aria-label="Próxima semana"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
+          <button
+            type="button"
+            onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, -7))}
+            className="grid size-8 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground md:size-10"
+            aria-label="Semana anterior"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          {getAgendaWeekDays(selectedDate).map((day) => {
+            const selected = isSameLocalDay(day, selectedDate);
+            const today = isSameLocalDay(day, new Date());
+            return (
+              <button
+                key={day.toISOString()}
+                type="button"
+                onClick={() => navigateToAgendaDate(day)}
+                className="group flex min-w-0 flex-col items-center gap-1"
+                aria-current={selected ? "date" : undefined}
+              >
+                <span className="text-[9px] font-black uppercase tracking-[0.08em] text-muted-foreground">
+                  {day.toLocaleDateString("pt-PT", { weekday: "short" }).replace(".", "")}
+                </span>
+                <span
+                  className={`grid size-8 place-items-center rounded-full text-sm font-black transition md:size-9 ${selected ? "bg-foreground text-background shadow-md" : "group-hover:bg-muted"}`}
+                >
+                  {day.getDate()}
+                </span>
+                <span
+                  className={`size-1 rounded-full ${today ? "bg-emerald-500" : "bg-transparent"}`}
+                />
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => navigateToAgendaDate(addLocalDays(selectedDate, 7))}
+            className="grid size-8 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground md:size-10"
+            aria-label="Próxima semana"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
       </nav>
 
       <div className="hidden min-h-11 items-center justify-between gap-2 rounded-2xl border border-border/70 bg-card px-3 py-2.5 shadow-sm md:flex">
         <div className="min-w-0">
-          <p className="truncate text-xs font-black md:text-sm">{formatAgendaDateTitle(selectedDate)}</p>
+          <p className="truncate text-xs font-black md:text-sm">
+            {formatAgendaDateTitle(selectedDate)}
+          </p>
           <p className="hidden font-mono text-[10px] font-semibold tabular-nums text-muted-foreground min-[390px]:block">
             {agendaNow.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <label className="relative inline-flex size-8 cursor-pointer items-center justify-center rounded-lg border border-border text-[11px] font-bold md:h-9 md:w-auto md:gap-1.5 md:rounded-xl md:px-3">
-            <CalendarDays className="size-3.5" /><span className="hidden md:inline">Data</span>
-            <input type="date" value={toDateInputValue(selectedDate)} onChange={(event) => event.target.value && navigateToAgendaDate(dateFromInputValue(event.target.value))} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Escolher data" />
+            <CalendarDays className="size-3.5" />
+            <span className="hidden md:inline">Data</span>
+            <input
+              type="date"
+              value={toDateInputValue(selectedDate)}
+              onChange={(event) =>
+                event.target.value && navigateToAgendaDate(dateFromInputValue(event.target.value))
+              }
+              className="absolute inset-0 cursor-pointer opacity-0"
+              aria-label="Escolher data"
+            />
           </label>
-          <button type="button" disabled className="hidden h-9 rounded-xl border border-border px-3 text-[11px] font-bold md:block">Dia</button>
-          <button type="button" onClick={() => setAgendaToolsOpen((value) => !value)} className={`grid size-8 place-items-center rounded-lg border md:size-9 md:rounded-xl ${agendaToolsOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border"}`} aria-label="Pesquisa e filtros">
+          <button
+            type="button"
+            onClick={() => setAgendaToolsOpen((value) => !value)}
+            className={`grid size-8 place-items-center rounded-lg border md:size-9 md:rounded-xl ${agendaToolsOpen || activeFilterCount > 0 ? "border-foreground bg-foreground text-background" : "border-border"}`}
+            aria-label="Pesquisa e filtros"
+          >
             <Filter className="size-3.5" />
           </button>
         </div>
       </div>
 
       {/* Search + Filter */}
-      {agendaToolsOpen && <div className="flex flex-col gap-2 border-b border-border/80 bg-card/95 p-3 shadow-sm md:rounded-[1.25rem] md:border">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Pesquisar cliente, telefone ou profissional..."
-              className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm text-foreground placeholder:text-muted-foreground outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8 md:bg-background/70"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+      {agendaToolsOpen && (
+        <div className="flex flex-col gap-2 border-b border-border/80 bg-card/95 p-3 shadow-sm md:rounded-[1.25rem] md:border">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Pesquisar cliente, telefone ou profissional..."
+                className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm text-foreground placeholder:text-muted-foreground outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8 md:bg-background/70"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((v) => !v)}
+              className={`hidden h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:inline-flex ${filtersOpen || activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+              Filtros
+              {activeFilterCount > 0 && (
+                <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileFiltersOpen(true)}
+              className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:hidden ${activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground"}`}
+            >
+              <Filter className="h-3.5 w-3.5" />
+              {activeFilterCount > 0 && (
+                <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {canStaffViewTeamAgenda && (
+            <div className="grid grid-cols-2 gap-2 md:flex md:w-fit">
+              <AgendaScopeButton
+                active={agendaScope === "mine"}
+                onClick={() => {
+                  setAgendaScope("mine");
+                  updateFilter("staffId", "all");
+                }}
               >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((v) => !v)}
-            className={`hidden h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:inline-flex ${filtersOpen || activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"}`}
-          >
-            <Filter className="h-3.5 w-3.5" />
-            Filtros
-            {activeFilterCount > 0 && (
-              <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileFiltersOpen(true)}
-            className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition-all md:hidden ${activeFilterCount > 0 ? "border-foreground/25 bg-foreground text-background" : "border-border bg-card text-muted-foreground"}`}
-          >
-            <Filter className="h-3.5 w-3.5" />
-            {activeFilterCount > 0 && (
-              <span className="grid size-5 place-items-center rounded-full bg-background/20 text-[10px] font-bold">
-                {activeFilterCount}
-              </span>
-            )}
-          </button>
-        </div>
+                Minha agenda
+              </AgendaScopeButton>
+              <AgendaScopeButton
+                active={agendaScope === "team"}
+                onClick={() => setAgendaScope("team")}
+              >
+                Toda a equipa
+              </AgendaScopeButton>
+            </div>
+          )}
 
-        {canStaffViewTeamAgenda && (
-          <div className="grid grid-cols-2 gap-2 md:flex md:w-fit">
-            <AgendaScopeButton
-              active={agendaScope === "mine"}
-              onClick={() => {
-                setAgendaScope("mine");
-                updateFilter("staffId", "all");
-              }}
-            >
-              Minha agenda
-            </AgendaScopeButton>
-            <AgendaScopeButton
-              active={agendaScope === "team"}
-              onClick={() => setAgendaScope("team")}
-            >
-              Toda a equipa
-            </AgendaScopeButton>
-          </div>
-        )}
-
-        {filtersOpen && (
-          <div className="hidden animate-in fade-in slide-in-from-top-1 duration-200 md:block">
-            <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <p className="text-xs font-semibold text-muted-foreground">Filtros Avançados</p>
-                {activeFilterCount > 0 && (
+          {filtersOpen && (
+            <div className="hidden animate-in fade-in slide-in-from-top-1 duration-200 md:block">
+              <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-xs font-semibold text-muted-foreground">Filtros Avançados</p>
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={resetFilters}
+                      className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      Limpar filtros
+                    </button>
+                  )}
+                </div>
+                <AgendaFilterFields
+                  filters={filters}
+                  options={filterOptions}
+                  onChange={updateFilter}
+                  hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda}
+                />
+                <div className="mt-3 flex justify-end gap-2">
                   <button
                     type="button"
-                    onClick={resetFilters}
-                    className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    onClick={() => setFiltersOpen(false)}
+                    className="h-9 rounded-xl border border-border px-4 text-xs font-semibold text-muted-foreground transition hover:bg-muted"
                   >
-                    Limpar filtros
+                    Fechar
                   </button>
-                )}
-              </div>
-              <AgendaFilterFields
-                filters={filters}
-                options={filterOptions}
-                onChange={updateFilter}
-                hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda}
-              />
-              <div className="mt-3 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setFiltersOpen(false)}
-                  className="h-9 rounded-xl border border-border px-4 text-xs font-semibold text-muted-foreground transition hover:bg-muted"
-                >
-                  Fechar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFiltersOpen(false)}
-                  className="h-9 rounded-xl bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-90"
-                >
-                  Aplicar
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setFiltersOpen(false)}
+                    className="h-9 rounded-xl bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-90"
+                  >
+                    Aplicar
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>}
+          )}
+        </div>
+      )}
 
       {/* Agenda profissional em linha do tempo */}
       {loading ? (
         <div className="overflow-hidden border-y border-border/80 bg-card shadow-sm md:rounded-[1.35rem] md:border">
-          <div className="h-[4.5rem] animate-pulse border-b border-border bg-muted/45" />
+          <div className="h-10 animate-pulse border-b border-border bg-muted/45 md:h-[4.5rem]" />
           <div className="grid h-[60dvh] grid-cols-[3.4rem_1fr] md:grid-cols-[3.6rem_1fr]">
             <div className="border-r border-border bg-muted/20" />
             <div className="bg-[linear-gradient(to_bottom,transparent_57px,hsl(var(--border)/0.45)_58px)] bg-[length:100%_58px] md:bg-[linear-gradient(to_bottom,transparent_80px,hsl(var(--border)/0.45)_81px)] md:bg-[length:100%_82px]" />
@@ -1150,7 +1341,8 @@ function AgendaPage() {
           date={selectedDate}
           now={agendaNow}
           professionals={timelineProfessionals}
-          appointments={timelineAppointments}
+          appointments={timelineEntries}
+          availability={selectedAvailability}
           onOpenAppointment={(appointment) => {
             if (appointment.privateDetails) setTimelineDetailId(appointment.id);
           }}
@@ -1186,24 +1378,19 @@ function AgendaPage() {
             paid,
             timelineDetailAppt.status,
           );
-          const financialSummary = getAppointmentFinancialSummary(
-            timelineDetailAppt,
-            split,
-            paid,
-          );
+          const financialSummary = getAppointmentFinancialSummary(timelineDetailAppt, split, paid);
           const messageState = formatMessageState(
             timelineDetailAppt,
             paid,
             latestMessageByAppointment.get(timelineDetailAppt.id),
           );
-          const canConfirm =
-            revenue.isOnlinePaid && timelineDetailAppt.status !== "cancelled";
+          const canConfirm = revenue.isOnlinePaid && timelineDetailAppt.status !== "cancelled";
           const canResend =
             messageState?.tone === "danger" ||
             (isPastAppointment(timelineDetailAppt.ends_at) &&
               Boolean(
                 timelineDetailAppt.clients?.phone &&
-                  normalizePhoneForDisplay(timelineDetailAppt.clients.phone),
+                normalizePhoneForDisplay(timelineDetailAppt.clients.phone),
               ));
           const actions: TimelineDrawerAction[] = [
             {
@@ -1298,9 +1485,7 @@ function AgendaPage() {
               actions={actions}
               onClose={() => setTimelineDetailId(null)}
               onConfirmCancel={() => {
-                void cancelAppointment(timelineDetailAppt.id).then(() =>
-                  setTimelineDetailId(null),
-                );
+                void cancelAppointment(timelineDetailAppt.id).then(() => setTimelineDetailId(null));
               }}
               cancelling={cancellingId === timelineDetailAppt.id}
             />
@@ -1309,13 +1494,19 @@ function AgendaPage() {
 
       {/* Mobile Filter Bottom Sheet */}
       {mobileFiltersOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
+        <div
+          className="fixed inset-0 z-[100] md:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Filtros da agenda"
+        >
           <button
             type="button"
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setMobileFiltersOpen(false)}
+            aria-label="Fechar filtros da agenda"
           />
-          <div className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-hidden rounded-t-[1.5rem] border-t border-border bg-card shadow-2xl">
+          <div className="absolute inset-x-0 bottom-0 flex max-h-[calc(100dvh-max(env(safe-area-inset-top),0.5rem))] min-h-0 flex-col overflow-hidden rounded-t-[1.5rem] border-t border-border bg-card shadow-2xl">
             <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
@@ -1331,7 +1522,7 @@ function AgendaPage() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="max-h-[calc(88vh-8.5rem)] overflow-y-auto px-4 py-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
               <AgendaFilterFields
                 filters={filters}
                 options={filterOptions}
@@ -1340,7 +1531,7 @@ function AgendaPage() {
                 hideProfessional={isProfessionalPanel && !canStaffViewTeamAgenda}
               />
             </div>
-            <div className="grid grid-cols-2 gap-2 border-t border-border p-3">
+            <div className="grid grid-cols-2 gap-2 border-t border-border p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
               <button
                 type="button"
                 onClick={resetFilters}
@@ -1393,7 +1584,7 @@ function AgendaPage() {
           onClose={() => setBlockTimeDefaults(null)}
           onCreated={() => {
             setBlockTimeDefaults(null);
-            void loadData({ silent: true });
+            void Promise.all([loadData({ silent: true }), loadStaffTimeOffForDate(selectedDate)]);
           }}
         />
       )}
@@ -1671,7 +1862,13 @@ function BlockTimeModal({
       toast.error("Preencha o início e o fim do bloqueio.");
       return;
     }
-    if (new Date(ends).getTime() <= new Date(starts).getTime()) {
+    const startsAt = new Date(starts);
+    const endsAt = new Date(ends);
+    if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
+      toast.error("Preencha uma data e um horário válidos.");
+      return;
+    }
+    if (endsAt.getTime() <= startsAt.getTime()) {
       toast.error("O fim do bloqueio deve ser posterior ao início.");
       return;
     }
@@ -1679,8 +1876,8 @@ function BlockTimeModal({
     const { error } = await supabase.from("staff_time_off").insert({
       studio_id: studioId,
       staff_id: staffId,
-      starts_at: new Date(starts).toISOString(),
-      ends_at: new Date(ends).toISOString(),
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
       reason: reason.trim() || null,
     });
     setSaving(false);
@@ -1706,22 +1903,46 @@ function BlockTimeModal({
             <p className="truncate text-sm font-black">{staffName}</p>
           </div>
         </div>
-        <div className="grid gap-3 min-[390px]:grid-cols-2">
+        <div className="space-y-3">
           <ModalField label="Início do bloqueio">
-            <input
-              type="datetime-local"
-              value={starts}
-              onChange={(event) => setStarts(event.target.value)}
-              className={inputCls}
-            />
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
+              <input
+                type="date"
+                value={starts.slice(0, 10)}
+                onChange={(event) =>
+                  setStarts(mergeLocalDateTime(starts, "date", event.target.value))
+                }
+                className={`${inputCls} min-w-0 px-2`}
+                aria-label="Data de início do bloqueio"
+              />
+              <input
+                type="time"
+                value={starts.slice(11, 16)}
+                onChange={(event) =>
+                  setStarts(mergeLocalDateTime(starts, "time", event.target.value))
+                }
+                className={`${inputCls} min-w-0 px-2`}
+                aria-label="Hora de início do bloqueio"
+              />
+            </div>
           </ModalField>
           <ModalField label="Fim do bloqueio">
-            <input
-              type="datetime-local"
-              value={ends}
-              onChange={(event) => setEnds(event.target.value)}
-              className={inputCls}
-            />
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_5.75rem] gap-2">
+              <input
+                type="date"
+                value={ends.slice(0, 10)}
+                onChange={(event) => setEnds(mergeLocalDateTime(ends, "date", event.target.value))}
+                className={`${inputCls} min-w-0 px-2`}
+                aria-label="Data de fim do bloqueio"
+              />
+              <input
+                type="time"
+                value={ends.slice(11, 16)}
+                onChange={(event) => setEnds(mergeLocalDateTime(ends, "time", event.target.value))}
+                className={`${inputCls} min-w-0 px-2`}
+                aria-label="Hora de fim do bloqueio"
+              />
+            </div>
           </ModalField>
         </div>
         <ModalField label="Motivo (opcional)">
@@ -1737,7 +1958,7 @@ function BlockTimeModal({
         onClose={onClose}
         onSave={() => void handleSave()}
         saving={saving}
-        disabled={!starts || !ends}
+        disabled={!isValidLocalDateTime(starts) || !isValidLocalDateTime(ends)}
         label="Bloquear horário"
       />
     </ModalShell>
@@ -1885,14 +2106,12 @@ function NewAppointmentModal({
         .select("id")
         .single();
       if (ae || !appt) throw new Error(ae?.message ?? "Erro ao criar marcação");
-      await supabase
-        .from("appointment_services" as any)
-        .insert({
-          appointment_id: (appt as any).id,
-          service_id: svc.id,
-          price: svc.price,
-          duration_min: svc.duration_min,
-        });
+      await supabase.from("appointment_services" as any).insert({
+        appointment_id: (appt as any).id,
+        service_id: svc.id,
+        price: svc.price,
+        duration_min: svc.duration_min,
+      });
       toast.success("Marcação criada com sucesso!");
       onCreated();
     } catch (err) {
@@ -2424,14 +2643,22 @@ function ModalShell({
   // Body scroll lock while modal is open
   useEffect(() => {
     const prev = document.body.style.overflow;
+    const previousOverscroll = document.body.style.overscrollBehavior;
     document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
     return () => {
       document.body.style.overflow = prev;
+      document.body.style.overscrollBehavior = previousOverscroll;
     };
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center overflow-x-hidden bg-black/40 px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-sm md:items-center md:p-6">
+    <div
+      className="fixed inset-0 z-[100] flex items-end justify-center overflow-x-hidden bg-black/40 px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-sm md:items-center md:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+    >
       <div className="relative flex max-h-[calc(100dvh-max(1rem,env(safe-area-inset-top))-0.5rem)] w-full max-w-xl flex-col overflow-hidden rounded-[1.25rem] border border-border bg-card/98 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200 md:max-h-[min(88dvh,44rem)] md:rounded-2xl">
         {/* Sticky header — always visible, never scrolls away */}
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -2447,6 +2674,7 @@ function ModalShell({
             type="button"
             onClick={onClose}
             className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground hover:text-foreground"
+            aria-label={`Fechar ${title}`}
           >
             <X className="h-4 w-4" />
           </button>
@@ -3693,13 +3921,7 @@ function SheetItem({
 
 // ─── Status Chip ──────────────────────────────────────────────────────────────
 
-function TimelineChip({
-  state,
-  isNext,
-}: {
-  state: AgendaTimelineState;
-  isNext: boolean;
-}) {
+function TimelineChip({ state, isNext }: { state: AgendaTimelineState; isNext: boolean }) {
   if (state === "current") {
     return (
       <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-amber-500/12 px-2 py-0.5 text-[9px] font-bold uppercase leading-tight tracking-wide text-amber-800 dark:text-amber-300">
@@ -4287,6 +4509,18 @@ function addLocalDays(value: Date, amount: number) {
   result.setDate(result.getDate() + amount);
   return result;
 }
+function timeValueToMinutes(value: string) {
+  const [hours = "0", minutes = "0"] = value.split(":");
+  return Number(hours) * 60 + Number(minutes);
+}
+function mergeLocalDateTime(value: string, part: "date" | "time", nextValue: string) {
+  const currentDate = value.slice(0, 10);
+  const currentTime = value.slice(11, 16);
+  return part === "date" ? `${nextValue}T${currentTime}` : `${currentDate}T${nextValue}`;
+}
+function isValidLocalDateTime(value: string) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) && !Number.isNaN(new Date(value).getTime());
+}
 function getAgendaWeekDays(value: Date) {
   const selected = startOfLocalDay(value);
   const mondayOffset = (selected.getDay() + 6) % 7;
@@ -4294,9 +4528,8 @@ function getAgendaWeekDays(value: Date) {
   return Array.from({ length: 7 }, (_, index) => addLocalDays(monday, index));
 }
 function getMobileAgendaDays(anchor: Date, startOffset: number, endOffset: number) {
-  return Array.from(
-    { length: endOffset - startOffset + 1 },
-    (_, index) => addLocalDays(anchor, startOffset + index),
+  return Array.from({ length: endOffset - startOffset + 1 }, (_, index) =>
+    addLocalDays(anchor, startOffset + index),
   );
 }
 function differenceInLocalCalendarDays(value: Date, anchor: Date) {

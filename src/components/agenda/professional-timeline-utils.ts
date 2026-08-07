@@ -10,6 +10,7 @@ export type ProfessionalTimelineAppointment = {
   startsAt: string;
   endsAt: string;
   status: string;
+  kind?: "appointment" | "block";
   clientName: string;
   serviceName: string;
   professionalName: string;
@@ -82,19 +83,25 @@ export function layoutProfessionalAppointments(
 
 export function getProfessionalTimelineBounds(
   appointments: ProfessionalTimelineAppointment[],
+  availability?: Array<{ startMinutes: number; endMinutes: number }>,
 ) {
-  if (appointments.length === 0) return { startHour: 8, endHour: 20 };
-  const firstHour = Math.min(
-    ...appointments.map((appointment) => new Date(appointment.startsAt).getHours()),
-  );
-  const lastHour = Math.max(
-    ...appointments.map((appointment) => {
-      const end = new Date(appointment.endsAt);
-      return end.getHours() + (end.getMinutes() > 0 ? 1 : 0);
-    }),
-  );
+  const starts = appointments.map((appointment) => {
+    const start = new Date(appointment.startsAt);
+    return start.getHours() + start.getMinutes() / 60;
+  });
+  const ends = appointments.map((appointment) => {
+    const end = new Date(appointment.endsAt);
+    return end.getHours() + end.getMinutes() / 60;
+  });
+  for (const period of availability ?? []) {
+    starts.push(period.startMinutes / 60);
+    ends.push(period.endMinutes / 60);
+  }
+  if (starts.length === 0) return { startHour: 8, endHour: 20 };
+  const firstHour = Math.floor(Math.min(...starts));
+  const lastHour = Math.ceil(Math.max(...ends));
   return {
-    startHour: Math.max(0, Math.min(8, firstHour) - 1),
-    endHour: Math.min(24, Math.max(20, lastHour) + 1),
+    startHour: Math.max(0, Math.min(8, firstHour)),
+    endHour: Math.min(24, Math.max(20, lastHour)),
   };
 }

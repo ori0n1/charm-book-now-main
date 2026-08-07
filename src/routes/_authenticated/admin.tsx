@@ -37,10 +37,7 @@ import { getSegmentConfig } from "@/lib/segments";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
 import { getSettledSession } from "@/lib/auth-landing";
 import { revokeCurrentDevicePushSubscription } from "@/lib/push-subscriptions.functions";
-import {
-  getCurrentPushSubscription,
-  unsubscribeCurrentPushSubscription,
-} from "@/lib/pwa-push";
+import { getCurrentPushSubscription, unsubscribeCurrentPushSubscription } from "@/lib/pwa-push";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: APP_BRAND.name }] }),
@@ -57,8 +54,24 @@ const NAV = [
     group: "Operação",
     primary: true,
   },
-  { to: "/admin/balcao", label: "Balcão", mobileLabel: "Balcão", icon: CalendarPlus, exact: false, group: "Operação", primary: true },
-  { to: "/admin/agenda", label: "Agenda", mobileLabel: "Agenda", icon: Calendar, exact: false, group: "Operação", primary: true },
+  {
+    to: "/admin/balcao",
+    label: "Balcão",
+    mobileLabel: "Balcão",
+    icon: CalendarPlus,
+    exact: false,
+    group: "Operação",
+    primary: true,
+  },
+  {
+    to: "/admin/agenda",
+    label: "Agenda",
+    mobileLabel: "Agenda",
+    icon: Calendar,
+    exact: false,
+    group: "Operação",
+    primary: true,
+  },
   {
     to: "/admin/clientes",
     label: "Clientes",
@@ -77,8 +90,24 @@ const NAV = [
     group: "Operação",
     primary: true,
   },
-  { to: "/admin/equipa", label: "Profissionais", mobileLabel: "Prof.", icon: Users, exact: false, group: "Operação", primary: true },
-  { to: "/admin/horarios", label: "Horários", mobileLabel: "Horas", icon: Clock, exact: false, group: "Operação", primary: true },
+  {
+    to: "/admin/equipa",
+    label: "Profissionais",
+    mobileLabel: "Prof.",
+    icon: Users,
+    exact: false,
+    group: "Operação",
+    primary: true,
+  },
+  {
+    to: "/admin/horarios",
+    label: "Horários",
+    mobileLabel: "Horas",
+    icon: Clock,
+    exact: false,
+    group: "Operação",
+    primary: true,
+  },
   {
     to: "/admin/pagamentos",
     label: "Financeiro",
@@ -119,7 +148,14 @@ const NAV = [
     exact: false,
     group: "Gestão",
   },
-  { to: "/admin/marca", label: "Marca", mobileLabel: "Marca", icon: Palette, exact: false, group: "Configuração" },
+  {
+    to: "/admin/marca",
+    label: "Marca",
+    mobileLabel: "Marca",
+    icon: Palette,
+    exact: false,
+    group: "Configuração",
+  },
   {
     to: "/admin/politicas",
     label: "Políticas",
@@ -240,36 +276,44 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
     retry: 1,
-    queryFn: async () =>
-      (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
+    queryFn: async () => (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
   const premiumLocked = Boolean(billingQuery.data && !billingQuery.data.premiumActive);
   const premiumActive = Boolean(accessMode === "full" && billingQuery.data?.premiumActive);
   const premiumCancelScheduled = Boolean(
-    premiumActive && billingQuery.data && isPaidSubscriptionBilling(billingQuery.data) && billingQuery.data.cancelAtPeriodEnd,
+    premiumActive &&
+    billingQuery.data &&
+    isPaidSubscriptionBilling(billingQuery.data) &&
+    billingQuery.data.cancelAtPeriodEnd,
   );
-  const premiumIndicatorVisible = Boolean(accessMode === "full" && billingQuery.data && (premiumActive || premiumLocked));
-  const premiumIndicatorTone = premiumLocked ? "expired" : premiumCancelScheduled ? "scheduled" : "active";
+  const premiumIndicatorVisible = Boolean(
+    accessMode === "full" && billingQuery.data && (premiumActive || premiumLocked),
+  );
+  const premiumIndicatorTone = premiumLocked
+    ? "expired"
+    : premiumCancelScheduled
+      ? "scheduled"
+      : "active";
   const ownerGreeting = studio
     ? getOwnerGreeting(studio)
     : { title: APP_BRAND.shortName, subtitle: "Bem-vinda ao painel Bellza" };
   const premiumTooltip = getPremiumHeaderTooltip(billingQuery.data);
   const isPremiumPage = pathname.startsWith("/admin/premium");
   const isDashboardPage = pathname === "/admin";
-  const isBalcaoPage = pathname.startsWith("/admin/balcao");
+  const isAgendaPage = pathname.startsWith("/admin/agenda");
   const showTrialBanner = Boolean(
     accessMode === "full" &&
-      billingQuery.data &&
-      isPureTrialBilling(billingQuery.data) &&
-      isDashboardPage,
+    billingQuery.data &&
+    isPureTrialBilling(billingQuery.data) &&
+    isDashboardPage,
   );
   const showCancellationBanner = Boolean(
     accessMode === "full" &&
-      billingQuery.data &&
-      isPaidSubscriptionBilling(billingQuery.data) &&
-      billingQuery.data.cancelAtPeriodEnd &&
-      billingQuery.data.premiumActive &&
-      !isPremiumPage,
+    billingQuery.data &&
+    isPaidSubscriptionBilling(billingQuery.data) &&
+    billingQuery.data.cancelAtPeriodEnd &&
+    billingQuery.data.premiumActive &&
+    !isPremiumPage,
   );
 
   useEffect(() => {
@@ -477,7 +521,13 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
       ? NAV.filter((item) => item.to === "/admin/balcao")
       : accessMode === "limited"
         ? NAV.filter((item) =>
-            ["/admin", "/admin/agenda", "/admin/clientes", "/admin/balcao", "/admin/horarios"].includes(item.to),
+            [
+              "/admin",
+              "/admin/agenda",
+              "/admin/clientes",
+              "/admin/balcao",
+              "/admin/horarios",
+            ].includes(item.to),
           )
         : NAV.filter((item) => !("saasOnly" in item) || studio.role === "saas_owner");
   const roleNav = allowedNav;
@@ -520,14 +570,26 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   }
 
   return (
-    <div className="admin-shell min-h-screen overflow-x-hidden bg-background">
+    <div
+      className={`admin-shell min-h-screen overflow-x-hidden bg-background ${isAgendaPage ? "admin-shell-agenda" : ""}`}
+    >
       <aside
         className={`fixed inset-y-0 left-0 hidden h-dvh min-h-0 flex-col border-r border-border/70 bg-card/95 shadow-[12px_0_40px_rgba(0,0,0,0.04)] transition-[width] duration-300 ease-out md:flex ${
           desktopSidebarCollapsed ? "w-20" : "w-60"
         }`}
       >
-        <div className={desktopSidebarCollapsed ? "shrink-0 px-3 pb-3 pt-4" : "shrink-0 px-5 pt-5 pb-4"}>
-          <div className={desktopSidebarCollapsed ? "flex flex-col items-center gap-2.5" : "flex items-start justify-between gap-3"}>
+        <div
+          className={
+            desktopSidebarCollapsed ? "shrink-0 px-3 pb-3 pt-4" : "shrink-0 px-5 pt-5 pb-4"
+          }
+        >
+          <div
+            className={
+              desktopSidebarCollapsed
+                ? "flex flex-col items-center gap-2.5"
+                : "flex items-start justify-between gap-3"
+            }
+          >
             <div className="min-w-0">
               {!desktopSidebarCollapsed && (
                 <>
@@ -573,14 +635,20 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
 
         <nav
           className={`admin-sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain pb-3 pr-1.5 ${
-            desktopSidebarCollapsed ? "flex flex-col items-stretch gap-1.5 px-3 pt-1" : "flex flex-col gap-2 px-3 pt-1"
+            desktopSidebarCollapsed
+              ? "flex flex-col items-stretch gap-1.5 px-3 pt-1"
+              : "flex flex-col gap-2 px-3 pt-1"
           }`}
         >
           {navGroups.map((group) => {
             return (
               <div
                 key={group.label}
-                className={desktopSidebarCollapsed ? "border-t border-border/45 pt-1.5 first:border-t-0 first:pt-0" : ""}
+                className={
+                  desktopSidebarCollapsed
+                    ? "border-t border-border/45 pt-1.5 first:border-t-0 first:pt-0"
+                    : ""
+                }
               >
                 {!desktopSidebarCollapsed && (
                   <p className="px-2 pb-1 text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground/70">
@@ -617,7 +685,9 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
                           }`}
                           strokeWidth={active ? 2.1 : 1.75}
                         />
-                        {!desktopSidebarCollapsed && <span className="truncate">{navLabel(item)}</span>}
+                        {!desktopSidebarCollapsed && (
+                          <span className="truncate">{navLabel(item)}</span>
+                        )}
                       </Link>
                     );
                   })}
@@ -643,9 +713,9 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
 
       <header
         data-tour="admin-header"
-        className={`sticky top-0 z-20 flex items-center justify-between border-b border-border/70 bg-background/88 px-4 py-3 backdrop-blur-2xl transition-[margin] duration-300 ease-out md:px-8 md:py-4 ${
-          desktopSidebarCollapsed ? "md:ml-20" : "md:ml-60"
-        }`}
+        className={`sticky top-0 z-20 flex items-center justify-between border-b border-border/70 bg-background/88 px-3 backdrop-blur-2xl transition-[margin] duration-300 ease-out md:px-8 md:py-4 ${
+          isAgendaPage ? "h-[var(--admin-mobile-header-height)] py-1.5" : "py-3"
+        } ${desktopSidebarCollapsed ? "md:ml-20" : "md:ml-60"}`}
       >
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
@@ -653,22 +723,23 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
               {ownerGreeting.title}
             </h1>
             {premiumIndicatorVisible && (
-              <PremiumHeaderBadge
-                tone={premiumIndicatorTone}
-                tooltip={premiumTooltip}
-              />
+              <PremiumHeaderBadge tone={premiumIndicatorTone} tooltip={premiumTooltip} />
             )}
           </div>
-          <p className="mt-0.5 truncate text-[11px] font-medium text-muted-foreground md:text-xs">
+          <p
+            className={`mt-0.5 truncate text-[11px] font-medium text-muted-foreground md:text-xs ${isAgendaPage ? "hidden md:block" : ""}`}
+          >
             {ownerGreeting.subtitle}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {accessMode === "full" && <AdminNotifications studioId={studio.id} studioName={studio.name} />}
+          {accessMode === "full" && (
+            <AdminNotifications studioId={studio.id} studioName={studio.name} />
+          )}
           <ThemeToggle className="h-9 w-9" />
           <button
             onClick={logout}
-            className="rounded-2xl border border-border p-2"
+            className={`rounded-2xl border border-border p-2 ${isAgendaPage ? "hidden md:block" : ""}`}
             aria-label="Sair"
           >
             <LogOut className="h-4 w-4" />
@@ -682,10 +753,10 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
         }`}
       >
         <div
-          className={`admin-content mx-auto max-w-[88rem] px-3 pt-3 sm:px-4 md:px-5 md:pb-10 md:pt-5 xl:px-6 ${
-            isBalcaoPage
-              ? "pb-[calc(env(safe-area-inset-bottom)+5.75rem)]"
-              : "pb-[calc(env(safe-area-inset-bottom)+5.75rem)]"
+          className={`admin-content mx-auto max-w-[88rem] px-3 sm:px-4 md:px-5 md:pb-10 md:pt-5 xl:px-6 ${
+            isAgendaPage
+              ? "pt-0 pb-[calc(env(safe-area-inset-bottom)+4.75rem)]"
+              : "pt-3 pb-[calc(env(safe-area-inset-bottom)+5.75rem)]"
           }`}
         >
           {showCancellationBanner && (
@@ -707,9 +778,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           <div className="absolute inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5rem)] top-[calc(max(env(safe-area-inset-top),0px)+0.75rem)] flex min-h-0 flex-col overflow-hidden rounded-[1.2rem] border border-border/80 bg-card/98 shadow-2xl shadow-black/35">
             <div className="flex shrink-0 items-center justify-between border-b border-border/70 px-3.5 py-2.5">
               <div>
-                <p className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
-                  Menu
-                </p>
+                <p className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">Menu</p>
                 <p className="text-sm font-medium">Navegação do painel</p>
               </div>
               <button
@@ -734,7 +803,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
                         const Icon = item.icon;
                         const primary = "primary" in item && item.primary;
                         return (
-                      <Link
+                          <Link
                             key={item.to}
                             to={item.to}
                             data-tour={tourTargetFor(item.to)}
@@ -759,7 +828,9 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
                               <Icon className="h-4 w-4" />
                             </span>
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-semibold">{navLabel(item)}</span>
+                              <span className="block truncate text-sm font-semibold">
+                                {navLabel(item)}
+                              </span>
                               <span
                                 className={`block truncate text-[11px] ${
                                   active ? "text-background/70" : "text-muted-foreground"
@@ -915,7 +986,9 @@ function AdminQuickTour({
       return;
     }
 
-    setMobileMenuOpen(Boolean("mobileMenu" in currentStep && currentStep.mobileMenu && mobileViewport()));
+    setMobileMenuOpen(
+      Boolean("mobileMenu" in currentStep && currentStep.mobileMenu && mobileViewport()),
+    );
 
     const update = (attempt = 0) => {
       if (cancelled) return;
@@ -1013,8 +1086,14 @@ function AdminQuickTour({
           style={{
             left: Math.max(8, targetRect.left - 6),
             top: Math.max(8, targetRect.top - 6),
-            width: Math.min(window.innerWidth - Math.max(8, targetRect.left - 6) - 8, targetRect.width + 12),
-            height: Math.min(window.innerHeight - Math.max(8, targetRect.top - 6) - 8, targetRect.height + 12),
+            width: Math.min(
+              window.innerWidth - Math.max(8, targetRect.left - 6) - 8,
+              targetRect.width + 12,
+            ),
+            height: Math.min(
+              window.innerHeight - Math.max(8, targetRect.top - 6) - 8,
+              targetRect.height + 12,
+            ),
           }}
         />
       )}
@@ -1033,7 +1112,9 @@ function AdminQuickTour({
               </span>
             </div>
             <h2 className="mt-1 text-base font-semibold tracking-tight">{currentStep.title}</h2>
-            <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{currentStep.body}</p>
+            <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+              {currentStep.body}
+            </p>
           </div>
         </div>
 
@@ -1041,9 +1122,7 @@ function AdminQuickTour({
           {ADMIN_TOUR_STEPS.map((step, index) => (
             <span
               key={step.target}
-              className={`h-1.5 rounded-full transition-colors ${
-                index <= stepIndex ? "bg-emerald-500" : "bg-muted"
-              }`}
+              className={`h-1.5 rounded-full transition-colors ${index <= stepIndex ? "bg-emerald-500" : "bg-muted"}`}
             />
           ))}
         </div>
@@ -1067,7 +1146,11 @@ function AdminQuickTour({
             </button>
             <button
               type="button"
-              onClick={isLast ? finishTour : () => setStepIndex((index) => Math.min(ADMIN_TOUR_STEPS.length - 1, index + 1))}
+              onClick={
+                isLast
+                  ? finishTour
+                  : () => setStepIndex((index) => Math.min(ADMIN_TOUR_STEPS.length - 1, index + 1))
+              }
               className="inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-xs font-semibold text-background shadow-sm transition hover:-translate-y-0.5 hover:opacity-95"
             >
               <span className="truncate">{isLast ? "Concluir" : "Avançar"}</span>
@@ -1133,7 +1216,10 @@ function PremiumHeaderBadge({
       className={`group relative inline-grid size-5 shrink-0 place-items-center rounded-md outline-none transition hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-offset-2 ${toneClass}`}
     >
       <span className="relative inline-grid size-[18px] place-items-center">
-        <BadgeCheck className="absolute inset-0 h-full w-full fill-current stroke-current" strokeWidth={1.8} />
+        <BadgeCheck
+          className="absolute inset-0 h-full w-full fill-current stroke-current"
+          strokeWidth={1.8}
+        />
         <Check className="relative h-3 w-3 text-background" strokeWidth={3} />
       </span>
       {showTooltip && (
@@ -1151,7 +1237,11 @@ function PremiumHeaderBadge({
   );
 }
 
-function getOwnerGreeting(studio: { owner_name?: string | null; name: string; staff_name?: string | null }) {
+function getOwnerGreeting(studio: {
+  owner_name?: string | null;
+  name: string;
+  staff_name?: string | null;
+}) {
   const name =
     getFirstName(studio.owner_name) ||
     getFirstName(studio.staff_name) ||
@@ -1193,7 +1283,11 @@ function getPremiumHeaderTooltip(billing?: BillingSummary) {
 
 function CancellationScheduledBanner({ endDate }: { endDate: string | null }) {
   const formatted = endDate
-    ? new Date(endDate).toLocaleDateString("pt-PT", { day: "2-digit", month: "long", year: "numeric" })
+    ? new Date(endDate).toLocaleDateString("pt-PT", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      })
     : null;
   return (
     <div className="mb-3 flex w-full flex-col items-center justify-center gap-3 rounded-[1.15rem] border border-amber-300/25 bg-[linear-gradient(135deg,rgba(245,158,11,0.12),rgba(255,255,255,0.025)_48%,rgba(251,191,36,0.08))] px-3.5 py-3 text-center shadow-sm shadow-black/5 md:mb-4 md:px-4">
@@ -1234,9 +1328,7 @@ function TrialPremiumBanner({ billing }: { billing: BillingSummary }) {
   return (
     <section
       className={`mb-3 overflow-hidden rounded-xl border px-3.5 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.025)] md:mb-4 ${
-        urgent
-          ? "border-amber-500/25 bg-amber-500/10"
-          : "border-emerald-700/20 bg-emerald-500/10"
+        urgent ? "border-amber-500/25 bg-amber-500/10" : "border-emerald-700/20 bg-emerald-500/10"
       }`}
     >
       <div className="grid gap-2.5 lg:grid-cols-[1fr_auto] lg:items-center">
@@ -1255,7 +1347,8 @@ function TrialPremiumBanner({ billing }: { billing: BillingSummary }) {
                   : `Restam ${remaining ?? "--"} dias do teste gratuito`}
               </h2>
               <p className="mt-0.5 max-w-2xl text-[11px] leading-relaxed text-muted-foreground">
-                Após o fim do teste será necessário ativar uma assinatura Premium para continuar a utilizar o painel.
+                Após o fim do teste será necessário ativar uma assinatura Premium para continuar a
+                utilizar o painel.
               </p>
             </div>
             <span className="w-fit shrink-0 rounded-full bg-background/55 px-2.5 py-0.5 text-[11px] font-semibold text-foreground ring-1 ring-border/35">
@@ -1299,17 +1392,17 @@ function isStripePlan(plan?: string | null) {
 function isPureTrialBilling(billing: BillingSummary) {
   return Boolean(
     billing.premiumActive &&
-      billing.status === "trialing" &&
-      !isStripePlan(billing.plan) &&
-      futureBillingDate(billing.trialEndsAt ?? billing.nextBillingAt),
+    billing.status === "trialing" &&
+    !isStripePlan(billing.plan) &&
+    futureBillingDate(billing.trialEndsAt ?? billing.nextBillingAt),
   );
 }
 
 function isPaidSubscriptionBilling(billing: BillingSummary) {
   return Boolean(
     isStripePlan(billing.plan) &&
-      billing.status !== "trialing" &&
-      billing.status !== "checkout_pending",
+    billing.status !== "trialing" &&
+    billing.status !== "checkout_pending",
   );
 }
 
@@ -1325,7 +1418,9 @@ function formatBillingDate(value?: string | null) {
 function getBillingDaysRemaining(billing: BillingSummary) {
   if (typeof billing.daysRemaining === "number") return billing.daysRemaining;
   const target =
-    billing.status === "trialing" ? billing.trialEndsAt ?? billing.nextBillingAt : billing.nextBillingAt;
+    billing.status === "trialing"
+      ? (billing.trialEndsAt ?? billing.nextBillingAt)
+      : billing.nextBillingAt;
   if (!target) return null;
   return Math.max(0, Math.ceil((new Date(target).getTime() - Date.now()) / 86400000));
 }
@@ -1334,8 +1429,3 @@ function futureBillingDate(value?: string | null) {
   if (!value) return null;
   return new Date(value).getTime() > Date.now() ? value : null;
 }
-
-
-
-
-

@@ -481,6 +481,7 @@
   .admin-shell {
     --admin-mobile-card-radius: 1.35rem;
     --admin-mobile-shadow: 0 1px 2px oklch(0 0 0 / 0.04), 0 10px 24px oklch(0 0 0 / 0.06);
+    --admin-mobile-header-height: 3.25rem;
   }
 
   @media (max-width: 767px) {
@@ -686,6 +687,30 @@
     .admin-content :where(.text-emerald-700, .dark\:text-emerald-400) {
       color: oklch(0.57 0.16 160);
     }
+
+    .admin-content > .agenda-timeline-page {
+      gap: 0;
+    }
+
+    .admin-content .agenda-timeline-page :where(.agenda-compact-control) {
+      min-height: 0;
+      font-size: inherit;
+    }
+
+    .admin-content .agenda-timeline-page :where(.agenda-timeline) {
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .admin-content .agenda-timeline-page :where(.agenda-date-navigation) {
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .admin-content .agenda-timeline-page :where(.agenda-professionals) {
+      border-radius: 0;
+      box-shadow: none;
+    }
   }
 
   @media (min-width: 768px) {
@@ -702,13 +727,12 @@
   }
 
   .public-booking-premium {
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in oklch, var(--accent) 7%, var(--background)) 0%,
-        var(--background) 24%,
-        var(--background) 100%
-      );
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklch, var(--accent) 7%, var(--background)) 0%,
+      var(--background) 24%,
+      var(--background) 100%
+    );
   }
 
   .public-studio-hero > div {
@@ -723,7 +747,12 @@
 
   .public-studio-identity {
     border-color: rgba(255, 255, 255, 0.12);
-    background: linear-gradient(115deg, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.1) 58%, rgba(255, 255, 255, 0.04));
+    background: linear-gradient(
+      115deg,
+      rgba(0, 0, 0, 0.22),
+      rgba(0, 0, 0, 0.1) 58%,
+      rgba(255, 255, 255, 0.04)
+    );
     box-shadow: 0 16px 44px rgba(0, 0, 0, 0.22);
   }
 
@@ -743,7 +772,11 @@
     --accent: oklch(0.66 0.13 76);
     --accent-foreground: oklch(0.14 0.012 70);
     background:
-      linear-gradient(180deg, color-mix(in oklch, var(--accent) 7%, var(--background)) 0%, var(--background) 32rem),
+      linear-gradient(
+        180deg,
+        color-mix(in oklch, var(--accent) 7%, var(--background)) 0%,
+        var(--background) 32rem
+      ),
       var(--color-background);
     color: var(--color-foreground);
   }
@@ -801,8 +834,11 @@
   .public-product-preview {
     border-radius: 1.25rem;
     border: 1px solid color-mix(in oklch, var(--border) 68%, transparent);
-    background:
-      linear-gradient(135deg, color-mix(in oklch, var(--card) 95%, var(--background)), color-mix(in oklch, var(--accent) 8%, var(--card)));
+    background: linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--card) 95%, var(--background)),
+      color-mix(in oklch, var(--accent) 8%, var(--card))
+    );
     padding: 0.75rem;
     box-shadow: 0 20px 54px oklch(0 0 0 / 0.075);
   }
@@ -813,8 +849,16 @@
 
   .public-auth-surface {
     background:
-      linear-gradient(135deg, color-mix(in oklch, var(--accent) 8%, var(--background)), transparent 38rem),
-      linear-gradient(180deg, var(--background), color-mix(in oklch, var(--muted) 32%, var(--background)));
+      linear-gradient(
+        135deg,
+        color-mix(in oklch, var(--accent) 8%, var(--background)),
+        transparent 38rem
+      ),
+      linear-gradient(
+        180deg,
+        var(--background),
+        color-mix(in oklch, var(--muted) 32%, var(--background))
+      );
   }
 
   .public-auth-card {
@@ -826,8 +870,11 @@
   .public-auth-preview {
     border-radius: 1.5rem;
     border: 1px solid color-mix(in oklch, var(--border) 58%, transparent);
-    background:
-      linear-gradient(135deg, color-mix(in oklch, var(--card) 96%, var(--background)), color-mix(in oklch, var(--accent) 5%, var(--card)));
+    background: linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--card) 96%, var(--background)),
+      color-mix(in oklch, var(--accent) 5%, var(--card))
+    );
     padding: 2rem;
     box-shadow: 0 22px 70px oklch(0 0 0 / 0.06);
   }
@@ -893,7 +940,9 @@
     font-size: 0.8125rem;
     font-weight: 600;
     color: var(--color-muted-foreground);
-    transition: color 0.15s ease, background-color 0.15s ease;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
   }
   .public-btn-ghost:hover {
     color: var(--color-foreground);
@@ -945,7 +994,11 @@
     --accent: oklch(0.64 0.12 70);
     --accent-foreground: oklch(0.14 0.012 70);
     background:
-      linear-gradient(180deg, color-mix(in oklch, var(--accent) 5%, var(--background)) 0%, var(--background) 34rem),
+      linear-gradient(
+        180deg,
+        color-mix(in oklch, var(--accent) 5%, var(--background)) 0%,
+        var(--background) 34rem
+      ),
       var(--color-background);
   }
 
@@ -979,8 +1032,16 @@
 
   .public-auth-surface {
     background:
-      linear-gradient(135deg, color-mix(in oklch, var(--accent) 5%, var(--background)), transparent 38rem),
-      linear-gradient(180deg, var(--background), color-mix(in oklch, var(--muted) 32%, var(--background)));
+      linear-gradient(
+        135deg,
+        color-mix(in oklch, var(--accent) 5%, var(--background)),
+        transparent 38rem
+      ),
+      linear-gradient(
+        180deg,
+        var(--background),
+        color-mix(in oklch, var(--muted) 32%, var(--background))
+      );
   }
 
   .public-feature-card {
@@ -1002,8 +1063,11 @@
     min-width: 0;
     border-radius: 1.35rem;
     border: 1px solid color-mix(in oklch, var(--border) 62%, transparent);
-    background:
-      linear-gradient(135deg, color-mix(in oklch, var(--card) 98%, var(--background)), color-mix(in oklch, var(--accent) 6%, var(--card)));
+    background: linear-gradient(
+      135deg,
+      color-mix(in oklch, var(--card) 98%, var(--background)),
+      color-mix(in oklch, var(--accent) 6%, var(--card))
+    );
     padding: 0.75rem;
     box-shadow: 0 22px 70px oklch(0 0 0 / 0.08);
   }
@@ -1258,12 +1322,20 @@
 
   .public-auth-surface {
     background:
-      radial-gradient(circle at 12% 10%, color-mix(in srgb, var(--accent-soft) 58%, transparent), transparent 28rem),
+      radial-gradient(
+        circle at 12% 10%,
+        color-mix(in srgb, var(--accent-soft) 58%, transparent),
+        transparent 28rem
+      ),
       linear-gradient(180deg, var(--background), var(--surface-muted));
   }
 
   .public-auth-preview {
-    background: linear-gradient(135deg, var(--card), color-mix(in srgb, var(--accent-soft) 34%, var(--card)));
+    background: linear-gradient(
+      135deg,
+      var(--card),
+      color-mix(in srgb, var(--accent-soft) 34%, var(--card))
+    );
   }
 
   .public-btn-primary {
@@ -1289,8 +1361,11 @@
   }
 
   .public-product-demo {
-    background:
-      linear-gradient(135deg, var(--card), color-mix(in srgb, var(--accent-soft) 42%, var(--card)));
+    background: linear-gradient(
+      135deg,
+      var(--card),
+      color-mix(in srgb, var(--accent-soft) 42%, var(--card))
+    );
     padding: 0.85rem;
     box-shadow: 0 22px 55px rgba(24, 24, 27, 0.075);
   }
@@ -1394,7 +1469,11 @@
     --color-danger: var(--public-danger);
     --color-danger-soft: var(--public-danger-soft);
     background:
-      linear-gradient(180deg, color-mix(in srgb, var(--public-accent-soft) 38%, var(--public-background)) 0%, var(--public-background) 23rem),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--public-accent-soft) 38%, var(--public-background)) 0%,
+        var(--public-background) 23rem
+      ),
       var(--public-background);
     color: var(--public-text-primary);
     color-scheme: light;
@@ -1408,7 +1487,11 @@
 
   .public-site-theme .public-nav {
     border-bottom-color: var(--public-border);
-    background: color-mix(in srgb, var(--public-surface-soft, var(--public-surface-subtle)) 88%, transparent);
+    background: color-mix(
+      in srgb,
+      var(--public-surface-soft, var(--public-surface-subtle)) 88%,
+      transparent
+    );
     backdrop-filter: blur(12px);
   }
 
@@ -1442,15 +1525,26 @@
 
   .public-site-theme .public-section-alt {
     border-block: 1px solid color-mix(in srgb, var(--public-border) 76%, transparent);
-    background:
-      linear-gradient(180deg, color-mix(in srgb, var(--public-background-alt) 92%, var(--public-background)) 0%, var(--public-background-alt) 100%);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--public-background-alt) 92%, var(--public-background)) 0%,
+      var(--public-background-alt) 100%
+    );
   }
 
   .public-site-theme .public-hero-section {
     border-bottom: 1px solid color-mix(in srgb, var(--public-border) 64%, transparent);
     background:
-      radial-gradient(circle at 78% 18%, color-mix(in srgb, var(--public-accent-soft) 68%, transparent), transparent 24rem),
-      linear-gradient(180deg, color-mix(in srgb, var(--public-accent-soft) 22%, var(--public-background)) 0%, var(--public-background) 70%);
+      radial-gradient(
+        circle at 78% 18%,
+        color-mix(in srgb, var(--public-accent-soft) 68%, transparent),
+        transparent 24rem
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--public-accent-soft) 22%, var(--public-background)) 0%,
+        var(--public-background) 70%
+      );
   }
 
   .public-site-theme .public-final-cta {
@@ -1460,13 +1554,20 @@
 
   .public-site-theme .public-auth-surface {
     background:
-      radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--public-accent-soft) 62%, transparent), transparent 28rem),
+      radial-gradient(
+        circle at 18% 12%,
+        color-mix(in srgb, var(--public-accent-soft) 62%, transparent),
+        transparent 28rem
+      ),
       linear-gradient(180deg, var(--public-background), var(--public-background-alt));
   }
 
   .public-site-theme .public-auth-preview {
-    background:
-      linear-gradient(145deg, var(--public-surface), color-mix(in srgb, var(--public-accent-soft) 32%, var(--public-surface-soft)));
+    background: linear-gradient(
+      145deg,
+      var(--public-surface),
+      color-mix(in srgb, var(--public-accent-soft) 32%, var(--public-surface-soft))
+    );
   }
 
   .public-site-theme .public-btn-primary {
@@ -1507,8 +1608,12 @@
 
   .public-site-theme .public-product-demo {
     border-color: var(--public-border-strong);
-    background:
-      linear-gradient(145deg, var(--public-surface) 0%, var(--public-surface-soft) 56%, color-mix(in srgb, var(--public-accent-soft) 42%, var(--public-surface)) 100%);
+    background: linear-gradient(
+      145deg,
+      var(--public-surface) 0%,
+      var(--public-surface-soft) 56%,
+      color-mix(in srgb, var(--public-accent-soft) 42%, var(--public-surface)) 100%
+    );
     padding: clamp(0.75rem, 1.4vw, 1rem);
     box-shadow: 0 24px 60px rgba(52, 42, 31, 0.13);
   }
@@ -1552,7 +1657,6 @@
     background: var(--public-surface-soft);
     box-shadow: inset 0 0 0 1px var(--public-border);
   }
-
 
   .public-prose {
     display: flex;
