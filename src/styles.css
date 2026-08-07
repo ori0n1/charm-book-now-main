@@ -538,6 +538,13 @@
       isolation: isolate;
     }
 
+    .admin-shell-agenda .agenda-touch-surface,
+    .admin-shell-agenda .agenda-touch-surface :where(button, span, img) {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+    }
+
     .admin-content > div {
       display: flex;
       flex-direction: column;

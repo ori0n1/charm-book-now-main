@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
 import {
+  getTimelineSlotMinutes,
   getProfessionalTimelineBounds,
   layoutProfessionalAppointments,
   type ProfessionalTimelineAppointment,
@@ -136,7 +137,11 @@ export function ProfessionalTimeline({
   }
 
   return (
-    <section className="agenda-timeline relative z-0 isolate overflow-visible bg-background md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm">
+    <section
+      className="agenda-timeline agenda-touch-surface relative z-0 isolate select-none overflow-visible bg-background touch-pan-y md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm"
+      onContextMenu={(event) => event.preventDefault()}
+      onDragStart={(event) => event.preventDefault()}
+    >
       <div
         className={`agenda-professionals relative z-20 flex min-h-[4.25rem] snap-x snap-mandatory scroll-px-2 gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-xl touch-pan-x [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden ${
           displayProfessionals.length <= 2 ? "justify-center" : "justify-start"
@@ -247,15 +252,23 @@ export function ProfessionalTimeline({
                   {String(hour).padStart(2, "0")}:00
                 </span>
               ))}
-              {hours.slice(0, -1).map((hour) => (
-                <span
-                  key={`${hour}:30`}
-                  className="absolute inset-x-1 -translate-y-1/2 whitespace-nowrap text-right font-mono text-[8px] font-semibold leading-none tabular-nums text-muted-foreground/70"
-                  style={{ top: (hour - bounds.startHour) * hourHeight + hourHeight / 2 }}
-                >
-                  {String(hour).padStart(2, "0")}:30
-                </span>
-              ))}
+              {hours.slice(0, -1).flatMap((hour) =>
+                [15, 30, 45].map((minute) => (
+                  <span
+                    key={`${hour}:${minute}`}
+                    className={`absolute inset-x-1 -translate-y-1/2 whitespace-nowrap text-right font-mono leading-none tabular-nums ${
+                      minute === 30
+                        ? "text-[8px] font-semibold text-muted-foreground/75"
+                        : "text-[7px] font-medium text-muted-foreground/45"
+                    }`}
+                    style={{
+                      top: (hour - bounds.startHour) * hourHeight + (minute / 60) * hourHeight,
+                    }}
+                  >
+                    {String(hour).padStart(2, "0")}:{minute}
+                  </span>
+                )),
+              )}
             </div>
 
             {safeVisibleProfessionals.map((person) => {
@@ -270,7 +283,7 @@ export function ProfessionalTimeline({
               return (
                 <div
                   key={person.id}
-                  className="relative min-w-0 cursor-crosshair border-r border-border/60 bg-background/20"
+                  className="relative min-w-0 cursor-crosshair select-none border-r border-border/60 bg-background/20 touch-pan-y"
                   onClick={(event) => {
                     if ((event.target as HTMLElement).closest("[data-timeline-entry]")) return;
                     if (suppressClickRef.current) {
@@ -278,11 +291,12 @@ export function ProfessionalTimeline({
                       return;
                     }
                     const rect = event.currentTarget.getBoundingClientRect();
-                    const rawMinutes =
-                      bounds.startHour * 60 + ((event.clientY - rect.top) / hourHeight) * 60;
-                    const minutes = Math.max(
-                      bounds.startHour * 60,
-                      Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15),
+                    const minutes = getTimelineSlotMinutes(
+                      event.clientY,
+                      rect.top,
+                      bounds.startHour,
+                      bounds.endHour,
+                      hourHeight,
                     );
                     setSlotMenu({ staffId: person.id, minutes });
                   }}
@@ -291,11 +305,12 @@ export function ProfessionalTimeline({
                     clearLongPress();
                     longPressStartRef.current = { x: event.clientX, y: event.clientY };
                     const rect = event.currentTarget.getBoundingClientRect();
-                    const rawMinutes =
-                      bounds.startHour * 60 + ((event.clientY - rect.top) / hourHeight) * 60;
-                    const minutes = Math.max(
-                      bounds.startHour * 60,
-                      Math.min(bounds.endHour * 60 - 15, Math.round(rawMinutes / 15) * 15),
+                    const minutes = getTimelineSlotMinutes(
+                      event.clientY,
+                      rect.top,
+                      bounds.startHour,
+                      bounds.endHour,
+                      hourHeight,
                     );
                     longPressTimerRef.current = window.setTimeout(() => {
                       suppressClickRef.current = true;
@@ -320,12 +335,35 @@ export function ProfessionalTimeline({
                       className="absolute inset-x-0 border-t border-border/55"
                       style={{ top: (hour - bounds.startHour) * hourHeight }}
                     >
-                      <span
-                        className="absolute inset-x-0 border-t border-dashed border-border/25"
-                        style={{ top: hourHeight / 2 }}
-                      />
+                      {[15, 30, 45].map((minute) => (
+                        <span
+                          key={minute}
+                          className={`absolute inset-x-0 border-t ${
+                            minute === 30
+                              ? "border-dashed border-border/30"
+                              : "border-dotted border-border/18"
+                          }`}
+                          style={{ top: (minute / 60) * hourHeight }}
+                        />
+                      ))}
                     </div>
                   ))}
+
+                  {slotMenu?.staffId === person.id && (
+                    <div
+                      className="pointer-events-none absolute inset-x-0 z-[5] border-y border-foreground/25 bg-foreground/[0.055]"
+                      style={{
+                        top: ((slotMenu.minutes - bounds.startHour * 60) / 60) * hourHeight,
+                        height: hourHeight / 4,
+                      }}
+                      data-testid="agenda-selected-slot"
+                      aria-hidden="true"
+                    >
+                      <span className="absolute left-1 top-1/2 -translate-y-1/2 rounded bg-card/90 px-1 font-mono text-[7px] font-black tabular-nums text-foreground shadow-sm">
+                        {formatMinutes(slotMenu.minutes)}
+                      </span>
+                    </div>
+                  )}
 
                   {positioned.map((appointment) => {
                     const left = (appointment.lane / appointment.laneCount) * 100;
@@ -438,7 +476,10 @@ export function ProfessionalTimeline({
       </div>
 
       {slotMenu && (
-        <div className="fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)] z-[60] max-h-[min(20rem,calc(100dvh-8rem))] overflow-y-auto rounded-2xl border border-border bg-card p-2 shadow-2xl md:absolute md:bottom-3 md:left-auto md:right-4 md:w-72">
+        <div
+          className="fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)] z-[60] max-h-[min(20rem,calc(100dvh-8rem))] overflow-y-auto rounded-2xl border border-border bg-card p-2 shadow-2xl md:absolute md:bottom-3 md:left-auto md:right-4 md:w-72"
+          data-testid="agenda-slot-menu"
+        >
           <div className="flex items-center justify-between px-2 py-1.5">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">
@@ -542,6 +583,7 @@ function ProfessionalAvatar({
       <img
         src={person.avatarUrl}
         alt=""
+        draggable={false}
         className={`${size} shrink-0 rounded-full object-cover ring-2 ring-background`}
       />
     );

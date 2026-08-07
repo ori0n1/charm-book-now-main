@@ -20,7 +20,7 @@ test("PWA update activates and refreshes installed clients once", async ({ page 
 
   expect(manifest.display).toBe("standalone");
   expect(manifest.scope).toBe("/");
-  expect(manifest.start_url).toBe("/admin");
+  expect(manifest.start_url).toBe("/admin/agenda");
   expect(manifest.start_url).not.toContain("pwa_v=");
 });
 

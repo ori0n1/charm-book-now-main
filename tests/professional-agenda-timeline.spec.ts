@@ -2,10 +2,23 @@ import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  getTimelineSlotMinutes,
   getProfessionalTimelineBounds,
   layoutProfessionalAppointments,
   type ProfessionalTimelineAppointment,
 } from "../src/components/agenda/professional-timeline-utils";
+
+test("mapeia cada faixa visual para o quarto de hora exato", () => {
+  const timelineTop = 100;
+  const hourHeight = 56;
+
+  expect(getTimelineSlotMinutes(100, timelineTop, 8, 20, hourHeight)).toBe(8 * 60);
+  expect(getTimelineSlotMinutes(113.99, timelineTop, 8, 20, hourHeight)).toBe(8 * 60);
+  expect(getTimelineSlotMinutes(114, timelineTop, 8, 20, hourHeight)).toBe(8 * 60 + 15);
+  expect(getTimelineSlotMinutes(128, timelineTop, 8, 20, hourHeight)).toBe(8 * 60 + 30);
+  expect(getTimelineSlotMinutes(142, timelineTop, 8, 20, hourHeight)).toBe(8 * 60 + 45);
+  expect(getTimelineSlotMinutes(156, timelineTop, 8, 20, hourHeight)).toBe(9 * 60);
+});
 
 function appointment(
   id: string,
@@ -112,12 +125,15 @@ test("reutiliza o modal atual ao tocar num horário livre", async () => {
     "utf8",
   );
 
-  expect(timelineSource).toContain("Math.round(rawMinutes / 15) * 15");
+  expect(timelineSource).toContain("getTimelineSlotMinutes(");
+  expect(timelineSource).not.toContain("Math.round(rawMinutes / 15) * 15");
   expect(timelineSource).toContain('label="Criar encaixe"');
   expect(timelineSource).not.toContain('label="Novo agendamento"');
   expect(timelineSource).toContain('label="Bloquear horário"');
   expect(timelineSource).toContain('label="Cancelar"');
   expect(timelineSource).toContain("onBlockAtSlot(slotMenu.staffId, slotMenu.minutes)");
+  expect(timelineSource).toContain('data-testid="agenda-selected-slot"');
+  expect(timelineSource).toContain('data-testid="agenda-slot-menu"');
   expect(timelineSource).toContain("longPressStartRef");
   expect(agendaSource).toContain("initialStaffId={newApptDefaults?.staffId}");
   expect(agendaSource).toContain("initialDate={newApptDefaults?.date}");
@@ -257,6 +273,11 @@ test("mantém profissionais visíveis, centralizados e com contadores reais", as
   expect(agendaSource).toContain('data-testid="agenda-date-navigation"');
   expect(timelineSource).toContain('data-testid="agenda-professionals"');
   expect(timelineSource).toContain('data-testid="agenda-timeline-grid"');
+  expect(timelineSource).toContain("[15, 30, 45].map");
+  expect(timelineSource).toContain("onContextMenu={(event) => event.preventDefault()}");
+  expect(agendaSource).toContain("onContextMenu={(event) => event.preventDefault()}");
+  expect(stylesSource).toContain("-webkit-touch-callout: none");
+  expect(stylesSource).toContain("-webkit-user-select: none");
 });
 
 test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", async ({ page }) => {
@@ -378,6 +399,18 @@ test("configura a agenda como início sem alterar ações existentes", async () 
     "utf8",
   );
   const authSource = await readFile(resolve(process.cwd(), "src/lib/auth-landing.ts"), "utf8");
+  const onboardingSource = await readFile(
+    resolve(process.cwd(), "src/routes/_authenticated/onboarding.tsx"),
+    "utf8",
+  );
+  const resetPasswordSource = await readFile(
+    resolve(process.cwd(), "src/routes/reset-password.tsx"),
+    "utf8",
+  );
+  const accessSource = await readFile(
+    resolve(process.cwd(), "src/lib/access.functions.ts"),
+    "utf8",
+  );
   const manifest = JSON.parse(
     await readFile(resolve(process.cwd(), "public/manifest.webmanifest"), "utf8"),
   ) as {
@@ -392,6 +425,9 @@ test("configura a agenda como início sem alterar ações existentes", async () 
   expect(agendaSource).toContain("setPaymentDialogAppt(timelineDetailAppt)");
   expect(agendaSource).toContain("cancelAppointment(timelineDetailAppt.id)");
   expect(authSource).toContain('return "/admin/agenda"');
+  expect(onboardingSource).toContain('navigate({ to: "/admin/agenda" })');
+  expect(resetPasswordSource).toContain('isTeamInvite ? "/admin/agenda" : "/login"');
+  expect(accessSource).toContain('role === "desk_staff" ? "/admin/balcao" : "/admin/agenda"');
   expect(manifest.id).toBe("/admin");
   expect(manifest.start_url).toBe("/admin/agenda");
 });

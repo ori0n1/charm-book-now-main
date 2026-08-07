@@ -273,7 +273,11 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
       .eq("id", staff.id);
     if (updateError) throw new Error(updateError.message);
 
-    return { ok: true, email: loginEmail, landing: role === "desk_staff" ? "/admin/balcao" : "/admin" };
+    return {
+      ok: true,
+      email: loginEmail,
+      landing: role === "desk_staff" ? "/admin/balcao" : "/admin/agenda",
+    };
   });
 
 export const resolveTeamLoginIdentifier = createServerFn({ method: "POST" })

@@ -1077,9 +1077,10 @@ function AgendaPage() {
       </header>
 
       <nav
-        className="agenda-date-navigation relative z-30 border-y border-border/70 bg-card/95 py-1 backdrop-blur-xl md:static md:rounded-2xl md:border md:px-1 md:py-2 md:shadow-sm"
+        className="agenda-date-navigation agenda-touch-surface relative z-30 select-none border-y border-border/70 bg-card/95 py-1 backdrop-blur-xl touch-pan-x md:static md:rounded-2xl md:border md:px-1 md:py-2 md:shadow-sm"
         aria-label="Navegação semanal"
         data-testid="agenda-date-navigation"
+        onContextMenu={(event) => event.preventDefault()}
       >
         <div className="flex h-7 items-center justify-between px-3 md:hidden">
           <p className="whitespace-nowrap text-[10px] font-black capitalize tracking-[0.04em] text-muted-foreground">

@@ -76,7 +76,7 @@ function ResetPasswordPage() {
       return;
     }
     toast.success("Palavra-passe atualizada.");
-    navigate({ to: isTeamInvite ? "/admin" : "/login" });
+    navigate({ to: isTeamInvite ? "/admin/agenda" : "/login" });
   }
 
   if (checking) {

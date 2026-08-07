@@ -112,7 +112,7 @@ function OnboardingPage() {
     }
 
     toast.success("Negócio criado!");
-    navigate({ to: "/admin" });
+    navigate({ to: "/admin/agenda" });
   }
 
   if (checking) {

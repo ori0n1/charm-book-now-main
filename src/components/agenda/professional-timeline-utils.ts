@@ -27,6 +27,18 @@ export type PositionedTimelineAppointment = ProfessionalTimelineAppointment & {
   laneCount: number;
 };
 
+export function getTimelineSlotMinutes(
+  clientY: number,
+  timelineTop: number,
+  startHour: number,
+  endHour: number,
+  hourHeight: number,
+) {
+  const rawMinutes = startHour * 60 + ((clientY - timelineTop) / hourHeight) * 60;
+  const slotMinutes = Math.floor(rawMinutes / 15) * 15;
+  return Math.max(startHour * 60, Math.min(endHour * 60 - 15, slotMinutes));
+}
+
 export function layoutProfessionalAppointments(
   appointments: ProfessionalTimelineAppointment[],
   startHour: number,
