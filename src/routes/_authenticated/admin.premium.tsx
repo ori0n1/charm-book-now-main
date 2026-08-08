@@ -74,7 +74,7 @@ const PLAN_FEATURES = [
   "Marcações online",
   "Painel financeiro completo",
   "Múltiplos profissionais",
-  "WhatsApp de confirmação automático",
+  "Teste do WhatsApp de confirmação; após o teste, ativação opcional",
   "Página pública personalizada",
   "Suporte por email prioritário",
 ];

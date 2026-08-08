@@ -5052,7 +5052,7 @@ function ReviewStep({
         <p className="mt-1">{policySummary}</p>
       </div>
       <p className="px-2 text-center text-[11px] text-muted-foreground">
-        Receberá a confirmação no WhatsApp.
+        Receberá a confirmação quando o WhatsApp do estúdio estiver ativo.
       </p>
     </section>
   );
@@ -5470,7 +5470,7 @@ function ReviewStepPremium({
       </div>
       )}
       <p className="px-2 text-center text-[11px] text-muted-foreground">
-        Receberá a confirmação no WhatsApp.
+        Receberá a confirmação quando o WhatsApp do estúdio estiver ativo.
       </p>
     </section>
   );

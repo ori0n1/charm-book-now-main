@@ -13,6 +13,7 @@ import {
   Search,
   TrendingUp,
   Users,
+  MessageCircle,
 } from "lucide-react";
 import {
   getPlatformMetrics,
@@ -135,14 +136,23 @@ function CentralPage() {
               Estado das contas, assinaturas, atividade e resultados dos estúdios cadastrados.
             </p>
           </div>
-          <Link
-            to="/admin/central-metricas"
-            search={{ studio: undefined }}
-            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-xs font-semibold text-background shadow-sm"
-          >
-            <TrendingUp className="h-4 w-4" />
-            Abrir métricas detalhadas
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to="/admin/central-whatsapp"
+              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-xs font-semibold shadow-sm"
+            >
+              <MessageCircle className="h-4 w-4" />
+              WhatsApp
+            </Link>
+            <Link
+              to="/admin/central-metricas"
+              search={{ studio: undefined }}
+              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-xs font-semibold text-background shadow-sm"
+            >
+              <TrendingUp className="h-4 w-4" />
+              Abrir métricas detalhadas
+            </Link>
+          </div>
         </section>
 
         {query.isError && (

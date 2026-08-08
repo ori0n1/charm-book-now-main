@@ -189,20 +189,16 @@ export const testWhatsAppMessage = createServerFn({ method: "POST" })
       autoEnabled: true,
       bookingUrl,
     };
-    const templateVariables = buildTemplateVariables(ctx);
-    const result = await getWhatsAppProvider().sendText({
-      to,
-      body: renderMessage(ctx.template, ctx),
-      reservationUrl: ctx.bookingUrl,
-      orderId: publicOrderIdFromUrl(ctx.bookingUrl),
-      templateVariables,
-      idempotencyKey: `senddm-whatsapp-test-${data.studioId}-${Date.now()}`,
-    });
+    const result = await sendConfirmationFromContext(
+      sb,
+      ctx,
+      `senddm-whatsapp-test-${data.studioId}-${Date.now()}`,
+    );
     return {
-      ok: true,
-      messageId: result.messageId ?? null,
-      deliveryStatus: result.deliveryStatus,
-      delivered: String(result.deliveryStatus || "").toUpperCase() === "DELIVERED",
+      ok: result?.status === "sent" || result?.status === "pending",
+      messageId: result?.provider_message_id ?? null,
+      deliveryStatus: result?.status ?? null,
+      delivered: result?.status === "sent",
     };
   });
 
@@ -291,7 +287,8 @@ async function sendConfirmationFromContext(
   idempotencyKey: string,
 ) {
   const existing =
-    (await findExistingLog(sb, idempotencyKey)) ?? (await findExistingConfirmationLog(sb, ctx));
+    (await findExistingLog(sb, idempotencyKey)) ??
+    (ctx.messageKind ? null : await findExistingConfirmationLog(sb, ctx));
   const rendered = renderMessage(ctx.template || DEFAULT_TEMPLATE, ctx);
   const emailPromise = sendEmailConfirmationFromContext(
     sb,
@@ -357,6 +354,30 @@ async function sendConfirmationFromContext(
     return log;
   }
 
+  const usageReservation = await reserveWhatsAppUsage(sb, {
+    studioId: ctx.studioId,
+    idempotencyKey,
+    messageKind: ctx.messageKind ?? "confirmation",
+  });
+  if (!usageReservation.allowed) {
+    console.warn("[whatsapp] skipped by commercial policy", {
+      studio_id: ctx.studioId,
+      appointment_id: ctx.appointmentId,
+      reason: usageReservation.reason,
+      used: usageReservation.used ?? null,
+      limit: usageReservation.limit ?? null,
+    });
+    const log = await insertLog(sb, ctx, idempotencyKey, {
+      status: "skipped",
+      reason: usageReservation.reason,
+      message: rendered,
+      recipientPhone: recipient,
+      provider: WHATSAPP_PROVIDER,
+    });
+    await emailPromise;
+    return log;
+  }
+
   const pending =
     existing ??
     (await insertLog(sb, ctx, idempotencyKey, {
@@ -397,8 +418,9 @@ async function sendConfirmationFromContext(
       appointmentId: ctx.appointmentId,
       templateVariables: buildTemplateVariables(ctx),
       messageKind: ctx.messageKind ?? "confirmation",
-      idempotencyKey:
-        existing?.status === "failed" ? `${idempotencyKey}-retry-${Date.now()}` : idempotencyKey,
+      // Retries deliberately keep the same provider idempotency key. A timeout
+      // after provider acceptance must never create a second customer message.
+      idempotencyKey,
     });
     console.info("[whatsapp] sent", {
       studio_id: ctx.studioId,
@@ -416,6 +438,13 @@ async function sendConfirmationFromContext(
       provider: sent.provider,
       provider_message_id: sent.messageId,
       payload: sent.payload,
+    });
+    await finalizeWhatsAppUsage(sb, {
+      idempotencyKey,
+      outcome: delivered ? "delivered" : "submitted",
+      messageLogId: pending.id,
+      providerMessageId: sent.messageId,
+      providerStatus: sent.deliveryStatus,
     });
     await emailPromise;
     return log;
@@ -435,9 +464,92 @@ async function sendConfirmationFromContext(
       provider_message_id: providerError?.messageId ?? null,
       payload: providerError?.payload ?? { error: reason },
     });
+    await finalizeWhatsAppUsage(sb, {
+      idempotencyKey,
+      outcome: "failed",
+      messageLogId: pending.id,
+      providerMessageId: providerError?.messageId ?? null,
+      providerStatus: "FAILED",
+      metadata: { reason },
+    });
     await emailPromise;
     return log;
   }
+}
+
+type WhatsAppUsageReservation = {
+  allowed: boolean;
+  reason: string;
+  ledgerId?: string;
+  used?: number | null;
+  limit?: number | null;
+};
+
+async function reserveWhatsAppUsage(
+  sb: any,
+  input: { studioId: string; idempotencyKey: string; messageKind: string },
+): Promise<WhatsAppUsageReservation> {
+  const { data, error } = await sb.rpc("reserve_whatsapp_usage", {
+    p_studio_id: input.studioId,
+    p_idempotency_key: input.idempotencyKey,
+    p_message_kind: input.messageKind,
+  });
+  if (error) {
+    if (isMissingWhatsAppCommercialSchema(error)) {
+      console.warn("[whatsapp] commercial controls unavailable; preserving legacy access", {
+        studio_id: input.studioId,
+        reason: error.message,
+      });
+      return { allowed: true, reason: "legacy_schema_fallback" };
+    }
+    throw new Error(`whatsapp_usage_reservation_failed:${error.message}`);
+  }
+  return {
+    allowed: Boolean(data?.allowed),
+    reason: String(data?.reason || "whatsapp_usage_denied"),
+    ledgerId: data?.ledgerId,
+    used: data?.used,
+    limit: data?.limit,
+  };
+}
+
+async function finalizeWhatsAppUsage(
+  sb: any,
+  input: {
+    idempotencyKey: string;
+    outcome: "submitted" | "delivered" | "failed" | "skipped";
+    messageLogId?: string | null;
+    providerMessageId?: string | null;
+    providerStatus?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const { error } = await sb.rpc("finalize_whatsapp_usage", {
+    p_idempotency_key: input.idempotencyKey,
+    p_outcome: input.outcome,
+    p_message_log_id: input.messageLogId ?? null,
+    p_provider_message_id: input.providerMessageId ?? null,
+    p_provider_status: input.providerStatus ?? null,
+    p_metadata: input.metadata ?? {},
+  });
+  if (error && !isMissingWhatsAppCommercialSchema(error)) {
+    console.error("[whatsapp] usage finalization failed", {
+      idempotency_key: input.idempotencyKey,
+      outcome: input.outcome,
+      reason: error.message,
+    });
+  }
+}
+
+function isMissingWhatsAppCommercialSchema(error: any) {
+  const message = String(error?.message ?? "").toLowerCase();
+  return (
+    error?.code === "PGRST202" ||
+    error?.code === "42883" ||
+    message.includes("reserve_whatsapp_usage") ||
+    message.includes("finalize_whatsapp_usage") ||
+    message.includes("schema cache")
+  );
 }
 
 function getWhatsAppProvider(): WhatsAppProvider {
@@ -956,7 +1068,7 @@ export async function reconcilePendingWhatsAppMessages(options?: { studioId?: st
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   let query = sb
     .from("whatsapp_message_logs")
-    .select("id,studio_id,status,reason,provider_message_id,payload,created_at,updated_at")
+    .select("id,studio_id,idempotency_key,status,reason,provider_message_id,payload,created_at,updated_at")
     .eq("provider", WHATSAPP_PROVIDER)
     .or("status.eq.pending,and(status.eq.failed,reason.like.senddm_button_parameter_unresolved*)")
     .gte("created_at", since)
@@ -978,6 +1090,12 @@ export async function reconcilePendingWhatsAppMessages(options?: { studioId?: st
         await updateLog(sb, row.id, {
           status: "failed",
           reason: "senddm_stale_pending_without_message_id",
+        });
+        await finalizeWhatsAppUsage(sb, {
+          idempotencyKey: row.idempotency_key,
+          outcome: "failed",
+          messageLogId: row.id,
+          providerStatus: "STALE_WITHOUT_MESSAGE_ID",
         });
       } else {
         totals.pending += 1;
@@ -1024,6 +1142,19 @@ export async function reconcilePendingWhatsAppMessages(options?: { studioId?: st
             delivery_channel: classification.channel,
           },
         },
+      });
+      await finalizeWhatsAppUsage(sb, {
+        idempotencyKey: row.idempotency_key,
+        outcome:
+          classification.state === "delivered"
+            ? "delivered"
+            : classification.state === "failed"
+              ? "failed"
+              : "submitted",
+        messageLogId: row.id,
+        providerMessageId: messageId,
+        providerStatus: classification.status,
+        metadata: classification.reason ? { provider_reason: classification.reason } : {},
       });
     } catch (lookupError) {
       totals.pending += 1;

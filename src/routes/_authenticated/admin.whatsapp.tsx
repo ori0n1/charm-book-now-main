@@ -1,4 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -21,6 +23,10 @@ import {
   getWhatsAppSettings,
   saveWhatsAppSettings,
 } from "@/lib/whatsapp.functions";
+import {
+  getWhatsAppCommercialStatus,
+  type WhatsAppCommercialStatus,
+} from "@/lib/whatsapp-commercial.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/whatsapp")({
   head: () => ({ meta: [{ title: "Comunicação - Painel" }] }),
@@ -156,6 +162,7 @@ function WhatsAppPage() {
   const { studio, loading: studioLoading, error: studioError } = useCurrentStudio();
   const loadSettings = useServerFn(getWhatsAppSettings);
   const saveSettings = useServerFn(saveWhatsAppSettings);
+  const loadCommercialStatus = useServerFn(getWhatsAppCommercialStatus);
   const notifyFollowers = useServerFn(sendFollowerNotification);
 
   const [settings, setSettings] = useState<WhatsAppSettings | null>(null);
@@ -167,6 +174,12 @@ function WhatsAppPage() {
     "Temos um horário livre para atendimento. Abra o app do estúdio para reservar.",
   );
   const communityBodyRef = useRef<HTMLTextAreaElement>(null);
+  const commercial = useQuery<WhatsAppCommercialStatus>({
+    queryKey: ["whatsapp-commercial-status", studio?.id],
+    enabled: Boolean(studio?.id),
+    queryFn: () => loadCommercialStatus({ data: { studioId: studio!.id } }),
+    staleTime: 30_000,
+  });
 
   useEffect(() => {
     resizeTextarea(communityBodyRef.current);
@@ -475,14 +488,78 @@ function WhatsAppPage() {
             <input
               type="checkbox"
               checked={currentSettings.autoSendEnabled}
+              disabled={commercial.data ? !commercial.data.available : false}
               onChange={(event) => save({ autoSendEnabled: event.target.checked })}
-              className="size-4 accent-emerald-600"
+              className="size-4 accent-emerald-600 disabled:cursor-not-allowed disabled:opacity-50"
             />
           </label>
         </div>
+
+        {commercial.data && (
+          <div className="mt-3 grid gap-2 border-t border-border/70 pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className={`rounded-full px-2.5 py-1 font-semibold ${commercialTone(commercial.data)}`}>
+                  {commercialLabel(commercial.data)}
+                </span>
+                {commercial.data.daysRemaining != null && (
+                  <span className="text-muted-foreground">
+                    {commercial.data.daysRemaining} dia{commercial.data.daysRemaining === 1 ? "" : "s"} restante{commercial.data.daysRemaining === 1 ? "" : "s"}
+                  </span>
+                )}
+              </div>
+              {commercial.data.limit != null && (
+                <div className="mt-2 max-w-xl">
+                  <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                    <span>{commercial.data.used} enviadas</span>
+                    <span>{commercial.data.remaining} restantes</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-emerald-600 transition-[width]"
+                      style={{ width: `${commercial.data.usagePercent ?? 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {commercial.data.alerts.length > 0 && commercial.data.available && (
+                <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+                  Utilização do teste atingiu {commercial.data.alerts.at(-1)?.thresholdPercent}%.
+                </p>
+              )}
+              {!commercial.data.available && (
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  O WhatsApp está pausado. As restantes funcionalidades da Bellza continuam ativas normalmente.
+                </p>
+              )}
+            </div>
+            {!commercial.data.available && (
+              <Link
+                to="/admin/premium"
+                className="inline-flex h-9 items-center justify-center rounded-xl bg-foreground px-3 text-xs font-semibold text-background"
+              >
+                Ver opções
+              </Link>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
+}
+
+function commercialLabel(status: WhatsAppCommercialStatus) {
+  if (status.status === "trial") return status.available ? "Teste WhatsApp ativo" : "Teste WhatsApp concluído";
+  if (status.status === "active") return "WhatsApp adicional ativo";
+  if (status.status === "legacy") return "WhatsApp ativo";
+  if (status.status === "paused") return "WhatsApp pausado";
+  return "WhatsApp não ativado";
+}
+
+function commercialTone(status: WhatsAppCommercialStatus) {
+  return status.available
+    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+    : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 }
 
 function emptySettings(studioId: string): WhatsAppSettings {
