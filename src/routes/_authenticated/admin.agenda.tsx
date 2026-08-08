@@ -233,17 +233,18 @@ function AgendaPage() {
   const [staffTimeOff, setStaffTimeOff] = useState<StaffTimeOffRow[]>([]);
   const selectedDayButtonRef = useRef<HTMLButtonElement>(null);
   const mobileDateScrollerRef = useRef<HTMLDivElement>(null);
-  const mobileDateAnchorRef = useRef(startOfLocalDay(new Date()));
+  const [mobileDateAnchor, setMobileDateAnchor] = useState(() => selectedDate);
   const prependScrollWidthRef = useRef<number | null>(null);
   const dateRangeLoadingRef = useRef(false);
-  const dateScrollFrameRef = useRef<number | null>(null);
   const selectedDateScrollPendingRef = useRef(true);
+  const followsTodayRef = useRef(true);
+  const lastObservedLocalDayRef = useRef(selectedDate);
+  const agendaWasHiddenRef = useRef(false);
   const [mobileDateRange, setMobileDateRange] = useState({ start: -21, end: 21 });
-  const [mobileCalendarMonth, setMobileCalendarMonth] = useState(selectedDate);
+  const mobileCalendarMonth = selectedDate;
   const mobileAgendaDays = useMemo(
-    () =>
-      getMobileAgendaDays(mobileDateAnchorRef.current, mobileDateRange.start, mobileDateRange.end),
-    [mobileDateRange.end, mobileDateRange.start],
+    () => getMobileAgendaDays(mobileDateAnchor, mobileDateRange.start, mobileDateRange.end),
+    [mobileDateAnchor, mobileDateRange.end, mobileDateRange.start],
   );
   const loadStaffTimeOffForDate = useCallback(
     async (date: Date) => {
@@ -272,14 +273,27 @@ function AgendaPage() {
     const timer = window.setInterval(() => setAgendaNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
-  useEffect(
-    () => () => {
-      if (dateScrollFrameRef.current !== null) {
-        window.cancelAnimationFrame(dateScrollFrameRef.current);
+  useEffect(() => {
+    const currentLocalDay = startOfLocalDay(agendaNow);
+    if (isSameLocalDay(lastObservedLocalDayRef.current, currentLocalDay)) return;
+    lastObservedLocalDayRef.current = currentLocalDay;
+    if (followsTodayRef.current) resetAgendaToToday(currentLocalDay);
+  }, [agendaNow]);
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        agendaWasHiddenRef.current = true;
+        return;
       }
-    },
-    [],
-  );
+      if (!agendaWasHiddenRef.current) return;
+      agendaWasHiddenRef.current = false;
+      const now = new Date();
+      setAgendaNow(now);
+      resetAgendaToToday(now);
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
   useEffect(() => {
     if (!mobileFiltersOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -293,7 +307,7 @@ function AgendaPage() {
   }, [mobileFiltersOpen]);
 
   useEffect(() => {
-    const selectedOffset = differenceInLocalCalendarDays(selectedDate, mobileDateAnchorRef.current);
+    const selectedOffset = differenceInLocalCalendarDays(selectedDate, mobileDateAnchor);
     setMobileDateRange((current) => {
       if (selectedOffset >= current.start && selectedOffset <= current.end) return current;
       return {
@@ -301,7 +315,7 @@ function AgendaPage() {
         end: Math.max(current.end, selectedOffset + 14),
       };
     });
-  }, [selectedDate]);
+  }, [mobileDateAnchor, selectedDate]);
 
   useLayoutEffect(() => {
     const scroller = mobileDateScrollerRef.current;
@@ -311,15 +325,16 @@ function AgendaPage() {
     }
     prependScrollWidthRef.current = null;
     dateRangeLoadingRef.current = false;
-    if (selectedDateScrollPendingRef.current && selectedDayButtonRef.current) {
-      selectedDayButtonRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "center",
-      });
+    const selectedButton = selectedDayButtonRef.current;
+    if (scroller && selectedDateScrollPendingRef.current && selectedButton) {
+      // Center before paint so an older month never flashes during Agenda startup.
+      scroller.scrollLeft = Math.max(
+        0,
+        selectedButton.offsetLeft - (scroller.clientWidth - selectedButton.offsetWidth) / 2,
+      );
       selectedDateScrollPendingRef.current = false;
     }
-  }, [mobileDateRange.end, mobileDateRange.start, selectedDate]);
+  }, [mobileDateAnchor, mobileDateRange.end, mobileDateRange.start, selectedDate]);
 
   useEffect(() => {
     if (!studio) return;
@@ -718,16 +733,10 @@ function AgendaPage() {
   function updateFilter<K extends keyof AgendaFilters>(key: K, value: AgendaFilters[K]) {
     setFilters((c) => ({ ...c, [key]: value }));
     if (key === "date" && typeof value === "string" && value) {
-      selectedDateScrollPendingRef.current = true;
-      const nextDate = dateFromInputValue(value);
-      setSelectedDate(nextDate);
-      setMobileCalendarMonth(nextDate);
+      navigateToAgendaDate(dateFromInputValue(value), false);
     }
     if (key === "dateMode" && (value === "today" || value === "upcoming")) {
-      selectedDateScrollPendingRef.current = true;
-      const today = startOfLocalDay(new Date());
-      setSelectedDate(today);
-      setMobileCalendarMonth(today);
+      resetAgendaToToday();
     }
   }
   function resetFilters() {
@@ -735,37 +744,31 @@ function AgendaPage() {
     setFiltersOpen(false);
     setMobileFiltersOpen(false);
   }
-  function navigateToAgendaDate(date: Date) {
+  function navigateToAgendaDate(date: Date, updateFilters = true) {
     selectedDateScrollPendingRef.current = true;
     setTimelineFocusRequest((current) => current + 1);
     const nextDate = startOfLocalDay(date);
+    followsTodayRef.current = isSameLocalDay(nextDate, new Date());
     setSelectedDate(nextDate);
-    setMobileCalendarMonth(nextDate);
+    if (updateFilters) {
+      setFilters((current) => ({ ...current, dateMode: "all", date: "" }));
+    }
+  }
+
+  function resetAgendaToToday(now: Date = new Date()) {
+    const today = startOfLocalDay(now);
+    followsTodayRef.current = true;
+    lastObservedLocalDayRef.current = today;
+    selectedDateScrollPendingRef.current = true;
+    setMobileDateAnchor(today);
+    setMobileDateRange({ start: -21, end: 21 });
+    setTimelineFocusRequest((current) => current + 1);
+    setSelectedDate(today);
     setFilters((current) => ({ ...current, dateMode: "all", date: "" }));
   }
 
   function extendMobileDateRange(event: UIEvent<HTMLDivElement>) {
     const scroller = event.currentTarget;
-    if (dateScrollFrameRef.current !== null) {
-      window.cancelAnimationFrame(dateScrollFrameRef.current);
-    }
-    dateScrollFrameRef.current = window.requestAnimationFrame(() => {
-      const center = scroller.scrollLeft + scroller.clientWidth / 2;
-      let closest: HTMLButtonElement | null = null;
-      let closestDistance = Number.POSITIVE_INFINITY;
-      for (const button of scroller.querySelectorAll<HTMLButtonElement>(
-        "button[data-agenda-date]",
-      )) {
-        const distance = Math.abs(button.offsetLeft + button.offsetWidth / 2 - center);
-        if (distance < closestDistance) {
-          closest = button;
-          closestDistance = distance;
-        }
-      }
-      const dateValue = closest?.dataset.agendaDate;
-      if (dateValue) setMobileCalendarMonth(dateFromInputValue(dateValue));
-      dateScrollFrameRef.current = null;
-    });
     if (dateRangeLoadingRef.current) return;
     const remaining = scroller.scrollWidth - scroller.clientWidth - scroller.scrollLeft;
     if (scroller.scrollLeft <= 96) {
@@ -1028,7 +1031,7 @@ function AgendaPage() {
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={() => navigateToAgendaDate(new Date())}
+            onClick={() => resetAgendaToToday()}
             className="inline-flex size-9 items-center justify-center rounded-xl border border-border bg-card text-xs font-black shadow-sm transition hover:bg-muted md:h-11 md:w-auto md:gap-2 md:rounded-2xl md:px-4"
             aria-label="Voltar para hoje"
           >
@@ -1089,7 +1092,7 @@ function AgendaPage() {
           <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => navigateToAgendaDate(new Date())}
+              onClick={() => resetAgendaToToday()}
               className="agenda-compact-control h-7 min-h-0 rounded-lg border border-border bg-background/70 px-2 text-[9px] font-black"
             >
               Hoje
