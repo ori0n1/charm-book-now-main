@@ -31,6 +31,15 @@ export const rescheduleStudioAppointment = createServerFn({ method: "POST" })
       .maybeSingle();
 
     if (error) {
+      const { data: availabilityDiagnosis, error: diagnosisError } = await sb.rpc(
+        "diagnose_studio_reschedule_slot",
+        {
+          p_appointment_id: data.appointmentId,
+          p_studio_id: data.studioId,
+          p_local_date: data.date,
+          p_local_time: data.time,
+        },
+      );
       console.error("[studio-reschedule] database mutation failed", {
         appointmentId: data.appointmentId,
         studioId: data.studioId,
@@ -40,6 +49,14 @@ export const rescheduleStudioAppointment = createServerFn({ method: "POST" })
         message: error.message,
         details: error.details,
         hint: error.hint,
+        availabilityDiagnosis,
+        diagnosisError: diagnosisError
+          ? {
+              code: diagnosisError.code,
+              message: diagnosisError.message,
+              details: diagnosisError.details,
+            }
+          : null,
       });
       throw new Error(translateRescheduleDatabaseError(error));
     }
@@ -124,4 +141,3 @@ function translateRescheduleDatabaseError(error: {
   }
   return "reschedule_failed";
 }
-
