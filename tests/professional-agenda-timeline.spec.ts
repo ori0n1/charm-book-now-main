@@ -238,7 +238,8 @@ test("mantém datas contínuas e notificações acima da timeline", async () => 
   expect(agendaSource).toContain("start: current.start - 14");
   expect(agendaSource).toContain("end: current.end + 14");
   expect(agendaSource).toContain("scroller.scrollLeft += scroller.scrollWidth - previousWidth");
-  expect(agendaSource).toContain("setMobileCalendarMonth(dateFromInputValue(dateValue))");
+  expect(agendaSource).toContain("const mobileCalendarMonth = selectedDate");
+  expect(agendaSource).not.toContain("setMobileCalendarMonth(");
   expect(agendaSource).toContain('aria-label="Abrir filtros da agenda"');
   expect(agendaSource).toContain('className="hidden min-h-12');
   expect(notificationsSource).toContain("createPortal(");

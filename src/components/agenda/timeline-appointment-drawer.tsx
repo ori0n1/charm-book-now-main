@@ -10,6 +10,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { ClientAvatar } from "@/components/client-avatar";
 
 export type TimelineDrawerAction = {
   id: string;
@@ -22,6 +23,7 @@ export type TimelineDrawerAction = {
 
 export type TimelineDrawerDetails = {
   clientName: string;
+  clientAvatarUrl?: string | null;
   clientPhone?: string | null;
   serviceName: string;
   professionalName: string;
@@ -93,9 +95,11 @@ export function TimelineAppointmentDrawer({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-5">
           <div className="rounded-2xl border border-border/70 bg-muted/25 p-3.5">
             <div className="flex items-start gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-violet-500/12 text-violet-700 dark:text-violet-300">
-                <UserRound className="h-4 w-4" />
-              </span>
+              <ClientAvatar
+                name={details.clientName}
+                avatarUrl={details.clientAvatarUrl}
+                className="size-10 shrink-0 text-xs"
+              />
               <div className="min-w-0">
                 <p className="truncate text-sm font-black">{details.clientName}</p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -187,6 +191,8 @@ export function TimelineAppointmentDrawer({
                   }
                   disabled={action.disabled}
                   className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-bold transition disabled:opacity-50 ${
+                    action.id === "cancel" ? "col-span-2 w-full" : ""
+                  } ${
                     action.danger
                       ? "border-rose-300/70 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-300"
                       : "border-border bg-background/70 text-foreground hover:bg-muted"

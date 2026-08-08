@@ -1482,6 +1482,7 @@ function AgendaPage() {
             <TimelineAppointmentDrawer
               details={{
                 clientName: timelineDetailAppt.clients?.name ?? "Sem cliente",
+                clientAvatarUrl: timelineDetailAppt.clients?.avatar_url,
                 clientPhone: timelineDetailAppt.clients?.phone,
                 serviceName: appointmentServiceLabel(timelineDetailAppt),
                 professionalName: timelineDetailAppt.staff?.name ?? "Não definido",
