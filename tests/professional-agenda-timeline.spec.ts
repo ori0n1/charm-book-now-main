@@ -56,6 +56,38 @@ test("posiciona marcações pela hora e duração reais", () => {
   expect(result[1].lane).toBe(1);
 });
 
+test("posiciona horários intermediários sem arredondar para a grade de 15 minutos", () => {
+  const [atEightEleven] = layoutProfessionalAppointments(
+    [
+      appointment(
+        "exact-0811",
+        "staff-a",
+        "2026-07-30T08:11:00+01:00",
+        "2026-07-30T08:41:00+01:00",
+      ),
+    ],
+    8,
+    56,
+  );
+  const [atEightFifteen] = layoutProfessionalAppointments(
+    [
+      appointment(
+        "exact-0815",
+        "staff-a",
+        "2026-07-30T08:15:00+01:00",
+        "2026-07-30T08:45:00+01:00",
+      ),
+    ],
+    8,
+    56,
+  );
+
+  expect(atEightEleven.top).toBeCloseTo((11 / 60) * 56, 5);
+  expect(atEightEleven.height).toBe(28);
+  expect(atEightFifteen.top).toBe(14);
+  expect(atEightEleven.top).not.toBe(atEightFifteen.top);
+});
+
 test("mantém limites úteis num dia vazio ou com horários extremos", () => {
   expect(getProfessionalTimelineBounds([])).toEqual({ startHour: 8, endHour: 20 });
   expect(
@@ -173,9 +205,8 @@ test("usa uma única rolagem vertical no mobile", async () => {
   expect(timelineSource).toContain("md:max-h-[72dvh] md:overflow-auto");
   expect(timelineSource).toContain("const MOBILE_HOUR_HEIGHT = 56");
   expect(timelineSource).toContain("const MOBILE_TIME_GUTTER = 46");
-  expect(timelineSource).toContain(
-    "style={{ top: (hour - bounds.startHour) * hourHeight + hourHeight / 2 }}",
-  );
+  expect(timelineSource).toContain("[15, 30, 45].map((minute)");
+  expect(timelineSource).toContain("(minute / 60) * hourHeight");
   expect(timelineSource).toContain("style={{ left: timeGutter }}");
   expect(timelineSource).not.toContain("style={{ width: timeGutter - 4 }}");
   expect(timelineSource).toContain("Agora {formatTime(now.toISOString())}");
@@ -232,8 +263,8 @@ test("mostra bloqueios reais e mantém o modal seguro no mobile", async () => {
   expect(agendaSource).toContain('kind: "block"');
   expect(agendaSource).toContain('type="date"');
   expect(agendaSource).toContain('type="time"');
-  expect(agendaSource).toContain('aria-label="Data de início do bloqueio"');
-  expect(agendaSource).toContain('aria-label="Hora de fim do bloqueio"');
+  expect(agendaSource).toContain("aria-label={`Data de ${prefix} do bloqueio`}");
+  expect(agendaSource).toContain("aria-label={`Hora de ${prefix} do bloqueio`}");
   expect(agendaSource).toMatch(/role="dialog"\s+aria-modal="true"/);
   expect(timelineSource).toContain('data-timeline-entry="block"');
   expect(timelineSource).toContain('closest("[data-timeline-entry]")');
@@ -264,10 +295,16 @@ test("mantém profissionais visíveis, centralizados e com contadores reais", as
 
   expect(timelineSource).toContain('aria-label="Profissionais da agenda"');
   expect(timelineSource).toContain('displayProfessionals.length <= 2 ? "justify-center"');
+  expect(timelineSource).toContain("scroll-smooth");
+  expect(timelineSource).toContain("touch-pan-x");
+  expect(timelineSource).toContain("touch-auto");
+  expect(timelineSource).toContain('document.documentElement.style.touchAction = "manipulation"');
+  expect(timelineSource).toContain("previousTouchAction");
+  expect(timelineSource).toContain("w-[11rem]");
   expect(timelineSource).toContain("md:hidden");
   expect(timelineSource).not.toContain("{mobile && (");
   expect(timelineSource).not.toContain("mobile && displayProfessionals.length > 1");
-  expect(timelineSource).toContain('appointment.status === "cancelled"');
+  expect(timelineSource).toContain('appointment.status !== "cancelled"');
   expect(timelineSource).toContain("appointmentCounts.get(person.id) ?? 0");
   expect(timelineSource).toContain("setMobileProfessionalId(person.id)");
   expect(agendaSource).toContain("focusRequestKey={timelineFocusRequest}");
@@ -285,6 +322,34 @@ test("mantém profissionais visíveis, centralizados e com contadores reais", as
   expect(agendaSource).toContain("onContextMenu={(event) => event.preventDefault()}");
   expect(stylesSource).toContain("-webkit-touch-callout: none");
   expect(stylesSource).toContain("-webkit-user-select: none");
+});
+
+test("cancelamentos ficam no histórico sem ocupar a timeline operacional", async () => {
+  const timelineSource = await readFile(
+    resolve(process.cwd(), "src/components/agenda/professional-timeline.tsx"),
+    "utf8",
+  );
+  const availabilityMigration = await readFile(
+    resolve(
+      process.cwd(),
+      "supabase/migrations/20260628103000_booking_availability_consistency.sql",
+    ),
+    "utf8",
+  );
+  const baseSchema = await readFile(
+    resolve(
+      process.cwd(),
+      "supabase/migrations/20260512115441_9eb19473-af5f-4ee3-92a3-61cb9a18457a.sql",
+    ),
+    "utf8",
+  );
+
+  expect(timelineSource).toContain(
+    'appointments.filter((appointment) => appointment.status !== "cancelled")',
+  );
+  expect(timelineSource).toContain("positionedByProfessional");
+  expect(availabilityMigration).toContain("a.status NOT IN ('cancelled','no_show')");
+  expect(baseSchema).toContain("WHERE (status NOT IN ('cancelled', 'no_show'))");
 });
 
 test("não sobrepõe cabeçalho, profissionais ou campos entre 320px e 430px", async ({ page }) => {

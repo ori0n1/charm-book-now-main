@@ -67,7 +67,11 @@ export function layoutProfessionalAppointments(
     for (const { appointment, lane } of assigned) {
       const start = new Date(appointment.startsAt);
       const end = new Date(appointment.endsAt);
-      const startMinutes = start.getHours() * 60 + start.getMinutes();
+      const startMinutes =
+        start.getHours() * 60 +
+        start.getMinutes() +
+        start.getSeconds() / 60 +
+        start.getMilliseconds() / 60_000;
       const durationMinutes = Math.max(15, (end.getTime() - start.getTime()) / 60_000);
       result.push({
         ...appointment,

@@ -48,7 +48,16 @@ export function ProfessionalTimeline({
   const [slotMenu, setSlotMenu] = useState<{ staffId: string; minutes: number } | null>(null);
   const hourHeight = mobile ? MOBILE_HOUR_HEIGHT : DESKTOP_HOUR_HEIGHT;
   const timeGutter = mobile ? MOBILE_TIME_GUTTER : DESKTOP_TIME_GUTTER;
-  const bounds = getProfessionalTimelineBounds(appointments, availability);
+  // Cancelled appointments remain in the agenda history, but they are no longer
+  // operational entries: they must not consume timeline space or affect bounds.
+  const operationalAppointments = useMemo(
+    () => appointments.filter((appointment) => appointment.status !== "cancelled"),
+    [appointments],
+  );
+  const bounds = useMemo(
+    () => getProfessionalTimelineBounds(operationalAppointments, availability),
+    [availability, operationalAppointments],
+  );
   const timelineHeight = (bounds.endHour - bounds.startHour) * hourHeight;
   const hours = Array.from(
     { length: bounds.endHour - bounds.startHour + 1 },
@@ -63,15 +72,35 @@ export function ProfessionalTimeline({
   );
   const appointmentCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const appointment of appointments) {
-      if (appointment.kind === "block" || appointment.status === "cancelled") continue;
+    for (const appointment of operationalAppointments) {
+      if (appointment.kind === "block") continue;
       counts.set(appointment.staffId, (counts.get(appointment.staffId) ?? 0) + 1);
     }
     return counts;
-  }, [appointments]);
-  const visibleProfessionals = mobile
-    ? displayProfessionals.filter((person) => person.id === mobileProfessionalId)
-    : displayProfessionals;
+  }, [operationalAppointments]);
+  const positionedByProfessional = useMemo(() => {
+    const grouped = new Map<string, ProfessionalTimelineAppointment[]>();
+    for (const appointment of operationalAppointments) {
+      const current = grouped.get(appointment.staffId);
+      if (current) current.push(appointment);
+      else grouped.set(appointment.staffId, [appointment]);
+    }
+    const positioned = new Map<string, ReturnType<typeof layoutProfessionalAppointments>>();
+    for (const [staffId, staffAppointments] of grouped) {
+      positioned.set(
+        staffId,
+        layoutProfessionalAppointments(staffAppointments, bounds.startHour, hourHeight),
+      );
+    }
+    return positioned;
+  }, [bounds.startHour, hourHeight, operationalAppointments]);
+  const visibleProfessionals = useMemo(
+    () =>
+      mobile
+        ? displayProfessionals.filter((person) => person.id === mobileProfessionalId)
+        : displayProfessionals,
+    [displayProfessionals, mobile, mobileProfessionalId],
+  );
   const safeVisibleProfessionals =
     visibleProfessionals.length > 0 ? visibleProfessionals : [displayProfessionals[0]];
   const columnWidth = mobile ? "minmax(0, 1fr)" : "minmax(13rem, 1fr)";
@@ -88,6 +117,17 @@ export function ProfessionalTimeline({
     sync();
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    // The global shell defaults to vertical-only gestures. While the agenda is
+    // mounted, allow both axes so the professional strip can receive native
+    // horizontal swipes; restore the previous page behaviour on exit.
+    const previousTouchAction = document.documentElement.style.touchAction;
+    document.documentElement.style.touchAction = "manipulation";
+    return () => {
+      document.documentElement.style.touchAction = previousTouchAction;
+    };
   }, []);
 
   useEffect(() => {
@@ -138,12 +178,12 @@ export function ProfessionalTimeline({
 
   return (
     <section
-      className="agenda-timeline agenda-touch-surface relative z-0 isolate select-none overflow-visible bg-background touch-pan-y md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm"
+      className="agenda-timeline agenda-touch-surface relative z-0 isolate select-none overflow-visible bg-background touch-auto md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm"
       onContextMenu={(event) => event.preventDefault()}
       onDragStart={(event) => event.preventDefault()}
     >
       <div
-        className={`agenda-professionals relative z-20 flex min-h-[4.25rem] snap-x snap-mandatory scroll-px-2 gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-xl touch-pan-x [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden ${
+        className={`agenda-professionals relative z-20 flex min-h-[4.25rem] snap-x snap-mandatory scroll-smooth scroll-px-2 gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-xl touch-pan-x [-webkit-overflow-scrolling:touch] [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden ${
           displayProfessionals.length <= 2 ? "justify-center" : "justify-start"
         }`}
         aria-label="Profissionais da agenda"
@@ -153,7 +193,10 @@ export function ProfessionalTimeline({
           <button
             key={person.id}
             type="button"
-            onClick={() => setMobileProfessionalId(person.id)}
+            onClick={() => {
+              setMobileProfessionalId(person.id);
+              setSlotMenu(null);
+            }}
             className={`agenda-compact-control inline-flex h-14 min-h-0 shrink-0 snap-start items-center gap-2 rounded-xl border px-2.5 text-left text-[11px] font-bold transition ${
               person.id === mobileProfessionalId
                 ? "border-foreground bg-foreground text-background shadow-sm"
@@ -272,14 +315,7 @@ export function ProfessionalTimeline({
             </div>
 
             {safeVisibleProfessionals.map((person) => {
-              const personAppointments = appointments.filter(
-                (appointment) => appointment.staffId === person.id,
-              );
-              const positioned = layoutProfessionalAppointments(
-                personAppointments,
-                bounds.startHour,
-                hourHeight,
-              );
+              const positioned = positionedByProfessional.get(person.id) ?? [];
               return (
                 <div
                   key={person.id}
