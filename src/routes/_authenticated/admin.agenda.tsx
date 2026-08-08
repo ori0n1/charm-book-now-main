@@ -2496,7 +2496,7 @@ function NewAppointmentModal({
               <SelectTrigger className={selectTriggerCls}>
                 <SelectValue placeholder="Escolher serviço" />
               </SelectTrigger>
-              <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
+              <SelectContent className={modalSelectContentCls}>
                 {services.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name} — {formatEUR(s.price)} — {s.duration_min}min
@@ -2510,7 +2510,7 @@ function NewAppointmentModal({
               <SelectTrigger className={selectTriggerCls}>
                 <SelectValue placeholder="Escolher profissional" />
               </SelectTrigger>
-              <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
+              <SelectContent className={modalSelectContentCls}>
                 {staffList.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
@@ -2705,7 +2705,7 @@ function EditAppointmentModal({
               <SelectTrigger className={selectTriggerCls}>
                 <SelectValue placeholder="Escolher serviço" />
               </SelectTrigger>
-              <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
+              <SelectContent className={modalSelectContentCls}>
                 {services.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name} — {formatEUR(s.price)} — {s.duration_min}min
@@ -2719,7 +2719,7 @@ function EditAppointmentModal({
               <SelectTrigger className={selectTriggerCls}>
                 <SelectValue placeholder="Escolher profissional" />
               </SelectTrigger>
-              <SelectContent className="rounded-2xl border-border/80 bg-popover/98 shadow-2xl">
+              <SelectContent className={modalSelectContentCls}>
                 {staffList.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
@@ -2991,6 +2991,10 @@ const timeCls =
   "h-9 min-w-0 w-full rounded-xl border border-border bg-background/70 px-3 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8 appearance-none [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-calendar-picker-indicator]:ml-auto [&::-webkit-calendar-picker-indicator]:opacity-50 [&::-webkit-date-and-time-value]:text-left";
 const selectTriggerCls =
   "h-9 min-w-0 rounded-xl border-border bg-background/70 px-3 text-sm shadow-none focus:ring-2 focus:ring-foreground/10 [&>span]:truncate";
+// SelectContent is rendered in a portal. Keep modal dropdowns above ModalShell's z-[100]
+// while preserving Radix's collision detection, viewport sizing and automatic top/bottom flip.
+const modalSelectContentCls =
+  "z-[120] rounded-2xl border-border/80 bg-popover/98 shadow-2xl";
 const datePickerCls = "h-9 min-w-0 rounded-xl border-border bg-background/70 px-3 shadow-none";
 const textareaCls =
   "max-h-20 min-w-0 w-full resize-none rounded-xl border border-border bg-background/70 px-3 py-2 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8";
