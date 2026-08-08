@@ -4,7 +4,13 @@ import { CalendarDays } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 type PremiumDatePickerProps = {
@@ -17,6 +23,7 @@ type PremiumDatePickerProps = {
   startYear?: number;
   endYear?: number;
   showTodayButton?: boolean;
+  portalLayer?: "default" | "modal";
 };
 
 export function PremiumDatePicker({
@@ -29,6 +36,7 @@ export function PremiumDatePicker({
   startYear = 1900,
   endYear = new Date().getFullYear() + 5,
   showTodayButton = true,
+  portalLayer = "default",
 }: PremiumDatePickerProps) {
   const [open, setOpen] = useState(false);
   const selected = value ? new Date(`${value}T12:00:00`) : undefined;
@@ -48,11 +56,15 @@ export function PremiumDatePicker({
   }, [selected?.getTime(), startMonth.getTime(), endMonth.getTime()]);
 
   function changeDisplayedMonth(monthIndex: number) {
-    setDisplayedMonth((current) => clampMonth(new Date(current.getFullYear(), monthIndex, 1), startMonth, endMonth));
+    setDisplayedMonth((current) =>
+      clampMonth(new Date(current.getFullYear(), monthIndex, 1), startMonth, endMonth),
+    );
   }
 
   function changeDisplayedYear(year: number) {
-    setDisplayedMonth((current) => clampMonth(new Date(year, current.getMonth(), 1), startMonth, endMonth));
+    setDisplayedMonth((current) =>
+      clampMonth(new Date(year, current.getMonth(), 1), startMonth, endMonth),
+    );
   }
 
   function selectDate(date: Date | undefined) {
@@ -85,7 +97,9 @@ export function PremiumDatePicker({
             className,
           )}
         >
-          <span className={cn("min-w-0 truncate", value ? "text-foreground" : "text-muted-foreground")}>
+          <span
+            className={cn("min-w-0 truncate", value ? "text-foreground" : "text-muted-foreground")}
+          >
             {value ? formatDatePt(value) : placeholder}
           </span>
           <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -95,14 +109,20 @@ export function PremiumDatePicker({
         align="start"
         sideOffset={8}
         collisionPadding={12}
-        className="w-[min(calc(100vw-1.5rem),22rem)] rounded-3xl border-border bg-popover/98 p-2 shadow-2xl shadow-black/20"
+        className={cn(
+          "w-[min(calc(100vw-1.5rem),22rem)] rounded-3xl border-border bg-popover/98 p-2 shadow-2xl shadow-black/20",
+          portalLayer === "modal" && "z-[120]",
+        )}
       >
         <div className="mb-2 grid grid-cols-[minmax(0,1fr)_6.75rem] gap-2 px-1">
-          <Select value={String(displayedMonth.getMonth())} onValueChange={(next) => changeDisplayedMonth(Number(next))}>
+          <Select
+            value={String(displayedMonth.getMonth())}
+            onValueChange={(next) => changeDisplayedMonth(Number(next))}
+          >
             <SelectTrigger className="h-10 min-h-10 rounded-2xl bg-background/80 px-3 text-sm font-bold shadow-sm">
               <SelectValue aria-label="Escolher mês" />
             </SelectTrigger>
-            <SelectContent className="z-[100] max-h-72">
+            <SelectContent className={cn("max-h-72", portalLayer === "modal" && "z-[130]")}>
               {MONTHS_PT.map((month, index) => (
                 <SelectItem key={month} value={String(index)}>
                   {month}
@@ -110,11 +130,14 @@ export function PremiumDatePicker({
               ))}
             </SelectContent>
           </Select>
-          <Select value={String(displayedMonth.getFullYear())} onValueChange={(next) => changeDisplayedYear(Number(next))}>
+          <Select
+            value={String(displayedMonth.getFullYear())}
+            onValueChange={(next) => changeDisplayedYear(Number(next))}
+          >
             <SelectTrigger className="h-10 min-h-10 rounded-2xl bg-background/80 px-3 text-sm font-bold shadow-sm">
               <SelectValue aria-label="Escolher ano" />
             </SelectTrigger>
-            <SelectContent className="z-[100] max-h-72">
+            <SelectContent className={cn("max-h-72", portalLayer === "modal" && "z-[130]")}>
               {years.map((year) => (
                 <SelectItem key={year} value={String(year)}>
                   {year}

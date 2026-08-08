@@ -2527,6 +2527,7 @@ function NewAppointmentModal({
                 onChange={setDate}
                 placeholder="Escolher data"
                 className={datePickerCls}
+                portalLayer="modal"
               />
             </ModalField>
             <ModalField label="Hora *">
@@ -2835,6 +2836,7 @@ function RescheduleModal({
               onChange={setDate}
               placeholder="Escolher data"
               className={datePickerCls}
+              portalLayer="modal"
             />
           </ModalField>
           <ModalField label="Nova hora *">
@@ -2900,7 +2902,9 @@ function ModalShell({
     };
   }, []);
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-end justify-center overflow-x-hidden bg-black/40 px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-sm md:items-center md:p-6"
       role="dialog"
@@ -2929,7 +2933,8 @@ function ModalShell({
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2993,8 +2998,7 @@ const selectTriggerCls =
   "h-9 min-w-0 rounded-xl border-border bg-background/70 px-3 text-sm shadow-none focus:ring-2 focus:ring-foreground/10 [&>span]:truncate";
 // SelectContent is rendered in a portal. Keep modal dropdowns above ModalShell's z-[100]
 // while preserving Radix's collision detection, viewport sizing and automatic top/bottom flip.
-const modalSelectContentCls =
-  "z-[120] rounded-2xl border-border/80 bg-popover/98 shadow-2xl";
+const modalSelectContentCls = "z-[120] rounded-2xl border-border/80 bg-popover/98 shadow-2xl";
 const datePickerCls = "h-9 min-w-0 rounded-xl border-border bg-background/70 px-3 shadow-none";
 const textareaCls =
   "max-h-20 min-w-0 w-full resize-none rounded-xl border border-border bg-background/70 px-3 py-2 text-sm outline-none transition focus:border-foreground/30 focus:ring-2 focus:ring-foreground/8";
