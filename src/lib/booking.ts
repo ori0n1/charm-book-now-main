@@ -31,6 +31,28 @@ export type BookingResult = {
   payment_status?: string;
 };
 
+export function validateConfirmedBookingResult(value: unknown): BookingResult {
+  if (!value || typeof value !== "object") throw invalidBookingConfirmation();
+  const result = value as Partial<BookingResult>;
+  const appointmentId = cleanBackendId(result.appointment_id);
+  const bookingRequestId = cleanBackendId(result.booking_request_id);
+
+  if (typeof result.requires_payment !== "boolean") throw invalidBookingConfirmation();
+  if (result.requires_payment) {
+    if (!appointmentId && !bookingRequestId) throw invalidBookingConfirmation();
+  } else if (!appointmentId) {
+    // A non-payment booking is only confirmed after the database has created
+    // the appointment and returned its immutable identifier.
+    throw invalidBookingConfirmation();
+  }
+
+  return {
+    ...(result as BookingResult),
+    appointment_id: appointmentId,
+    booking_request_id: bookingRequestId,
+  };
+}
+
 export async function createPublicBooking(input: CreateBookingInput): Promise<BookingResult> {
   const startsAtIso =
     input.startsAt instanceof Date ? input.startsAt.toISOString() : input.startsAt;
@@ -66,13 +88,26 @@ export async function createPublicBooking(input: CreateBookingInput): Promise<Bo
       ),
     );
   }
-  const result = data as unknown as BookingResult;
+  const result = validateConfirmedBookingResult(data);
   if (input.policyAcceptance) {
     await recordPolicyAcceptance(input.policyAcceptance, result).catch((error) => {
       console.error("[public-booking] policy acceptance failed", error);
     });
   }
   return result;
+}
+
+function cleanBackendId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const id = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    ? id
+    : null;
+}
+
+function invalidBookingConfirmation() {
+  console.error("[public-booking] invalid confirmation payload");
+  return new Error("Não foi possível confirmar a reserva. Atualize a página e tente novamente.");
 }
 
 function normalizeClientPhone(value: string) {

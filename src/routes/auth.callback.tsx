@@ -29,13 +29,19 @@ function AuthCallbackPage() {
 
     async function settleOAuthSession() {
       try {
+        // Read the route context before settling the PKCE session. Session
+        // settlement deliberately removes OAuth parameters from the address
+        // bar, so reading it afterwards loses the public origin of the flow.
+        const callbackContext = readAuthCallbackContext();
         const session = await settleSessionFromCurrentUrl("/auth/callback");
         if (!session?.user?.id) {
           navigate({ to: "/login", replace: true });
           return;
         }
 
-        const callbackContext = readAuthCallbackContext();
+        // Clear legacy hints so an interrupted public flow cannot contaminate
+        // a later regular panel login. Only the current callback URL is proof
+        // of public context.
         const clearedLegacyPublicContext = readAndClearPublicAuthContext();
         const publicReturnTo = readAndClearPublicReturnTo();
 

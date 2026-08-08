@@ -5,7 +5,7 @@ import {
 } from "../src/lib/auth-context";
 
 test.describe("authentication redirect consistency", () => {
-  test("studio role always wins over an explicit or stale public context", () => {
+  test("explicit public context keeps a studio account on the public studio page", () => {
     const explicitPublic = resolveAuthCallbackDestination({
       landing: "/admin",
       callbackContext: "public",
@@ -17,18 +17,21 @@ test.describe("authentication redirect consistency", () => {
       publicReturnTo: "/s/capivarabarbearia",
     });
 
-    expect(explicitPublic).toEqual({ destination: "/admin", accountType: "studio" });
+    expect(explicitPublic).toEqual({
+      destination: "/s/capivarabarbearia",
+      accountType: "studio",
+    });
     expect(regularLogin).toEqual({ destination: "/admin", accountType: "studio" });
   });
 
-  test("staff destinations remain role-specific on every device", () => {
+  test("staff keeps its role but remains in the explicit public context", () => {
     expect(
       resolveAuthCallbackDestination({
         landing: "/admin/agenda",
         callbackContext: "public",
         publicReturnTo: "/s/another-studio",
       }),
-    ).toEqual({ destination: "/admin/agenda", accountType: "studio" });
+    ).toEqual({ destination: "/s/another-studio", accountType: "studio" });
 
     expect(
       resolveAuthCallbackDestination({
@@ -75,5 +78,17 @@ test.describe("authentication redirect consistency", () => {
       account_type: "studio",
       bellza_account_type: "studio",
     });
+  });
+
+  test("callback captures public context before OAuth cleanup", async () => {
+    const callbackSource = await import("node:fs/promises").then((fs) =>
+      fs.readFile("src/routes/auth.callback.tsx", "utf8"),
+    );
+    const readAt = callbackSource.indexOf("const callbackContext = readAuthCallbackContext()");
+    const settleAt = callbackSource.indexOf('settleSessionFromCurrentUrl("/auth/callback")');
+
+    expect(readAt).toBeGreaterThan(-1);
+    expect(settleAt).toBeGreaterThan(readAt);
+    expect(callbackSource).toContain("Only the current callback URL is proof");
   });
 });

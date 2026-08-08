@@ -1121,8 +1121,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           setConfirmedTarget({ appointmentId: result.appointment_id });
           setPendingPayment({ appointmentId: result.appointment_id });
         } else {
-          setConfirmedPaymentStatus("paid_online");
-          setConfirmed(true);
+          throw new Error("Não foi possível confirmar a reserva. Atualize a página e tente novamente.");
         }
       } else {
         dispatchPublicBookingSideEffects(result.appointment_id);

@@ -58,17 +58,20 @@ export function resolveAuthCallbackDestination(input: {
   callbackContext: "public" | null;
   publicReturnTo: string | null;
 }) {
+  // The route that initiated authentication owns the navigation context.
+  // A validated studio role still remains a studio role, but it must not turn
+  // an explicit public sign-in into an administrative navigation.
+  if (input.callbackContext === "public") {
+    return {
+      destination: input.publicReturnTo ?? "/",
+      accountType: input.landing === "/onboarding" ? ("customer" as const) : ("studio" as const),
+    };
+  }
+
   if (input.landing !== "/onboarding") {
     return {
       destination: input.landing,
       accountType: "studio" as const,
-    };
-  }
-
-  if (input.callbackContext === "public") {
-    return {
-      destination: input.publicReturnTo ?? "/",
-      accountType: "customer" as const,
     };
   }
 
