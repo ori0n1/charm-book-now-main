@@ -173,4 +173,23 @@ test.describe("reschedule startsAt contract", () => {
       "REVOKE ALL ON FUNCTION public.reschedule_studio_appointment",
     );
   });
+
+  test("keeps back-office walk-ins movable without weakening public availability", async () => {
+    const migrationSource = await readFile(
+      "supabase/migrations/20260808113000_preserve_studio_walkin_reschedule_override.sql",
+      "utf8",
+    );
+
+    expect(migrationSource).toContain("v_is_managerial_override := NOT EXISTS");
+    expect(migrationSource).toContain("v_original_local_start");
+    expect(migrationSource).toContain("is_staff_managerial_slot_bookable");
+    expect(migrationSource).toContain("v_appt.id");
+    expect(migrationSource).toContain("appointment.status NOT IN ('cancelled', 'no_show')");
+    expect(migrationSource).toContain("public.staff_time_off");
+    expect(migrationSource).toContain("public.booking_payment_requests");
+    expect(migrationSource).not.toContain("reschedule_public_appointment");
+    expect(migrationSource).toContain(
+      "REVOKE ALL ON FUNCTION public.is_staff_managerial_slot_bookable",
+    );
+  });
 });
