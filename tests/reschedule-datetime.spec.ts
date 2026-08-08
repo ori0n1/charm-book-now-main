@@ -16,9 +16,10 @@ test.describe("reschedule startsAt contract", () => {
     );
   });
 
-  test("accepts same-day and future 15-minute slots in every supported hour", () => {
+  test("accepts same-day, arbitrary-minute and future slots", () => {
     for (const value of [
       "2026-07-29T00:00:00Z",
+      "2026-07-29T08:11:00Z",
       "2026-07-29T09:15:00Z",
       "2026-07-29T12:30:00Z",
       "2027-01-01T23:45:00Z",
@@ -41,25 +42,73 @@ test.describe("reschedule startsAt contract", () => {
   });
 
   test("keeps duration and availability rules on the database boundary", async () => {
-    const [serverSource, migrationSource] = await Promise.all([
+    const [serverSource, migrationSource, availabilitySource] = await Promise.all([
       readFile("src/lib/client-appointment.functions.ts", "utf8"),
       readFile(
-        "supabase/migrations/20260729181000_fix_reschedule_appointment_root_cause.sql",
+        "supabase/migrations/20260808101500_fix_reschedule_false_slot_conflicts.sql",
+        "utf8",
+      ),
+      readFile(
+        "supabase/migrations/20260628103000_booking_availability_consistency.sql",
         "utf8",
       ),
     ]);
 
     expect(serverSource).toContain("p_slot_step_min: 15");
+    expect(serverSource).toContain('rpc("get_public_reschedule_slots"');
+    expect(serverSource).toContain("p_public_token: data.token");
+    expect(serverSource).not.toContain('rpc("get_available_slots"');
     expect(serverSource).toContain("p_starts_at: data.startsAt");
-    expect(migrationSource).toContain("FROM public.get_available_slots(");
+    expect(migrationSource).not.toContain("FROM public.get_available_slots(");
     expect(migrationSource).toContain(
-      "v_new_end := p_starts_at + (v_duration || ' minutes')::interval",
+      "v_new_end := p_starts_at + make_interval(mins => v_duration)",
     );
     expect(migrationSource).toContain("WHERE aps.appointment_id = v_appt.id");
-    expect(migrationSource).not.toContain(
-      "FROM public.appointment_services\n  WHERE appointment_id = v_appt.id",
-    );
+    expect(migrationSource).toContain("NULL,\n      v_appt.id");
+    expect(migrationSource.match(/NULL,\n {6}v_appt\.id/g)).toHaveLength(3);
+    expect(migrationSource).toContain("NULLIF(v_appt.total_duration_min, 0)");
+    expect(migrationSource).toContain("CREATE OR REPLACE FUNCTION public.get_public_reschedule_slots");
     expect(migrationSource).toContain("WHEN exclusion_violation");
+    expect(availabilitySource).toContain("p_ignore_appointment_id uuid DEFAULT NULL");
+    expect(availabilitySource).toContain("a.id <> p_ignore_appointment_id");
+    expect(availabilitySource).toContain("a.status NOT IN ('cancelled','no_show')");
+    expect(availabilitySource).toContain("tstzrange(a.starts_at, a.ends_at, '[)')");
+  });
+
+  test("uses real half-open intervals without false conflicts at exact boundaries", () => {
+    const overlaps = (
+      newStart: string,
+      newEnd: string,
+      existingStart: string,
+      existingEnd: string,
+    ) =>
+      new Date(newStart).getTime() < new Date(existingEnd).getTime() &&
+      new Date(newEnd).getTime() > new Date(existingStart).getTime();
+
+    expect(
+      overlaps(
+        "2026-08-08T13:15:00Z",
+        "2026-08-08T14:00:00Z",
+        "2026-08-08T12:30:00Z",
+        "2026-08-08T13:15:00Z",
+      ),
+    ).toBe(false);
+    expect(
+      overlaps(
+        "2026-08-08T13:15:00Z",
+        "2026-08-08T14:00:00Z",
+        "2026-08-08T13:59:00Z",
+        "2026-08-08T14:30:00Z",
+      ),
+    ).toBe(true);
+    expect(
+      overlaps(
+        "2026-08-08T08:11:00Z",
+        "2026-08-08T08:56:00Z",
+        "2026-08-08T09:00:00Z",
+        "2026-08-08T09:30:00Z",
+      ),
+    ).toBe(false);
   });
 
   test("maps technical failures to safe and useful client messages", () => {
@@ -104,7 +153,7 @@ test.describe("reschedule startsAt contract", () => {
       readFile("src/routes/_authenticated/admin.agenda.tsx", "utf8"),
       readFile("src/lib/studio-appointment.functions.ts", "utf8"),
       readFile(
-        "supabase/migrations/20260729181000_fix_reschedule_appointment_root_cause.sql",
+        "supabase/migrations/20260808101500_fix_reschedule_false_slot_conflicts.sql",
         "utf8",
       ),
     ]);

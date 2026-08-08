@@ -54,11 +54,10 @@ export const getClientRescheduleSlots = createServerFn({ method: "POST" })
     if (!policy.canReschedule) throw new Error(policy.rescheduleBlockReason);
     const durationMin = await getAppointmentDuration(sb, appt);
     const staffId = appt.staff?.id ?? appt.staff_id;
-    const { data: slots, error } = await sb.rpc("get_available_slots", {
-      p_studio_slug: appt.studios?.slug,
+    const { data: slots, error } = await sb.rpc("get_public_reschedule_slots", {
+      p_public_token: data.token,
       p_staff_id: staffId,
       p_date: data.date,
-      p_duration_min: durationMin,
       p_slot_step_min: 15,
     });
     if (error) throw new Error("Não foi possível consultar a disponibilidade.");
