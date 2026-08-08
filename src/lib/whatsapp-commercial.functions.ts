@@ -78,92 +78,59 @@ export const getWhatsAppCommercialStatus = createServerFn({ method: "GET" })
 export const getWhatsAppAdminDashboard = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
+    const requestId = crypto.randomUUID();
+    const startedAt = Date.now();
+    const userId = (context as any).userId as string;
     const sb = admin();
-    await assertSaasOwner(sb, (context as any).userId);
+    let stage = "authorization";
+    try {
+      await assertSaasOwner(sb, userId);
+      stage = "overview_query";
+      const { data, error } = await sb.rpc("get_whatsapp_admin_overview");
+      if (error) throw error;
+      if (!data?.settings || !data?.summary || !Array.isArray(data?.studios)) {
+        throw new Error("whatsapp_admin_overview_invalid_response");
+      }
 
-    const [{ data: settings, error: settingsError }, { data: studios, error: studiosError }] =
-      await Promise.all([
-        sb.from("whatsapp_platform_settings").select("*").eq("id", 1).single(),
-        sb
-          .from("studios")
-          .select(
-            "id,name,subscription_status,trial_ends_at,whatsapp_auto_send_enabled,whatsapp_studio_entitlements(status,trial_started_at,trial_ends_at,trial_message_limit_override,addon_started_at,addon_ends_at,paused_reason)",
-          )
-          .order("name"),
-      ]);
-    if (settingsError) throw new Error(settingsError.message);
-    if (studiosError) throw new Error(studiosError.message);
-
-    const baseStudioRows = await Promise.all(
-      (studios ?? []).map(async (studio: any) => ({
-        id: studio.id,
-        name: studio.name,
-        subscriptionStatus: studio.subscription_status,
-        ...(await loadStudioCommercialStatus(sb, studio.id, settings)),
-      })),
-    );
-
-    const [{ data: ledger, error: ledgerError }, { data: messageLogs, error: logsError }] =
-      await Promise.all([
-        sb
-          .from("whatsapp_usage_ledger")
-          .select("studio_id,state,unit_cost_cents,commercial_unit_cents,created_at"),
-        sb.from("whatsapp_message_logs").select("studio_id,status,reason,created_at"),
-      ]);
-    if (ledgerError) throw new Error(ledgerError.message);
-    if (logsError) throw new Error(logsError.message);
-    const submitted = (ledger ?? []).filter((row: any) =>
-      ["submitted", "counted"].includes(row.state),
-    );
-    const studioRows = baseStudioRows.map((studio) => {
-      const studioLedger = submitted.filter((row: any) => row.studio_id === studio.id);
-      const studioLogs = (messageLogs ?? []).filter((row: any) => row.studio_id === studio.id);
-      return {
-        ...studio,
-        sentMessages: studioLogs.filter((row: any) => row.status === "sent").length,
-        pendingMessages: studioLogs.filter((row: any) => row.status === "pending").length,
-        failedMessages: studioLogs.filter((row: any) => row.status === "failed").length,
-        blockedMessages: studioLogs.filter(
-          (row: any) =>
-            row.status === "skipped" &&
-            String(row.reason || "").startsWith("whatsapp_"),
-        ).length,
-        estimatedProviderCostCents: studioLedger.reduce(
-          (sum: number, row: any) => sum + Number(row.unit_cost_cents ?? 0),
-          0,
-        ),
-        estimatedRevenueCents: studioLedger.reduce(
-          (sum: number, row: any) => sum + Number(row.commercial_unit_cents ?? 0),
-          0,
-        ),
+      const response = {
+        ...data,
+        settings: normalizeSettings(data.settings),
+        requestId,
+        generatedAt: new Date().toISOString(),
       };
-    });
-
-    return {
-      settings: normalizeSettings(settings),
-      summary: {
-        studiosUsing: studioRows.filter((row) => row.available && row.autoSendEnabled).length,
-        trialStudios: studioRows.filter((row) => row.status === "trial").length,
-        payingStudios: studioRows.filter((row) => row.status === "active").length,
-        messages: submitted.length,
-        failedMessages: (messageLogs ?? []).filter((row: any) => row.status === "failed").length,
-        blockedMessages: (messageLogs ?? []).filter(
-          (row: any) =>
-            row.status === "skipped" && String(row.reason || "").startsWith("whatsapp_"),
-        ).length,
-        estimatedProviderCostCents: submitted.reduce(
-          (sum: number, row: any) => sum + Number(row.unit_cost_cents ?? 0),
-          0,
-        ),
-        estimatedRevenueCents: submitted.reduce(
-          (sum: number, row: any) => sum + Number(row.commercial_unit_cents ?? 0),
-          0,
-        ),
-        costConfigured: settings.provider_cost_per_message_cents != null,
-      },
-      studios: studioRows,
-    };
+      console.info("[whatsapp-admin] overview_loaded", {
+        request_id: requestId,
+        user_id: userId,
+        studios: data.studios.length,
+        duration_ms: Date.now() - startedAt,
+      });
+      return response;
+    } catch (error) {
+      const code = classifyWhatsAppAdminError(error);
+      console.error("[whatsapp-admin] overview_failed", {
+        request_id: requestId,
+        user_id: userId,
+        stage,
+        error_code: code,
+        database_code: typeof (error as any)?.code === "string" ? (error as any).code : undefined,
+        reason: error instanceof Error ? error.message : String(error),
+        duration_ms: Date.now() - startedAt,
+      });
+      throw new Error(`whatsapp_admin_overview_failed:${code}:${requestId}`);
+    }
   });
+
+function classifyWhatsAppAdminError(error: unknown) {
+  const databaseCode = String((error as any)?.code ?? "");
+  const message = error instanceof Error ? error.message : String(error);
+  if (databaseCode === "42501" || message.includes("forbidden")) return "permission_denied";
+  if (databaseCode === "42P01") return "table_missing";
+  if (databaseCode === "42703") return "column_missing";
+  if (databaseCode === "42883" || databaseCode === "PGRST202") return "rpc_missing";
+  if (databaseCode.startsWith("PGRST")) return "query_failed";
+  if (message.includes("invalid_response")) return "invalid_response";
+  return "internal_error";
+}
 
 export const saveWhatsAppPlatformSettings = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -203,7 +170,9 @@ export const saveWhatsAppPlatformSettings = createServerFn({ method: "POST" })
       commercial_included_messages: data.commercialIncludedMessages,
       commercial_excess_message_cents: data.commercialExcessMessageCents,
       currency: data.currency.toLowerCase(),
-      provider_contract_verified_at: data.providerContractVerified ? new Date().toISOString() : null,
+      provider_contract_verified_at: data.providerContractVerified
+        ? new Date().toISOString()
+        : null,
       updated_by: userId,
     };
     const { data: saved, error } = await sb
@@ -238,7 +207,10 @@ export const saveWhatsAppStudioEntitlement = createServerFn({ method: "POST" })
       studio_id: data.studioId,
       status: data.status,
       trial_message_limit_override: data.trialMessageLimitOverride,
-      addon_started_at: data.status === "active" ? previous?.addon_started_at ?? new Date().toISOString() : previous?.addon_started_at,
+      addon_started_at:
+        data.status === "active"
+          ? (previous?.addon_started_at ?? new Date().toISOString())
+          : previous?.addon_started_at,
       addon_ends_at: data.addonEndsAt,
       paused_reason: data.status === "paused" ? data.pausedReason || "paused_by_admin" : null,
     };
@@ -263,29 +235,33 @@ async function loadStudioCommercialStatus(
   studioId: string,
   providedSettings?: any,
 ): Promise<WhatsAppCommercialStatus> {
-  const [{ data: settings, error: settingsError }, { data: studio, error: studioError }, usage, alerts] =
-    await Promise.all([
-      providedSettings
-        ? Promise.resolve({ data: providedSettings, error: null })
-        : sb.from("whatsapp_platform_settings").select("*").eq("id", 1).single(),
-      sb
-        .from("studios")
-        .select(
-          "id,trial_ends_at,whatsapp_auto_send_enabled,whatsapp_studio_entitlements(status,trial_started_at,trial_ends_at,trial_message_limit_override,addon_ends_at,paused_reason)",
-        )
-        .eq("id", studioId)
-        .single(),
-      sb
-        .from("whatsapp_usage_ledger")
-        .select("state,created_at")
-        .eq("studio_id", studioId)
-        .in("state", ["reserved", "submitted", "counted"]),
-      sb
-        .from("whatsapp_usage_alerts")
-        .select("threshold_percent,created_at")
-        .eq("studio_id", studioId)
-        .order("threshold_percent"),
-    ]);
+  const [
+    { data: settings, error: settingsError },
+    { data: studio, error: studioError },
+    usage,
+    alerts,
+  ] = await Promise.all([
+    providedSettings
+      ? Promise.resolve({ data: providedSettings, error: null })
+      : sb.from("whatsapp_platform_settings").select("*").eq("id", 1).single(),
+    sb
+      .from("studios")
+      .select(
+        "id,trial_ends_at,whatsapp_auto_send_enabled,whatsapp_studio_entitlements(status,trial_started_at,trial_ends_at,trial_message_limit_override,addon_ends_at,paused_reason)",
+      )
+      .eq("id", studioId)
+      .single(),
+    sb
+      .from("whatsapp_usage_ledger")
+      .select("state,created_at")
+      .eq("studio_id", studioId)
+      .in("state", ["reserved", "submitted", "counted"]),
+    sb
+      .from("whatsapp_usage_alerts")
+      .select("threshold_percent,created_at")
+      .eq("studio_id", studioId)
+      .order("threshold_percent"),
+  ]);
   if (settingsError) throw new Error(settingsError.message);
   if (studioError) throw new Error(studioError.message);
   if (usage.error) throw new Error(usage.error.message);
@@ -298,9 +274,13 @@ async function loadStudioCommercialStatus(
   const trialStart = entitlement?.trial_started_at;
   const trialEnd = entitlement?.trial_ends_at ?? studio.trial_ends_at;
   const scopedUsage = (usage.data ?? []).filter(
-    (row: any) => status !== "trial" || (!trialStart || row.created_at >= trialStart) && (!trialEnd || row.created_at < trialEnd),
+    (row: any) =>
+      status !== "trial" ||
+      ((!trialStart || row.created_at >= trialStart) && (!trialEnd || row.created_at < trialEnd)),
   );
-  const used = scopedUsage.filter((row: any) => ["submitted", "counted"].includes(row.state)).length;
+  const used = scopedUsage.filter((row: any) =>
+    ["submitted", "counted"].includes(row.state),
+  ).length;
   const reserved = scopedUsage.filter((row: any) => row.state === "reserved").length;
   const limit =
     status === "trial"
@@ -308,9 +288,14 @@ async function loadStudioCommercialStatus(
       : null;
   const available = Boolean(
     settings.global_enabled &&
-      (status === "legacy" ||
-        status === "active" && (!entitlement?.addon_ends_at || entitlement.addon_ends_at > new Date().toISOString()) ||
-        status === "trial" && settings.trial_enabled && trialEnd && trialEnd > new Date().toISOString() && used + reserved < (limit ?? 0)),
+    (status === "legacy" ||
+      (status === "active" &&
+        (!entitlement?.addon_ends_at || entitlement.addon_ends_at > new Date().toISOString())) ||
+      (status === "trial" &&
+        settings.trial_enabled &&
+        trialEnd &&
+        trialEnd > new Date().toISOString() &&
+        used + reserved < (limit ?? 0))),
   );
   const daysRemaining =
     status === "trial" && trialEnd
@@ -326,9 +311,15 @@ async function loadStudioCommercialStatus(
     reserved,
     limit,
     remaining: limit == null ? null : Math.max(0, limit - used - reserved),
-    usagePercent: limit == null ? null : limit === 0 ? 100 : Math.min(100, Math.round(((used + reserved) / limit) * 100)),
+    usagePercent:
+      limit == null
+        ? null
+        : limit === 0
+          ? 100
+          : Math.min(100, Math.round(((used + reserved) / limit) * 100)),
     pauseReason: entitlement?.paused_reason ?? null,
-    billingAvailable: settings.billing_mode !== "disabled" && settings.commercial_price_cents != null,
+    billingAvailable:
+      settings.billing_mode !== "disabled" && settings.commercial_price_cents != null,
     billingMode: settings.billing_mode,
     commercialPriceCents: settings.commercial_price_cents,
     currency: settings.currency,
