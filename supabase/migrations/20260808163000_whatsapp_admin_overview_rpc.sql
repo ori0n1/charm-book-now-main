@@ -105,7 +105,23 @@ BEGIN
     FROM public.whatsapp_message_logs
   )
   SELECT jsonb_build_object(
-    'settings', to_jsonb(cfg),
+    'settings', jsonb_build_object(
+      'id', cfg.id,
+      'global_enabled', cfg.global_enabled,
+      'trial_enabled', cfg.trial_enabled,
+      'trial_duration_days', cfg.trial_duration_days,
+      'trial_message_limit', cfg.trial_message_limit,
+      'alert_thresholds', cfg.alert_thresholds,
+      'post_trial_mode', cfg.post_trial_mode,
+      'billing_mode', cfg.billing_mode,
+      'provider_cost_per_message_cents', cfg.provider_cost_per_message_cents,
+      'commercial_price_cents', cfg.commercial_price_cents,
+      'commercial_included_messages', cfg.commercial_included_messages,
+      'commercial_excess_message_cents', cfg.commercial_excess_message_cents,
+      'currency', cfg.currency,
+      'provider_contract_verified_at', cfg.provider_contract_verified_at,
+      'updated_at', cfg.updated_at
+    ),
     'summary', jsonb_build_object(
       'studiosUsing', count(*) FILTER (WHERE r.available AND r.whatsapp_auto_send_enabled),
       'trialStudios', count(*) FILTER (WHERE r.whatsapp_status = 'trial'),
