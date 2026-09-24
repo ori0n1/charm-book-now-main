@@ -1,0 +1,3 @@
+# Preserve the frozen staging-only replay artifacts byte-for-byte.
+/artifacts/bellza-staging-remote/supabase/migrations/20260918180000_public_schema_baseline.sql -text
+/artifacts/bellza-staging-remote/supabase/migrations/20260919151000_staging_storage_fixture.sql -text

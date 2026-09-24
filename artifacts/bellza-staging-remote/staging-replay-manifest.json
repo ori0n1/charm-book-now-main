@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "name": "bellza-staging-only-replay-artifacts",
+  "immutable": true,
+  "artifactRoot": "artifacts/bellza-staging-remote",
+  "operationalMigrationDirectory": "supabase/migrations",
+  "allowedContext": "local-disposable-staging-replay",
+  "artifacts": [
+    {
+      "version": "20260918180000",
+      "filename": "supabase/migrations/20260918180000_public_schema_baseline.sql",
+      "sha256": "b2c152495c591d0eacf2c4cd4f67a1b4905b6006526eeff9c960d04f2781017c",
+      "classification": "staging-only-baseline",
+      "order": 1,
+      "purpose": "Represent the pre-incremental public schema used to reproduce Bellza staging in a disposable local clone.",
+      "dependencies": [],
+      "allowedEnvironments": [
+        "local-disposable-staging-replay"
+      ],
+      "forbiddenEnvironments": [
+        "production",
+        "remote-staging-direct-application",
+        "normal-db-push"
+      ],
+      "replayInstruction": "Materialize as the first migration only inside a new disposable local Supabase clone, then apply the ordered incremental staging chain.",
+      "immutability": "Frozen bytes. Never edit in place; any replacement requires a new artifact, version, hash, review, and replay proof."
+    },
+    {
+      "version": "20260919151000",
+      "filename": "supabase/migrations/20260919151000_staging_storage_fixture.sql",
+      "sha256": "9cd8586d272923bb9158949f4a87ce2e38e85af9efdf1a44d7641bef5411b06c",
+      "classification": "staging-only-synthetic-fixture",
+      "order": 10,
+      "purpose": "Reproduce staging-only storage bucket metadata and policies without copying user objects or real customer data.",
+      "dependencies": [
+        "20260918180000",
+        "20260918190000",
+        "20260919140000",
+        "20260919141000",
+        "20260919142000",
+        "20260919143000",
+        "20260919144000",
+        "20260919145000",
+        "20260919150000"
+      ],
+      "allowedEnvironments": [
+        "local-disposable-staging-replay"
+      ],
+      "forbiddenEnvironments": [
+        "production",
+        "remote-staging-direct-application",
+        "normal-db-push"
+      ],
+      "replayInstruction": "Materialize immediately after 20260919150000 and before 20260919152000, only inside the disposable local replay clone.",
+      "immutability": "Frozen bytes. Never edit in place; any replacement requires a new artifact, version, hash, review, and replay proof."
+    }
+  ],
+  "productionPolicy": "Production migrations must never source, copy, or apply these staging-only artifacts. Production advances only through independently reviewed operational migrations against its existing verified ledger and schema."
+}
