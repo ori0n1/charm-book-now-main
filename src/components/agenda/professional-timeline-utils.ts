@@ -1,3 +1,5 @@
+import { getZonedMinutes } from "@/lib/studio-time";
+
 export type ProfessionalTimelinePerson = {
   id: string;
   name: string;
@@ -18,6 +20,8 @@ export type ProfessionalTimelineAppointment = {
   valueLabel?: string;
   durationLabel: string;
   privateDetails: boolean;
+  attendancePending?: boolean;
+  manualFit?: boolean;
 };
 
 export type PositionedTimelineAppointment = ProfessionalTimelineAppointment & {
@@ -43,6 +47,7 @@ export function layoutProfessionalAppointments(
   appointments: ProfessionalTimelineAppointment[],
   startHour: number,
   hourHeight: number,
+  timeZone = "Europe/Lisbon",
 ) {
   const sorted = [...appointments].sort(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
@@ -67,11 +72,7 @@ export function layoutProfessionalAppointments(
     for (const { appointment, lane } of assigned) {
       const start = new Date(appointment.startsAt);
       const end = new Date(appointment.endsAt);
-      const startMinutes =
-        start.getHours() * 60 +
-        start.getMinutes() +
-        start.getSeconds() / 60 +
-        start.getMilliseconds() / 60_000;
+      const startMinutes = getZonedMinutes(start, timeZone);
       const durationMinutes = Math.max(15, (end.getTime() - start.getTime()) / 60_000);
       result.push({
         ...appointment,
@@ -101,15 +102,14 @@ export function layoutProfessionalAppointments(
 export function getProfessionalTimelineBounds(
   appointments: ProfessionalTimelineAppointment[],
   availability?: Array<{ startMinutes: number; endMinutes: number }>,
+  timeZone = "Europe/Lisbon",
 ) {
-  const starts = appointments.map((appointment) => {
-    const start = new Date(appointment.startsAt);
-    return start.getHours() + start.getMinutes() / 60;
-  });
-  const ends = appointments.map((appointment) => {
-    const end = new Date(appointment.endsAt);
-    return end.getHours() + end.getMinutes() / 60;
-  });
+  const starts = appointments.map(
+    (appointment) => getZonedMinutes(appointment.startsAt, timeZone) / 60,
+  );
+  const ends = appointments.map(
+    (appointment) => getZonedMinutes(appointment.endsAt, timeZone) / 60,
+  );
   for (const period of availability ?? []) {
     starts.push(period.startMinutes / 60);
     ends.push(period.endMinutes / 60);

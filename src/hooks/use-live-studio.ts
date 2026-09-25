@@ -41,6 +41,12 @@ type LiveStudio = typeof staticStudio & {
   refund_requests_enabled?: boolean | null;
   cancellation_policy_text?: string | null;
   legal_policy_version?: string | null;
+  booking_flow_mode?: "online" | "request" | null;
+  booking_request_professional_mode?: "hidden" | "showcase" | "preference" | null;
+  notifications_enabled?: boolean | null;
+  online_payment_ready?: boolean | null;
+  mb_way_payment_ready?: boolean | null;
+  public_notifications_available?: boolean | null;
 };
 
 type LiveUpsell = Upsell & { offeredServiceId: string };
@@ -69,79 +75,100 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
 
   async function load() {
     const studioSelect =
-      "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,stripe_connect_charges_enabled,stripe_connect_onboarding_completed,stripe_connect_mb_way_payments_enabled,business_segment,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version";
+      "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,online_payment_ready,mb_way_payment_ready,public_notifications_available,business_segment,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version,booking_flow_mode,booking_request_professional_mode";
+    const previousStudioSelect =
+      "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,stripe_connect_charges_enabled,stripe_connect_onboarding_completed,stripe_connect_mb_way_payments_enabled,business_segment,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version,booking_flow_mode,booking_request_professional_mode,notifications_enabled";
     const legacyStudioSelect =
       "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,business_segment";
-    let studioResult = await supabase
-      .from("studios")
-      .select(`${studioSelect},public_amenities,min_booking_notice_min`)
-      .eq("id", studioId)
-      .maybeSingle();
+    let studioResult = await loadPublicTable("public_booking_studios", "public_studios", (query) =>
+      query
+        .select(`${studioSelect},public_amenities,min_booking_notice_min`)
+        .eq("id", studioId)
+        .maybeSingle(),
+    );
     if (studioResult.error) {
-      studioResult = await supabase
-        .from("studios")
+      studioResult = await (supabase as any).from("public_studios")
+        .select(`${previousStudioSelect},public_amenities,min_booking_notice_min`)
+        .eq("id", studioId)
+        .maybeSingle();
+    }
+    if (studioResult.error) {
+      studioResult = await (supabase as any).from("public_studios")
         .select(`${legacyStudioSelect},public_amenities`)
         .eq("id", studioId)
         .maybeSingle();
     }
     if (studioResult.error) {
-      studioResult = await supabase
-        .from("studios")
+      studioResult = await (supabase as any).from("public_studios")
         .select(legacyStudioSelect)
         .eq("id", studioId)
         .maybeSingle();
     }
+    /*
+      No base-table fallback: a failure of the public views must not turn a
+      published profile query into a query against private studio settings.
+    */
     const [{ data: svc }, { data: cats }, { data: links }, offersResult] =
       await Promise.all([
-        supabase
-          .from("services")
-          .select(
-            "id,name,description,duration_min,price,is_recommended,is_active,media,category_id",
-          )
-          .eq("studio_id", studioId)
-          .eq("is_active", true)
-          .order("sort_order")
-          .order("name"),
-        supabase
-          .from("service_categories")
-          .select("id,label,sort_order")
-          .eq("studio_id", studioId)
-          .order("sort_order"),
-        supabase.from("staff_services").select("staff_id,service_id"),
-        supabase
-          .from("upsell_offers")
-          .select("id,trigger_service_id,offered_service_id,discounted_price,discount_type,discount_value,display_mode,duration_min,description,is_active")
-          .eq("studio_id", studioId)
-          .eq("is_active", true),
+        loadPublicTable("public_services", "services", (query) =>
+          query
+            .select(
+              "id,name,description,duration_min,price,is_recommended,is_active,media,category_id",
+            )
+            .eq("studio_id", studioId)
+            .eq("is_active", true)
+            .order("sort_order")
+            .order("name"),
+        ),
+        loadPublicTable("public_service_categories", "service_categories", (query) =>
+          query.select("id,label,sort_order").eq("studio_id", studioId).order("sort_order"),
+        ),
+        loadPublicTable(
+          "public_staff_services",
+          "staff_services",
+          (query) => query.select("staff_id,service_id").eq("studio_id", studioId),
+          (query) => query.select("staff_id,service_id"),
+        ),
+        loadPublicTable("public_upsell_offers", "upsell_offers", (query) =>
+          query
+            .select("id,trigger_service_id,offered_service_id,discounted_price,discount_type,discount_value,display_mode,duration_min,description,is_active")
+            .eq("studio_id", studioId)
+            .eq("is_active", true),
+        ),
       ]);
     let offers = offersResult.data as any[] | null;
     if (offersResult.error) {
-      const { data } = await supabase
-        .from("upsell_offers")
-        .select("id,trigger_service_id,offered_service_id,discounted_price,description,is_active")
-        .eq("studio_id", studioId)
-        .eq("is_active", true);
+      const { data } = await loadPublicTable("public_upsell_offers", "upsell_offers", (query) =>
+        query
+          .select("id,trigger_service_id,offered_service_id,discounted_price,description,is_active")
+          .eq("studio_id", studioId)
+          .eq("is_active", true),
+      );
       offers = data as any[] | null;
     }
 
     // Staff query with graceful fallback for missing optional columns
-    let staffResult: any = await supabase
-      .from("staff")
-      .select("id,name,role,bio,photo_url,rating,reviews_count,is_active,current_status")
+    let staffResult: any = await (supabase as any).from("public_booking_staff")
+      .select("id,name,role,bio,photo_url,rating,reviews_count,is_active,booking_availability_status")
       .eq("studio_id", studioId)
       .eq("is_active", true)
       .order("sort_order");
     if (staffResult.error) {
-      staffResult = await supabase
-        .from("staff")
+      staffResult = await (supabase as any).from("public_staff")
+        .select("id,name,role,bio,photo_url,rating,reviews_count,is_active,current_status")
+        .eq("studio_id", studioId)
+        .eq("is_active", true)
+        .order("sort_order");
+    }
+    if (staffResult.error) {
+      staffResult = await (supabase as any).from("public_staff")
         .select("id,name,role,bio,photo_url,rating,is_active,current_status")
         .eq("studio_id", studioId)
         .eq("is_active", true)
         .order("sort_order");
     }
     if (staffResult.error) {
-      staffResult = await supabase
-        .from("staff")
+      staffResult = await (supabase as any).from("public_staff")
         .select("id,name,role,bio,photo_url,rating,is_active")
         .eq("studio_id", studioId)
         .eq("is_active", true);
@@ -150,14 +177,25 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
     const st = studioResult.data as Partial<LiveStudio> | null;
 
     const liveStudio: LiveStudio = st
-      ? ({ ...staticStudio, ...st } as LiveStudio)
+      ? ({
+          ...staticStudio,
+          ...st,
+          stripe_connect_charges_enabled:
+            st.online_payment_ready ?? st.stripe_connect_charges_enabled ?? false,
+          stripe_connect_onboarding_completed:
+            st.online_payment_ready ?? st.stripe_connect_onboarding_completed ?? false,
+          stripe_connect_mb_way_payments_enabled:
+            st.mb_way_payment_ready ?? st.stripe_connect_mb_way_payments_enabled ?? false,
+          notifications_enabled:
+            st.public_notifications_available ?? st.notifications_enabled ?? false,
+        } as LiveStudio)
       : (staticStudio as LiveStudio);
 
     const liveCategories: Category[] =
       cats && cats.length
         ? [
             { id: "all", label: "Todos os serviços" },
-            ...cats.map((c) => ({ id: c.id, label: c.label })),
+            ...cats.map((c: { id: string; label: string }) => ({ id: c.id, label: c.label })),
           ]
         : allowStaticFallback
           ? staticCategories
@@ -165,7 +203,17 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
 
     const liveServices: Service[] =
       svc && svc.length
-        ? svc.map((s) => {
+        ? svc.map(
+            (s: {
+              id: string;
+              category_id: string | null;
+              name: string;
+              description: string | null;
+              duration_min: number;
+              price: number | string;
+              is_recommended: boolean;
+              media: unknown;
+            }) => {
             const media = (s.media as unknown as { type: "image" | "video"; src: string }[]) ?? [];
             return {
               id: s.id,
@@ -177,7 +225,8 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
               recommended: s.is_recommended,
               media,
             };
-          })
+            },
+          )
         : allowStaticFallback
           ? staticServices
           : [];
@@ -203,7 +252,7 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
               reviewsCount: p.reviews_count ? Number(p.reviews_count) : undefined,
               photo: p.photo_url ?? "",
               serviceIds: linkMap.get(p.id) ?? [],
-              currentStatus: normalizeStaffStatus(p.current_status),
+              currentStatus: normalizeStaffStatus(p.booking_availability_status ?? p.current_status),
             }))
         : allowStaticFallback
           ? staticProfessionals
@@ -248,6 +297,11 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
 
   useEffect(() => {
     void load();
+    // Public pages read from deliberately narrow views after the security
+    // hardening migration. Those views are not Realtime publications, so a
+    // small polling fallback keeps the catalogue fresh without reopening the
+    // underlying tables to anonymous clients.
+    const refreshInterval = window.setInterval(() => void load(), 60_000);
     const channel = supabase
       .channel(`studio-${studioId}`)
       .on(
@@ -290,12 +344,26 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
       )
       .subscribe();
     return () => {
+      window.clearInterval(refreshInterval);
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studioId]);
 
   return state;
+}
+
+async function loadPublicTable(
+  view: string,
+  legacyTable: string,
+  build: (query: any) => PromiseLike<any>,
+  buildLegacy: ((query: any) => PromiseLike<any>) | null = null,
+) {
+  const viewResult = await build((supabase as any).from(view));
+  if (!viewResult.error) return viewResult;
+  // Backwards-compatible only while the security migration is being rolled out.
+  // Once base-table public policies are removed this fallback fails closed.
+  return (buildLegacy ?? build)((supabase as any).from(legacyTable));
 }
 
 function normalizeUpsellDiscountType(value: unknown): Upsell["discountType"] {

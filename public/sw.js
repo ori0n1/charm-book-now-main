@@ -1,10 +1,25 @@
-const CACHE_VERSION = "bellza-pwa-v20260729-push-activation-fix";
+const CACHE_VERSION = "bellza-pwa-v20260911-push-pwa-v2";
 const APP_CACHE = `${CACHE_VERSION}-app`;
+const PUSH_DEDUPE_CACHE = "bellza-push-dedupe-v1";
+const BRAND_ASSET_VERSION = "20260911-push-pwa-v2";
+const pushDisplaysInFlight = new Set();
 const IS_UPDATE = Boolean(self.registration.active);
 const STATIC_ASSETS = [
-  "/bellza-logo.png",
-  "/pwa-icon.svg",
+  `/bellza-logo.svg?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-logo-white.svg?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-symbol.svg?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-symbol-white.svg?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-app-icon.svg?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-app-icon-dark.svg?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-app-icon-192.png?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-app-icon-512.png?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-apple-touch-icon.png?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-favicon.svg?v=${BRAND_ASSET_VERSION}`,
+  `/bellza-symbol-dark.svg?v=${BRAND_ASSET_VERSION}`,
 ];
+const STATIC_ASSET_PATHS = new Set(
+  STATIC_ASSETS.map((asset) => new URL(asset, self.location.origin).pathname),
+);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -37,7 +52,8 @@ self.addEventListener("activate", (event) => {
         await Promise.all(
           clientList.map((client) => {
             const clientUrl = new URL(client.url);
-            if (clientUrl.origin !== self.location.origin || !("navigate" in client)) return undefined;
+            if (clientUrl.origin !== self.location.origin || !("navigate" in client))
+              return undefined;
             return client.navigate(client.url).catch(() => undefined);
           }),
         );
@@ -63,19 +79,25 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.pathname.endsWith(".webmanifest") || url.pathname.includes("/api/public/studio-manifest/")) {
+  if (
+    url.pathname.endsWith(".webmanifest") ||
+    url.pathname.includes("/api/public/studio-manifest/")
+  ) {
     event.respondWith(fetch(request, { cache: "no-store" }).catch(() => Response.error()));
     return;
   }
 
-  if (STATIC_ASSETS.includes(url.pathname)) {
+  if (STATIC_ASSET_PATHS.has(url.pathname)) {
     event.respondWith(
       caches.match(request).then((cached) => {
         const fresh = fetch(request)
           .then((response) => {
             if (response.ok) {
               const clone = response.clone();
-              caches.open(APP_CACHE).then((cache) => cache.put(request, clone)).catch(() => undefined);
+              caches
+                .open(APP_CACHE)
+                .then((cache) => cache.put(request, clone))
+                .catch(() => undefined);
             }
             return response;
           })
@@ -88,11 +110,11 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
-  const title = payload.title || "Bellza";
+  const title = stripPushSourceAttribution(payload.title) || "Bellza";
   const options = {
-    body: payload.body || "",
-    icon: payload.icon || "/pwa-icon.svg",
-    badge: payload.badge || "/pwa-icon.svg",
+    body: stripPushSourceAttribution(payload.body),
+    icon: payload.icon || `/bellza-app-icon-192.png?v=${BRAND_ASSET_VERSION}`,
+    badge: payload.badge || `/bellza-symbol-dark.svg?v=${BRAND_ASSET_VERSION}`,
     tag: payload.tag || payload.url || "bellza-notification",
     data: {
       url: payload.url || "/",
@@ -106,8 +128,9 @@ self.addEventListener("push", (event) => {
     receiptToken: payload.data?.receiptToken,
   };
   const received = acknowledgePushReceipt(receipt, "received");
-  const displayed = self.registration
-    .showNotification(title, options)
+  const identity =
+    payload.data?.dedupeKey || payload.data?.deliveryId || payload.data?.notificationId || null;
+  const displayed = showPushNotificationOnce(identity, title, options)
     .then(() => acknowledgePushReceipt(receipt, "displayed"))
     .catch((error) => {
       console.error("[push] notification_display_failed", {
@@ -120,11 +143,39 @@ self.addEventListener("push", (event) => {
   event.waitUntil(Promise.allSettled([received, displayed]));
 });
 
+async function showPushNotificationOnce(identity, title, options) {
+  if (!identity) {
+    await self.registration.showNotification(title, options);
+    return;
+  }
+
+  const key = String(identity);
+  if (pushDisplaysInFlight.has(key)) return;
+  pushDisplaysInFlight.add(key);
+  try {
+    const cache = await caches.open(PUSH_DEDUPE_CACHE);
+    const marker = new Request(
+      `${self.location.origin}/__bellza_push_dedupe__/${encodeURIComponent(key)}`,
+    );
+    if (await cache.match(marker)) return;
+
+    await self.registration.showNotification(title, options);
+    await cache.put(marker, new Response(String(Date.now())));
+
+    const keys = await cache.keys();
+    if (keys.length > 256) {
+      await Promise.all(keys.slice(0, keys.length - 256).map((request) => cache.delete(request)));
+    }
+  } finally {
+    pushDisplaysInFlight.delete(key);
+  }
+}
+
 self.addEventListener("pushsubscriptionchange", (event) => {
   event.waitUntil(
     renewChangedPushSubscription(event).then((subscription) =>
       self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
+        for (const client of clientList) {
           client.postMessage({
             type: "BELLZA_PUSH_SUBSCRIPTION_CHANGED",
             subscription: subscription?.toJSON?.() || null,
@@ -158,22 +209,27 @@ self.addEventListener("notificationclick", (event) => {
   const targetPath = target.pathname;
 
   event.waitUntil(
-    self.clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clientList) => {
-        for (const client of clientList) {
-          const clientUrl = new URL(client.url);
-          const clientPath = clientUrl.pathname;
-          if ("focus" in client && (client.url === targetUrl || clientPath === targetPath || clientUrl.origin === self.location.origin)) {
-            if ("navigate" in client && client.url !== targetUrl) {
-              return client.navigate(targetUrl).then((navigatedClient) => (navigatedClient || client).focus());
-            }
-            return client.focus();
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        const clientUrl = new URL(client.url);
+        const clientPath = clientUrl.pathname;
+        if (
+          "focus" in client &&
+          (client.url === targetUrl ||
+            clientPath === targetPath ||
+            clientUrl.origin === self.location.origin)
+        ) {
+          if ("navigate" in client && client.url !== targetUrl) {
+            return client
+              .navigate(targetUrl)
+              .then((navigatedClient) => (navigatedClient || client).focus());
           }
+          return client.focus();
         }
-        if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
-        return undefined;
-      }),
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+      return undefined;
+    }),
   );
 });
 
@@ -184,6 +240,13 @@ function readPushPayload(event) {
   } catch {
     return { title: "Bellza", body: event.data.text() };
   }
+}
+
+function stripPushSourceAttribution(value) {
+  return String(value || "")
+    .replace(/^\s*from\s*[:\-–—]?\s*/i, "")
+    .replace(/\s+(?:[•·\-–—]\s*)?from\s+[^\n]+$/i, "")
+    .trim();
 }
 
 async function acknowledgePushReceipt(receipt, stage) {

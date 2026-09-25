@@ -2,6 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { getSettledSession } from "@/lib/auth-landing";
 import { normalizeBusinessSegment, type BusinessSegment } from "@/lib/segments";
+import { normalizeStudioTimeZone } from "@/lib/studio-time";
+import { normalizePlanTier, type PlanTier } from "@/lib/plan-entitlements";
+import { ADMIN_REFERENCE_GC_MS, ADMIN_REFERENCE_STALE_MS } from "@/lib/admin-query-cache";
 
 export type CurrentStudio = {
   id: string;
@@ -19,6 +22,8 @@ export type CurrentStudio = {
   payment_policy: string;
   min_booking_notice_min: number;
   staff_agenda_visibility: "private" | "team_busy" | "team_basic";
+  timezone: string;
+  plan_tier: PlanTier;
 };
 
 export type AppRole = "saas_owner" | "studio_owner" | "manager" | "staff" | "desk_staff";
@@ -34,7 +39,7 @@ async function fetchStudios(): Promise<CurrentStudio[]> {
   const full = await supabase
     .from("user_roles")
     .select(
-      "studio_id,role, studios:studio_id(id,name,owner_name,slug,business_segment,commission_percent,deposit_percent,deposit_recipient,deposit_professional_percent,payment_policy,min_booking_notice_min,staff_agenda_visibility)",
+      "studio_id,role, studios:studio_id(id,name,owner_name,slug,business_segment,commission_percent,deposit_percent,deposit_recipient,deposit_professional_percent,payment_policy,min_booking_notice_min,staff_agenda_visibility,timezone,plan_tier)",
     );
   if (!full.error) return withStaffIdentity(normalizeStudios(full.data), userId);
 
@@ -72,6 +77,8 @@ function normalizeStudios(data: unknown): CurrentStudio[] {
         payment_policy: studio.payment_policy ?? "pay_in_studio",
         min_booking_notice_min: studio.min_booking_notice_min ?? 30,
         staff_agenda_visibility: studio.staff_agenda_visibility ?? "private",
+        timezone: normalizeStudioTimeZone(studio.timezone),
+        plan_tier: normalizePlanTier(studio.plan_tier),
       };
     })
     .filter((s: CurrentStudio | null): s is CurrentStudio => !!s)
@@ -115,11 +122,11 @@ export function useCurrentStudio() {
   const query = useQuery({
     queryKey: ["current-studio"],
     queryFn: fetchStudios,
-    staleTime: 0,
-    gcTime: 0,
+    staleTime: ADMIN_REFERENCE_STALE_MS,
+    gcTime: ADMIN_REFERENCE_GC_MS,
     enabled: typeof window !== "undefined",
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
+    refetchOnMount: false,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 

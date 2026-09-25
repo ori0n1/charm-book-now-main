@@ -2,36 +2,81 @@ import { APP_BRAND } from "@/lib/app-brand";
 
 export const PRICING_PLANS = [
   {
-    id: "monthly",
-    name: "Premium Mensal",
-    price: "8,99 €",
-    cadence: "/mês",
-    total: "Cancele quando quiser",
-    equivalent: "Teste gratuito de 14 dias incluído",
-    badges: ["Sem fidelização", "Preço de lançamento"],
+    id: "free",
+    name: "Free",
+    monthlyPrice: "0 €",
+    yearlyPrice: "0 €",
+    monthlyPlanId: null,
+    yearlyPlanId: null,
+    positioning: "Começar",
+    annualSaving: null,
+    tagline: "Comece a receber marcações online.",
+    features: [
+      "Agenda e reservas online",
+      "Página pública do seu estúdio",
+      "Serviços, clientes e 1 profissional",
+    ],
+    cta: "Começar grátis",
     highlighted: false,
   },
   {
-    id: "yearly",
-    name: "Premium Anual",
-    price: "89,99 €",
-    cadence: "/ano",
-    total: "Equivale a 7,50 €/mês",
-    equivalent: "Poupe cerca de 17% face ao mensal",
-    badges: ["Recomendado", "Condições de lançamento"],
+    id: "pro",
+    name: "Pro",
+    monthlyPrice: "12,99 €",
+    yearlyPrice: "129 €",
+    monthlyPlanId: "pro_monthly",
+    yearlyPlanId: "pro_yearly",
+    positioning: "Gerir",
+    annualSaving: "Poupe 26,88 € por ano",
+    tagline: "Tudo para gerir o seu negócio.",
+    features: [
+      "Equipa e agendas até 3 profissionais",
+      "Pagamentos, sinais e notificações",
+      "Clientes, presença e relatórios",
+    ],
+    cta: "Escolher Pro",
     highlighted: true,
+  },
+  {
+    id: "premium",
+    name: "Premium",
+    monthlyPrice: "24,99 €",
+    yearlyPrice: "249 €",
+    monthlyPlanId: "premium_monthly",
+    yearlyPlanId: "premium_yearly",
+    positioning: "Crescer",
+    annualSaving: "Poupe 50,88 € por ano",
+    tagline: "Automatize, fidelize e cresça.",
+    features: [
+      "WhatsApp e automações com franquia",
+      "Fidelidade, promoções e campanhas",
+      "Financeiro, equipa e relatórios avançados",
+    ],
+    cta: "Escolher Premium",
+    highlighted: false,
   },
 ] as const;
 
+export const PLAN_COMPARISON = [
+  { feature: "Agenda e marcações manuais", free: "Incluído", pro: "Incluído", premium: "Incluído" },
+  { feature: "Agendamento online e página pública", free: "Incluído", pro: "Incluído", premium: "Incluído" },
+  { feature: "Profissionais ativos", free: "1", pro: "Até 3", premium: "Sem limite" },
+  { feature: "Gestão completa de clientes e equipa", free: "—", pro: "Incluído", premium: "Incluído" },
+  { feature: "Pagamentos e sinal online", free: "—", pro: "Incluído", premium: "Incluído" },
+  { feature: "Notificações e relatórios básicos", free: "—", pro: "Incluído", premium: "Incluído" },
+  { feature: "Presença, faltas e avaliações", free: "—", pro: "Incluído", premium: "Incluído" },
+  { feature: "WhatsApp e automações", free: "—", pro: "—", premium: "Incluído*" },
+  { feature: "Fidelidade, promoções e campanhas", free: "—", pro: "—", premium: "Incluído" },
+  { feature: "Financeiro, equipa e relatórios avançados", free: "—", pro: "—", premium: "Incluído" },
+] as const;
+
 export const PLAN_FEATURES = [
-  "Aplicativo próprio do estúdio em formato PWA",
-  "Página pública própria com link exclusivo",
-  "Múltiplos profissionais, clientes e serviços",
-  "Agenda online, disponibilidade e reservas",
-  "Mensagens automáticas e notificações",
-  "Pagamentos online, sinais, caixa e relatórios",
-  "Programa de indicação com crédito mensal",
-  "Suporte, atualizações contínuas e 14 dias grátis",
+  "Agenda e marcações manuais",
+  "Agendamento online e página pública",
+  "Gestão de clientes, serviços e horários",
+  "Pagamentos e sinal online a partir do Pro",
+  "WhatsApp e automações no Premium",
+  "14 dias de Premium gratuitos, sem perda de dados ao terminar",
 ] as const;
 
 export const TRUST_PILLARS = [
@@ -124,7 +169,17 @@ export const LANDING_FAQS = [
   {
     question: "Tenho limites de profissionais ou clientes?",
     answer:
-      "Durante a fase de lançamento, o plano inclui as funcionalidades atuais para gerir profissionais, clientes, serviços, mensagens automáticas e notificações no uso normal do estúdio.",
+      "O Free permite 1 profissional e gestão básica de clientes. O Pro permite até 3 profissionais e gestão completa. O Premium inclui recursos avançados de equipa sem limite de profissionais definido. Os dados permanecem guardados quando muda de plano.",
+  },
+  {
+    question: "O que acontece se eu continuar no plano Free?",
+    answer:
+      "Continua a utilizar agenda, marcações manuais, serviços, horários, clientes básicos e a sua página pública com 1 profissional. Pagamentos online, notificações e recursos avançados ficam indisponíveis, mas os dados já criados não são apagados.",
+  },
+  {
+    question: "O WhatsApp está incluído em que plano?",
+    answer:
+      "O WhatsApp e as automações estão disponíveis no Premium e sujeitos à franquia e aos limites de utilização contratados. A Bellza apresenta esses limites antes da contratação ou de qualquer cobrança adicional.",
   },
   {
     question: "Os clientes conseguem marcar online?",

@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Check, Loader2, LockKeyhole, MessageCircle } from "lucide-react";
+import { BrandLoadingState } from "@/components/brand-loading-state";
 import { toast } from "sonner";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingHeader } from "@/components/landing/landing-header";
@@ -10,7 +11,13 @@ import { acceptStaffInviteLink, getStaffInviteLink } from "@/lib/access.function
 import { APP_BRAND } from "@/lib/app-brand";
 
 export const Route = createFileRoute("/convite-equipa/$token")({
-  head: () => ({ meta: [{ title: `Convite - ${APP_BRAND.name}` }] }),
+  head: () => ({
+    meta: [
+      { title: `Convite - ${APP_BRAND.name}` },
+      { name: "robots", content: "noindex,nofollow,noarchive" },
+      { name: "referrer", content: "no-referrer" },
+    ],
+  }),
   component: TeamInvitePage,
 });
 
@@ -21,7 +28,7 @@ type Invite = {
   whatsapp: string;
   photoUrl: string | null;
   status: string;
-  inviteCode: string | null;
+  requiresCode: boolean;
   expiresAt: string | null;
 };
 
@@ -59,13 +66,15 @@ function TeamInvitePage() {
     event.preventDefault();
     if (!invite || saving) return;
     if (password !== confirm) return toast.error("As palavras-passe não coincidem.");
-    if (password.length < 6) return toast.error("A palavra-passe deve ter pelo menos 6 caracteres.");
+    if (password.length < 10) return toast.error("A palavra-passe deve ter pelo menos 10 caracteres.");
+    if (invite.requiresCode && !code.trim()) return toast.error("Introduza o código de acesso.");
     setSaving(true);
     try {
       const result = (await acceptInvite({ data: { token, password, code } })) as {
         email: string;
         landing: string;
       };
+      window.history.replaceState({}, document.title, "/login");
       await supabase.auth.signOut();
       const { error } = await supabase.auth.signInWithPassword({
         email: result.email,
@@ -84,7 +93,7 @@ function TeamInvitePage() {
   if (checking) {
     return (
       <InviteShell>
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        <BrandLoadingState label="A validar convite..." tone="light" />
       </InviteShell>
     );
   }
@@ -145,11 +154,12 @@ function TeamInvitePage() {
           </div>
         </div>
 
-        <form onSubmit={onSubmit} className="mt-6 space-y-3">
-          {invite.inviteCode && (
+        <form method="post" action="/login" onSubmit={onSubmit} className="mt-6 space-y-3">
+          {invite.requiresCode && (
             <label className="block text-xs">
-              <span className="text-muted-foreground">Codigo de acesso opcional</span>
+              <span className="text-muted-foreground">Código de acesso</span>
               <input
+                required
                 value={code}
                 onChange={(event) => setCode(event.target.value.toUpperCase())}
                 placeholder="Ex.: A1B2C3"
@@ -162,10 +172,10 @@ function TeamInvitePage() {
             <input
               type="password"
               required
-              minLength={6}
+              minLength={10}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              placeholder="Minimo 6 caracteres"
+              placeholder="Mínimo 10 caracteres"
               className="public-input mt-1 w-full"
             />
           </label>
@@ -174,7 +184,7 @@ function TeamInvitePage() {
             <input
               type="password"
               required
-              minLength={6}
+              minLength={10}
               value={confirm}
               onChange={(event) => setConfirm(event.target.value)}
               placeholder="Repita a palavra-passe"
@@ -197,11 +207,11 @@ function TeamInvitePage() {
 
 function InviteShell({ children }: { children: ReactNode }) {
   return (
-    <div className="public-shell public-site-theme public-auth-surface min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme public-landing-theme public-auth-surface min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
-      <LandingHeader />
+      <LandingHeader brandTone="light" />
       <main className="relative grid min-h-[60vh] place-items-center px-4 py-10 sm:px-6 sm:py-14">{children}</main>
-      <LandingFooter />
+      <LandingFooter brandTone="light" />
     </div>
   );
 }

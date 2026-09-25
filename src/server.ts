@@ -2,6 +2,13 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import {
+  getCanonicalRedirectLocation,
+  handleCspReport,
+  isSensitivePublicPath,
+  withCspReportOnly,
+} from "./lib/http-security";
+import { SUPABASE_AUTH_COOKIE_NAME } from "./integrations/supabase/auth-config";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -18,26 +25,40 @@ async function getServerEntry(): Promise<ServerEntry> {
   return serverEntryPromise;
 }
 
-function brandedErrorResponse(): Response {
+function brandedErrorResponse(request?: Request): Response {
   return withSecurityHeaders(
     new Response(renderErrorPage(), {
       status: 500,
       headers: { "content-type": "text/html; charset=utf-8" },
     }),
+    request,
   );
 }
 
-function withSecurityHeaders(response: Response): Response {
+function withSecurityHeaders(response: Response, request?: Request): Response {
   const headers = new Headers(response.headers);
+  const isSecureRequest = request ? new URL(request.url).protocol === "https:" : true;
   headers.set("X-Content-Type-Options", "nosniff");
-  headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  const pathname = request ? new URL(request.url).pathname : "";
+  headers.set(
+    "Referrer-Policy",
+    isCredentialBearingAuthPath(pathname) ? "no-referrer" : "strict-origin-when-cross-origin",
+  );
   headers.set("X-Frame-Options", "DENY");
-  headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  if (isSecureRequest) {
+    headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  } else {
+    headers.delete("Strict-Transport-Security");
+  }
   headers.set(
     "Permissions-Policy",
     "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()",
   );
   headers.set("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  // CSP is intentionally observation-only during this rollout. Enforcing it
+  // before production violation data is reviewed could break auth or payments.
+  headers.delete("Content-Security-Policy");
+  headers.set("X-Permitted-Cross-Domain-Policies", "none");
 
   return new Response(response.body, {
     status: response.status,
@@ -58,6 +79,7 @@ function isPrivateIndexingPath(pathname: string): boolean {
     pathname.startsWith("/signup") ||
     pathname.startsWith("/forgot-password") ||
     pathname.startsWith("/reset-password") ||
+    pathname.startsWith("/convite-equipa") ||
     pathname.startsWith("/marcacao") ||
     pathname.startsWith("/r/")
   );
@@ -73,8 +95,9 @@ function withSeoHeaders(request: Request, response: Response): Response {
   const url = new URL(request.url);
   const headers = new Headers(response.headers);
   const isPrivate = isPrivateIndexingPath(url.pathname);
+  const isSandbox = process.env.STRIPE_ENV === "sandbox";
 
-  if (isPrivate) {
+  if (isPrivate || isSandbox) {
     headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
   } else if (
     (request.method === "GET" || request.method === "HEAD") &&
@@ -100,7 +123,11 @@ function withPwaUpdateHeaders(request: Request, response: Response): Response {
     url.pathname === "/manifest.webmanifest" ||
     url.pathname.startsWith("/api/public/studio-manifest/");
 
-  if (isVersionedAsset) {
+  const carriesAuth = requestCarriesAuth(request) || response.headers.has("set-cookie");
+
+  if (isPrivateHtmlPath(url.pathname)) {
+    setPrivateNoStore(headers);
+  } else if (isVersionedAsset) {
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
   } else if (isPwaMetadata) {
     headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
@@ -110,7 +137,10 @@ function withPwaUpdateHeaders(request: Request, response: Response): Response {
     (request.method === "GET" || request.method === "HEAD") &&
     contentType.includes("text/html")
   ) {
-    headers.set("Cache-Control", "no-cache, must-revalidate");
+    if (carriesAuth) setPrivateNoStore(headers);
+    else headers.set("Cache-Control", "no-cache, must-revalidate");
+  } else if (carriesAuth && isDynamicApplicationPath(url.pathname)) {
+    setPrivateNoStore(headers);
   }
 
   return new Response(response.body, {
@@ -120,11 +150,78 @@ function withPwaUpdateHeaders(request: Request, response: Response): Response {
   });
 }
 
+function isPrivateHtmlPath(pathname: string) {
+  return (
+    pathname === "/admin" ||
+    pathname.startsWith("/admin/") ||
+    pathname === "/onboarding" ||
+    pathname.startsWith("/onboarding/")
+  );
+}
+
+function isCredentialBearingAuthPath(pathname: string) {
+  return (
+    pathname === "/auth/callback" ||
+    pathname === "/reset-password" ||
+    pathname.startsWith("/convite-equipa/")
+  );
+}
+
+function isDynamicApplicationPath(pathname: string) {
+  return pathname.startsWith("/api/") || pathname.startsWith("/_serverFn/");
+}
+
+function requestCarriesAuth(request: Request) {
+  if (request.headers.has("authorization")) return true;
+  const cookie = request.headers.get("cookie") ?? "";
+  return cookie
+    .split(";")
+    .map((part) => part.slice(0, Math.max(part.indexOf("="), 0)).trim())
+    .some(
+      (name) => name === SUPABASE_AUTH_COOKIE_NAME || name.startsWith(`${SUPABASE_AUTH_COOKIE_NAME}.`),
+    );
+}
+
+function setPrivateNoStore(headers: Headers) {
+  headers.set("Cache-Control", "private, no-store");
+  headers.set("Pragma", "no-cache");
+  headers.set("Expires", "0");
+  mergeVary(headers, "Cookie");
+  mergeVary(headers, "Authorization");
+}
+
+function mergeVary(headers: Headers, value: string) {
+  const values = new Set(
+    (headers.get("Vary") ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+  values.add(value);
+  headers.set("Vary", [...values].join(", "));
+}
+
 function canonicalHostRedirect(request: Request): Response | null {
-  // Do not redirect between bellza.pt and www.bellza.pt. Installed PWAs are
-  // origin-scoped; redirecting an existing www installation to the bare domain
-  // can make the OS open the target as a normal browser tab instead of the app.
-  return null;
+  const location = getCanonicalRedirectLocation(request);
+  if (!location) return null;
+
+  return new Response(null, {
+    status: 308,
+    headers: {
+      Location: location,
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+}
+
+function sensitivePathNotFound(): Response {
+  return new Response("Not Found", {
+    status: 404,
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "text/plain; charset=utf-8",
+    },
+  });
 }
 
 function isCatastrophicSsrErrorBody(body: string, responseStatus: number): boolean {
@@ -172,20 +269,31 @@ export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
     try {
       const redirect = canonicalHostRedirect(request);
-      if (redirect) return withSecurityHeaders(redirect);
+      if (redirect) return withSecurityHeaders(redirect, request);
+
+      const url = new URL(request.url);
+      if (isSensitivePublicPath(url.pathname)) {
+        return withSecurityHeaders(sensitivePathNotFound(), request);
+      }
+
+      const cspReport = await handleCspReport(request);
+      if (cspReport) return withSecurityHeaders(cspReport, request);
 
       const handler = await getServerEntry();
       const response = await handler.fetch(request, env, ctx);
-      return withPwaUpdateHeaders(
+      return withCspReportOnly(
         request,
-        withSeoHeaders(
+        withPwaUpdateHeaders(
           request,
-          withSecurityHeaders(await normalizeCatastrophicSsrResponse(response)),
+          withSeoHeaders(
+            request,
+            withSecurityHeaders(await normalizeCatastrophicSsrResponse(response), request),
+          ),
         ),
       );
     } catch (error) {
       console.error(error);
-      return brandedErrorResponse();
+      return withCspReportOnly(request, brandedErrorResponse(request));
     }
   },
   async scheduled(
@@ -195,17 +303,9 @@ export default {
   ) {
     ctx.waitUntil(
       Promise.all([
-        import("./lib/notification-dispatcher.server")
-          .then((module) => module.dispatchPendingStudioPushNotifications())
-          .catch((error) => console.error("studio_push_dispatch_failed", error)),
-        import("./lib/public-client.functions")
-          .then((module) =>
-            Promise.all([
-              module.dispatchPendingClientPushNotifications(),
-              module.dispatchPendingClientCenterPushNotifications(),
-            ]),
-          )
-          .catch((error) => console.error("client_push_dispatch_failed", error)),
+        import("./lib/appointment-lifecycle.server")
+          .then((module) => module.dispatchDueAppointmentLifecycle())
+          .catch((error) => console.error("appointment_lifecycle_dispatch_failed", error)),
         import("./lib/whatsapp.functions")
           .then(async (module) => {
             await module.dispatchMissingAppointmentWhatsAppConfirmations();

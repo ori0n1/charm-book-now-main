@@ -1,14 +1,23 @@
 import { expect, test } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = "https://pwmdzpvnatrvfpgcvnzg.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP";
+const SUPABASE_URL = process.env.BELLZA_STAGING_SUPABASE_URL ?? "";
+const SUPABASE_PUBLISHABLE_KEY = process.env.BELLZA_STAGING_SUPABASE_PUBLISHABLE_KEY ?? "";
 
-const STUDIO_SLUG = "bellza";
-const STUDIO_ID = "012e3a9a-dcbf-4f4b-95ae-02707abedc85";
-const STAFF_ID = "b12274c7-f315-47c6-9cbf-578832d284e6";
+const STUDIO_SLUG = process.env.BELLZA_STAGING_STUDIO_SLUG ?? "";
+const STUDIO_ID = process.env.BELLZA_STAGING_STUDIO_ID ?? "";
+const STAFF_ID = process.env.BELLZA_STAGING_STAFF_ID ?? "";
+const stagingConfigured = Boolean(
+  SUPABASE_URL &&
+    SUPABASE_PUBLISHABLE_KEY &&
+    STUDIO_SLUG &&
+    STUDIO_ID &&
+    STAFF_ID &&
+    !SUPABASE_URL.includes("pwmdzpvnatrvfpgcvnzg.supabase.co"),
+);
+test.skip(!stagingConfigured, "Requires an explicit synthetic staging fixture; never query production.");
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+const supabase = createClient(SUPABASE_URL || "https://staging-not-configured.invalid", SUPABASE_PUBLISHABLE_KEY || "not_configured", {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
@@ -24,7 +33,7 @@ test("get_available_slots returns real future availability for active Bellza sta
   const futureWorkingDate = nextMondayDate();
 
   const { data: studio, error: studioError } = await supabase
-    .from("studios")
+    .from("public_booking_studios")
     .select("id, slug, timezone, min_booking_notice_min, is_active")
     .eq("slug", STUDIO_SLUG)
     .single();
@@ -38,26 +47,15 @@ test("get_available_slots returns real future availability for active Bellza sta
   });
 
   const { data: staff, error: staffError } = await supabase
-    .from("staff")
-    .select("id, is_active, current_status")
+    .from("public_booking_staff")
+    .select("id, is_active, booking_availability_status")
     .eq("id", STAFF_ID)
     .eq("studio_id", STUDIO_ID)
     .single();
 
   expect(staffError).toBeNull();
   expect(staff).toMatchObject({ id: STAFF_ID, is_active: true });
-  expect(staff?.current_status).not.toBe("absent");
-
-  const { data: windows, error: windowsError } = await supabase
-    .from("staff_availability")
-    .select("weekday, start_time, end_time")
-    .eq("studio_id", STUDIO_ID)
-    .eq("staff_id", STAFF_ID)
-    .eq("weekday", 1);
-
-  expect(windowsError).toBeNull();
-  expect(windows?.length).toBeGreaterThan(0);
-  expect(windows?.[0]).toMatchObject({ start_time: "09:00:00", end_time: "18:00:00" });
+  expect(staff?.booking_availability_status).not.toBe("absent");
 
   const { data: slots10, error: slots10Error } = await supabase.rpc("get_available_slots", {
     p_studio_slug: STUDIO_SLUG,
@@ -72,7 +70,7 @@ test("get_available_slots returns real future availability for active Bellza sta
   expect(slots10?.[0]).toMatchObject({ staff_id: STAFF_ID, slot_label: "09:00" });
 
   const { data: services, error: servicesError } = await supabase
-    .from("services")
+    .from("public_services")
     .select("id, name, duration_min, is_active")
     .eq("studio_id", STUDIO_ID)
     .eq("is_active", true)

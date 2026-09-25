@@ -1,9 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { ArrowRight, CalendarDays, Clock3, Home } from "lucide-react";
 import { BlogCard } from "@/components/blog/blog-card";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingHeader } from "@/components/landing/landing-header";
 import { APP_BRAND } from "@/lib/app-brand";
+import { serializeJsonForHtmlScript } from "@/lib/output-safety";
 import {
   BLOG_BASE_URL,
   getArticleFAQSchema,
@@ -15,6 +16,10 @@ import {
 } from "@/lib/blog";
 
 export const Route = createFileRoute("/blog/$slug")({
+  loader: ({ params }) => {
+    if (!getBlogArticle(params.slug)) throw notFound();
+    return { slug: params.slug };
+  },
   head: ({ params }) => {
     const article = getBlogArticle(params.slug);
     if (!article) {
@@ -66,8 +71,8 @@ function BlogArticlePage() {
 
   if (!article) {
     return (
-      <div className="public-shell public-site-theme min-h-screen">
-        <LandingHeader />
+      <div className="public-shell public-site-theme public-landing-theme min-h-screen">
+        <LandingHeader brandTone="light" />
         <main className="mx-auto max-w-3xl px-4 py-20 text-center sm:px-6">
           <h1 className="text-3xl font-semibold tracking-tight">Artigo não encontrado</h1>
           <p className="mt-3 text-muted-foreground">Este conteúdo pode ter sido removido ou alterado.</p>
@@ -75,7 +80,7 @@ function BlogArticlePage() {
             Voltar ao Blog
           </Link>
         </main>
-        <LandingFooter />
+        <LandingFooter brandTone="light" />
       </div>
     );
   }
@@ -84,23 +89,23 @@ function BlogArticlePage() {
   const faqSchema = getArticleFAQSchema(article);
 
   return (
-    <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme public-landing-theme min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(getArticleSchema(article)) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonForHtmlScript(getArticleSchema(article)) }}
       />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(getBreadcrumbSchema(article)) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonForHtmlScript(getBreadcrumbSchema(article)) }}
       />
       {faqSchema && (
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+          dangerouslySetInnerHTML={{ __html: serializeJsonForHtmlScript(faqSchema) }}
         />
       )}
-      <LandingHeader />
+      <LandingHeader brandTone="light" />
 
       <main>
         <article>
@@ -311,7 +316,7 @@ function BlogArticlePage() {
         )}
       </main>
 
-      <LandingFooter />
+      <LandingFooter brandTone="light" />
     </div>
   );
 }

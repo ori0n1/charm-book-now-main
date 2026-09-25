@@ -18,7 +18,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
-import { sendFollowerNotification } from "@/lib/studio-follows.functions";
+import {
+  getClientAtRiskCampaignStatus,
+  sendFollowerNotification,
+  type ClientAtRiskCampaignStatus,
+} from "@/lib/studio-follows.functions";
 import {
   getWhatsAppSettings,
   saveWhatsAppSettings,
@@ -164,6 +168,7 @@ function WhatsAppPage() {
   const saveSettings = useServerFn(saveWhatsAppSettings);
   const loadCommercialStatus = useServerFn(getWhatsAppCommercialStatus);
   const notifyFollowers = useServerFn(sendFollowerNotification);
+  const loadAtRiskStatus = useServerFn(getClientAtRiskCampaignStatus);
 
   const [settings, setSettings] = useState<WhatsAppSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -179,6 +184,13 @@ function WhatsAppPage() {
     enabled: Boolean(studio?.id),
     queryFn: () => loadCommercialStatus({ data: { studioId: studio!.id } }),
     staleTime: 30_000,
+  });
+  const atRiskCampaign = useQuery<ClientAtRiskCampaignStatus>({
+    queryKey: ["client-at-risk-campaign-status", studio?.id],
+    enabled: Boolean(studio?.id),
+    queryFn: () => loadAtRiskStatus({ data: { studioId: studio!.id } }),
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
   });
 
   useEffect(() => {
@@ -226,6 +238,7 @@ function WhatsAppPage() {
 
   async function sendCommunityNotification() {
     if (!studio) return;
+    if (communityKind === "client_at_risk" && !atRiskCampaign.data?.newAtRiskCount) return;
     setCommunityBusy(true);
     try {
       const result = await notifyFollowers({
@@ -236,12 +249,25 @@ function WhatsAppPage() {
           body: communityBody,
         },
       });
-      if ((result as any)?.skipped === "cooldown") {
+      if ((result as any)?.skipped === "no_at_risk") {
+        toast.info("Não existem clientes em risco neste momento.");
+      } else if ((result as any)?.skipped === "no_reachable_at_risk") {
+        toast.info("Os clientes em risco ainda não seguem o estúdio no app.");
+      } else if ((result as any)?.skipped === "no_new_at_risk") {
+        toast.info("Todos os clientes em risco atuais já receberam esta reativação.");
+      } else if ((result as any)?.skipped === "cooldown") {
         toast.info(
           "Já foi enviado um aviso deste tipo há pouco tempo. Tente novamente mais tarde.",
         );
       } else if ((result as any)?.skipped === "no_followers") {
         toast.info("Ainda não existem clientes seguidores para este estúdio.");
+      } else if (communityKind === "client_at_risk") {
+        const recipients = Number((result as any)?.followers ?? 0);
+        toast.success(
+          (result as any)?.sent === 0
+            ? `Reativação disponibilizada na central de ${recipients} cliente${recipients === 1 ? "" : "s"} em risco.`
+            : `Reativação enviada a ${recipients} cliente${recipients === 1 ? "" : "s"} em risco.`,
+        );
       } else if ((result as any)?.sent === 0) {
         toast.success(
           "Aviso guardado na central dos seguidores. Ative as permissões push para receber fora do app.",
@@ -249,6 +275,7 @@ function WhatsAppPage() {
       } else {
         toast.success("Aviso enviado à comunidade do estúdio.");
       }
+      if (communityKind === "client_at_risk") await atRiskCampaign.refetch();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível enviar o aviso.");
     } finally {
@@ -275,6 +302,10 @@ function WhatsAppPage() {
   const selectedCommunityKind =
     communityCampaigns.find((item) => item.kind === communityKind) ?? communityCampaigns[0];
   const SelectedCommunityIcon = selectedCommunityKind.icon;
+  const riskStatus = atRiskCampaign.data;
+  const riskCampaignSelected = communityKind === "client_at_risk";
+  const riskSendUnavailable =
+    riskCampaignSelected && (atRiskCampaign.isLoading || !riskStatus?.newAtRiskCount);
 
   return (
     <div className="mx-auto flex w-full max-w-[88rem] flex-col gap-2.5 pb-24 md:gap-4 md:pb-6">
@@ -376,6 +407,20 @@ function WhatsAppPage() {
                       <span className="mt-0.5 block min-h-[2rem] min-w-0 whitespace-normal break-normal text-[12px] font-semibold leading-[1.2] hyphens-none sm:min-h-0 sm:text-[13px] sm:leading-snug md:text-sm">
                         {item.label}
                       </span>
+                      {item.kind === "client_at_risk" && (
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-medium leading-tight text-rose-700 dark:text-rose-300">
+                          {atRiskCampaign.isError
+                            ? "Não foi possível verificar"
+                            : atRiskCampaign.isLoading
+                            ? "A verificar clientes..."
+                            : `${riskStatus?.atRiskCount ?? 0} cliente${riskStatus?.atRiskCount === 1 ? "" : "s"} em risco`}
+                          {(riskStatus?.newAtRiskCount ?? 0) > 0 && (
+                            <span className="rounded-full bg-rose-500/12 px-1.5 py-0.5 font-bold">
+                              {riskStatus!.newAtRiskCount} novo{riskStatus!.newAtRiskCount === 1 ? "" : "s"}
+                            </span>
+                          )}
+                        </span>
+                      )}
                     </span>
                   </button>
                 );
@@ -416,8 +461,9 @@ function WhatsAppPage() {
 
             <div className="flex flex-col gap-2 rounded-2xl bg-muted/10 p-3 text-xs leading-relaxed text-muted-foreground ring-1 ring-border/35 sm:flex-row sm:items-center sm:justify-between">
               <span className="min-w-0">
-                Para evitar spam, avisos repetidos do mesmo tipo ficam limitados por um curto
-                intervalo.
+                {riskCampaignSelected
+                  ? "A reativação é enviada apenas uma vez por episódio de risco e somente a clientes elegíveis."
+                  : "Para evitar spam, avisos repetidos do mesmo tipo ficam limitados por um curto intervalo."}
               </span>
               <span className="w-fit shrink-0 rounded-full bg-background/70 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 Envio com consentimento
@@ -451,18 +497,62 @@ function WhatsAppPage() {
                 O aviso aparece na central do cliente e, quando permitido pelo navegador, também
                 chega como push no PWA.
               </p>
+              {riskCampaignSelected && (
+                <div className="mt-3 rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 text-xs leading-relaxed">
+                  <p className="font-semibold text-foreground">
+                    {atRiskCampaign.isError
+                      ? "Não foi possível verificar os clientes em risco"
+                      : atRiskCampaign.isLoading
+                      ? "A verificar clientes em risco..."
+                      : `${riskStatus?.atRiskCount ?? 0} cliente${riskStatus?.atRiskCount === 1 ? "" : "s"} em risco`}
+                  </p>
+                  {!atRiskCampaign.isLoading && !atRiskCampaign.isError && (riskStatus?.atRiskCount ?? 0) === 0 && (
+                    <p className="mt-1 text-muted-foreground">
+                      Não há clientes que cumpram os critérios de reativação neste momento.
+                    </p>
+                  )}
+                  {(riskStatus?.atRiskCount ?? 0) > 0 && (riskStatus?.reachableCount ?? 0) === 0 && (
+                    <p className="mt-1 text-muted-foreground">
+                      Estes clientes ainda não seguem o estúdio no app e não podem receber esta campanha.
+                    </p>
+                  )}
+                  {(riskStatus?.reachableCount ?? 0) > 0 && (riskStatus?.newAtRiskCount ?? 0) === 0 && (
+                    <p className="mt-1 text-muted-foreground">
+                      Nenhum novo envio necessário. Os clientes elegíveis atuais já foram avisados.
+                    </p>
+                  )}
+                  {(riskStatus?.newAtRiskCount ?? 0) > 0 && (
+                    <p className="mt-1 font-medium text-rose-700 dark:text-rose-300">
+                      {riskStatus!.newAtRiskCount} novo{riskStatus!.newAtRiskCount === 1 ? " cliente pode" : "s clientes podem"} receber a reativação.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             <button
               type="button"
               onClick={sendCommunityNotification}
               disabled={
-                communityBusy || communityTitle.trim().length < 3 || communityBody.trim().length < 8
+                communityBusy ||
+                riskSendUnavailable ||
+                communityTitle.trim().length < 3 ||
+                communityBody.trim().length < 8
               }
               className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-full bg-foreground px-4 text-xs font-bold uppercase tracking-[0.08em] text-background shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Send className="h-4 w-4" />
-              {communityBusy ? "A enviar..." : "Enviar aviso"}
+              {communityBusy
+                ? "A enviar..."
+                : riskCampaignSelected && atRiskCampaign.isLoading
+                  ? "A verificar..."
+                  : riskCampaignSelected && atRiskCampaign.isError
+                    ? "Verificação indisponível"
+                  : riskCampaignSelected && !riskStatus?.newAtRiskCount
+                    ? "Sem novos clientes"
+                    : riskCampaignSelected
+                      ? `Enviar a ${riskStatus!.newAtRiskCount}`
+                      : "Enviar aviso"}
             </button>
           </aside>
         </div>

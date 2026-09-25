@@ -125,7 +125,9 @@ export const getCustomerLoyaltyAdminSummary = createServerFn({ method: "POST" })
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertStudioAccess(sb, (context as any).userId, data.studioId);
+    await assertStudioAccess(sb, (context as any).userId, data.studioId, {
+      entitlement: "loyalty",
+    });
     return loadCustomerLoyaltyAdminSummary(data.studioId);
   });
 
@@ -134,7 +136,9 @@ export const updateCustomerLoyaltySettings = createServerFn({ method: "POST" })
   .inputValidator((input) => SettingsInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertStudioAccess(sb, (context as any).userId, data.studioId);
+    await assertStudioAccess(sb, (context as any).userId, data.studioId, {
+      entitlement: "loyalty",
+    });
     const payload = {
       studio_id: data.studioId,
       enabled: data.enabled,

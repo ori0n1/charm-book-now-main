@@ -2,9 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertStudioAccess } from "@/lib/server-security";
+import { assertStudioOwnerAccess } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
-import { createStripeClient, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
+import { createStripeClient, getConfiguredStripeEnv, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
+import { readConnectedAccountResponsibility } from "@/lib/stripe-connect-integrity.server";
 
 const StudioInput = z.object({ studioId: z.string().uuid() });
 
@@ -14,18 +15,49 @@ function sb() {
 
 /**
  * Resolve o ambiente Stripe para Connect.
- * Exige STRIPE_ENV=live em produção — lança erro se não estiver configurado como live,
- * para garantir consistência com payments.functions.ts e evitar mistura sandbox/live.
+ * STRIPE_ENV é uma decisão exclusiva do servidor. O cliente nunca escolhe
+ * entre sandbox e live, evitando mistura de objetos entre ambientes.
  */
 function connectStripeEnv(): StripeEnv {
-  if (process.env.STRIPE_ENV !== "live") {
-    throw new Error("stripe_live_required: STRIPE_ENV deve ser 'live' em produção.");
-  }
-  return "live";
+  return getConfiguredStripeEnv();
 }
 
 function appBaseUrl(): string {
   return resolveStripeAppBaseUrl({ request: getRequest() });
+}
+
+const SANDBOX_CONNECT_ACCOUNT_MODEL = "standard_full_v1";
+
+function requireNewConnectAccountModel(env: StripeEnv) {
+  if (env !== "sandbox") {
+    throw new Error("stripe_connect_new_account_creation_sandbox_only");
+  }
+  if (process.env.STRIPE_CONNECT_NEW_ACCOUNT_MODEL?.trim() !== SANDBOX_CONNECT_ACCOUNT_MODEL) {
+    throw new Error("stripe_connect_new_account_model_not_configured");
+  }
+  return SANDBOX_CONNECT_ACCOUNT_MODEL;
+}
+
+function assertNewStandardAccountConfiguration(
+  account: { id: string; livemode?: boolean; type?: string; metadata?: Record<string, string> | null },
+  env: StripeEnv,
+  studioId: string,
+) {
+  if (env !== "sandbox" || account.livemode !== false) {
+    throw new Error("stripe_connect_created_account_environment_mismatch");
+  }
+  if (account.type !== "standard" || account.metadata?.studio_id !== studioId) {
+    throw new Error("stripe_connect_created_account_identity_mismatch");
+  }
+  const responsibility = readConnectedAccountResponsibility(account as any);
+  if (
+    responsibility.feesPayer !== "account" ||
+    responsibility.lossesCollector !== "stripe" ||
+    responsibility.dashboardType !== "full"
+  ) {
+    throw new Error("stripe_connect_created_account_controller_incompatible");
+  }
+  return responsibility;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -44,6 +76,12 @@ export type ConnectStatusPayload = {
   onboardingCompleted: boolean;
   mbWayPaymentsEnabled: boolean;
   status: ConnectAccountStatus;
+  responsibility?: {
+    feesPayer: string | null;
+    lossesCollector: string | null;
+    dashboardType: string | null;
+    compatibleWithStudioPaysFees: boolean;
+  };
   financial?: ConnectFinancialSummary;
 };
 
@@ -127,6 +165,25 @@ function deriveStatus(account: {
 
 function isMbWayPaymentsActive(account: { capabilities?: Record<string, unknown> | null }) {
   return account.capabilities?.mb_way_payments === "active";
+}
+
+function connectResponsibilityPatch(account: any, balance?: any) {
+  const responsibility = readConnectedAccountResponsibility(account);
+  const negativeBalanceCents = [...(balance?.available ?? []), ...(balance?.pending ?? [])]
+    .reduce((sum: number, item: { amount?: number | null }) => {
+      const amount = Number(item.amount || 0);
+      return amount < 0 ? sum + amount : sum;
+    }, 0);
+  return {
+    responsibility,
+    patch: {
+      stripe_connect_fees_payer: responsibility.feesPayer,
+      stripe_connect_losses_collector: responsibility.lossesCollector,
+      stripe_connect_dashboard_type: responsibility.dashboardType,
+      stripe_connect_negative_balance_cents: negativeBalanceCents,
+      stripe_connect_responsibility_checked_at: new Date().toISOString(),
+    },
+  };
 }
 
 async function ensureMbWayCapabilityRequested(stripe: ReturnType<typeof createStripeClient>, accountId: string) {
@@ -429,7 +486,9 @@ export const getConnectAccountStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }): Promise<ConnectStatusPayload> => {
-    await assertStudioAccess(sb(), (context as any).userId, data.studioId);
+    await assertStudioOwnerAccess(sb(), (context as any).userId, data.studioId, {
+      entitlement: "online_payments",
+    });
     const studio = await loadStudioConnect(data.studioId);
     return {
       accountId: studio.stripe_connect_account_id ?? null,
@@ -443,36 +502,44 @@ export const getConnectAccountStatus = createServerFn({ method: "POST" })
   });
 
 /**
- * Creates a Stripe Connect Express account (if needed) and returns an
+ * Creates a Stripe Connect Standard/full-dashboard test account (if needed) and returns an
  * onboarding link URL. Call this when the studio clicks "Conectar Stripe".
  */
 export const createConnectOnboardingLink = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }): Promise<{ url: string }> => {
-    await assertStudioAccess(sb(), (context as any).userId, data.studioId);
+    await assertStudioOwnerAccess(sb(), (context as any).userId, data.studioId, {
+      entitlement: "online_payments",
+    });
     const studio = await loadStudioConnect(data.studioId);
-    const stripe = createStripeClient(connectStripeEnv());
+    const env = connectStripeEnv();
+    const stripe = createStripeClient(env);
 
     let accountId = studio.stripe_connect_account_id;
 
-    // Create Express account if none exists yet.
-    // Platform is configured as Direct Charges (losses_collector: stripe).
-    // Both card_payments + transfers are required for this setup.
+    // New account creation is deliberately sandbox-only. Existing linked
+    // accounts bypass this branch and are never converted or recreated.
     if (!accountId) {
+      requireNewConnectAccountModel(env);
       let account;
       try {
-        account = await stripe.accounts.create({
-          type: "express",
-          country: "PT",
-          default_currency: "eur",
-          capabilities: {
-            card_payments: { requested: true },
-            mb_way_payments: { requested: true },
-            transfers: { requested: true },
-          } as any,
-          metadata: { studio_id: data.studioId },
-        });
+        account = await stripe.accounts.create(
+          {
+            type: "standard",
+            country: "PT",
+            default_currency: "eur",
+            capabilities: {
+              card_payments: { requested: true },
+              mb_way_payments: { requested: true },
+              transfers: { requested: true },
+            } as any,
+            metadata: { studio_id: data.studioId },
+          },
+          {
+            idempotencyKey: `bellza-connect:${env}:${data.studioId}:${SANDBOX_CONNECT_ACCOUNT_MODEL}`,
+          },
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error("[stripe-connect] accounts.create failed", {
@@ -483,6 +550,8 @@ export const createConnectOnboardingLink = createServerFn({ method: "POST" })
       }
 
       accountId = account.id;
+      assertNewStandardAccountConfiguration(account, env, data.studioId);
+      const controller = connectResponsibilityPatch(account);
       await patchStudioConnect(data.studioId, {
         stripe_connect_account_id: accountId,
         stripe_connect_status: "pending",
@@ -490,6 +559,7 @@ export const createConnectOnboardingLink = createServerFn({ method: "POST" })
         stripe_connect_payouts_enabled: false,
         stripe_connect_onboarding_completed: false,
         stripe_connect_mb_way_payments_enabled: false,
+        ...controller.patch,
       });
     } else {
       await ensureMbWayCapabilityRequested(stripe, accountId);
@@ -525,7 +595,9 @@ export const syncConnectAccountStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }): Promise<ConnectStatusPayload> => {
-    await assertStudioAccess(sb(), (context as any).userId, data.studioId);
+    await assertStudioOwnerAccess(sb(), (context as any).userId, data.studioId, {
+      entitlement: "online_payments",
+    });
     const studio = await loadStudioConnect(data.studioId);
 
     if (!studio.stripe_connect_account_id) {
@@ -542,9 +614,13 @@ export const syncConnectAccountStatus = createServerFn({ method: "POST" })
 
     const stripe = createStripeClient(connectStripeEnv());
     await ensureMbWayCapabilityRequested(stripe, studio.stripe_connect_account_id);
-    const account = await stripe.accounts.retrieve(studio.stripe_connect_account_id);
+    const [account, balance] = await Promise.all([
+      stripe.accounts.retrieve(studio.stripe_connect_account_id),
+      stripe.balance.retrieve({}, { stripeAccount: studio.stripe_connect_account_id }),
+    ]);
     const status = deriveStatus(account as any);
     const mbWayPaymentsEnabled = isMbWayPaymentsActive(account as any);
+    const controller = connectResponsibilityPatch(account, balance);
 
     await patchStudioConnect(data.studioId, {
       stripe_connect_charges_enabled: account.charges_enabled,
@@ -552,6 +628,7 @@ export const syncConnectAccountStatus = createServerFn({ method: "POST" })
       stripe_connect_onboarding_completed: account.details_submitted ?? false,
       stripe_connect_mb_way_payments_enabled: mbWayPaymentsEnabled,
       stripe_connect_status: status,
+      ...controller.patch,
     });
 
     return {
@@ -561,19 +638,28 @@ export const syncConnectAccountStatus = createServerFn({ method: "POST" })
       onboardingCompleted: account.details_submitted ?? false,
       mbWayPaymentsEnabled,
       status,
+      responsibility: {
+        ...controller.responsibility,
+        compatibleWithStudioPaysFees:
+          controller.responsibility.feesPayer === "account" &&
+          controller.responsibility.lossesCollector === "stripe",
+      },
       financial: await loadConnectFinancialSummary(data.studioId, studio.stripe_connect_account_id),
     };
   });
 
 /**
- * Creates a Stripe Express dashboard login link for an already-connected account.
- * Lets the studio owner access their Stripe dashboard directly.
+ * Opens the appropriate Stripe dashboard for an already-connected account.
+ * Express accounts use one-time login links; full-dashboard accounts sign in
+ * directly with Stripe and never receive an Express login link.
  */
 export const createConnectLoginLink = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }): Promise<{ url: string }> => {
-    await assertStudioAccess(sb(), (context as any).userId, data.studioId);
+    await assertStudioOwnerAccess(sb(), (context as any).userId, data.studioId, {
+      entitlement: "online_payments",
+    });
     const studio = await loadStudioConnect(data.studioId);
 
     if (!studio.stripe_connect_account_id) {
@@ -581,6 +667,14 @@ export const createConnectLoginLink = createServerFn({ method: "POST" })
     }
 
     const stripe = createStripeClient(connectStripeEnv());
+    const account = await stripe.accounts.retrieve(studio.stripe_connect_account_id);
+    const responsibility = readConnectedAccountResponsibility(account);
+    if (responsibility.dashboardType === "full") {
+      return { url: "https://dashboard.stripe.com/" };
+    }
+    if (responsibility.dashboardType !== "express") {
+      throw new Error("connect_dashboard_access_unavailable");
+    }
     const link = await stripe.accounts.createLoginLink(studio.stripe_connect_account_id);
     return { url: link.url };
   });
@@ -601,8 +695,21 @@ export async function syncConnectAccountFromWebhook(stripeAccountId: string) {
   const stripe = createStripeClient(connectStripeEnv());
   await ensureMbWayCapabilityRequested(stripe, stripeAccountId);
   const account = await stripe.accounts.retrieve(stripeAccountId);
+  let balance: Awaited<ReturnType<typeof stripe.balance.retrieve>> | undefined;
+  try {
+    balance = await stripe.balance.retrieve({}, { stripeAccount: stripeAccountId });
+  } catch (error) {
+    // Account status and capabilities must still converge when an intentionally
+    // restricted Test key omits Balance Read. Financial reconciliation remains
+    // fail-closed in the payment path until that permission is granted.
+    console.warn("[stripe-connect] webhook_balance_read_skipped", {
+      accountId: stripeAccountId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
+  }
   const status = deriveStatus(account as any);
   const mbWayPaymentsEnabled = isMbWayPaymentsActive(account as any);
+  const controller = connectResponsibilityPatch(account, balance);
 
   await patchStudioConnect(studio.id, {
     stripe_connect_charges_enabled: account.charges_enabled,
@@ -610,5 +717,6 @@ export async function syncConnectAccountFromWebhook(stripeAccountId: string) {
     stripe_connect_onboarding_completed: account.details_submitted ?? false,
     stripe_connect_mb_way_payments_enabled: mbWayPaymentsEnabled,
     stripe_connect_status: status,
+    ...controller.patch,
   });
 }

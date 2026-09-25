@@ -58,6 +58,8 @@ export type Database = {
           created_at: string;
           ends_at: string;
           id: string;
+          is_manual_fit: boolean;
+          duration_overridden: boolean;
           notes: string | null;
           reminder_sent_at: string | null;
           staff_id: string;
@@ -75,6 +77,8 @@ export type Database = {
           created_at?: string;
           ends_at: string;
           id?: string;
+          is_manual_fit?: boolean;
+          duration_overridden?: boolean;
           notes?: string | null;
           reminder_sent_at?: string | null;
           staff_id: string;
@@ -92,6 +96,8 @@ export type Database = {
           created_at?: string;
           ends_at?: string;
           id?: string;
+          is_manual_fit?: boolean;
+          duration_overridden?: boolean;
           notes?: string | null;
           reminder_sent_at?: string | null;
           staff_id?: string;
@@ -413,6 +419,8 @@ export type Database = {
           client_secret: string | null;
           created_at: string;
           currency: string;
+          dispute_status: string | null;
+          disputed_amount_cents: number;
           expires_at: string | null;
           hosted_voucher_url: string | null;
           id: string;
@@ -431,6 +439,8 @@ export type Database = {
           client_secret?: string | null;
           created_at?: string;
           currency?: string;
+          dispute_status?: string | null;
+          disputed_amount_cents?: number;
           expires_at?: string | null;
           hosted_voucher_url?: string | null;
           id?: string;
@@ -449,6 +459,8 @@ export type Database = {
           client_secret?: string | null;
           created_at?: string;
           currency?: string;
+          dispute_status?: string | null;
+          disputed_amount_cents?: number;
           expires_at?: string | null;
           hosted_voucher_url?: string | null;
           id?: string;
@@ -572,6 +584,7 @@ export type Database = {
       };
       refund_requests: {
         Row: {
+          amount_cents: number | null;
           appointment_id: string | null;
           booking_request_id: string | null;
           client_email: string | null;
@@ -588,6 +601,7 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          amount_cents?: number | null;
           appointment_id?: string | null;
           booking_request_id?: string | null;
           client_email?: string | null;
@@ -604,6 +618,7 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          amount_cents?: number | null;
           appointment_id?: string | null;
           booking_request_id?: string | null;
           client_email?: string | null;
@@ -1032,6 +1047,8 @@ export type Database = {
       studios: {
         Row: {
           accepted_payment_methods: string[];
+          booking_flow_mode: string;
+          booking_request_professional_mode: string;
           business_segment: string;
           brand_color: string | null;
           cancellation_after_deadline_policy: string;
@@ -1059,6 +1076,7 @@ export type Database = {
           payment_policy: string;
           phone: string | null;
           plan: Database["public"]["Enums"]["subscription_plan"];
+          plan_tier: "free" | "pro" | "premium";
           public_amenities: Json;
           rating: number | null;
           refund_requests_enabled: boolean;
@@ -1075,6 +1093,8 @@ export type Database = {
         };
         Insert: {
           accepted_payment_methods?: string[];
+          booking_flow_mode?: string;
+          booking_request_professional_mode?: string;
           business_segment?: string;
           brand_color?: string | null;
           cancellation_after_deadline_policy?: string;
@@ -1102,6 +1122,7 @@ export type Database = {
           payment_policy?: string;
           phone?: string | null;
           plan?: Database["public"]["Enums"]["subscription_plan"];
+          plan_tier?: "free" | "pro" | "premium";
           public_amenities?: Json;
           rating?: number | null;
           refund_requests_enabled?: boolean;
@@ -1118,6 +1139,8 @@ export type Database = {
         };
         Update: {
           accepted_payment_methods?: string[];
+          booking_flow_mode?: string;
+          booking_request_professional_mode?: string;
           business_segment?: string;
           brand_color?: string | null;
           cancellation_after_deadline_policy?: string;
@@ -1145,6 +1168,7 @@ export type Database = {
           payment_policy?: string;
           phone?: string | null;
           plan?: Database["public"]["Enums"]["subscription_plan"];
+          plan_tier?: "free" | "pro" | "premium";
           public_amenities?: Json;
           rating?: number | null;
           refund_requests_enabled?: boolean;
@@ -1327,6 +1351,10 @@ export type Database = {
       is_studio_member: {
         Args: { _studio_id: string; _user_id: string };
         Returns: boolean;
+      };
+      remove_or_archive_service: {
+        Args: { p_service_id: string; p_studio_id: string };
+        Returns: string;
       };
       record_public_policy_acceptance: {
         Args: {

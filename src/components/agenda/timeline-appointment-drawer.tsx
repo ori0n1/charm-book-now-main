@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { ClientAvatar } from "@/components/client-avatar";
+import { formatStudioTime, normalizeStudioTimeZone } from "@/lib/studio-time";
 
 export type TimelineDrawerAction = {
   id: string;
@@ -35,6 +36,11 @@ export type TimelineDrawerDetails = {
   messageLabel?: string | null;
   notes?: string | null;
   valueLabel: string;
+  scheduleHistory?: Array<{
+    label: string;
+    detail: string;
+    createdAt: string;
+  }>;
 };
 
 export function TimelineAppointmentDrawer({
@@ -43,12 +49,14 @@ export function TimelineAppointmentDrawer({
   onClose,
   onConfirmCancel,
   cancelling,
+  timeZone,
 }: {
   details: TimelineDrawerDetails;
   actions: TimelineDrawerAction[];
   onClose: () => void;
   onConfirmCancel?: () => void;
   cancelling?: boolean;
+  timeZone: string;
 }) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
 
@@ -121,16 +129,73 @@ export function TimelineAppointmentDrawer({
             </div>
           </div>
 
+          {actions.length > 0 && !confirmingCancel && (
+            <div
+              className="mt-3 grid grid-cols-2 gap-2"
+              aria-label="Ações rápidas da marcação"
+              data-testid="appointment-quick-actions"
+            >
+              {actions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  onClick={
+                    action.id === "cancel" ? () => setConfirmingCancel(true) : action.onClick
+                  }
+                  disabled={action.disabled}
+                  className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-bold transition disabled:opacity-50 ${
+                    action.id === "cancel" ? "col-span-2 w-full" : ""
+                  } ${
+                    action.danger
+                      ? "border-rose-300/70 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-300"
+                      : "border-border bg-background/70 text-foreground hover:bg-muted"
+                  }`}
+                >
+                  <span className="shrink-0">{action.icon}</span>
+                  <span className="min-w-0 leading-tight">{action.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {confirmingCancel && (
+            <div className="mt-3 rounded-2xl border border-rose-300/70 bg-rose-50 p-4 text-center dark:border-rose-500/25 dark:bg-rose-500/10">
+              <AlertTriangle className="mx-auto h-5 w-5 text-rose-600 dark:text-rose-300" />
+              <p className="mt-2 text-sm font-black">Cancelar esta marcação?</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Esta ação utiliza exatamente o cancelamento atual do painel.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingCancel(false)}
+                  className="h-10 rounded-xl border border-border bg-card text-xs font-bold"
+                >
+                  Manter
+                </button>
+                <button
+                  type="button"
+                  onClick={onConfirmCancel}
+                  disabled={cancelling}
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-3 text-xs font-black text-white disabled:opacity-60"
+                >
+                  {cancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="mt-3 grid grid-cols-2 gap-2">
             <DetailTile
               icon={<CalendarDays className="h-3.5 w-3.5" />}
               label="Data"
-              value={formatDate(details.startsAt)}
+              value={formatDate(details.startsAt, timeZone)}
             />
             <DetailTile
               icon={<Clock3 className="h-3.5 w-3.5" />}
               label="Horário"
-              value={`${formatTime(details.startsAt)}–${formatTime(details.endsAt)}`}
+              value={`${formatTime(details.startsAt, timeZone)}–${formatTime(details.endsAt, timeZone)}`}
             />
             <DetailTile
               icon={<UserRound className="h-3.5 w-3.5" />}
@@ -180,57 +245,30 @@ export function TimelineAppointmentDrawer({
             </div>
           )}
 
-          {actions.length > 0 && !confirmingCancel && (
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              {actions.map((action) => (
-                <button
-                  key={action.id}
-                  type="button"
-                  onClick={
-                    action.id === "cancel" ? () => setConfirmingCancel(true) : action.onClick
-                  }
-                  disabled={action.disabled}
-                  className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-center text-xs font-bold transition disabled:opacity-50 ${
-                    action.id === "cancel" ? "col-span-2 w-full" : ""
-                  } ${
-                    action.danger
-                      ? "border-rose-300/70 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-300"
-                      : "border-border bg-background/70 text-foreground hover:bg-muted"
-                  }`}
-                >
-                  <span className="shrink-0">{action.icon}</span>
-                  <span className="min-w-0 leading-tight">{action.label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {confirmingCancel && (
-            <div className="mt-4 rounded-2xl border border-rose-300/70 bg-rose-50 p-4 text-center dark:border-rose-500/25 dark:bg-rose-500/10">
-              <AlertTriangle className="mx-auto h-5 w-5 text-rose-600 dark:text-rose-300" />
-              <p className="mt-2 text-sm font-black">Cancelar esta marcação?</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Esta ação utiliza exatamente o cancelamento atual do painel.
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirmingCancel(false)}
-                  className="h-10 rounded-xl border border-border bg-card text-xs font-bold"
-                >
-                  Manter
-                </button>
-                <button
-                  type="button"
-                  onClick={onConfirmCancel}
-                  disabled={cancelling}
-                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-3 text-xs font-black text-white disabled:opacity-60"
-                >
-                  {cancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  Cancelar
-                </button>
+          {details.scheduleHistory && details.scheduleHistory.length > 0 && (
+            <details className="mt-3 rounded-2xl border border-border/70 bg-muted/15 px-3.5 py-3">
+              <summary className="cursor-pointer text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">
+                Histórico de alterações
+              </summary>
+              <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
+                {details.scheduleHistory.map((event) => (
+                  <div key={`${event.createdAt}-${event.label}`} className="min-w-0 text-xs">
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <p className="min-w-0 break-words font-black">{event.label}</p>
+                      <time className="shrink-0 text-[10px] text-muted-foreground">
+                        {new Date(event.createdAt).toLocaleString("pt-PT", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </time>
+                    </div>
+                    <p className="mt-0.5 break-words text-muted-foreground">{event.detail}</p>
+                  </div>
+                ))}
               </div>
-            </div>
+            </details>
           )}
         </div>
       </aside>
@@ -239,15 +277,7 @@ export function TimelineAppointmentDrawer({
   );
 }
 
-function DetailTile({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: string;
-}) {
+function DetailTile({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
   return (
     <div className="min-w-0 rounded-2xl border border-border/70 bg-background/60 px-3 py-2.5">
       <p className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.13em] text-muted-foreground">
@@ -261,17 +291,15 @@ function DetailTile({
   );
 }
 
-function formatDate(value: string) {
+function formatDate(value: string, timeZone: string) {
   return new Date(value).toLocaleDateString("pt-PT", {
+    timeZone: normalizeStudioTimeZone(timeZone),
     weekday: "short",
     day: "2-digit",
     month: "short",
   });
 }
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString("pt-PT", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function formatTime(value: string, timeZone: string) {
+  return formatStudioTime(value, timeZone);
 }

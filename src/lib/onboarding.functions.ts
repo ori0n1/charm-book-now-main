@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { getRequestFingerprint } from "@/lib/server-security";
+import { getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
+import { getAdminClient } from "@/lib/supabase-admin.server";
 
 const CreateStudioInput = z.object({
   name: z.string().trim().min(2),
@@ -39,13 +40,20 @@ export const createStudioWithTrialGuard = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => CreateStudioInput.parse(input))
   .handler(async ({ data, context }) => {
-    const sb = (context as any).supabase;
+    const sb = getAdminClient() as any;
+    const userId = String((context as any).userId ?? "");
     const requestFingerprint = getRequestFingerprint();
     const ipHash = await sha256Hex(`ip:${requestFingerprint}`);
     const deviceSource = data.deviceFingerprint || requestFingerprint;
     const deviceHash = await sha256Hex(`device:${deviceSource}`);
 
+    await Promise.all([
+      rateLimitOrThrow({ key: `trial-create:user:${userId}`, limit: 2, windowMs: 24 * 60 * 60_000 }),
+      rateLimitOrThrow({ key: `trial-create:ip:${ipHash}`, limit: 5, windowMs: 24 * 60 * 60_000 }),
+    ]);
+
     const { data: studioId, error } = await sb.rpc("create_studio_with_owner", {
+      p_owner_user_id: userId,
       p_name: data.name,
       p_slug: data.slug,
       p_timezone: "Europe/Lisbon",

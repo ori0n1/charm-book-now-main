@@ -1,20 +1,18 @@
 import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
-import { getSettledSession } from "@/lib/auth-landing";
+import { getVerifiedAuthState } from "@/integrations/supabase/auth-session.functions";
+import { sanitizePrivateReturnTo } from "@/lib/auth-return";
+import { BELLZA_MANIFEST } from "@/lib/brand-assets";
 
 export const Route = createFileRoute("/_authenticated")({
   head: () => ({
     meta: [{ name: "robots", content: "noindex,nofollow,noarchive" }],
-    links: [{ rel: "manifest", href: "/manifest.webmanifest" }],
+    links: [{ rel: "manifest", href: BELLZA_MANIFEST }],
   }),
-  beforeLoad: async () => {
-    // Skip on SSR — Supabase auth lives in localStorage on the browser.
-    // If we ran getUser() on the server it would always be null and we'd
-    // bounce every refresh to /login.
-    if (typeof window === "undefined") return;
-
-    const session = await getSettledSession();
-    if (!session) {
-      throw redirect({ to: "/login" });
+  beforeLoad: async ({ location }) => {
+    const auth = await getVerifiedAuthState();
+    if (!auth.authenticated) {
+      const returnTo = sanitizePrivateReturnTo(`${location.pathname}${location.searchStr}`);
+      throw redirect({ to: "/login", search: { returnTo } });
     }
   },
   component: AuthenticatedLayout,

@@ -11,6 +11,11 @@ const PushReceipt = z.object({
 export const Route = createFileRoute("/api/public/push/receipt")({
   server: {
     handlers: {
+      GET: async () =>
+        new Response(null, {
+          status: 405,
+          headers: { Allow: "POST" },
+        }),
       POST: async ({ request }) => {
         try {
           const contentLength = Number(request.headers.get("content-length") ?? "0");

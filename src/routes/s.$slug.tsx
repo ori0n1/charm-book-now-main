@@ -1,27 +1,49 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { lazy, Suspense, useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { createFileRoute, notFound } from "@tanstack/react-router";
+import { lazy, Suspense } from "react";
+import { BrandLoadingState } from "@/components/brand-loading-state";
 import { APP_BRAND, CANONICAL_ORIGIN } from "@/lib/app-brand";
+import { BELLZA_APP_ICON_512 } from "@/lib/brand-assets";
+import { serializeJsonForHtmlScript } from "@/lib/output-safety";
+import { getPublicStudioSeo } from "@/lib/public-studio.functions";
 
 const BookingExperience = lazy(() =>
   import("@/components/booking-experience").then((mod) => ({ default: mod.BookingExperience })),
 );
 
-function studioNameFromSlug(slug: string) {
-  return slug
-    .split("-")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+function studioDescription(
+  name: string,
+  description: string | null,
+  tagline: string | null,
+  bookingFlowMode: "online" | "request",
+) {
+  const custom = description?.trim() || tagline?.trim();
+  if (custom) return custom.slice(0, 160);
+  if (bookingFlowMode === "request") {
+    return `Solicite um agendamento em ${name}: indique serviço, data e horário pretendidos e confirme a disponibilidade diretamente com o estúdio.`;
+  }
+  return `Marque online em ${name}: escolha serviço, profissional e horário disponível com a experiência premium da ${APP_BRAND.name}.`;
 }
 
 export const Route = createFileRoute("/s/$slug")({
-  head: ({ params }) => {
-    const studioLabel = studioNameFromSlug(params.slug);
+  loader: async ({ params }) => {
+    const studio = await getPublicStudioSeo({ data: { slug: params.slug } });
+    if (!studio) throw notFound();
+    return studio;
+  },
+  head: ({ loaderData, params }) => {
+    if (!loaderData) {
+      return {
+        meta: [
+          { title: `Estúdio | ${APP_BRAND.name}` },
+          { name: "robots", content: "noindex,follow" },
+        ],
+      };
+    }
+    const studio = loaderData;
     const canonical = `${CANONICAL_ORIGIN}/s/${params.slug}`;
-    const title = `${studioLabel || "Estúdio"} | Marcação online na ${APP_BRAND.name}`;
-    const description =
-      `Marque online em ${studioLabel || "um estúdio Bellza"}: escolha serviço, profissional e horário disponível com a experiência premium da ${APP_BRAND.name}.`;
+    const title = `${studio.name} | ${studio.bookingFlowMode === "request" ? "Solicitar agendamento" : "Marcação online"} na ${APP_BRAND.name}`;
+    const description = studioDescription(studio.name, studio.description, studio.tagline, studio.bookingFlowMode);
+    const socialImage = studio.logoUrl || `${CANONICAL_ORIGIN}${BELLZA_APP_ICON_512}`;
 
     return {
       meta: [
@@ -33,11 +55,11 @@ export const Route = createFileRoute("/s/$slug")({
         { property: "og:type", content: "website" },
         { property: "og:site_name", content: APP_BRAND.name },
         { property: "og:url", content: canonical },
-        { property: "og:image", content: `${CANONICAL_ORIGIN}/bellza-logo.png` },
+        { property: "og:image", content: socialImage },
         { name: "twitter:card", content: "summary_large_image" },
         { name: "twitter:title", content: title },
         { name: "twitter:description", content: description },
-        { name: "twitter:image", content: `${CANONICAL_ORIGIN}/bellza-logo.png` },
+        { name: "twitter:image", content: socialImage },
         // PWA meta for iOS add-to-home-screen
         { name: "apple-mobile-web-app-capable", content: "yes" },
         { name: "mobile-web-app-capable", content: "yes" },
@@ -55,66 +77,40 @@ export const Route = createFileRoute("/s/$slug")({
 });
 
 function PublicStudioPage() {
-  const { slug } = Route.useParams();
-  const [studioId, setStudioId] = useState<string | null | undefined>(undefined);
+  const studio = Route.useLoaderData();
+  const description = studioDescription(studio.name, studio.description, studio.tagline, studio.bookingFlowMode);
+  const schema = {
+    "@context": "https://schema.org",
+    "@type": "BeautySalon",
+    name: studio.name,
+    description,
+    url: `${CANONICAL_ORIGIN}/s/${studio.slug}`,
+    ...(studio.logoUrl ? { image: studio.logoUrl } : {}),
+    ...(studio.location ? { address: studio.location } : {}),
+  };
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from("studios")
-          .select("id")
-          .eq("slug", slug)
-          .eq("is_active", true)
-          .maybeSingle();
-        if (!active) return;
-        if (error) {
-          setStudioId(null);
-          return;
-        }
-        setStudioId(data?.id ?? null);
-      } catch {
-        if (active) setStudioId(null);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [slug]);
-
-  if (studioId === undefined) {
-    return (
-      <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">
-        A carregar estúdio...
-      </div>
-    );
-  }
-  if (studioId === null) {
-    return (
-      <div className="grid min-h-screen place-items-center px-6 text-center">
-        <div>
-          <p className="text-[10px] uppercase tracking-[0.25em] text-muted-foreground">404</p>
-          <h1 className="mt-2 text-2xl font-light">Estúdio não encontrado</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            O link <span className="font-mono">/s/{slug}</span> não corresponde a nenhum estúdio
-            ativo.
-          </p>
-        </div>
-      </div>
-    );
-  }
   return (
-    <Suspense fallback={<LoadingStudio />}>
-      <BookingExperience studioId={studioId} />
-    </Suspense>
+    <main>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: serializeJsonForHtmlScript(schema) }}
+      />
+      <header className="sr-only">
+        <h1>{studio.name} — {studio.bookingFlowMode === "request" ? "solicitação de agendamento" : "marcação online"}</h1>
+        <p>{description}</p>
+        {studio.location && <p>{studio.location}</p>}
+      </header>
+      <Suspense fallback={<LoadingStudio />}>
+        <BookingExperience studioId={studio.id} />
+      </Suspense>
+    </main>
   );
 }
 
 function LoadingStudio() {
   return (
-    <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">
-      A carregar estúdio...
+    <div className="public-shell public-site-theme public-landing-theme min-h-screen bg-background">
+      <BrandLoadingState label="A carregar estúdio..." tone="light" fullScreen />
     </div>
   );
 }

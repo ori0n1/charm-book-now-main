@@ -10,6 +10,9 @@ import { loadCustomerLoyaltySummaryForClient } from "@/lib/customer-loyalty.func
 import { canAttachAppointmentClientToSession, normalizePublicClientEmail } from "@/lib/public-client-identity";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendWebPush } from "@/lib/web-push.server";
+import { formatStudioDateTime } from "@/lib/studio-time";
+import { isAppointmentReminderDispatchable } from "@/lib/appointment-lifecycle";
+import { BELLZA_APP_ICON_192, BELLZA_NOTIFICATION_BADGE } from "@/lib/brand-assets";
 
 const PublicClientInput = z.object({
   studioId: z.string().uuid(),
@@ -69,6 +72,40 @@ type ClientNotificationRow = {
   status: string;
   created_at: string;
 };
+
+type PublicClientEntitlements = {
+  notifications: boolean;
+  loyalty: boolean;
+  reviews: boolean;
+};
+
+async function studioHasEntitlement(sb: any, studioId: string, feature: string) {
+  const { data, error } = await (sb as any).rpc("studio_has_entitlement", {
+    _studio_id: studioId,
+    _feature: feature,
+  });
+  if (error) {
+    console.error("[plans] entitlement_check_failed", {
+      studio_id: studioId,
+      feature,
+      error: error.message,
+    });
+    return false;
+  }
+  return data === true;
+}
+
+async function loadPublicClientEntitlements(
+  sb: any,
+  studioId: string,
+): Promise<PublicClientEntitlements> {
+  const [notifications, loyalty, reviews] = await Promise.all([
+    studioHasEntitlement(sb, studioId, "notifications"),
+    studioHasEntitlement(sb, studioId, "loyalty"),
+    studioHasEntitlement(sb, studioId, "reviews"),
+  ]);
+  return { notifications, loyalty, reviews };
+}
 
 export const ensurePublicClientProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -233,6 +270,8 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     if (studioError) throw new Error(studioError.message);
     if (!studio) throw new Response("studio_not_found", { status: 404 });
 
+    const entitlements = await loadPublicClientEntitlements(sb, data.studioId);
+
     await attachLegacyClientsByVerifiedEmail(sb, {
       studioId: data.studioId,
       userId,
@@ -290,7 +329,9 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
         pendingPayments: [],
         totals: { paid: 0, deposits: 0, pending: 0 },
         loyalty: null,
-        notifications: await loadClientNotifications(sb, data.studioId, userId),
+        notifications: entitlements.notifications
+          ? await loadClientNotifications(sb, data.studioId, userId)
+          : [],
       };
     }
 
@@ -309,7 +350,9 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     const [servicesByAppointment, payments, reviewedAppointmentIds] = await Promise.all([
       loadServicesByAppointment(sb, appointmentIds),
       loadPayments(sb, data.studioId, appointmentIds),
-      loadReviewedAppointmentIds(sb, userId, appointmentIds),
+      entitlements.reviews
+        ? loadReviewedAppointmentIds(sb, userId, appointmentIds)
+        : Promise.resolve([] as string[]),
     ]);
 
     const paymentMap = new Map<string, PaymentRow[]>();
@@ -399,25 +442,32 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
       { paid: 0, deposits: 0, pending: 0 },
     );
 
-    await ensureClientDerivedNotifications(sb, {
-      studioId: data.studioId,
-      userId,
-      appointments: normalizedAppointments,
-      reviewedAppointmentIds,
-    });
+    if (entitlements.notifications) {
+      await ensureClientDerivedNotifications(sb, {
+        studioId: data.studioId,
+        userId,
+        appointments: normalizedAppointments,
+        reviewedAppointmentIds,
+        reviewsEnabled: entitlements.reviews,
+      });
+    }
 
     return {
       profile,
       appointments: normalizedAppointments,
       pendingPayments,
       totals,
-      loyalty: await loadCustomerLoyaltySummaryForClient({
-        studioId: data.studioId,
-        studioSlug: studio.slug,
-        clientId: latestClient?.id ?? clientIds[0] ?? null,
-      }),
+      loyalty: entitlements.loyalty
+        ? await loadCustomerLoyaltySummaryForClient({
+            studioId: data.studioId,
+            studioSlug: studio.slug,
+            clientId: latestClient?.id ?? clientIds[0] ?? null,
+          })
+        : null,
       reviewedAppointmentIds,
-      notifications: await loadClientNotifications(sb, data.studioId, userId),
+      notifications: entitlements.notifications
+        ? await loadClientNotifications(sb, data.studioId, userId)
+        : [],
     };
   });
 
@@ -629,6 +679,9 @@ export const markPublicClientNotificationRead = createServerFn({ method: "POST" 
     if (!userId) throw new Response("public_client_auth_missing", { status: 401 });
 
     const sb = getAdminClient();
+    if (!(await studioHasEntitlement(sb, data.studioId, "notifications"))) {
+      throw new Response("plan_feature_required:notifications", { status: 403 });
+    }
     const { error } = await (sb as any)
       .from("notifications_log")
       .update({ status: "read" })
@@ -648,6 +701,9 @@ export const markAllPublicClientNotificationsRead = createServerFn({ method: "PO
     if (!userId) throw new Response("public_client_auth_missing", { status: 401 });
 
     const sb = getAdminClient();
+    if (!(await studioHasEntitlement(sb, data.studioId, "notifications"))) {
+      throw new Response("plan_feature_required:notifications", { status: 403 });
+    }
     const { error } = await (sb as any)
       .from("notifications_log")
       .update({ status: "read" })
@@ -701,16 +757,21 @@ export async function dispatchPendingClientPushNotifications(options?: { studioI
 
   let created = 0;
   for (const group of grouped.values()) {
-    const reviewedAppointmentIds = await loadReviewedAppointmentIds(
-      sb,
-      group.userId,
-      group.appointments.map((appointment) => appointment.id),
-    );
+    if (!(await studioHasEntitlement(sb, group.studioId, "notifications"))) continue;
+    const reviewsEnabled = await studioHasEntitlement(sb, group.studioId, "reviews");
+    const reviewedAppointmentIds = reviewsEnabled
+      ? await loadReviewedAppointmentIds(
+          sb,
+          group.userId,
+          group.appointments.map((appointment) => appointment.id),
+        )
+      : [];
     created += await ensureClientDerivedNotifications(sb, {
       studioId: group.studioId,
       userId: group.userId,
       appointments: group.appointments,
       reviewedAppointmentIds,
+      reviewsEnabled,
     });
   }
   created += await ensureAutomaticReturnReminders(sb, options);
@@ -723,7 +784,7 @@ export async function dispatchPendingClientCenterPushNotifications(options?: { s
   const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   let query = (sb as any)
     .from("notifications_log")
-    .select("id,studio_id,kind,recipient,status,payload,created_at")
+    .select("id,studio_id,appointment_id,kind,recipient,status,payload,created_at")
     .eq("channel", "client_center")
     .eq("status", "unread")
     .gte("created_at", since)
@@ -740,8 +801,19 @@ export async function dispatchPendingClientCenterPushNotifications(options?: { s
   );
   if (rows.length === 0) return { sent: 0, skipped: 0 };
 
-  const pending: ClientCenterNotificationRow[] = [];
+  const entitlementByStudio = new Map<string, boolean>();
+  const entitledRows: ClientCenterNotificationRow[] = [];
   for (const row of rows) {
+    let enabled = entitlementByStudio.get(row.studio_id);
+    if (enabled === undefined) {
+      enabled = await studioHasEntitlement(sb, row.studio_id, "notifications");
+      entitlementByStudio.set(row.studio_id, enabled);
+    }
+    if (enabled) entitledRows.push(row);
+  }
+
+  const pending: ClientCenterNotificationRow[] = [];
+  for (const row of entitledRows) {
     const hasSentPush = await hasConfirmedClientPushForCenterRow(sb, row);
     if (!hasSentPush) pending.push(row);
   }
@@ -763,6 +835,7 @@ export async function dispatchPendingClientCenterPushNotifications(options?: { s
       userId,
       rows: groupRows.map((row) => ({
         id: row.id,
+        appointmentId: row.appointment_id,
         kind: row.kind,
         payload: row.payload ?? {},
       })),
@@ -1013,6 +1086,7 @@ async function loadClientNotifications(
   }>
 > {
   if (!userId) return [];
+  if (!(await studioHasEntitlement(sb, studioId, "notifications"))) return [];
   const { data, error } = await (sb as any)
     .from("notifications_log")
     .select("id,kind,payload,status,created_at")
@@ -1039,6 +1113,7 @@ function readPayloadText(payload: Record<string, unknown> | null, key: string) {
 }
 
 function notificationKindTitle(kind: string) {
+  if (kind === "appointment_reminder") return "Lembrete de marcação";
   if (kind === "staff_online") return "Agenda disponível";
   if (kind === "payment_confirmed") return "Pagamento confirmado";
   if (kind === "appointment_confirmed") return "Marcação confirmada";
@@ -1047,6 +1122,7 @@ function notificationKindTitle(kind: string) {
 }
 
 function notificationKindBody(kind: string) {
+  if (kind === "appointment_reminder") return "A sua marcação começa em breve.";
   if (kind === "staff_online") return "Um profissional tem horários disponíveis para reserva.";
   if (kind === "payment_confirmed") return "O pagamento foi confirmado com sucesso.";
   if (kind === "appointment_confirmed") return "A sua marcação foi confirmada pelo estúdio.";
@@ -1061,10 +1137,14 @@ function notificationKindBody(kind: string) {
 function sanitizeNotificationText(value: string, fallback: string) {
   const text = String(value ?? "").trim();
   if (!text) return fallback;
+  const withoutSourceAttribution = text
+    .replace(/^\s*from\s*[:\-–—]?\s*/i, "")
+    .replace(/\s+(?:[•·\-–—]\s*)?from\s+[^\n]+$/i, "")
+    .trim();
   const technicalPattern =
-    /\b(from|insert|update|delete|upsert|select|payload|schema|table|row|uuid|endpoint|subscription|webhook)\b|notifications_log|studio_notifications|push_subscriptions|appointment_created|update_professional_status|client_center|push_client|push_studio|[_{}[\]"`]/i;
-  if (technicalPattern.test(text)) return fallback;
-  return text.replace(/\s+from\s+\S+$/i, "").trim() || fallback;
+    /\b(insert|update|delete|upsert|select|payload|schema|table|row|uuid|endpoint|subscription|webhook)\b|notifications_log|studio_notifications|push_subscriptions|appointment_created|update_professional_status|client_center|push_client|push_studio|[_{}[\]"`]/i;
+  if (technicalPattern.test(withoutSourceAttribution)) return fallback;
+  return withoutSourceAttribution || fallback;
 }
 
 async function ensureClientDerivedNotifications(
@@ -1074,6 +1154,7 @@ async function ensureClientDerivedNotifications(
     userId,
     appointments,
     reviewedAppointmentIds,
+    reviewsEnabled,
   }: {
     studioId: string;
     userId: string;
@@ -1087,9 +1168,20 @@ async function ensureClientDerivedNotifications(
       isUpcoming: boolean;
     }>;
     reviewedAppointmentIds: string[];
+    reviewsEnabled?: boolean;
   },
 ) {
   if (!userId || appointments.length === 0) return 0;
+  if (!(await studioHasEntitlement(sb, studioId, "notifications"))) return 0;
+
+  const canRequestReviews =
+    reviewsEnabled ?? (await studioHasEntitlement(sb, studioId, "reviews"));
+
+  const { data: notificationStudio } = await sb
+    .from("studios")
+    .select("timezone")
+    .eq("id", studioId)
+    .maybeSingle();
 
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const candidates: Array<{
@@ -1098,6 +1190,7 @@ async function ensureClientDerivedNotifications(
     appointmentId: string;
     title: string;
     body: string;
+    startsAt?: string;
   }> = [];
   const reviewed = new Set(reviewedAppointmentIds);
 
@@ -1107,18 +1200,17 @@ async function ensureClientDerivedNotifications(
     if (!appointment.isUpcoming && startsAt < cutoff) continue;
 
     const service = appointment.services[0]?.name ?? "Serviço";
-    const dateText = new Intl.DateTimeFormat("pt-PT", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(appointment.startsAt));
+    const dateText = formatStudioDateTime(
+      appointment.startsAt,
+      notificationStudio?.timezone,
+    );
 
     if (appointment.status === "confirmed" && appointment.isUpcoming) {
       candidates.push({
-        key: `appointment_confirmed:${appointment.id}`,
+        key: `appointment_confirmed:${appointment.id}:${Math.floor(startsAt / 1000)}`,
         kind: "appointment_confirmed",
         appointmentId: appointment.id,
+        startsAt: appointment.startsAt,
         title: "Marcação confirmada",
         body: `${service} está confirmado para ${dateText}.`,
       });
@@ -1134,7 +1226,12 @@ async function ensureClientDerivedNotifications(
       });
     }
 
-    if (appointment.status === "completed" && appointment.paidAmount > 0 && !reviewed.has(appointment.id)) {
+    if (
+      canRequestReviews &&
+      appointment.status === "completed" &&
+      appointment.paidAmount > 0 &&
+      !reviewed.has(appointment.id)
+    ) {
       candidates.push({
         key: `review_request:${appointment.id}`,
         kind: "review_request",
@@ -1176,6 +1273,9 @@ async function ensureClientDerivedNotifications(
         title: item.title,
         body: item.body,
         recipient_user_id: userId,
+        appointment_id: item.appointmentId,
+        starts_at: item.startsAt,
+        studio_id: studioId,
         event: item.kind,
       },
     }));
@@ -1211,10 +1311,13 @@ async function ensureClientNotificationsForAppointment(
 
   const normalizedAppointment = normalizeAppointmentRow(appointment);
   const appointmentIds = [appointmentId];
+  const reviewsEnabled = await studioHasEntitlement(sb, studioId, "reviews");
   const [servicesByAppointment, payments, reviewedAppointmentIds] = await Promise.all([
     loadServicesByAppointment(sb, appointmentIds),
     loadPayments(sb, studioId, appointmentIds),
-    loadReviewedAppointmentIds(sb, userId, appointmentIds),
+    reviewsEnabled
+      ? loadReviewedAppointmentIds(sb, userId, appointmentIds)
+      : Promise.resolve([] as string[]),
   ]);
   const created = await ensureClientDerivedNotifications(sb, {
     studioId,
@@ -1223,6 +1326,7 @@ async function ensureClientNotificationsForAppointment(
       normalizeClientAppointment(normalizedAppointment, servicesByAppointment, groupPayments(payments)),
     ],
     reviewedAppointmentIds,
+    reviewsEnabled,
   });
   if (created > 0) {
     console.info("[notifications] client_center_created", {
@@ -1358,7 +1462,19 @@ async function ensureAutomaticReturnReminders(sb: any, options?: { studioId?: st
 
   if (candidates.length === 0) return 0;
 
-  const studioIds = Array.from(new Set(candidates.map((item) => item.studioId)));
+  const notificationEntitlementByStudio = new Map<string, boolean>();
+  for (const studioId of new Set(candidates.map((item) => item.studioId))) {
+    notificationEntitlementByStudio.set(
+      studioId,
+      await studioHasEntitlement(sb, studioId, "notifications"),
+    );
+  }
+  const entitledCandidates = candidates.filter(
+    (item) => notificationEntitlementByStudio.get(item.studioId) === true,
+  );
+  if (entitledCandidates.length === 0) return 0;
+
+  const studioIds = Array.from(new Set(entitledCandidates.map((item) => item.studioId)));
   let existingQuery = (sb as any)
     .from("notifications_log")
     .select("payload")
@@ -1378,7 +1494,7 @@ async function ensureAutomaticReturnReminders(sb: any, options?: { studioId?: st
       .filter(Boolean),
   );
 
-  const rows = candidates
+  const rows = entitledCandidates
     .filter((item) => !existingKeys.has(item.key))
     .map((item) => ({
       studio_id: item.studioId,
@@ -1438,11 +1554,66 @@ async function dispatchClientCenterPush(
     userId: string;
     rows: Array<{
       id?: string;
+      appointmentId?: string | null;
       kind: string;
       payload: Record<string, unknown>;
     }>;
   },
 ) {
+  if (!(await studioHasEntitlement(sb, studioId, "notifications"))) return;
+  const pushRows: typeof rows = [];
+  for (const row of rows) {
+    const invalidReason = await clientAppointmentPushInvalidReason(sb, studioId, row);
+    if (!invalidReason) {
+      pushRows.push(row);
+      continue;
+    }
+    await insertNotificationLog(sb, {
+      studioId,
+      channel: "push_client",
+      kind: row.kind,
+      recipient: `user:${userId}`,
+      status: "skipped",
+      error: invalidReason,
+      payload: {
+        event: "client_center_push_suppressed",
+        key: readPayloadText(row.payload, "key"),
+        client_center_id: row.id ?? null,
+      },
+    });
+  }
+  if (pushRows.length === 0) return;
+
+  // A team member can also have a client profile. Sending both audiences to the
+  // same browser produces duplicate/conflicting appointment pushes. Keep the
+  // client-center entry, but let the studio push be the only native push.
+  const { data: studioMembership, error: membershipError } = await sb
+    .from("user_roles")
+    .select("role")
+    .eq("studio_id", studioId)
+    .eq("user_id", userId)
+    .limit(1)
+    .maybeSingle();
+  if (membershipError) throw new Error(membershipError.message);
+  if (studioMembership?.role) {
+    for (const row of pushRows) {
+      await insertNotificationLog(sb, {
+        studioId,
+        channel: "push_client",
+        kind: row.kind,
+        recipient: `user:${userId}`,
+        status: "skipped",
+        error: "studio_member_receives_studio_push",
+        payload: {
+          event: "client_center_push_suppressed",
+          key: readPayloadText(row.payload, "key"),
+          client_center_id: row.id ?? null,
+        },
+      });
+    }
+    return;
+  }
+
   const { data: studio } = await sb
     .from("studios")
     .select("slug,logo_url,updated_at")
@@ -1456,7 +1627,8 @@ async function dispatchClientCenterPush(
     .in("audience", ["client", "both"])
     .is("revoked_at", null)
     .order("updated_at", { ascending: false })
-    .limit(8);
+    .gte("last_seen_at", new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString())
+    .limit(3);
   if (error) throw new Error(error.message);
 
   const isolatedSubscriptions = ((subscriptions ?? []) as Array<{
@@ -1487,7 +1659,7 @@ async function dispatchClientCenterPush(
     return;
   }
 
-  for (const row of rows) {
+  for (const row of pushRows) {
     const title = sanitizeNotificationText(readPayloadText(row.payload, "title"), notificationKindTitle(row.kind));
     const body = sanitizeNotificationText(readPayloadText(row.payload, "body"), notificationKindBody(row.kind));
     const key = readPayloadText(row.payload, "key") || `${row.kind}:${Date.now()}`;
@@ -1495,10 +1667,18 @@ async function dispatchClientCenterPush(
       title,
       body,
       url: studio?.slug ? `/s/${studio.slug}` : "/",
-      icon: withPushAssetVersion(studio?.logo_url || "/pwa-icon.svg", studio?.updated_at),
-      badge: "/pwa-icon.svg",
+      icon: studio?.logo_url
+        ? withPushAssetVersion(studio.logo_url, studio.updated_at)
+        : BELLZA_APP_ICON_192,
+      badge: BELLZA_NOTIFICATION_BADGE,
       tag: `client-${key}`,
-      data: { studioId, kind: row.kind, key, notificationId: row.id },
+      data: {
+        studioId,
+        kind: row.kind,
+        key,
+        notificationId: row.id,
+        dedupeKey: `client:${studioId}:${row.kind}:${key}`,
+      },
     };
 
     for (const subscription of isolatedSubscriptions) {
@@ -1548,12 +1728,63 @@ async function dispatchClientCenterPush(
 type ClientCenterNotificationRow = {
   id: string;
   studio_id: string;
+  appointment_id: string | null;
   kind: string;
   recipient: string;
   status: string;
   payload: Record<string, unknown> | null;
   created_at: string;
 };
+
+async function clientAppointmentPushInvalidReason(
+  sb: any,
+  studioId: string,
+  row: {
+    kind: string;
+    appointmentId?: string | null;
+    payload: Record<string, unknown>;
+  },
+) {
+  if (row.kind !== "appointment_reminder" && row.kind !== "appointment_confirmed") return null;
+  const appointmentId = row.appointmentId || readPayloadText(row.payload, "appointment_id");
+  if (!appointmentId) return "appointment_reminder_missing_appointment";
+
+  const { data: appointment, error } = await sb
+    .from("appointments")
+    .select("id,studio_id,starts_at,status")
+    .eq("id", appointmentId)
+    .eq("studio_id", studioId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!appointment?.id) return "appointment_missing_or_studio_mismatch";
+
+  const queuedStartsAt = clientReminderQueuedStart(row.payload);
+  if (!queuedStartsAt) return "appointment_notification_missing_schedule";
+  if (
+    isAppointmentReminderDispatchable({
+      status: appointment.status,
+      startsAt: appointment.starts_at,
+      queuedStartsAt,
+    })
+  ) {
+    return null;
+  }
+  if (String(appointment.status) !== "confirmed") return "appointment_no_longer_confirmed";
+  if (queuedStartsAt && Date.parse(queuedStartsAt) !== Date.parse(String(appointment.starts_at))) {
+    return "appointment_schedule_changed";
+  }
+  return "appointment_reminder_expired";
+}
+
+function clientReminderQueuedStart(payload: Record<string, unknown>) {
+  const direct = readPayloadText(payload, "starts_at");
+  if (direct) return direct;
+  const match = readPayloadText(payload, "key").match(
+    /(?::reminder:(\d+):client$|^appointment_confirmed:[^:]+:(\d+)$)/,
+  );
+  const epoch = match?.[1] ?? match?.[2];
+  return epoch ? new Date(Number(epoch) * 1000).toISOString() : null;
+}
 
 async function hasConfirmedClientPushForCenterRow(sb: any, row: ClientCenterNotificationRow) {
   const key = readPayloadText(row.payload, "key");
@@ -1564,7 +1795,7 @@ async function hasConfirmedClientPushForCenterRow(sb: any, row: ClientCenterNoti
     .eq("channel", "push_client")
     .eq("kind", row.kind)
     .eq("recipient", row.recipient)
-    .eq("status", "sent")
+    .in("status", ["sent", "skipped"])
     .gte("created_at", row.created_at)
     .limit(1);
 

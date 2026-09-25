@@ -5,6 +5,7 @@ import { BlogCard } from "@/components/blog/blog-card";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingHeader } from "@/components/landing/landing-header";
 import { APP_BRAND } from "@/lib/app-brand";
+import { serializeJsonForHtmlScript } from "@/lib/output-safety";
 import {
   BLOG_BASE_URL,
   blogArticles,
@@ -87,13 +88,13 @@ function BlogIndexPage() {
   const visibleArticles = filteredArticles.slice(0, visible);
 
   return (
-    <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme public-landing-theme min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(getBreadcrumbSchema()) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonForHtmlScript(getBreadcrumbSchema()) }}
       />
-      <LandingHeader />
+      <LandingHeader brandTone="light" />
 
       <main>
         <section className="relative mx-auto max-w-7xl px-4 pb-10 pt-10 sm:px-6 sm:pb-14 sm:pt-16">
@@ -226,7 +227,7 @@ function BlogIndexPage() {
         </section>
       </main>
 
-      <LandingFooter />
+      <LandingFooter brandTone="light" />
     </div>
   );
 }

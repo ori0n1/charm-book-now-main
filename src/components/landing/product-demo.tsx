@@ -1,21 +1,112 @@
-import { Bell, CalendarCheck, CreditCard, Smartphone } from "lucide-react";
+import { CalendarCheck } from "lucide-react";
+import { SnapCarousel } from "@/components/snap-carousel";
 
-const PRINT_BASE = "/docs/guia-bellza/prints";
+const PRODUCT_IMAGE_BASE = "/landing/product-2026";
 
 const productScreens = {
   overview: {
-    src: `${PRINT_BASE}/inicio-desktop.png`,
-    alt: "Painel inicial real da Bellza com resumo do estúdio, agenda futura e indicadores financeiros",
-    badge: "painel.bellza.pt/inicio",
+    src: `${PRODUCT_IMAGE_BASE}/overview-960.webp`,
+    responsiveSrc: `${PRODUCT_IMAGE_BASE}/overview-480.webp`,
+    alt: "Painel real da conta de demonstração Bellza com resumo da agenda e do espaço",
+    badge: "Painel Bellza · Visão geral",
   },
   agenda: {
-    src: `${PRINT_BASE}/agenda-desktop.png`,
-    alt: "Ecrã real da agenda da Bellza com marcações, filtros, estados e valores",
-    badge: "painel.bellza.pt/agenda",
+    src: `${PRODUCT_IMAGE_BASE}/agenda-960.webp`,
+    responsiveSrc: `${PRODUCT_IMAGE_BASE}/agenda-480.webp`,
+    alt: "Agenda real da conta de demonstração Bellza com equipa, semana e marcações pendentes",
+    badge: "Painel Bellza · Agenda",
   },
 } as const;
 
 type ProductDemoVariant = keyof typeof productScreens;
+
+const PRODUCT_STORIES = [
+  {
+    id: "agenda",
+    title: "O dia todo sob controlo",
+    description: "Equipa, disponibilidade e marcações pendentes numa visão única.",
+    image: `${PRODUCT_IMAGE_BASE}/agenda-960.webp`,
+    mobileImage: `${PRODUCT_IMAGE_BASE}/agenda-480.webp`,
+    width: 960,
+    height: 738,
+    alt: "Agenda real da conta demo Bellza, preenchida apenas com conteúdo fictício",
+  },
+  {
+    id: "clients",
+    title: "Cada cliente com contexto",
+    description: "Histórico, serviços e valor sem voltar a procurar em conversas.",
+    image: `${PRODUCT_IMAGE_BASE}/clients-960.webp`,
+    mobileImage: `${PRODUCT_IMAGE_BASE}/clients-480.webp`,
+    width: 960,
+    height: 566,
+    alt: "Área real de clientes da conta demo Bellza, preenchida apenas com conteúdo fictício",
+  },
+  {
+    id: "finance",
+    title: "Receba e acompanhe",
+    description: "Pagamentos, taxas e valor líquido apresentados com clareza.",
+    image: `${PRODUCT_IMAGE_BASE}/finance-960.webp`,
+    mobileImage: `${PRODUCT_IMAGE_BASE}/finance-480.webp`,
+    width: 960,
+    height: 738,
+    alt: "Área financeira real da conta demo Bellza, preenchida apenas com conteúdo fictício",
+  },
+  {
+    id: "notifications",
+    title: "Comunique sem ruído",
+    description: "Avisos e modelos de mensagem reunidos no mesmo painel.",
+    image: `${PRODUCT_IMAGE_BASE}/notifications-960.webp`,
+    mobileImage: `${PRODUCT_IMAGE_BASE}/notifications-480.webp`,
+    width: 960,
+    height: 738,
+    alt: "Área real de comunicação da conta demo Bellza, preenchida apenas com conteúdo fictício",
+  },
+  {
+    id: "team",
+    title: "A equipa sempre alinhada",
+    description: "Acessos, visibilidade e profissionais organizados num só lugar.",
+    image: `${PRODUCT_IMAGE_BASE}/team-960.webp`,
+    mobileImage: `${PRODUCT_IMAGE_BASE}/team-480.webp`,
+    width: 960,
+    height: 558,
+    alt: "Área real de equipa da conta demo Bellza, preenchida apenas com conteúdo fictício",
+  },
+] as const;
+
+export function ProductStoryCarousel() {
+  return (
+    <SnapCarousel
+      labels={PRODUCT_STORIES.map((story) => story.title)}
+      ariaLabel="Demonstrações reais do produto Bellza"
+      variant="content"
+      className="mt-7"
+    >
+      {PRODUCT_STORIES.map((story) => (
+        <article key={story.id} data-product-story={story.id} className="public-product-story h-full">
+          <div className="public-product-story-image">
+            <img
+              src={story.image}
+              srcSet={`${story.mobileImage} 480w, ${story.image} 960w`}
+              sizes="(max-width: 639px) 88vw, (max-width: 1023px) 52vw, 560px"
+              alt={story.alt}
+              width={story.width}
+              height={story.height}
+              className="h-full w-full rounded-xl object-contain object-top"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+          <div className="p-4 sm:p-5">
+            <p className="text-sm font-semibold tracking-tight sm:text-base">{story.title}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground sm:text-sm">
+              {story.description}
+            </p>
+          </div>
+        </article>
+      ))}
+    </SnapCarousel>
+  );
+}
 
 export function ProductDemo({
   variant = "overview",
@@ -25,67 +116,40 @@ export function ProductDemo({
   loading?: "eager" | "lazy";
 }) {
   const screen = productScreens[variant];
-  const showPublicPhone = variant === "overview";
 
   return (
     <div
-      className={`public-product-demo ${showPublicPhone ? "" : "public-product-demo-flat"}`}
-      aria-label="Demonstração visual clara da Bellza"
+      className="public-product-demo public-product-demo-flat"
+      aria-label="Demonstração real da Bellza com conteúdo fictício"
     >
       <div className="public-demo-desktop">
-        <div className="flex items-center gap-2 border-b border-border/70 bg-muted/35 px-4 py-3">
-          <span className="size-2.5 rounded-full bg-danger-soft ring-1 ring-danger/20" aria-hidden="true" />
-          <span className="size-2.5 rounded-full bg-warning-soft ring-1 ring-warning/20" aria-hidden="true" />
-          <span className="size-2.5 rounded-full bg-success-soft ring-1 ring-success/20" aria-hidden="true" />
-          <span className="ml-3 rounded-full border border-border/70 bg-card px-3 py-1 text-[11px] font-semibold text-muted-foreground">
-            {screen.badge}
-          </span>
+        <div className="public-demo-toolbar">
+          <span className="size-2 rounded-full bg-[#dca0ad]" aria-hidden="true" />
+          <span className="size-2 rounded-full bg-[#dcc48d]" aria-hidden="true" />
+          <span className="size-2 rounded-full bg-[#91b9a7]" aria-hidden="true" />
+          <span className="public-demo-address">{screen.badge}</span>
         </div>
 
         <div className="public-demo-screenshot">
           <img
             src={screen.src}
+            srcSet={`${screen.responsiveSrc} 480w, ${screen.src} 960w`}
+            sizes="(max-width: 767px) 92vw, 720px"
             alt={screen.alt}
-            width={2880}
-            height={1920}
+            width={960}
+            height={738}
             className="h-full w-full object-contain object-top"
             loading={loading}
             decoding="async"
+            fetchPriority={loading === "eager" ? "high" : "auto"}
           />
         </div>
       </div>
 
-      {showPublicPhone && (
-        <div className="public-demo-phone" aria-label="Painel Bellza real no telemóvel">
-          <div className="rounded-[1.8rem] border border-border bg-card p-2 shadow-[0_18px_45px_rgba(24,24,27,0.12)]">
-            <div className="public-demo-phone-screen">
-              <img
-                src={`${PRINT_BASE}/inicio-mobile.png`}
-                alt="Painel inicial real da Bellza no telemóvel com marcações, link público e atalhos rápidos"
-                width={1170}
-                height={1992}
-                className="h-full w-full object-cover object-top"
-                loading="lazy"
-                decoding="async"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="public-demo-chip public-demo-chip-top">
-        <Bell className="size-4 text-accent" aria-hidden="true" />
-        <span>Nova marcação recebida</span>
+        <CalendarCheck className="size-4 text-accent" aria-hidden="true" />
+        <span>Agenda, clientes e pagamentos ligados</span>
       </div>
-      <div className="public-demo-chip public-demo-chip-bottom">
-        <CreditCard className="size-4 text-accent" aria-hidden="true" />
-        <span>Sinal online confirmado</span>
-      </div>
-      <div className="public-demo-badge" aria-hidden="true">
-        <Smartphone className="size-4 text-accent" aria-hidden="true" />
-        <span>A sua marca, o seu link, os seus clientes.</span>
-      </div>
-      <CalendarCheck className="public-demo-calendar" aria-hidden="true" />
     </div>
   );
 }

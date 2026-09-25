@@ -6,6 +6,52 @@
 // You can pass additional config via defineConfig({ vite: { ... } }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { readFileSync } from "node:fs";
+import { loadEnv } from "vite";
+
+function readPublicWranglerVar(name: string) {
+  const config = readFileSync(new URL("./wrangler.jsonc", import.meta.url), "utf8");
+  const match = config.match(new RegExp(`"${name}"\\s*:\\s*"([^"]+)"`));
+  return match?.[1] ?? "";
+}
+
+if (process.env.CLOUDFLARE_ENV === "staging") {
+  const stagingEnv = loadEnv("staging", process.cwd(), "VITE_");
+  const stageUrl = (process.env.VITE_SUPABASE_URL || stagingEnv.VITE_SUPABASE_URL || "").trim();
+  const stageKey = (
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    stagingEnv.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    ""
+  ).trim();
+  const productionUrl = "https://pwmdzpvnatrvfpgcvnzg.supabase.co";
+  let stageOrigin = "";
+  try {
+    const parsed = new URL(stageUrl);
+    if (parsed.protocol === "https:" && /^[a-z0-9-]+\.supabase\.co$/i.test(parsed.hostname)) {
+      stageOrigin = parsed.origin;
+    }
+  } catch {
+    // Invalid or missing staging URL fails closed below.
+  }
+  if (!stageOrigin || !stageKey || stageOrigin === productionUrl) {
+    throw new Error("staging_supabase_public_config_missing_or_production");
+  }
+  const stageVapidKey = cleanPublicVapidKey(
+    process.env.VITE_VAPID_PUBLIC_KEY || stagingEnv.VITE_VAPID_PUBLIC_KEY,
+  );
+  if (!stageVapidKey) {
+    throw new Error("staging_vapid_public_key_missing");
+  }
+  process.env.VITE_SUPABASE_URL = stageOrigin;
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY = stageKey;
+  process.env.VITE_VAPID_PUBLIC_KEY = stageVapidKey;
+} else {
+  // Local dev has no .env file; the public production values live in Wrangler.
+  // Only staging is forbidden from borrowing these values.
+  process.env.VITE_SUPABASE_URL ||= readPublicWranglerVar("VITE_SUPABASE_URL");
+  process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||= readPublicWranglerVar(
+    "VITE_SUPABASE_PUBLISHABLE_KEY",
+  );
+}
 
 function readPublicVapidKey() {
   const fromEnvironment = cleanPublicVapidKey(process.env.VITE_VAPID_PUBLIC_KEY);
@@ -41,6 +87,11 @@ export default defineConfig({
   vite: {
     define: {
       "import.meta.env.VITE_VAPID_PUBLIC_KEY": JSON.stringify(publicVapidKey),
+    },
+    // Exact production hosts are accepted only so local edge tests can exercise
+    // canonical redirects through the Worker. Wildcard hosts remain forbidden.
+    server: {
+      allowedHosts: ["bellza.pt", "www.bellza.pt"],
     },
   },
   tanstackStart: {

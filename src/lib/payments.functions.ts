@@ -1,9 +1,17 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { createStripeClient, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
+import { createStripeClient, getConfiguredStripeEnv, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
+import { assertConnectedAccountReadyForCharge } from "@/lib/stripe-connect-integrity.server";
+import { assertExactStripeAmount } from "@/lib/stripe-financial-integrity";
 import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
-import { getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import {
+  assertStudioAccess,
+  assertStudioEntitlement,
+  getRequestFingerprint,
+  rateLimitOrThrow,
+} from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 
 const PAYMENT_METHOD_MESSAGES: Record<string, string> = {
@@ -26,10 +34,7 @@ function admin(): any {
 }
 
 function stripeEnv(): StripeEnv {
-  if (process.env.STRIPE_ENV !== "live") {
-    throw new Error("stripe_live_required");
-  }
-  return "live";
+  return getConfiguredStripeEnv();
 }
 
 function appBaseUrl() {
@@ -124,10 +129,12 @@ async function loadPaymentReservationForConfirmation(
 function assertStripePaymentMatchesReservation(row: any, paymentIntent: any) {
   const metadata = paymentIntent.metadata ?? {};
   const expectedAmount = Number(row.amount_cents || 0);
-  const receivedAmount = Number(paymentIntent.amount_received || paymentIntent.amount || 0);
-  if (expectedAmount <= 0 || receivedAmount < expectedAmount) {
-    throw new Error("payment_amount_mismatch");
-  }
+  assertExactStripeAmount({
+    expectedAmountCents: expectedAmount,
+    stripeAmountCents: Number(paymentIntent.amount || 0),
+    receivedAmountCents: Number(paymentIntent.amount_received || 0),
+    succeeded: paymentIntent.status === "succeeded",
+  });
   if ((row.currency || "eur").toLowerCase() !== (paymentIntent.currency || "eur").toLowerCase()) {
     throw new Error("payment_currency_mismatch");
   }
@@ -307,6 +314,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     if (existing) {
       const reconciledExisting = await reconcileCheckoutSessionPayment(sb, existing);
       const source = await loadPaymentSource(sb, bookingRequestId, appointmentId);
+      await assertStudioEntitlement(sb, source.studioId, "online_payments");
       return {
         ...formatIntentResponse(reconciledExisting, source.totalCents, source.depositPercent),
         mb_way_phone:
@@ -316,6 +324,7 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     }
 
     const source = await loadPaymentSource(sb, bookingRequestId, appointmentId);
+    await assertStudioEntitlement(sb, source.studioId, "online_payments");
     const accepted = source.acceptedMethods;
     if (!accepted.includes(data.method)) throw new Error("payment_method_not_accepted");
 
@@ -339,6 +348,12 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     }
 
     const stripe = createStripeClient(stripeEnv());
+    await assertConnectedAccountReadyForCharge(stripe, {
+      accountId: source.connectAccountId,
+      studioId: source.studioId,
+      method: data.method,
+      requirePayouts: true,
+    });
     const checkoutExpiresAt = Math.floor(Date.now() / 1000) + 30 * 60;
     const paymentMetadata = {
       ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
@@ -590,9 +605,13 @@ export const getPaymentStatus = createServerFn({ method: "POST" })
   });
 
 export const reconcileStudioBookingPayments = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((input) => ReconcileStudioInput.parse(input))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const sb = admin();
+    await assertStudioAccess(sb, (context as any).userId, data.studioId, {
+      entitlement: "online_payments",
+    });
     await rateLimitOrThrow({
       key: `payment-reconcile:${data.studioId}:${getRequestFingerprint()}`,
       limit: 20,

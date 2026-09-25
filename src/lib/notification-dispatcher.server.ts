@@ -1,17 +1,8 @@
-import { createServerFn } from "@tanstack/react-start";
-import { z } from "zod";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendWebPush } from "@/lib/web-push.server";
-
-const SyncStudioPushInput = z.object({
-  studioId: z.string().uuid(),
-});
-
-const DispatchRecentStudioAppointmentInput = z.object({
-  studioId: z.string().uuid(),
-  appointmentId: z.string().uuid(),
-});
+import { isAppointmentReminderDispatchable } from "@/lib/appointment-lifecycle";
+import { assertStudioEntitlement } from "@/lib/server-security";
+import { BELLZA_APP_ICON_192, BELLZA_NOTIFICATION_BADGE } from "@/lib/brand-assets";
 
 type ClaimedDelivery = {
   delivery_id: string;
@@ -32,38 +23,42 @@ type ClaimedDelivery = {
 
 const CLAIM_BATCH_SIZE = 100;
 const MAX_DELIVERY_ATTEMPTS = 12;
+const MAX_ACTIVE_STUDIO_PUSH_DEVICES = 3;
+const ACTIVE_STUDIO_PUSH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-export const syncStudioPushNotifications = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((input) => SyncStudioPushInput.parse(input))
-  .handler(async ({ data, context }) => {
-    const userId = String((context as any).userId ?? "").trim();
-    if (!userId) throw new Response("Unauthorized", { status: 401 });
-
+export async function dispatchRecentStudioAppointmentPushNotification(input: {
+  studioId: string;
+  appointmentId: string;
+}) {
     const sb = getAdminClient();
-    await assertCanAccessStudio(sb, userId, data.studioId);
-    return dispatchPendingStudioPushNotifications({ studioId: data.studioId });
-  });
-
-export const dispatchRecentStudioAppointmentPushNotification = createServerFn({ method: "POST" })
-  .inputValidator((input) => DispatchRecentStudioAppointmentInput.parse(input))
-  .handler(async ({ data }) => {
-    const sb = getAdminClient();
-    const appointment = await loadRecentAppointmentForDispatch(sb, data.studioId, data.appointmentId);
+    if (!(await studioCanUseNotifications(sb, input.studioId))) {
+      return { sent: 0, failed: 0, retried: 0, skipped: 1 };
+    }
+    const appointment = await loadRecentAppointmentForDispatch(sb, input.studioId, input.appointmentId);
     if (!appointment) {
       console.info("[notifications] studio_push_recent_skipped", {
-        studio_id: data.studioId,
-        appointment_id: data.appointmentId,
+        studio_id: input.studioId,
+        appointment_id: input.appointmentId,
         reason: "appointment_missing_or_old",
       });
       return { sent: 0, failed: 0, retried: 0, skipped: 1 };
     }
 
+    const notificationId = await loadAppointmentNotificationId(
+      sb,
+      input.studioId,
+      input.appointmentId,
+    );
+    if (!notificationId) {
+      return { sent: 0, failed: 0, retried: 0, skipped: 1 };
+    }
+
     return dispatchPendingStudioPushNotifications({
-      studioId: data.studioId,
-      appointmentId: data.appointmentId,
+      studioId: input.studioId,
+      appointmentId: input.appointmentId,
+      notificationId,
     });
-  });
+}
 
 export async function dispatchPendingStudioPushNotifications(options?: {
   studioId?: string;
@@ -71,7 +66,16 @@ export async function dispatchPendingStudioPushNotifications(options?: {
   notificationId?: string;
 }) {
   const sb = getAdminClient();
+  if (options?.studioId && !(await studioCanUseNotifications(sb, options.studioId))) {
+    return { sent: 0, failed: 0, retried: 0, skipped: 1 };
+  }
+  const { error: staleError } = await (sb as any).rpc(
+    "finalize_stale_studio_notification_deliveries",
+    { p_studio_id: options?.studioId ?? null },
+  );
+  if (staleError && staleError.code !== "PGRST202") throw new Error(staleError.message);
   await cleanupExpiredPushSubscriptions(sb, options?.studioId);
+  await cleanupStaleStudioPushSubscriptions(sb, options?.studioId);
   await cleanupExcessStudioPushSubscriptions(sb, options?.studioId);
 
   let sent = 0;
@@ -109,6 +113,21 @@ export async function dispatchPendingStudioPushNotifications(options?: {
   return { sent, failed, retried, skipped };
 }
 
+async function loadAppointmentNotificationId(
+  sb: ReturnType<typeof getAdminClient>,
+  studioId: string,
+  appointmentId: string,
+) {
+  const { data, error } = await sb
+    .from("studio_notifications")
+    .select("id")
+    .eq("studio_id", studioId)
+    .eq("event_key", `new_appointment:${appointmentId}`)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.id ?? null;
+}
+
 async function deliverStudioPush(
   sb: ReturnType<typeof getAdminClient>,
   delivery: ClaimedDelivery,
@@ -135,17 +154,18 @@ async function deliverStudioPush(
 
   try {
     const result = await sendWebPush(delivery, {
-      title: "Bellza",
-      body: formatPushBody(title, body),
+      title,
+      body,
       url: actionUrl,
-      icon: "/pwa-icon.svg",
-      badge: "/pwa-icon.svg",
+      icon: BELLZA_APP_ICON_192,
+      badge: BELLZA_NOTIFICATION_BADGE,
       tag: `studio-${delivery.notification_id}`,
       data: {
         kind: delivery.kind,
         studioId: delivery.studio_id,
         notificationId: delivery.notification_id,
         deliveryId: delivery.delivery_id,
+        dedupeKey: `studio:${delivery.studio_id}:${delivery.notification_id}`,
         receiptToken: readPayloadString(delivery.payload, "delivery_receipt_token"),
         url: actionUrl,
       },
@@ -262,6 +282,9 @@ async function validateStudioNotificationScope(
   sb: ReturnType<typeof getAdminClient>,
   notification: ClaimedDelivery,
 ) {
+  if (!(await studioCanUseNotifications(sb, notification.studio_id))) {
+    return { ok: false as const, reason: "plan_feature_required:notifications" };
+  }
   const { data: currentMembership, error: membershipError } = await (sb as any)
     .from("user_roles")
     .select("role")
@@ -277,6 +300,41 @@ async function validateStudioNotificationScope(
   const payloadStudioId = readPayloadString(notification.payload, "studio_id");
   if (payloadStudioId && payloadStudioId !== notification.studio_id) {
     return { ok: false as const, reason: "payload_studio_mismatch" };
+  }
+
+  if (notification.kind === "appointment_reminder") {
+    const appointmentId = readPayloadString(notification.payload, "appointment_id");
+    if (!appointmentId) {
+      return { ok: false as const, reason: "appointment_reminder_missing_appointment" };
+    }
+    const { data: appointment, error } = await (sb as any)
+      .from("appointments")
+      .select("id,studio_id,starts_at,status")
+      .eq("id", appointmentId)
+      .eq("studio_id", notification.studio_id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!appointment?.id) {
+      return { ok: false as const, reason: "appointment_missing" };
+    }
+    const queuedStartsAt = readPayloadString(notification.payload, "starts_at");
+    if (
+      !isAppointmentReminderDispatchable({
+        status: appointment.status,
+        startsAt: appointment.starts_at,
+        queuedStartsAt: queuedStartsAt || null,
+      })
+    ) {
+      const currentStart = Date.parse(String(appointment.starts_at));
+      const queuedStart = Date.parse(queuedStartsAt ?? "");
+      const reason =
+        queuedStartsAt && Number.isFinite(queuedStart) && queuedStart !== currentStart
+          ? "appointment_schedule_changed"
+          : String(appointment.status) !== "confirmed"
+            ? "appointment_no_longer_confirmed"
+            : "appointment_reminder_expired";
+      return { ok: false as const, reason };
+    }
   }
 
   const checks: Array<{
@@ -327,6 +385,18 @@ async function validateStudioNotificationScope(
   }
 
   return { ok: true as const };
+}
+
+async function studioCanUseNotifications(
+  sb: ReturnType<typeof getAdminClient>,
+  studioId: string,
+) {
+  try {
+    await assertStudioEntitlement(sb, studioId, "notifications");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function loadRecentAppointmentForDispatch(
@@ -395,7 +465,7 @@ async function cleanupExcessStudioPushSubscriptions(
     if (!row.id || !row.user_id || !row.studio_id) continue;
     const key = `${row.studio_id}:${row.user_id}`;
     const count = keepCountByKey.get(key) ?? 0;
-    if (count >= 12) revokeIds.push(row.id);
+    if (count >= MAX_ACTIVE_STUDIO_PUSH_DEVICES) revokeIds.push(row.id);
     else keepCountByKey.set(key, count + 1);
   }
   if (revokeIds.length === 0) return;
@@ -411,6 +481,26 @@ async function cleanupExcessStudioPushSubscriptions(
   if (updateError) console.warn("push_subscription_excess_cleanup_update_failed", updateError.message);
 }
 
+async function cleanupStaleStudioPushSubscriptions(
+  sb: ReturnType<typeof getAdminClient>,
+  studioId?: string,
+) {
+  const now = new Date().toISOString();
+  let query = (sb as any)
+    .from("push_subscriptions")
+    .update({
+      revoked_at: now,
+      revocation_reason: "device_inactive_30_days",
+      updated_at: now,
+    })
+    .in("audience", ["studio", "both"])
+    .is("revoked_at", null)
+    .lt("last_seen_at", new Date(Date.now() - ACTIVE_STUDIO_PUSH_TTL_MS).toISOString());
+  if (studioId) query = query.eq("studio_id", studioId);
+  const { error } = await query;
+  if (error) console.warn("push_subscription_stale_cleanup_failed", error.message);
+}
+
 async function revokePushSubscription(
   sb: ReturnType<typeof getAdminClient>,
   subscriptionId: string,
@@ -422,22 +512,6 @@ async function revokePushSubscription(
     .update({ revoked_at: now, revocation_reason: reason, updated_at: now })
     .eq("id", subscriptionId);
   if (error) console.warn("push_subscription_revoke_failed", error.message);
-}
-
-async function assertCanAccessStudio(
-  sb: ReturnType<typeof getAdminClient>,
-  userId: string,
-  studioId: string,
-) {
-  const { data, error } = await sb
-    .from("user_roles")
-    .select("role")
-    .eq("user_id", userId)
-    .eq("studio_id", studioId)
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data?.role) throw new Response("forbidden", { status: 403 });
 }
 
 function retryDelayMs(attempt: number) {
@@ -481,14 +555,20 @@ function sanitizeActionUrl(value: string | null, kind: string) {
 function sanitizeStudioNotificationText(value: string, fallback: string) {
   const text = String(value ?? "").trim();
   if (!text) return fallback;
-  const withoutBrowserAttribution = text.replace(/\s+\bfrom\b\s+[\w .:/-]+\s*$/i, "").trim();
+  const withoutBrowserAttribution = text
+    .replace(/^\s*from\s*[:\-–—]?\s*/i, "")
+    .replace(/\s+(?:[•·\-–—]\s*)?from\s+[^\n]+$/i, "")
+    .trim();
   const technicalPattern =
-    /\b(from|insert|update|delete|upsert|select|payload|schema|table|row|uuid|endpoint|subscription|webhook)\b|notifications_log|studio_notifications|push_subscriptions|appointment_created|update_professional_status|push_client|push_studio|[_{}[\]"`]/i;
+    /\b(insert|update|delete|upsert|select|payload|schema|table|row|uuid|endpoint|subscription|webhook)\b|notifications_log|studio_notifications|push_subscriptions|appointment_created|update_professional_status|push_client|push_studio|[_{}[\]"`]/i;
   if (technicalPattern.test(withoutBrowserAttribution)) return fallback;
   return withoutBrowserAttribution || fallback;
 }
 
 function studioPushFallbackTitle(kind: string) {
+  if (kind === "appointment_reminder") return "Próximo atendimento";
+  if (kind === "attendance_confirmation") return "O atendimento aconteceu?";
+  if (kind === "attendance_summary") return "Atendimentos por confirmar";
   if (kind === "new_appointment") return "Nova marcação recebida";
   if (kind === "appointment_rescheduled") return "Marcação remarcada";
   if (kind === "appointment_cancelled") return "Marcação cancelada";
@@ -502,6 +582,9 @@ function studioPushFallbackTitle(kind: string) {
 }
 
 function studioPushFallbackBody(kind: string) {
+  if (kind === "appointment_reminder") return "Tem um atendimento a começar em breve.";
+  if (kind === "attendance_confirmation") return "Confirme se o cliente compareceu ou faltou.";
+  if (kind === "attendance_summary") return "Resolva as pendências de hoje na Agenda.";
   if (kind === "new_appointment") return "Tem uma nova marcação para acompanhar no painel.";
   if (kind === "appointment_rescheduled") return "Uma marcação foi remarcada.";
   if (kind === "appointment_cancelled") return "Uma marcação foi cancelada.";
@@ -512,10 +595,6 @@ function studioPushFallbackBody(kind: string) {
   if (kind === "refund_request") return "Existe um pedido de reembolso para analisar.";
   if (kind === "withdrawal_requested") return "Existe uma atualização financeira para analisar.";
   return "Tem uma nova ação importante no painel.";
-}
-
-function formatPushBody(title: string, body: string) {
-  return [title, body].map((item) => item.trim()).filter(Boolean).join("\n");
 }
 
 function maskEndpoint(endpoint: string) {

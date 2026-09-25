@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertStudioAccessWithOptions, rateLimitOrThrow } from "@/lib/server-security";
+import { assertStudioOwnerAccess, rateLimitOrThrow } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
 
@@ -44,8 +44,8 @@ export const getWithdrawalSummary = createServerFn({ method: "POST" })
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = admin();
-    await assertStudioAccessWithOptions(sb, (context as any).userId, data.studioId, {
-      requirePremium: true,
+    await assertStudioOwnerAccess(sb, (context as any).userId, data.studioId, {
+      entitlement: "finance_advanced",
     });
     const [settings, totals, requests] = await Promise.all([
       loadSettings(sb, data.studioId),
@@ -67,8 +67,8 @@ export const savePayoutSettings = createServerFn({ method: "POST" })
   .inputValidator((input) => PayoutSettingsInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = admin();
-    await assertStudioAccessWithOptions(sb, (context as any).userId, data.studioId, {
-      requirePremium: true,
+    await assertStudioOwnerAccess(sb, (context as any).userId, data.studioId, {
+      entitlement: "finance_advanced",
     });
 
     const iban = data.payoutMethod === "iban" ? normalizeIban(data.iban) : null;
@@ -100,7 +100,9 @@ export const requestStudioWithdrawal = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = admin();
     const userId = (context as any).userId;
-    await assertStudioAccessWithOptions(sb, userId, data.studioId, { requirePremium: true });
+    await assertStudioOwnerAccess(sb, userId, data.studioId, {
+      entitlement: "finance_advanced",
+    });
     await rateLimitOrThrow({
       key: `withdrawal:${userId}:${data.studioId}`,
       limit: 4,
@@ -150,7 +152,9 @@ export const cancelStudioWithdrawal = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = admin();
     const userId = (context as any).userId;
-    await assertStudioAccessWithOptions(sb, userId, data.studioId, { requirePremium: true });
+    await assertStudioOwnerAccess(sb, userId, data.studioId, {
+      entitlement: "finance_advanced",
+    });
 
     const { error } = await (sb as any)
       .from("withdrawal_requests")

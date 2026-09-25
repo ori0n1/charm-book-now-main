@@ -1,29 +1,17 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tanstack-start-app",
-  "workers_dev": true,
+  "name": "bellza-deploy-blocked",
+  "workers_dev": false,
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
   "main": "src/server.ts",
-  "triggers": {
-    "crons": ["*/2 * * * *"],
+  "build": {
+    "command": "node scripts/block-unsafe-wrangler-deploy.mjs",
   },
-  "routes": [
-    {
-      "pattern": "www.bellza.pt",
-      "zone_name": "bellza.pt",
-      "custom_domain": true,
-      "enabled": true,
-      "previews_enabled": false,
-    },
-    {
-      "pattern": "bellza.pt",
-      "zone_name": "bellza.pt",
-      "custom_domain": true,
-      "enabled": true,
-      "previews_enabled": false,
-    },
-  ],
+  "triggers": {
+    "crons": [],
+  },
+  "routes": [],
   "vars": {
     "STRIPE_ENV": "live",
     "SENDDM_API_BASE_URL": "https://api.sent.dm",
@@ -43,5 +31,33 @@
     "VITE_SUPABASE_PROJECT_ID": "pwmdzpvnatrvfpgcvnzg",
     "VITE_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP",
     "VITE_SUPABASE_URL": "https://pwmdzpvnatrvfpgcvnzg.supabase.co",
+  },
+  "env": {
+    "staging": {
+      "name": "tanstack-start-app-staging",
+      "workers_dev": true,
+      "routes": [],
+      "triggers": { "crons": [] },
+      "vars": {
+        "STRIPE_ENV": "sandbox",
+        "STRIPE_CONNECT_NEW_ACCOUNT_MODEL": "standard_full_v1",
+        "VITE_VAPID_PUBLIC_KEY": "BPi_JWLxJtv_fkCyG8zJuuCM68Sgyc2U89c0cIpFfD3mhY48jCb1xuh7stW8yTHl5ggrouIK8XkMBWNFm6Y3Sy0",
+        "STRIPE_SANDBOX_PRICE_PRO_MONTHLY": "price_1UIogML9Fu2tDsRpKGrlVIiO",
+        "STRIPE_SANDBOX_PRICE_PRO_YEARLY": "price_1UIogNL9Fu2tDsRp9WQo9ICU",
+        "STRIPE_SANDBOX_PRICE_PREMIUM_MONTHLY": "price_1UIogNL9Fu2tDsRpMkEmqOwK",
+        "STRIPE_SANDBOX_PRICE_PREMIUM_YEARLY": "price_1UIogNL9Fu2tDsRpM19rNoHH",
+        "STRIPE_SANDBOX_PLATFORM_WEBHOOK_ENDPOINT_ID": "we_1UIuGKL9Fu2tDsRplF8pVEjc",
+        "STRIPE_SANDBOX_CONNECT_WEBHOOK_ENDPOINT_ID": "we_1UIuGLL9Fu2tDsRpshHozHqW",
+        "STRIPE_SANDBOX_WEBHOOK_URL": "https://tanstack-start-app-staging.silas18-so.workers.dev/api/public/payments/webhook",
+        "ENABLE_IN_PERSON_MB_WAY": "false",
+        "EMAIL_NOTIFICATIONS_ENABLED": "false",
+        "APP_URL": "https://tanstack-start-app-staging.silas18-so.workers.dev",
+        "SUPABASE_URL": "https://qflwsdrgdkkcxjnbxmis.supabase.co",
+        "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_TXdQysbqP0YmHIpKO3LS4Q_az2nh6sh",
+        "VITE_SUPABASE_PROJECT_ID": "qflwsdrgdkkcxjnbxmis",
+        "VITE_SUPABASE_URL": "https://qflwsdrgdkkcxjnbxmis.supabase.co",
+        "VITE_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_TXdQysbqP0YmHIpKO3LS4Q_az2nh6sh",
+      },
+    },
   },
 }

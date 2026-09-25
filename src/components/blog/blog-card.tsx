@@ -38,7 +38,10 @@ export function BlogCard({
           <h2 className="mt-3 text-xl font-semibold leading-tight tracking-tight text-foreground">
             {article.title}
           </h2>
-          <p className="mt-3 line-clamp-3 text-sm leading-relaxed text-muted-foreground">
+          <p
+            className="mt-3 line-clamp-3 text-sm leading-relaxed text-muted-foreground"
+            data-allow-text-clip
+          >
             {article.excerpt}
           </p>
           <span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-accent">

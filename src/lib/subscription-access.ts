@@ -1,4 +1,12 @@
+import {
+  resolveEffectivePlanTier,
+  type PlanAccessSnapshot,
+  type PlanTier,
+} from "@/lib/plan-entitlements";
+
 export type StudioAccessSnapshot = {
+  plan_tier?: string | null;
+  subscription_plan_tier?: string | null;
   subscription_status?: string | null;
   subscription_current_period_end?: string | null;
   premium_access_until?: string | null;
@@ -13,6 +21,9 @@ export type SubscriptionAccessStatus =
   | "payment_required";
 
 export type SubscriptionAccessResult = {
+  effectivePlan: PlanTier;
+  subscriptionActive: boolean;
+  trialActive: boolean;
   premiumActive: boolean;
   locked: boolean;
   status: SubscriptionAccessStatus;
@@ -20,8 +31,7 @@ export type SubscriptionAccessResult = {
   redirectTo: "/admin/premium";
 };
 
-const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active"]);
-const TRIAL_STATUSES = new Set(["trialing", "trial", ""]);
+const PERIOD_ACCESS_STATUSES = new Set(["active", "trialing", "canceled"]);
 
 function timeOf(value?: string | null) {
   if (!value) return null;
@@ -41,35 +51,47 @@ export function getStudioSubscriptionAccess(
   const redirectTo = "/admin/premium" as const;
   if (!studio || studio.is_active === false) {
     return {
+      effectivePlan: "free",
+      subscriptionActive: false,
+      trialActive: false,
       premiumActive: false,
       locked: true,
       status: "payment_required",
-      message: "Escolha um plano para continuar a usar o painel.",
+      message: "Este estúdio não está ativo.",
       redirectTo,
     };
   }
 
   const status = String(studio.subscription_status ?? "");
-  const hasPremiumExtension = isFutureDate(studio.premium_access_until, now);
-  const hasPaidPeriod = isFutureDate(studio.subscription_current_period_end, now);
-  const activeSubscription =
-    hasPremiumExtension ||
-    (ACTIVE_SUBSCRIPTION_STATUSES.has(status) &&
-      (hasPaidPeriod || (!studio.subscription_current_period_end && !studio.premium_access_until)));
+  const trialActive = isFutureDate(studio.trial_ends_at, now);
+  const periodActive =
+    isFutureDate(studio.premium_access_until, now) ||
+    isFutureDate(studio.subscription_current_period_end, now);
+  const activeSubscription = periodActive && PERIOD_ACCESS_STATUSES.has(status);
+  const effectivePlan = resolveEffectivePlanTier(studio as PlanAccessSnapshot, now);
 
-  if (activeSubscription) {
+  if (activeSubscription && status !== "trialing") {
     return {
-      premiumActive: true,
+      effectivePlan,
+      subscriptionActive: true,
+      trialActive: false,
+      premiumActive: effectivePlan === "premium",
       locked: false,
       status: "active",
-      message: "Assinatura ativa.",
+      message: `Plano ${effectivePlan === "premium" ? "Premium" : "Pro"} ativo.`,
       redirectTo,
     };
   }
 
-  const trialActive = isFutureDate(studio.trial_ends_at, now) && !activeSubscription;
-  if (trialActive) {
+  if (trialActive || (activeSubscription && status === "trialing")) {
     return {
+      effectivePlan,
+      // A Bellza trial grants Premium entitlements, but it is not a paid
+      // Stripe subscription. Keeping these concepts separate prevents the UI
+      // from trying to update a canceled/absent subscription instead of
+      // creating a new Checkout Session.
+      subscriptionActive: activeSubscription,
+      trialActive: true,
       premiumActive: true,
       locked: false,
       status: "trialing",
@@ -80,12 +102,15 @@ export function getStudioSubscriptionAccess(
 
   const trialExpired = Boolean(studio.trial_ends_at && !isFutureDate(studio.trial_ends_at, now));
   return {
+    effectivePlan: "free",
+    subscriptionActive: false,
+    trialActive: false,
     premiumActive: false,
-    locked: true,
+    locked: false,
     status: trialExpired ? "expired_trial" : "payment_required",
     message: trialExpired
-      ? "O teste gratuito terminou. Escolha um plano para continuar a usar o painel."
-      : "Escolha um plano para continuar a usar o painel.",
+      ? "O teste gratuito terminou. O seu estúdio continua disponível no plano Free."
+      : "O seu estúdio está no plano Free.",
     redirectTo,
   };
 }

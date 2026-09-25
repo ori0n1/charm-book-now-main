@@ -16,6 +16,30 @@ type PushPayload = {
 
 const encoder = new TextEncoder();
 
+const TRUSTED_PUSH_HOSTS = new Set([
+  "fcm.googleapis.com",
+  "updates.push.services.mozilla.com",
+  "push.services.mozilla.com",
+  "web.push.apple.com",
+]);
+
+const TRUSTED_PUSH_HOST_SUFFIXES = [".notify.windows.com", ".push.apple.com"];
+
+export function isTrustedWebPushEndpoint(value: string) {
+  try {
+    const endpoint = new URL(value.trim());
+    if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password) return false;
+    if (endpoint.port && endpoint.port !== "443") return false;
+    const hostname = endpoint.hostname.toLowerCase().replace(/\.$/, "");
+    return (
+      TRUSTED_PUSH_HOSTS.has(hostname) ||
+      TRUSTED_PUSH_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function sendWebPush(subscription: PushSubscriptionRow, payload: PushPayload) {
   try {
     const privateKey = cleanBase64Url(process.env.VAPID_PRIVATE_KEY);
@@ -26,6 +50,9 @@ export async function sendWebPush(subscription: PushSubscriptionRow, payload: Pu
     }
 
     const endpoint = new URL(subscription.endpoint.trim());
+    if (!isTrustedWebPushEndpoint(endpoint.href)) {
+      return { ok: false, skipped: "untrusted_push_endpoint" as const, attempts: 0 };
+    }
     const vapidToken = await createVapidToken({
       audience: endpoint.origin,
       subject,
@@ -49,6 +76,7 @@ export async function sendWebPush(subscription: PushSubscriptionRow, payload: Pu
       try {
         const response = await fetch(endpoint.href, {
           method: "POST",
+          redirect: "manual",
           headers: {
             Authorization: `vapid t=${vapidToken}, k=${publicKey}`,
             "Content-Encoding": "aes128gcm",

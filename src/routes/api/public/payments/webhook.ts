@@ -1,16 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
 import type Stripe from "stripe";
 import {
-  assertStripeProductionConfig,
+  assertStripeRuntimeConfig,
   createStripeClient,
+  getConfiguredStripeEnv,
   type StripeEnv,
   verifyWebhook,
-  verifyWebhookBody,
 } from "@/lib/stripe.server";
 import {
   getPlanByPriceId,
-  getPlanIdFromSubscription,
+  getPlanConfigFromSubscription,
   getSubscriptionPriceId,
+  stripeRecurringPriceMatchesPlan,
 } from "@/lib/subscription-plans.server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { markTrialUsed } from "@/lib/subscription-helpers";
@@ -19,13 +20,24 @@ import { sendAppointmentConfirmationMessage } from "@/lib/whatsapp.functions";
 import { processReferralsOnPayment, rejectReferralOnCancellation } from "@/lib/referrals.functions";
 import { syncConnectAccountFromWebhook } from "@/lib/stripe-connect.functions";
 import { handleInPersonMbWayPaymentIntent } from "@/lib/in-person-mbway.functions";
+import {
+  assertDirectChargeAccount,
+  assertExactStripeAmount,
+  assertWithdrawalWebhookBinding,
+  minimalStripeEventAudit,
+  resolveBookingPaymentStatus,
+} from "@/lib/stripe-financial-integrity";
 
 type StripeMetadata = Record<string, string | undefined>;
 type StripePayload = Record<string, unknown> & {
   id?: string;
+  object?: string;
   amount?: number | null;
   amount_received?: number | null;
+  amount_refunded?: number | null;
+  refunded?: boolean | null;
   amount_total?: number | null;
+  charge?: string | StripePayload | null;
   latest_charge?: string | StripePayload | null;
   currency?: string | null;
   customer?: string | null;
@@ -46,6 +58,7 @@ type StripePayload = Record<string, unknown> & {
 type StripeWebhookEvent = {
   id?: string;
   type: string;
+  created?: number;
   livemode?: boolean;
   account?: string;
   data: { object: StripePayload };
@@ -61,10 +74,10 @@ function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
   const extended = subscription as SubscriptionWithPeriodEnd;
   const direct = extended.current_period_end;
   if (typeof direct === "number") return direct;
-  const trialEnd = extended.trial_end;
-  if (typeof trialEnd === "number") return trialEnd;
   const itemPeriodEnd = extended.items?.data?.[0]?.current_period_end;
-  return typeof itemPeriodEnd === "number" ? itemPeriodEnd : null;
+  if (typeof itemPeriodEnd === "number") return itemPeriodEnd;
+  const trialEnd = extended.trial_end;
+  return typeof trialEnd === "number" ? trialEnd : null;
 }
 
 function hasPeriodAccess(status: string, currentPeriodEnd: string | null) {
@@ -90,7 +103,7 @@ async function loadReservedBookingPayment(
   },
 ) {
   const select =
-    "id,studio_id,appointment_id,booking_request_id,amount_cents,currency,status,stripe_payment_intent_id,stripe_checkout_session_id,stripe_connect_account_id,booking_payment_requests:booking_request_id(id,studio_id,status,total_price),appointments:appointment_id(id,studio_id,status,total_price)";
+    "id,studio_id,appointment_id,booking_request_id,amount_cents,currency,status,stripe_payment_intent_id,stripe_checkout_session_id,stripe_connect_account_id,booking_payment_requests:booking_request_id(id,studio_id,status,total_price,client_name,client_phone,client_email)";
 
   const byStripe = await (sb as any)
     .from("payment_intents")
@@ -131,12 +144,14 @@ async function loadReservedBookingPayment(
 
 function assertBookingPaymentMatchesStripe(row: any, pi: StripePayload) {
   const metadata = pi.metadata ?? {};
-  const amountReceived = Number(pi.amount_received ?? pi.amount ?? 0);
   const expectedAmount = Number(row.amount_cents || 0);
   if (!row?.id) throw new Error("payment_reservation_missing");
-  if (expectedAmount <= 0 || amountReceived < expectedAmount) {
-    throw new Error("payment_amount_mismatch");
-  }
+  assertExactStripeAmount({
+    expectedAmountCents: expectedAmount,
+    stripeAmountCents: Number(pi.amount ?? 0),
+    receivedAmountCents: Number(pi.amount_received ?? 0),
+    succeeded: pi.status === "succeeded",
+  });
   if (!currencyMatches(row.currency as string | null, pi.currency)) {
     throw new Error("payment_currency_mismatch");
   }
@@ -169,19 +184,31 @@ async function loadStripeFinancialPatch(
   }
 
   const stripe = createStripeClient(env);
-  const charge = await stripe.charges.retrieve(
-    chargeId,
-    { expand: ["balance_transaction"] },
-    stripeAccount ? { stripeAccount } : undefined,
-  );
-  const balanceTransaction =
-    typeof charge.balance_transaction === "object" && charge.balance_transaction
-      ? charge.balance_transaction
-      : null;
+  let charge: Stripe.Charge | null = null;
+  let balanceTransaction: Stripe.BalanceTransaction | null = null;
+  for (let attempt = 0; attempt < 5 && !balanceTransaction; attempt += 1) {
+    charge = await stripe.charges.retrieve(
+      chargeId,
+      { expand: ["balance_transaction"] },
+      stripeAccount ? { stripeAccount } : undefined,
+    );
+    if (typeof charge.balance_transaction === "object" && charge.balance_transaction) {
+      balanceTransaction = charge.balance_transaction;
+    } else if (typeof charge.balance_transaction === "string") {
+      balanceTransaction = await stripe.balanceTransactions.retrieve(
+        charge.balance_transaction,
+        {},
+        stripeAccount ? { stripeAccount } : undefined,
+      );
+    }
+    if (!balanceTransaction && attempt < 4) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    }
+  }
 
-  if (!balanceTransaction) {
+  if (!charge || !balanceTransaction) {
     return {
-      stripe_charge_id: charge.id,
+      stripe_charge_id: charge?.id ?? chargeId,
       financial_details_status: "pending",
     };
   }
@@ -197,6 +224,81 @@ async function loadStripeFinancialPatch(
       : null,
     financial_details_status: "confirmed",
   };
+}
+
+async function automaticallyRefundPaidBookingConflict(options: {
+  env: StripeEnv;
+  paymentIntentId: string;
+  stripeAccount?: string | null;
+  bookingRequestId: string;
+  reservedPayment: any;
+  reason: string;
+}) {
+  const stripe = createStripeClient(options.env);
+  const refund = await stripe.refunds.create(
+    {
+      payment_intent: options.paymentIntentId,
+      reason: "requested_by_customer",
+      metadata: {
+        bellza_reason: "paid_booking_conflict",
+        booking_request_id: options.bookingRequestId,
+      },
+    },
+    {
+      idempotencyKey: `paid-booking-conflict-refund:${options.paymentIntentId}`,
+      ...(options.stripeAccount ? { stripeAccount: options.stripeAccount } : {}),
+    },
+  );
+
+  const sb = getAdminClient();
+  const [bookingUpdate, paymentUpdate] = await Promise.all([
+    sb
+      .from("booking_payment_requests")
+      .update({
+        status: "paid_conflict",
+        failure_reason: options.reason,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", options.bookingRequestId),
+    sb
+      .from("payment_intents")
+      .update({
+        status: "failed",
+        failure_reason: `automatically_refunded:${options.reason}`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("stripe_payment_intent_id", options.paymentIntentId),
+  ]);
+  if (bookingUpdate.error || paymentUpdate.error) {
+    throw new Error(
+      `paid_conflict_refund_state_failed:${bookingUpdate.error?.message ?? paymentUpdate.error?.message}`,
+    );
+  }
+
+  const request = options.reservedPayment.booking_payment_requests;
+  const requestRow = Array.isArray(request) ? request[0] : request;
+  const { error } = await (sb as any).from("refund_requests").insert({
+    studio_id: options.reservedPayment.studio_id,
+    booking_request_id: options.bookingRequestId,
+    payment_intent_id: options.reservedPayment.id,
+    client_name: requestRow?.client_name ?? null,
+    client_phone: requestRow?.client_phone ?? null,
+    client_email: requestRow?.client_email ?? null,
+    reason: "Reembolso automático: o horário ficou indisponível durante o pagamento.",
+    status: "refunded",
+    decision_note: options.reason,
+    reviewed_at: new Date().toISOString(),
+    platform_processed_at: new Date().toISOString(),
+    stripe_refund_id: refund.id,
+    refund_method: "stripe_automatic",
+  });
+  if (error) {
+    console.error("[payments-webhook] paid_conflict_refund_audit_failed", {
+      booking_request_id: options.bookingRequestId,
+      stripe_payment_intent_id: options.paymentIntentId,
+      reason: error.message,
+    });
+  }
 }
 
 async function handlePaymentIntent(
@@ -232,7 +334,18 @@ async function handlePaymentIntent(
   if (!reservedPayment?.id) {
     throw new Error("payment_reservation_missing");
   }
+  assertDirectChargeAccount(reservedPayment.stripe_connect_account_id, stripeAccount);
   assertBookingPaymentMatchesStripe(reservedPayment, pi);
+
+  const resolvedStatus = resolveBookingPaymentStatus(reservedPayment.status, piStatus);
+  if (resolvedStatus !== piStatus) {
+    console.info("[payments-webhook] out_of_order_state_ignored", {
+      stripe_payment_intent_id: pi.id,
+      current_status: reservedPayment.status,
+      incoming_status: piStatus,
+    });
+    return;
+  }
 
   const financialPatch =
     kind === "succeeded"
@@ -248,24 +361,41 @@ async function handlePaymentIntent(
 
   const paymentPatch = {
     stripe_payment_intent_id: pi.id,
-    stripe_connect_account_id: stripeAccount ?? reservedPayment.stripe_connect_account_id ?? null,
+    stripe_connect_account_id: stripeAccount,
     status: piStatus,
     ...financialPatch,
     updated_at: new Date().toISOString(),
   };
 
-  const { data: updatedByStripeId } = await sb
+  let paymentUpdate = sb
     .from("payment_intents")
     .update(paymentPatch)
-    .eq("stripe_payment_intent_id", pi.id)
-    .select("id");
+    .eq("id", reservedPayment.id)
+    .eq("studio_id", reservedPayment.studio_id);
+  if (kind !== "succeeded") paymentUpdate = paymentUpdate.neq("status", "succeeded");
+  const { data: updatedByStripeId, error: updateError } = await paymentUpdate.select("id");
+  if (updateError) throw updateError;
 
+  let updatedFallback: Array<{ id: string }> = [];
   if ((!updatedByStripeId || updatedByStripeId.length === 0) && bookingRequestId) {
-    await sb
+    let fallbackUpdate = sb
       .from("payment_intents")
       .update(paymentPatch)
+      .eq("studio_id", reservedPayment.studio_id)
       .eq("booking_request_id", bookingRequestId)
       .is("stripe_payment_intent_id", null);
+    if (kind !== "succeeded") fallbackUpdate = fallbackUpdate.neq("status", "succeeded");
+    const fallbackResult = await fallbackUpdate.select("id");
+    if (fallbackResult.error) throw fallbackResult.error;
+    updatedFallback = fallbackResult.data ?? [];
+  }
+
+  if (
+    kind !== "succeeded" &&
+    (!updatedByStripeId || updatedByStripeId.length === 0) &&
+    updatedFallback.length === 0
+  ) {
+    return;
   }
 
   if (kind === "succeeded") {
@@ -275,6 +405,22 @@ async function handlePaymentIntent(
         p_stripe_payment_intent_id: pi.id,
       });
       if (error) {
+        const paidConflict = /paid_conflict|slot_unavailable|exclusion/i.test(error.message);
+        if (paidConflict) {
+          await automaticallyRefundPaidBookingConflict({
+            env,
+            paymentIntentId: pi.id,
+            stripeAccount,
+            bookingRequestId,
+            reservedPayment,
+            reason: error.message,
+          });
+          console.warn("[payments-webhook] paid_conflict_refunded", {
+            booking_request_id: bookingRequestId,
+            stripe_payment_intent_id: pi.id,
+          });
+          return;
+        }
         await sb
           .from("booking_payment_requests")
           .update({
@@ -413,6 +559,11 @@ async function handleCheckoutSession(session: StripePayload, env: StripeEnv, str
     return;
   }
 
+  if (stripeAccount) {
+    // Connected-account Checkout events are never allowed to grant a Bellza plan.
+    return;
+  }
+
   const studioId = session.metadata?.studio_id;
   const userId = session.metadata?.user_id;
 
@@ -507,32 +658,46 @@ async function syncSubscription(
       ? subscription.customer
       : fallback?.customerId ?? null;
   const priceId = getSubscriptionPriceId(subscription);
-  const planId = getPlanIdFromSubscription(env, subscription);
+  const planConfig = getPlanConfigFromSubscription(env, subscription);
+  const stripePrice = subscription.items.data[0]?.price;
   const status = subscription.status ?? "incomplete";
   const periodEnd = getCurrentPeriodEnd(subscription);
   const currentPeriodEnd = periodEnd
     ? new Date(periodEnd * 1000).toISOString()
     : null;
 
-  if (!userId || !studioId || !priceId || !planId) {
-    // Invalid subscription data - silently ignore
-    return;
+  if (!userId) throw new Error("subscription_user_binding_invalid");
+  if (!studioId) throw new Error("subscription_studio_binding_missing");
+  if (!priceId || !planConfig || !stripePrice) {
+    throw new Error("subscription_plan_binding_invalid");
+  }
+  if (!stripeRecurringPriceMatchesPlan(stripePrice, env, planConfig)) {
+    throw new Error("subscription_price_contract_invalid");
   }
 
   const sb = getAdminClient();
   const { data: role, error: roleError } = await sb
     .from("user_roles")
-    .select("studio_id")
+    .select("studio_id,role")
     .eq("user_id", userId)
     .eq("studio_id", studioId)
+    .in("role", ["studio_owner", "saas_owner"])
     .limit(1)
     .maybeSingle();
     
-  if (roleError || !role?.studio_id) {
-    // User doesn't own this studio - potential security breach attempt
-    // Don't log as it could expose user/studio IDs
-    return;
-  }
+  if (roleError || !role?.studio_id) throw new Error("subscription_owner_binding_invalid");
+
+  const { data: billingStudio, error: studioLookupError } = await sb
+    .from("studios")
+    .select("id,stripe_customer_id")
+    .eq("id", studioId)
+    .maybeSingle();
+  if (
+    studioLookupError ||
+    !billingStudio?.id ||
+    !customerId ||
+    billingStudio.stripe_customer_id !== customerId
+  ) throw new Error("subscription_customer_binding_invalid");
 
   const activeAccess = hasPeriodAccess(status, currentPeriodEnd);
 
@@ -542,7 +707,8 @@ async function syncSubscription(
     stripe_customer_id: customerId,
     stripe_subscription_id: subscription.id,
     stripe_price_id: priceId,
-    plan: planId,
+    plan: planConfig.billingInterval,
+    plan_tier: planConfig.tier,
     status,
     current_period_end: currentPeriodEnd,
     cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
@@ -581,6 +747,7 @@ async function syncSubscription(
     subscription_current_period_end: currentPeriodEnd,
     subscription_cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
     premium_access_until: activeAccess ? currentPeriodEnd : null,
+    plan_tier: activeAccess ? planConfig.tier : "free",
     plan: activeAccess ? "pro" : "trial",
     updated_at: new Date().toISOString(),
   };
@@ -609,7 +776,35 @@ async function syncSubscription(
 }
 
 async function handleSubscription(subscription: StripePayload, env: StripeEnv) {
-  await syncSubscription(subscription as unknown as Stripe.Subscription, env);
+  if (!subscription.id) return;
+  const stripe = createStripeClient(env);
+  const current = await stripe.subscriptions.retrieve(subscription.id);
+  await syncSubscription(current, env);
+}
+
+async function handleCheckoutSessionExpired(session: StripePayload, stripeAccount?: string | null) {
+  if (stripeAccount || isBookingCheckoutSession(session)) return;
+  const studioId = session.metadata?.studio_id;
+  const userId = session.metadata?.user_id;
+  if (!studioId || !userId) return;
+
+  const sb = getAdminClient();
+  const { data: role } = await sb
+    .from("user_roles")
+    .select("studio_id")
+    .eq("user_id", userId)
+    .eq("studio_id", studioId)
+    .in("role", ["studio_owner", "saas_owner"])
+    .limit(1)
+    .maybeSingle();
+  if (!role?.studio_id) return;
+
+  await sb
+    .from("subscriptions")
+    .delete()
+    .eq("studio_id", studioId)
+    .eq("user_id", userId)
+    .eq("status", "checkout_pending");
 }
 
 async function handleInvoice(invoice: StripePayload, env: StripeEnv) {
@@ -638,12 +833,229 @@ async function handleInvoice(invoice: StripePayload, env: StripeEnv) {
     .eq("stripe_price_id", plan.priceId);
 }
 
+function stripeObjectId(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "id" in value && typeof value.id === "string") {
+    return value.id;
+  }
+  return null;
+}
+
+async function loadDirectChargePayment(input: {
+  paymentIntentId?: string | null;
+  chargeId?: string | null;
+  stripeAccount?: string | null;
+}) {
+  const sb = getAdminClient();
+  const select =
+    "id,studio_id,amount_cents,currency,status,stripe_payment_intent_id,stripe_charge_id,stripe_connect_account_id,refunded_amount_cents,refund_status,stripe_dispute_id,dispute_status";
+  let row: any = null;
+
+  if (input.paymentIntentId) {
+    const result = await (sb as any)
+      .from("payment_intents")
+      .select(select)
+      .eq("stripe_payment_intent_id", input.paymentIntentId)
+      .maybeSingle();
+    if (result.error) throw result.error;
+    row = result.data;
+  }
+  if (!row?.id && input.chargeId) {
+    const result = await (sb as any)
+      .from("payment_intents")
+      .select(select)
+      .eq("stripe_charge_id", input.chargeId)
+      .maybeSingle();
+    if (result.error) throw result.error;
+    row = result.data;
+  }
+
+  if (!row?.id) throw new Error("direct_charge_payment_not_found");
+  assertDirectChargeAccount(row.stripe_connect_account_id, input.stripeAccount);
+  return row;
+}
+
+async function syncChargeRefundState(
+  charge: StripePayload,
+  stripeAccount?: string | null,
+) {
+  const paymentIntentId = stripeObjectId(charge.payment_intent);
+  const row = await loadDirectChargePayment({
+    paymentIntentId,
+    chargeId: charge.id ?? null,
+    stripeAccount,
+  });
+  const amountRefunded = Number(charge.amount_refunded ?? 0);
+  const originalAmount = Number(row.amount_cents || 0);
+  if (!Number.isInteger(amountRefunded) || amountRefunded < 0 || amountRefunded > originalAmount) {
+    throw new Error("refund_amount_mismatch");
+  }
+
+  const refundStatus =
+    amountRefunded === 0 ? "none" : amountRefunded === originalAmount ? "full" : "partial";
+  const { error } = await getAdminClient()
+    .from("payment_intents")
+    .update({
+      refunded_amount_cents: amountRefunded,
+      refund_status: refundStatus,
+      stripe_financial_state_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq("id", row.id)
+    .eq("studio_id", row.studio_id);
+  if (error) throw error;
+  return row;
+}
+
+async function handleRefundEvent(
+  webhookRefund: StripePayload,
+  stripeAccount: string | null | undefined,
+  env: StripeEnv,
+) {
+  if (!webhookRefund.id) throw new Error("refund_id_missing");
+  if (!stripeAccount) throw new Error("connect_event_account_missing");
+  const stripe = createStripeClient(env);
+  // Fetch current Stripe state so a delayed refund.created event cannot
+  // overwrite a later succeeded/failed refund.updated event.
+  const refund = (await stripe.refunds.retrieve(
+    webhookRefund.id,
+    {},
+    { stripeAccount },
+  )) as unknown as StripePayload;
+  const paymentIntentId = stripeObjectId(refund.payment_intent);
+  const chargeId = stripeObjectId(refund.charge);
+  const row = await loadDirectChargePayment({ paymentIntentId, chargeId, stripeAccount });
+  const resolvedChargeId = chargeId ?? row.stripe_charge_id;
+  if (!resolvedChargeId) throw new Error("refund_charge_missing");
+  const charge = await stripe.charges.retrieve(
+    resolvedChargeId,
+    {},
+    { stripeAccount: stripeAccount as string },
+  );
+  await syncChargeRefundState(charge as unknown as StripePayload, stripeAccount);
+
+  const refundStatus = String(refund.status ?? "pending");
+  const refundRequestId = refund.metadata?.refund_request_id ?? null;
+  const refundPatch: Record<string, unknown> = {
+    stripe_refund_id: refund.id,
+    stripe_refund_status: refundStatus,
+    amount_cents: Number(refund.amount || 0),
+    stripe_last_synced_at: new Date().toISOString(),
+    refund_method: "stripe_connect_direct_charge",
+    updated_at: new Date().toISOString(),
+  };
+  if (refundStatus === "succeeded") {
+    refundPatch.status = "refunded";
+    refundPatch.platform_processed_at = new Date().toISOString();
+  }
+
+  let requestUpdate = (getAdminClient() as any)
+    .from("refund_requests")
+    .update(refundPatch)
+    .eq("studio_id", row.studio_id);
+  requestUpdate = refundRequestId
+    ? requestUpdate.eq("id", refundRequestId)
+    : requestUpdate.eq("stripe_refund_id", refund.id);
+  const { error: requestError } = await requestUpdate;
+  if (requestError) throw requestError;
+
+  await (getAdminClient() as any).from("financial_audit_logs").insert({
+    studio_id: row.studio_id,
+    entity_type: "payment_intent",
+    entity_id: row.id,
+    action: `stripe_refund_${refundStatus}`,
+    amount_cents: Number(refund.amount || 0),
+    currency: row.currency || "eur",
+    metadata: { stripe_refund_id: refund.id },
+  });
+}
+
+async function handleDisputeEvent(
+  webhookDispute: StripePayload,
+  stripeAccount: string | null | undefined,
+  env: StripeEnv,
+) {
+  if (!webhookDispute.id) throw new Error("dispute_id_missing");
+  if (!stripeAccount) throw new Error("connect_event_account_missing");
+  const stripe = createStripeClient(env);
+  // Fetch current Stripe state so delayed events cannot regress a dispute.
+  const dispute = (await stripe.disputes.retrieve(
+    webhookDispute.id,
+    {},
+    { stripeAccount },
+  )) as unknown as StripePayload;
+  const paymentIntentId = stripeObjectId(dispute.payment_intent);
+  const chargeId = stripeObjectId(dispute.charge);
+  const row = await loadDirectChargePayment({ paymentIntentId, chargeId, stripeAccount });
+  const amount = Number(dispute.amount || 0);
+  if (!Number.isInteger(amount) || amount <= 0 || amount > Number(row.amount_cents || 0)) {
+    throw new Error("dispute_amount_mismatch");
+  }
+  const status = String(dispute.status ?? "unknown");
+  const { error } = await getAdminClient()
+    .from("payment_intents")
+    .update({
+      stripe_dispute_id: dispute.id,
+      dispute_status: status,
+      disputed_amount_cents: amount,
+      stripe_financial_state_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as any)
+    .eq("id", row.id)
+    .eq("studio_id", row.studio_id);
+  if (error) throw error;
+
+  await (getAdminClient() as any).from("financial_audit_logs").insert({
+    studio_id: row.studio_id,
+    entity_type: "payment_intent",
+    entity_id: row.id,
+    action: `stripe_dispute_${status}`,
+    amount_cents: amount,
+    currency: row.currency || "eur",
+    metadata: { stripe_dispute_id: dispute.id },
+  });
+}
+
 async function syncWithdrawalRequest(
   obj: StripePayload,
   status: "processing" | "completed" | "failed" | "canceled",
+  eventConnectAccountId?: string | null,
 ) {
   const requestId = obj.metadata?.withdrawal_request_id;
   if (!requestId) return;
+
+  const sb = getAdminClient();
+  const { data: request, error: requestError } = await sb
+    .from("withdrawal_requests")
+    .select("id,studio_id,status,payout_method,payout_mode,stripe_account_id,stripe_transfer_id")
+    .eq("id", requestId)
+    .maybeSingle();
+  if (requestError) throw requestError;
+  if (!request) throw new Error("withdrawal_request_not_found");
+  const { data: studio, error: studioError } = await sb
+    .from("studios")
+    .select("stripe_connect_account_id")
+    .eq("id", request.studio_id)
+    .maybeSingle();
+  if (studioError) throw studioError;
+  assertWithdrawalWebhookBinding({
+    requestId: request.id,
+    metadataRequestId: requestId,
+    studioId: request.studio_id,
+    metadataStudioId: obj.metadata?.studio_id,
+    expectedConnectAccountId: request.stripe_account_id,
+    studioConnectAccountId: studio?.stripe_connect_account_id,
+    eventConnectAccountId,
+    expectedStripeObjectId: request.stripe_transfer_id,
+    eventStripeObjectId: obj.id,
+    payoutMethod: request.payout_method,
+    payoutMode: request.payout_mode,
+  });
+  if (request.status === status || (status === "processing" &&
+    ["completed", "paid", "failed", "canceled", "rejected"].includes(request.status))) return;
+  if (["completed", "paid", "failed", "canceled", "rejected"].includes(request.status)) {
+    throw new Error("withdrawal_terminal_state_conflict");
+  }
 
   const proofUrl =
     obj.receipt_url ||
@@ -668,45 +1080,85 @@ async function syncWithdrawalRequest(
   }
   if (proofUrl) patch.proof_url = proofUrl;
 
-  const sb = getAdminClient();
-  const { error } = await sb
+  const { data: updated, error } = await sb
     .from("withdrawal_requests")
     .update(patch)
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("studio_id", request.studio_id)
+    .eq("stripe_account_id", request.stripe_account_id)
+    .eq("stripe_transfer_id", request.stripe_transfer_id)
+    .eq("status", request.status)
+    .select("id");
   if (error) throw error;
+  if (updated?.length !== 1) throw new Error("withdrawal_state_changed");
 }
+
+type BillingEventClaim = { claimed: false } | { claimed: true; token: string };
 
 async function claimBillingEvent(event: {
   id?: string;
   type: string;
+  created?: number;
+  livemode?: boolean;
+  account?: string;
   data: { object: StripePayload };
 }) {
-  if (!event.id) return true;
+  if (!event.id) throw new Error("stripe_webhook_event_id_missing");
   const obj = event.data.object;
   const studioId = obj.metadata?.studio_id;
   const sb = getAdminClient();
-  const { error } = await sb
-    .from("platform_billing_events")
-    .insert({
-      stripe_event_id: event.id,
-      event_type: event.type,
-      studio_id: studioId ?? null,
-      payload: event as unknown as Record<string, unknown>,
-    });
-  
-  // Check for duplicate key error
-  if (error && typeof error === "object" && "code" in error && error.code === "23505") {
-    return false;
-  }
-  
+  const { data, error } = await (sb as any).rpc("claim_stripe_webhook_event", {
+    p_event_id: event.id,
+    p_event_type: event.type,
+    p_studio_id: studioId ?? null,
+    p_payload: minimalStripeEventAudit(event as any),
+    p_lease_seconds: 120,
+  });
   if (error) throw error;
-  return true;
+  const state = data?.state;
+  if (state === "processed") return { claimed: false } satisfies BillingEventClaim;
+  if (state === "busy") throw new Error("stripe_webhook_event_in_progress");
+  if (state !== "claimed" || typeof data?.token !== "string" || !data.token) {
+    throw new Error("stripe_webhook_claim_invalid_state");
+  }
+  return { claimed: true, token: data.token } satisfies BillingEventClaim;
 }
 
-async function releaseBillingEventClaim(eventId?: string) {
-  if (!eventId) return;
+async function completeBillingEventClaim(eventId: string | undefined, processingToken: string) {
+  if (!eventId) throw new Error("stripe_webhook_event_id_missing");
   const sb = getAdminClient();
-  await sb.from("platform_billing_events").delete().eq("stripe_event_id", eventId);
+  const { data, error } = await (sb as any).rpc("complete_stripe_webhook_event", {
+    p_event_id: eventId,
+    p_processing_token: processingToken,
+  });
+  if (error) throw error;
+  if (data !== true) throw new Error("stripe_webhook_completion_stale_claim");
+}
+
+async function failBillingEventClaim(
+  eventId: string | undefined,
+  processingToken: string,
+  error: unknown,
+) {
+  if (!eventId) return;
+  const message =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === "object" && "message" in error && typeof error.message === "string"
+        ? error.message
+        : "stripe_webhook_processing_failed";
+  const sb = getAdminClient();
+  const { error: updateError } = await (sb as any).rpc("fail_stripe_webhook_event", {
+    p_event_id: eventId,
+    p_processing_token: processingToken,
+    p_error: message,
+  });
+  if (updateError) {
+    console.error("[stripe-webhook] event_failure_state_update_failed", {
+      eventId,
+      reason: updateError.message,
+    });
+  }
 }
 
 async function processWebhookEvent(
@@ -724,8 +1176,8 @@ async function processWebhookEvent(
   }
   const obj = event.data.object;
   const sb = getAdminClient();
-  const claimed = await claimBillingEvent(event as { id?: string; type: string; data: { object: StripePayload } });
-  if (!claimed) {
+  const claim = await claimBillingEvent(event);
+  if (!claim.claimed) {
     console.info("[stripe-webhook] event_duplicate_ignored", {
       eventId: event.id ?? null,
       type: event.type,
@@ -736,7 +1188,7 @@ async function processWebhookEvent(
     switch (event.type) {
       case "payment_intent.succeeded":
         {
-          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "succeeded");
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "succeeded", event.account);
           if (inPersonMbWay.handled) {
             if (inPersonMbWay.previousStatus !== "succeeded" && inPersonMbWay.studioId) {
               await dispatchStudioPushForPayment(sb, {
@@ -752,21 +1204,21 @@ async function processWebhookEvent(
         break;
       case "payment_intent.processing":
         {
-          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "processing");
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "processing", event.account);
           if (inPersonMbWay.handled) break;
         }
         await handlePaymentIntent(obj, "processing", event.account ?? null, env);
         break;
       case "payment_intent.payment_failed":
         {
-          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "failed");
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "failed", event.account);
           if (inPersonMbWay.handled) break;
         }
         await handlePaymentIntent(obj, "failed", event.account ?? null, env);
         break;
       case "payment_intent.canceled":
         {
-          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "canceled");
+          const inPersonMbWay = await handleInPersonMbWayPaymentIntent(obj, "canceled", event.account);
           if (inPersonMbWay.handled) break;
         }
         await handlePaymentIntent(obj, "canceled", event.account ?? null, env);
@@ -774,34 +1226,52 @@ async function processWebhookEvent(
       case "checkout.session.completed":
         await handleCheckoutSession(obj, env, event.account ?? null);
         break;
+      case "checkout.session.expired":
+        await handleCheckoutSessionExpired(obj, event.account ?? null);
+        break;
       case "invoice.paid":
       case "invoice.payment_succeeded":
       case "invoice.payment_failed":
-        await handleInvoice(obj, env);
+        if (!event.account) await handleInvoice(obj, env);
         break;
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted":
-        await handleSubscription(obj, env);
+        if (!event.account) await handleSubscription(obj, env);
+        break;
+      case "charge.refunded":
+        if (event.account) await syncChargeRefundState(obj, event.account);
+        break;
+      case "refund.created":
+      case "refund.updated":
+      case "refund.failed":
+        if (event.account) await handleRefundEvent(obj, event.account, env);
+        break;
+      case "charge.dispute.created":
+      case "charge.dispute.updated":
+      case "charge.dispute.closed":
+      case "charge.dispute.funds_withdrawn":
+      case "charge.dispute.funds_reinstated":
+        if (event.account) await handleDisputeEvent(obj, event.account, env);
         break;
       case "transfer.created":
       case "payout.created":
         if (event.account) await syncConnectAccountFromWebhook(event.account);
-        await syncWithdrawalRequest(obj, "processing");
+        await syncWithdrawalRequest(obj, "processing", event.account);
         break;
       case "transfer.paid":
       case "payout.paid":
         if (event.account) await syncConnectAccountFromWebhook(event.account);
-        await syncWithdrawalRequest(obj, "completed");
+        await syncWithdrawalRequest(obj, "completed", event.account);
         break;
       case "transfer.failed":
       case "payout.failed":
         if (event.account) await syncConnectAccountFromWebhook(event.account);
-        await syncWithdrawalRequest(obj, "failed");
+        await syncWithdrawalRequest(obj, "failed", event.account);
         break;
       case "payout.canceled":
         if (event.account) await syncConnectAccountFromWebhook(event.account);
-        await syncWithdrawalRequest(obj, "canceled");
+        await syncWithdrawalRequest(obj, "canceled", event.account);
         break;
       case "balance.available":
       case "account.updated":
@@ -811,12 +1281,13 @@ async function processWebhookEvent(
       default:
         break;
     }
+    await completeBillingEventClaim(event.id, claim.token);
     console.info("[stripe-webhook] event_processed", {
       eventId: event.id ?? null,
       type: event.type,
     });
   } catch (error) {
-    await releaseBillingEventClaim(event.id);
+    await failBillingEventClaim(event.id, claim.token, error);
     throw error;
   }
 }
@@ -825,24 +1296,12 @@ async function handleWebhook(req: Request, env: StripeEnv) {
   const event = (await verifyWebhook(req, env)) as {
     id?: string;
     type: string;
+    created?: number;
     livemode?: boolean;
     account?: string;
     data: { object: StripePayload };
   };
   await processWebhookEvent(event, env);
-}
-
-async function handleWebhookWithoutEnv(req: Request) {
-  const signature = req.headers.get("stripe-signature");
-  const body = await req.text();
-  const event = (await verifyWebhookBody(body, signature, "live")) as {
-    id?: string;
-    type: string;
-    livemode?: boolean;
-    account?: string;
-    data: { object: StripePayload };
-  };
-  await processWebhookEvent(event, "live");
 }
 
 export const Route = createFileRoute("/api/public/payments/webhook")({
@@ -851,15 +1310,12 @@ export const Route = createFileRoute("/api/public/payments/webhook")({
       POST: async ({ request }) => {
         const rawEnv = new URL(request.url).searchParams.get("env");
         try {
-          assertStripeProductionConfig("live");
-          if (rawEnv && rawEnv !== "live") {
-            throw new Error("stripe_live_only_webhook");
-          }
-          if (rawEnv === "live") {
-            await handleWebhook(request, "live");
-          } else {
-            await handleWebhookWithoutEnv(request);
-          }
+          const env = getConfiguredStripeEnv();
+          assertStripeRuntimeConfig(env);
+          // The query string may only confirm the server-selected environment;
+          // it can never switch a Worker between sandbox and live.
+          if (rawEnv && rawEnv !== env) throw new Error("stripe_webhook_environment_mismatch");
+          await handleWebhook(request, env);
           return Response.json({ received: true });
         } catch (error) {
           console.error("stripe_webhook_failed", {

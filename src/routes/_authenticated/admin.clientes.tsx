@@ -33,6 +33,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ClientAvatar } from "@/components/client-avatar";
 import { ExpandableList } from "@/components/ui/expandable-list";
+import {
+  assessClientRisk,
+  isActiveFutureAppointment,
+  isClientAtRiskByCadence,
+} from "@/lib/client-risk";
 
 export const Route = createFileRoute("/_authenticated/admin/clientes")({
   head: () => ({ meta: [{ title: "Clientes - Painel" }] }),
@@ -64,6 +69,18 @@ type PaymentRow = {
   status: string;
 };
 
+type StudioClientRow = {
+  id: string;
+  name: string;
+  phone: string;
+  auth_user_id?: string | null;
+  avatar_url?: string | null;
+  booking_status?: ClientBookingStatus;
+  suspended_until?: string | null;
+  block_reason?: string | null;
+  date_of_birth?: string | null;
+};
+
 type ReturnReminderLogRow = {
   recipient: string | null;
   status: string | null;
@@ -87,11 +104,12 @@ type ClientSummary = {
   cancelledAppointments: number;
   noShowAppointments: number;
   futureAppointments: number;
+  hasFutureBooking: boolean;
   pendingAppointments: number;
   rescheduledAppointments: number;
   otherAppointments: number;
   totalPaid: number;
-  lastAppointmentAt: string;
+  lastAppointmentAt: string | null;
   lastService: string;
   bookingStatus: ClientBookingStatus;
   suspendedUntil: string | null;
@@ -117,6 +135,9 @@ type ClientPrimaryStatusInfo = {
   label: string;
   tone: ClientBadge["tone"] | "slate";
 };
+
+const CLIENT_WITHOUT_RETURN_BADGE = "Cliente sem retornar";
+
 type ClientAccumulator = ClientSummary & {
   serviceCounts: Map<string, number>;
   completedDates: string[];
@@ -134,7 +155,13 @@ function ClientsPage() {
     enabled: !!studio?.id,
     staleTime: 20 * 1000,
     queryFn: async () => {
-      const [appointmentsResult, paymentsResult, returnRemindersResult] = await Promise.all([
+      const [clientsResult, appointmentsResult, paymentsResult, returnRemindersResult] = await Promise.all([
+        (supabase as any)
+          .from("clients")
+          .select(
+            "id,name,phone,auth_user_id,avatar_url,booking_status,suspended_until,block_reason,date_of_birth",
+          )
+          .eq("studio_id", studio!.id),
         fetchClientAppointments(studio!.id, studio?.role === "staff" ? studio.staff_id : null),
         supabase
           .from("payment_intents")
@@ -150,11 +177,13 @@ function ClientsPage() {
           .limit(1000),
       ]);
 
+      if (clientsResult.error) throw clientsResult.error;
       if (appointmentsResult.error) throw appointmentsResult.error;
       if (paymentsResult.error) throw paymentsResult.error;
       if (returnRemindersResult.error) throw returnRemindersResult.error;
 
       return buildClientSummaries(
+        (clientsResult.data ?? []) as StudioClientRow[],
         (appointmentsResult.data ?? []) as AppointmentRow[],
         (paymentsResult.data ?? []) as PaymentRow[],
         (returnRemindersResult.data ?? []) as ReturnReminderLogRow[],
@@ -162,7 +191,7 @@ function ClientsPage() {
     },
   });
 
-  const clients = clientsQuery.data ?? [];
+  const clients = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
   const selectedClient = clients.find((client) => client.id === selectedClientId) ?? null;
   const filteredClients = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -178,7 +207,9 @@ function ClientsPage() {
     return [...filtered].sort((a, b) => {
       if (sort === "value") return b.totalPaid - a.totalPaid;
       if (sort === "appointments") return b.totalAppointments - a.totalAppointments;
-      return new Date(b.lastAppointmentAt).getTime() - new Date(a.lastAppointmentAt).getTime();
+      const bTime = b.lastAppointmentAt ? new Date(b.lastAppointmentAt).getTime() : 0;
+      const aTime = a.lastAppointmentAt ? new Date(a.lastAppointmentAt).getTime() : 0;
+      return bTime - aTime;
     });
   }, [clients, query, sort]);
 
@@ -319,6 +350,7 @@ async function fetchClientAppointments(studioId: string, staffId?: string | null
 }
 
 function buildClientSummaries(
+  studioClients: StudioClientRow[],
   appointments: AppointmentRow[],
   payments: PaymentRow[],
   returnReminderLogs: ReturnReminderLogRow[] = [],
@@ -335,6 +367,41 @@ function buildClientSummaries(
   const returnReminderByUser = buildReturnReminderMap(returnReminderLogs);
 
   const map = new Map<string, ClientAccumulator>();
+  for (const client of studioClients) {
+    map.set(client.id, {
+      id: client.id,
+      name: client.name,
+      phone: client.phone,
+      authUserId: client.auth_user_id ?? null,
+      avatarUrl: client.avatar_url ?? null,
+      totalAppointments: 0,
+      completedAppointments: 0,
+      cancelledAppointments: 0,
+      noShowAppointments: 0,
+      futureAppointments: 0,
+      hasFutureBooking: false,
+      pendingAppointments: 0,
+      rescheduledAppointments: 0,
+      otherAppointments: 0,
+      totalPaid: 0,
+      lastAppointmentAt: null,
+      lastService: "Sem marcações",
+      bookingStatus: normalizeBookingStatus(client.booking_status, client.suspended_until),
+      suspendedUntil: client.suspended_until ?? null,
+      blockReason: client.block_reason ?? null,
+      dateOfBirth: client.date_of_birth ?? null,
+      favoriteServices: [],
+      averageSpend: 0,
+      avgIntervalDays: null,
+      daysSinceLastVisit: null,
+      suggestedReturnAt: null,
+      attendanceRate: null,
+      badges: [],
+      returnReminder: null,
+      serviceCounts: new Map(),
+      completedDates: [],
+    });
+  }
   for (const appointment of appointments) {
     if (!appointment.clients?.id) continue;
     const existing = map.get(appointment.clients.id);
@@ -365,6 +432,7 @@ function buildClientSummaries(
         cancelledAppointments: appointmentBucket === "cancelled" ? 1 : 0,
         noShowAppointments: appointmentBucket === "no_show" ? 1 : 0,
         futureAppointments: appointmentBucket === "future" ? 1 : 0,
+        hasFutureBooking: isActiveFutureAppointment(appointment.status, appointment.starts_at),
         pendingAppointments: appointmentBucket === "pending" ? 1 : 0,
         rescheduledAppointments: appointmentBucket === "rescheduled" ? 1 : 0,
         otherAppointments: appointmentBucket === "other" ? 1 : 0,
@@ -408,11 +476,15 @@ function buildClientSummaries(
     if (appointmentBucket === "cancelled") existing.cancelledAppointments += 1;
     if (appointmentBucket === "no_show") existing.noShowAppointments += 1;
     if (appointmentBucket === "future") existing.futureAppointments += 1;
+    if (isActiveFutureAppointment(appointment.status, appointment.starts_at)) {
+      existing.hasFutureBooking = true;
+    }
     if (appointmentBucket === "pending") existing.pendingAppointments += 1;
     if (appointmentBucket === "rescheduled") existing.rescheduledAppointments += 1;
     if (appointmentBucket === "other") existing.otherAppointments += 1;
     existing.totalPaid += clientValue;
     if (
+      !existing.lastAppointmentAt ||
       new Date(appointment.starts_at).getTime() > new Date(existing.lastAppointmentAt).getTime()
     ) {
       existing.lastAppointmentAt = appointment.starts_at;
@@ -466,19 +538,13 @@ function finalizeClientSummary(
   const completedDates = client.completedDates
     .slice()
     .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-  const intervals = completedDates.slice(1).map((date, index) =>
-    Math.max(
-      1,
-      Math.round((new Date(date).getTime() - new Date(completedDates[index]).getTime()) / 86400000),
-    ),
-  );
-  const avgIntervalDays = intervals.length
-    ? Math.round(intervals.reduce((sum, days) => sum + days, 0) / intervals.length)
-    : null;
   const lastCompleted = completedDates.at(-1) ?? null;
-  const daysSinceLastVisit = lastCompleted
-    ? Math.max(0, Math.floor((Date.now() - new Date(lastCompleted).getTime()) / 86400000))
-    : null;
+  const risk = assessClientRisk({
+    completedVisitDates: completedDates,
+    hasFutureBooking: client.hasFutureBooking,
+  });
+  const avgIntervalDays = risk.averageIntervalDays;
+  const daysSinceLastVisit = risk.daysSinceLastVisit;
   const suggestedReturnAt =
     lastCompleted && avgIntervalDays
       ? new Date(new Date(lastCompleted).getTime() + avgIntervalDays * 86400000).toISOString()
@@ -518,7 +584,7 @@ function finalizeClientSummary(
 
 function buildClientBadges(client: ClientSummary): ClientBadge[] {
   const badges: ClientBadge[] = [];
-  const hasFutureBooking = client.futureAppointments > 0;
+  const hasFutureBooking = client.hasFutureBooking;
   const isReturnSeason =
     !hasFutureBooking &&
     client.avgIntervalDays !== null &&
@@ -526,10 +592,12 @@ function buildClientBadges(client: ClientSummary): ClientBadge[] {
     client.daysSinceLastVisit >= Math.max(0, client.avgIntervalDays - Math.max(3, Math.round(client.avgIntervalDays * 0.2))) &&
     client.daysSinceLastVisit <= client.avgIntervalDays + Math.max(7, Math.round(client.avgIntervalDays * 0.25));
   const isAtRisk =
-    !hasFutureBooking &&
-    client.avgIntervalDays !== null &&
-    client.daysSinceLastVisit !== null &&
-    client.daysSinceLastVisit > client.avgIntervalDays + Math.max(7, Math.round(client.avgIntervalDays * 0.35));
+    client.bookingStatus === "active" &&
+    isClientAtRiskByCadence({
+      averageIntervalDays: client.avgIntervalDays,
+      daysSinceLastVisit: client.daysSinceLastVisit,
+      hasFutureBooking,
+    });
 
   if (client.totalPaid >= 250 || client.completedAppointments >= 5) {
     badges.push({ label: "Cliente VIP", tone: "violet" });
@@ -541,7 +609,7 @@ function buildClientBadges(client: ClientSummary): ClientBadge[] {
     badges.push({ label: "Aniversário próximo", tone: "amber" });
   }
   if (isAtRisk) {
-    badges.push({ label: "Cliente em risco", tone: "rose" });
+    badges.push({ label: CLIENT_WITHOUT_RETURN_BADGE, tone: "rose" });
   } else if (isReturnSeason) {
     badges.push({ label: "Em época de retorno", tone: "blue" });
   }
@@ -890,8 +958,15 @@ function ClientPrimaryStatus({ client, compact = false }: { client: ClientSummar
 
 function getClientPrimaryStatus(client: ClientSummary): ClientPrimaryStatusInfo | null {
   const badgesByLabel = new Map(client.badges.map((badge) => [badge.label, badge]));
+  const withoutReturnBadge = badgesByLabel.get(CLIENT_WITHOUT_RETURN_BADGE);
+  if (withoutReturnBadge) {
+    return {
+      label: getClientWithoutReturnLabel(client.daysSinceLastVisit),
+      tone: withoutReturnBadge.tone,
+    };
+  }
+
   const priority: Array<{ badgeLabel: string; label: string }> = [
-    { badgeLabel: "Cliente em risco", label: "Em risco" },
     { badgeLabel: "Em época de retorno", label: "Época de retorno" },
     { badgeLabel: "Cliente VIP", label: "VIP" },
     { badgeLabel: "Cliente frequente", label: "Frequente" },
@@ -921,6 +996,11 @@ function primaryStatusToneClass(tone: ClientPrimaryStatusInfo["tone"]) {
     slate: "border-border/70 bg-muted/35 text-muted-foreground",
   };
   return classes[tone];
+}
+
+function getClientWithoutReturnLabel(daysSinceLastVisit: number | null) {
+  if (daysSinceLastVisit === null) return CLIENT_WITHOUT_RETURN_BADGE;
+  return `Não retorna há ${daysSinceLastVisit} dia${daysSinceLastVisit === 1 ? "" : "s"}`;
 }
 
 function ClientBadges({ badges, compact = false }: { badges: ClientBadge[]; compact?: boolean }) {
@@ -1020,7 +1100,9 @@ function ClientDetails({
     client.otherAppointments;
   const birthdayToday = isBirthdayToday(client.dateOfBirth);
   const relationshipInsight = getClientRelationshipInsight(client);
-  const returnDelayDays = getClientReturnDelayDays(client);
+  const hasDelayedReturn = client.badges.some(
+    (badge) => badge.label === CLIENT_WITHOUT_RETURN_BADGE,
+  );
   const automationEvents = getClientAutomationEvents(client);
   const keyContextMetrics = [
     {
@@ -1181,15 +1263,17 @@ function ClientDetails({
             <div className="flex flex-col gap-2 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">
               <div className="min-w-0">
                 <p className="text-sm font-semibold leading-snug">
-                  {returnDelayDays > 0
-                    ? `Retorno atrasado há ${returnDelayDays} dia${returnDelayDays === 1 ? "" : "s"}`
-                    : relationshipInsight}
+                  {hasDelayedReturn ? "Cliente com retorno atrasado" : relationshipInsight}
                 </p>
-                {returnDelayDays > 0 && (
-                  <p className="mt-0.5 text-xs leading-snug text-amber-800/75 dark:text-amber-200/75">
-                    O cliente já ultrapassou a previsão de retorno.
-                  </p>
-                )}
+                {hasDelayedReturn &&
+                  client.daysSinceLastVisit !== null &&
+                  client.suggestedReturnAt && (
+                    <p className="mt-0.5 text-xs leading-snug text-amber-800/75 dark:text-amber-200/75">
+                      Não retorna há {client.daysSinceLastVisit} dia
+                      {client.daysSinceLastVisit === 1 ? "" : "s"}. Pelo histórico de visitas, o
+                      retorno era esperado em {formatDate(client.suggestedReturnAt)}.
+                    </p>
+                  )}
               </div>
               <a
                 href={whatsAppUrl(client, studioName)}
@@ -1620,9 +1704,7 @@ function getClientRelationshipInsight(client: ClientSummary) {
   const delay = client.suggestedReturnAt
     ? Math.floor((Date.now() - new Date(client.suggestedReturnAt).getTime()) / 86400000)
     : 0;
-  if (delay >= 14) return `Cliente em risco de abandono. Retorno atrasado há ${delay} dias.`;
-  if (delay >= 1) return `Retorno atrasado há ${delay} dia${delay === 1 ? "" : "s"}.`;
-  if (delay >= 14) return `Cliente em risco de abandono. Retorno atrasado há ${delay} dias.`;
+  if (delay >= 14) return `Retorno bastante atrasado: ${delay} dias além do esperado.`;
   if (delay >= 1) return `Retorno atrasado há ${delay} dia${delay === 1 ? "" : "s"}.`;
   if (client.daysSinceLastVisit < Math.max(3, Math.round(client.avgIntervalDays * 0.6))) {
     return "Cliente voltou antes do esperado.";
@@ -1697,7 +1779,7 @@ function getClientAutomationEvents(_client: ClientSummary) {
   const events: string[] = [];
   if (birthdayToday) events.push("Mensagem de aniversário pendente.");
   if (client.futureAppointments > 0) events.push("Cliente já tem próxima marcação agendada.");
-  if (client.badges.some((badge) => badge.label === "Cliente em risco")) {
+  if (client.badges.some((badge) => badge.label === CLIENT_WITHOUT_RETURN_BADGE)) {
     events.push("Lembrete de retorno recomendado.");
   }
   return events;
@@ -1707,7 +1789,7 @@ function getClientMessageSuggestion(client: ClientSummary) {
   if (client.badges.some((badge) => badge.label === "Aniversário próximo")) {
     return "Enviar mensagem de aniversário.";
   }
-  if (client.badges.some((badge) => badge.label === "Cliente em risco")) {
+  if (client.badges.some((badge) => badge.label === CLIENT_WITHOUT_RETURN_BADGE)) {
     return "Enviar convite de retorno.";
   }
   if (client.badges.some((badge) => badge.label === "Em época de retorno")) {
@@ -1722,7 +1804,7 @@ function getClientOfferSuggestion(client: ClientSummary) {
   if (client.badges.some((badge) => badge.label === "Cliente VIP")) {
     return `Criar mimo ligado a ${favorite}.`;
   }
-  if (client.badges.some((badge) => badge.label === "Cliente em risco")) {
+  if (client.badges.some((badge) => badge.label === CLIENT_WITHOUT_RETURN_BADGE)) {
     return `Oferecer incentivo leve em ${favorite}.`;
   }
   return `Sugerir complemento para ${favorite}.`;
@@ -1734,7 +1816,8 @@ function phoneForWhatsApp(phone: string) {
   return `351${digits}`;
 }
 
-function formatDate(value: string) {
+function formatDate(value: string | null) {
+  if (!value) return "Sem visita";
   return new Intl.DateTimeFormat("pt-PT", {
     day: "2-digit",
     month: "2-digit",

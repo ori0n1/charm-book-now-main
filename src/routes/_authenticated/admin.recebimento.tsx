@@ -129,6 +129,9 @@ function RecebimentoPage() {
 
   // Ref to cancel in-flight async calls on unmount / studioId change
   const cancelRef = useRef(false);
+  // Account Links are single-use. Stripe redirects invalid/visited links to the
+  // refresh URL, which must mint a replacement after Bellza auth is restored.
+  const onboardingRefreshStudioRef = useRef<string | null>(null);
 
   function loadStatus(stId: string, shouldSync: boolean) {
     cancelRef.current = false;
@@ -192,8 +195,34 @@ function RecebimentoPage() {
       return () => clearTimeout(waitTimeout);
     }
 
-    const shouldSync = connectParam === "success" || connectParam === "refresh";
-    return loadStatus(studioId, shouldSync);
+    if (connectParam === "refresh") {
+      if (onboardingRefreshStudioRef.current === studioId) return;
+      onboardingRefreshStudioRef.current = studioId;
+      cancelRef.current = false;
+      setLoading(true);
+      setError(null);
+
+      void (async () => {
+        try {
+          const { url } = await onboardFn({ data: { studioId } });
+          if (!cancelRef.current) window.location.replace(url);
+        } catch (err) {
+          onboardingRefreshStudioRef.current = null;
+          if (!cancelRef.current) {
+            const msg = extractErrorMessage(err);
+            console.error("[recebimento] onboarding refresh failed:", msg);
+            setError("O link Stripe deixou de ser válido. Inicie novamente a ligação.");
+            setLoading(false);
+          }
+        }
+      })();
+
+      return () => {
+        cancelRef.current = true;
+      };
+    }
+
+    return loadStatus(studioId, connectParam === "success");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studioId, studioLoading, connectParam]);
 

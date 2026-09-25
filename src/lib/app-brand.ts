@@ -14,12 +14,12 @@ export const APP_BRAND = {
 export const CANONICAL_ORIGIN = `https://${APP_BRAND.publicSiteHost}`;
 
 export const LANDING_SEO = {
-  title: "Bellza | Crie o aplicativo próprio do seu salão ou estúdio",
+  title: "Bellza | Agenda online gratuita para salões e estúdios",
   description:
-    "Crie uma página exclusiva e um aplicativo PWA próprio para salão de beleza, estúdio de estética ou barbearia, com agenda online, reservas, clientes, pagamentos e notificações automáticas.",
+    "Gestão simples e profissional para salões, estúdios e barbearias: agenda online, clientes, equipa, pagamentos e comunicação num só lugar.",
   keywords:
-    "criar aplicativo para salão de beleza, aplicativo para estúdio de estética, aplicativo para barbearia, software para salão, sistema para salão de beleza, agenda online, reservas online, software para estética, aplicativo para agendamento, gestão para estúdios, aplicativo próprio para salão, sistema completo para beleza, Bellza",
-  themeColor: "#FAF8F4",
+    "agenda online gratuita, software para salão, sistema para salão de beleza, agenda para estúdio de estética, software para barbearia, reservas online, gestão para estúdios, pagamentos para salão, aplicação para agendamento, Bellza",
+  themeColor: "#FFFDFA",
   locale: "pt_PT",
   url: `${CANONICAL_ORIGIN}/`,
 } as const;

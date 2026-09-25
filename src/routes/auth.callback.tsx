@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { BrandLoadingState } from "@/components/brand-loading-state";
 import {
   readAndClearPublicAuthContext,
   readAndClearPublicReturnTo,
@@ -8,13 +9,13 @@ import {
   syncCurrentSessionAccountType,
 } from "@/lib/auth-context";
 import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
-import { recordAuthDebugEvent } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/auth/callback")({
   head: () => ({
     meta: [
       { title: "A validar sessão - Bellza" },
       { name: "robots", content: "noindex,nofollow,noarchive" },
+      { name: "referrer", content: "no-referrer" },
     ],
   }),
   component: AuthCallbackPage,
@@ -42,7 +43,7 @@ function AuthCallbackPage() {
         // Clear legacy hints so an interrupted public flow cannot contaminate
         // a later regular panel login. Only the current callback URL is proof
         // of public context.
-        const clearedLegacyPublicContext = readAndClearPublicAuthContext();
+        readAndClearPublicAuthContext();
         const publicReturnTo = readAndClearPublicReturnTo();
 
         setMessage("A carregar conta...");
@@ -51,18 +52,6 @@ function AuthCallbackPage() {
           landing,
           callbackContext,
           publicReturnTo,
-        });
-
-        recordAuthDebugEvent({
-          kind: "auth_callback_destination",
-          ok: true,
-          message: JSON.stringify({
-            landing,
-            destination: decision.destination,
-            accountType: decision.accountType,
-            explicitPublicContext: callbackContext === "public",
-            clearedLegacyPublicContext: clearedLegacyPublicContext === "public",
-          }),
         });
 
         if (decision.accountType) {
@@ -87,8 +76,8 @@ function AuthCallbackPage() {
   }, [navigate]);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-6">
-      <p className="text-sm text-muted-foreground">{message}</p>
+    <div className="public-shell public-site-theme public-landing-theme min-h-screen bg-background">
+      <BrandLoadingState label={message} tone="light" fullScreen />
     </div>
   );
 }

@@ -159,8 +159,12 @@ test("reutiliza o modal atual ao tocar num horário livre", async () => {
 
   expect(timelineSource).toContain("getTimelineSlotMinutes(");
   expect(timelineSource).not.toContain("Math.round(rawMinutes / 15) * 15");
+  expect(timelineSource).toContain('label="Nova Marcação"');
+  expect(timelineSource).toContain(
+    'onCreateAtSlot(slotMenu.staffId, slotMenu.minutes, "standard")',
+  );
   expect(timelineSource).toContain('label="Criar encaixe"');
-  expect(timelineSource).not.toContain('label="Novo agendamento"');
+  expect(timelineSource).toContain('onCreateAtSlot(slotMenu.staffId, slotMenu.minutes, "fit")');
   expect(timelineSource).toContain('label="Bloquear horário"');
   expect(timelineSource).toContain('label="Cancelar"');
   expect(timelineSource).toContain("onBlockAtSlot(slotMenu.staffId, slotMenu.minutes)");
@@ -170,6 +174,7 @@ test("reutiliza o modal atual ao tocar num horário livre", async () => {
   expect(agendaSource).toContain("initialStaffId={newApptDefaults?.staffId}");
   expect(agendaSource).toContain("initialDate={newApptDefaults?.date}");
   expect(agendaSource).toContain("initialTime={newApptDefaults?.time}");
+  expect(agendaSource).toContain('creationMode={newApptDefaults?.mode ?? "standard"}');
   expect(agendaSource).toContain("getAgendaWeekDays(selectedDate)");
   expect(agendaSource).toContain("mobileAgendaDays.map((day)");
   expect(agendaSource).toContain("<BlockTimeModal");
@@ -209,7 +214,7 @@ test("usa uma única rolagem vertical no mobile", async () => {
   expect(timelineSource).toContain("(minute / 60) * hourHeight");
   expect(timelineSource).toContain("style={{ left: timeGutter }}");
   expect(timelineSource).not.toContain("style={{ width: timeGutter - 4 }}");
-  expect(timelineSource).toContain("Agora {formatTime(now.toISOString())}");
+  expect(timelineSource).toContain("Agora {formatTime(now.toISOString(), timeZone)}");
   expect(timelineSource).not.toContain('label="Livre"');
   expect(timelineSource).toContain(
     "fixed inset-x-3 bottom-[calc(max(env(safe-area-inset-bottom),8px)+5.6rem)]",

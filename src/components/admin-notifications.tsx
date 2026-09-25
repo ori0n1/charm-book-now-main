@@ -34,19 +34,28 @@ import {
   shouldRefreshStoredPushSubscription,
   type PushActivationCode,
 } from "@/lib/pwa-push";
-import { syncStudioPushNotifications } from "@/lib/notification-dispatcher.server";
+import { syncStudioPushNotifications } from "@/lib/notification-dispatcher.functions";
 import { ClientAvatar } from "@/components/client-avatar";
 import { ExpandableList } from "@/components/ui/expandable-list";
+import { formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
 
 type StudioNotification = {
   id: string;
   studio_id: string;
+  appointment_id?: string | null;
+  appointments?:
+    | { starts_at: string; studio_id: string }
+    | Array<{ starts_at: string; studio_id: string }>
+    | null;
   kind:
     | "new_appointment"
     | "payment_confirmed"
     | "payment_failed"
     | "appointment_rescheduled"
     | "appointment_cancelled"
+    | "appointment_reminder"
+    | "attendance_confirmation"
+    | "attendance_summary"
     | "new_client"
     | "new_review"
     | "refund_request"
@@ -63,12 +72,34 @@ type StudioNotification = {
 type AdminNotificationsProps = {
   studioId: string;
   studioName: string;
+  timeZone: string;
 };
 
 const permissionStorageKey = "studio-notification-permission-asked";
 const PUSH_RECONCILE_TTL_MS = 5 * 60 * 1000;
+const NOTIFICATION_BACKGROUND_DELAY_MS = 1600;
 
-export function AdminNotifications({ studioId, studioName }: AdminNotificationsProps) {
+function scheduleNonCriticalNotificationTask(task: () => void) {
+  let idleId: number | undefined;
+  const browserWindow = window as Window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (id: number) => void;
+  };
+  const timerId = window.setTimeout(() => {
+    if (browserWindow.requestIdleCallback) {
+      idleId = browserWindow.requestIdleCallback(task, { timeout: 1200 });
+      return;
+    }
+    task();
+  }, NOTIFICATION_BACKGROUND_DELAY_MS);
+
+  return () => {
+    window.clearTimeout(timerId);
+    if (idleId !== undefined) browserWindow.cancelIdleCallback?.(idleId);
+  };
+}
+
+export function AdminNotifications({ studioId, studioName, timeZone }: AdminNotificationsProps) {
   const [items, setItems] = useState<StudioNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
@@ -159,16 +190,18 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     setPermission(Notification.permission);
     setPushNeedsAttention(Notification.permission !== "granted");
     if (Notification.permission === "granted") {
-      void loadPushHealth({ data: { studioId } })
-        .then((health) =>
-          registerStudioPush({
-            forceRenew: Number(health.activeDevices ?? 0) === 0,
-          }),
-        )
-        .catch((error) => {
-          console.warn("studio_push_health_check_failed", error);
-          return registerStudioPush();
-        });
+      return scheduleNonCriticalNotificationTask(() => {
+        void loadPushHealth({ data: { studioId } })
+          .then((health) =>
+            registerStudioPush({
+              forceRenew: Number(health.activeDevices ?? 0) === 0,
+            }),
+          )
+          .catch((error) => {
+            console.warn("studio_push_health_check_failed", error);
+            return registerStudioPush();
+          });
+      });
     }
   }, [loadPushHealth, registerStudioPush, studioId]);
 
@@ -237,12 +270,15 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
   useEffect(() => {
     if (!studioId) return;
     let cancelled = false;
+    setItems([]);
+    setUnreadCount(0);
+    setOpen(false);
 
     async function loadNotifications() {
       const [historyResult, unreadResult] = await Promise.all([
         (supabase as any)
           .from("studio_notifications")
-          .select("id,studio_id,kind,title,body,payload,action_url,read_at,created_at")
+          .select("id,studio_id,appointment_id,kind,title,body,payload,action_url,read_at,created_at,appointments:appointment_id(starts_at,studio_id)")
           .eq("studio_id", studioId)
           .order("created_at", { ascending: false })
           .limit(100),
@@ -255,7 +291,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
 
       if (!cancelled && !historyResult.error) {
         setItems(
-          ((historyResult.data ?? []) as StudioNotification[]).map(normalizeNotification),
+          ((historyResult.data ?? []) as StudioNotification[])
+            .filter((item) => item.studio_id === studioId)
+            .map((item) => normalizeNotification(item, timeZone)),
         );
       }
       if (!cancelled && !unreadResult.error) {
@@ -263,9 +301,8 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
       }
     }
 
-    async function syncAndLoadNotifications() {
-      await loadNotifications();
-      void Promise.allSettled([
+    async function syncAndReloadNotifications() {
+      await Promise.allSettled([
         reconcilePayments({ data: { studioId } }).catch((error) => {
           console.warn("studio_payment_reconcile_skipped", error);
         }),
@@ -277,7 +314,10 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
       });
     }
 
-    void syncAndLoadNotifications();
+    void loadNotifications();
+    const cancelInitialBackgroundSync = scheduleNonCriticalNotificationTask(() => {
+      if (!cancelled) void syncAndReloadNotifications();
+    });
 
     const channel = supabase
       .channel(`studio-notifications-${studioId}`)
@@ -290,7 +330,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
           filter: `studio_id=eq.${studioId}`,
         },
         (payload) => {
-          const next = normalizeNotification(payload.new as StudioNotification);
+          const raw = payload.new as StudioNotification;
+          if (raw.studio_id !== studioId) return;
+          const next = normalizeNotification(raw, timeZone);
           setItems((current) => {
             const alreadyLoaded = current.some((item) => item.id === next.id);
             if (!alreadyLoaded && !next.read_at) {
@@ -321,7 +363,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
           filter: `studio_id=eq.${studioId}`,
         },
         (payload) => {
-          const next = normalizeNotification(payload.new as StudioNotification);
+          const raw = payload.new as StudioNotification;
+          if (raw.studio_id !== studioId) return;
+          const next = normalizeNotification(raw, timeZone);
           setItems((current) => {
             const existing = current.find((item) => item.id === next.id);
             if (!existing && next.read_at) {
@@ -345,18 +389,20 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
 
     const recoverNotifications = () => {
       if (document.visibilityState === "hidden") return;
-      void syncAndLoadNotifications();
+      void loadNotifications();
+      void syncAndReloadNotifications();
     };
     window.addEventListener("online", recoverNotifications);
     document.addEventListener("visibilitychange", recoverNotifications);
 
     return () => {
       cancelled = true;
+      cancelInitialBackgroundSync();
       window.removeEventListener("online", recoverNotifications);
       document.removeEventListener("visibilitychange", recoverNotifications);
       void supabase.removeChannel(channel);
     };
-  }, [reconcilePayments, studioId, studioName, syncPushNotifications]);
+  }, [reconcilePayments, studioId, studioName, syncPushNotifications, timeZone]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -474,7 +520,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     const [historyResult, unreadResult] = await Promise.all([
       (supabase as any)
         .from("studio_notifications")
-        .select("id,studio_id,kind,title,body,payload,action_url,read_at,created_at")
+        .select("id,studio_id,appointment_id,kind,title,body,payload,action_url,read_at,created_at,appointments:appointment_id(starts_at,studio_id)")
         .eq("studio_id", studioId)
         .order("created_at", { ascending: false })
         .limit(100),
@@ -486,7 +532,9 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
     ]);
     if (!historyResult.error) {
       setItems(
-        ((historyResult.data ?? []) as StudioNotification[]).map(normalizeNotification),
+        ((historyResult.data ?? []) as StudioNotification[])
+          .filter((item) => item.studio_id === studioId)
+          .map((item) => normalizeNotification(item, timeZone)),
       );
     }
     if (!unreadResult.error) setUnreadCount(Number(unreadResult.count ?? 0));
@@ -634,7 +682,7 @@ export function AdminNotifications({ studioId, studioName }: AdminNotificationsP
                       {item.body}
                     </span>
                     <span className="mt-2 block text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-                      {formatNotificationTime(item.created_at)}
+                      {formatNotificationTime(item.created_at, timeZone)}
                     </span>
                   </span>
                 </button>
@@ -738,12 +786,41 @@ function readPayloadString(payload: Record<string, unknown> | null, key: string)
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function normalizeNotification(item: StudioNotification): StudioNotification {
+function normalizeNotification(item: StudioNotification, timeZone: string): StudioNotification {
+  const sanitizedBody = normalizeDisplayText(
+    sanitizeNotificationText(item.body, adminNotificationBody(item.kind)),
+  );
   return {
     ...item,
     title: normalizeDisplayText(sanitizeNotificationText(item.title, adminNotificationTitle(item.kind))),
-    body: normalizeDisplayText(sanitizeNotificationText(item.body, adminNotificationBody(item.kind))),
+    body: normalizeAppointmentTime(sanitizedBody, item, timeZone),
   };
+}
+
+function normalizeAppointmentTime(
+  body: string,
+  item: StudioNotification,
+  timeZone: string,
+) {
+  const appointment = Array.isArray(item.appointments)
+    ? item.appointments[0]
+    : item.appointments;
+  const startsAt =
+    appointment?.studio_id === item.studio_id
+      ? appointment.starts_at
+      : readPayloadString(item.payload, "starts_at");
+  if (!startsAt || Number.isNaN(new Date(startsAt).getTime())) return body;
+  if (
+    item.kind === "new_appointment" ||
+    item.kind === "appointment_rescheduled" ||
+    item.kind === "appointment_cancelled"
+  ) {
+    return body.replace(/\d{2}\/\d{2}\/\d{4}\s+(?:às\s+)?\d{2}:\d{2}/u, formatStudioDateTime(startsAt, timeZone));
+  }
+  if (item.kind === "appointment_reminder" || item.kind === "attendance_confirmation") {
+    return body.replace(/\b\d{2}:\d{2}\b/u, formatStudioTime(startsAt, timeZone));
+  }
+  return body;
 }
 
 function notificationActionUrl(item: StudioNotification) {
@@ -769,6 +846,9 @@ function shouldShowRealtimeToast(studioId: string, notificationId: string) {
 }
 
 function adminNotificationTitle(kind: string) {
+  if (kind === "appointment_reminder") return "Próximo atendimento";
+  if (kind === "attendance_confirmation") return "O atendimento aconteceu?";
+  if (kind === "attendance_summary") return "Atendimentos por confirmar";
   if (kind === "new_appointment") return "Nova marcação recebida";
   if (kind === "appointment_rescheduled") return "Marcação remarcada";
   if (kind === "appointment_cancelled") return "Marcação cancelada";
@@ -782,6 +862,9 @@ function adminNotificationTitle(kind: string) {
 }
 
 function adminNotificationBody(kind: string) {
+  if (kind === "appointment_reminder") return "Tem um atendimento a começar em breve.";
+  if (kind === "attendance_confirmation") return "Confirme se o cliente compareceu ou faltou.";
+  if (kind === "attendance_summary") return "Resolva as pendências de hoje na Agenda.";
   if (kind === "new_appointment") return "Tem uma nova marcação para acompanhar no painel.";
   if (kind === "payment_confirmed") return "Um pagamento foi confirmado.";
   if (kind === "payment_failed") return "Um pagamento precisa de atenção.";
@@ -797,10 +880,14 @@ function adminNotificationBody(kind: string) {
 function sanitizeNotificationText(value: string, fallback: string) {
   const text = String(value ?? "").trim();
   if (!text) return fallback;
+  const withoutSourceAttribution = text
+    .replace(/^\s*from\s*[:\-–—]?\s*/i, "")
+    .replace(/\s+(?:[•·\-–—]\s*)?from\s+[^\n]+$/i, "")
+    .trim();
   const technicalPattern =
-    /\b(from|insert|update|delete|upsert|select|payload|schema|table|row|uuid|endpoint|subscription|webhook)\b|notifications_log|studio_notifications|push_subscriptions|appointment_created|update_professional_status|push_client|push_studio|[_{}[\]"`]/i;
-  if (technicalPattern.test(text)) return fallback;
-  return text.replace(/\s+from\s+\S+$/i, "").trim() || fallback;
+    /\b(insert|update|delete|upsert|select|payload|schema|table|row|uuid|endpoint|subscription|webhook)\b|notifications_log|studio_notifications|push_subscriptions|appointment_created|update_professional_status|push_client|push_studio|[_{}[\]"`]/i;
+  if (technicalPattern.test(withoutSourceAttribution)) return fallback;
+  return withoutSourceAttribution || fallback;
 }
 
 function normalizeDisplayText(value: string) {
@@ -834,7 +921,7 @@ function normalizeDisplayText(value: string) {
   );
 }
 
-function formatNotificationTime(value: string) {
+function formatNotificationTime(value: string, timeZone: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
 
@@ -843,5 +930,6 @@ function formatNotificationTime(value: string) {
     month: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone,
   }).format(date);
 }

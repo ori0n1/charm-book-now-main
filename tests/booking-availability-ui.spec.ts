@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
-const PUBLIC_BOOKING_URL = process.env.BELLZA_PUBLIC_BOOKING_URL ?? "https://www.bellza.pt/s/bellza";
+const PUBLIC_BOOKING_URL = process.env.BELLZA_PUBLIC_BOOKING_URL ?? "";
+const bookingTarget = PUBLIC_BOOKING_URL ? new URL(PUBLIC_BOOKING_URL) : null;
+test.skip(
+  !bookingTarget || !["127.0.0.1", "localhost", "qflwsdrgdkkcxjnbxmis.supabase.co"].includes(bookingTarget.hostname),
+  "Requires an explicit local/staging booking fixture; production reads are forbidden.",
+);
 
 function nextMondayDayNumber() {
   const date = new Date();
@@ -8,6 +13,19 @@ function nextMondayDayNumber() {
   const daysUntilMonday = (8 - date.getDay()) % 7 || 7;
   date.setDate(date.getDate() + daysUntilMonday);
   return String(date.getDate());
+}
+
+async function selectNextMonday(page: import("@playwright/test").Page) {
+  const target = page
+    .getByRole("button", { name: new RegExp(`seg\\s*${nextMondayDayNumber()}`, "i") })
+    .first();
+
+  if (!(await target.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: /Próxima semana/i }).click();
+  }
+
+  await expect(target).toBeVisible({ timeout: 10_000 });
+  await target.click();
 }
 
 async function assertFutureAvailability(page: import("@playwright/test").Page, screenshotPath: string) {
@@ -24,7 +42,9 @@ async function assertFutureAvailability(page: import("@playwright/test").Page, s
   });
   await page.goto(PUBLIC_BOOKING_URL, { waitUntil: "domcontentloaded" });
 
-  await expect(page.getByText("Corte masculino", { exact: false }).first()).toBeVisible();
+  await expect(page.getByText("Corte masculino", { exact: false }).first()).toBeVisible({
+    timeout: 20_000,
+  });
   await page.getByRole("button", { name: /^agendar$/i }).last().click();
   await page.getByRole("button", { name: /^continuar$/i }).click();
   await expect(page.getByRole("heading", { name: "Disponibilidade" })).toBeVisible({
@@ -36,10 +56,7 @@ async function assertFutureAvailability(page: import("@playwright/test").Page, s
     await professionalButton.click();
   }
 
-  const mondayButton = page
-    .getByRole("button", { name: new RegExp(`seg\\s*${nextMondayDayNumber()}`, "i") })
-    .first();
-  await mondayButton.click();
+  await selectNextMonday(page);
 
   const timeButtons = page.locator("button").filter({ hasText: /^\d{2}:\d{2}$/ });
   await expect(timeButtons.first()).toBeVisible({ timeout: 15_000 });

@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import type { InputHTMLAttributes, ReactNode, RefObject } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Calendar,
@@ -22,11 +22,9 @@ import { ExpandableList } from "@/components/ui/expandable-list";
 import { InternationalPhoneInput } from "@/components/ui/international-phone-input";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { sortAppointmentsChronologically } from "@/lib/appointment-ordering";
+import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
 import {
-  createPlatformCheckoutSession,
-  getPlatformSubscriptionSummary,
-} from "@/lib/subscriptions.functions";
-import {
+  allocateAuthoritativeLineTotals,
   computeFinancialSplit,
   computeAttendanceRevenue,
   formatAppointmentStatus,
@@ -35,6 +33,30 @@ import {
   type FinancialRuleSource,
 } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
+import {
+  normalizePlanTier,
+  planHasFeature,
+  PLAN_DEFINITIONS,
+  type PlanTier,
+} from "@/lib/plan-entitlements";
+import {
+  ADMIN_REFERENCE_GC_MS,
+  ADMIN_REFERENCE_STALE_MS,
+  platformSubscriptionSummaryQueryKey,
+} from "@/lib/admin-query-cache";
+import {
+  prepareStripeBillingNavigation,
+  requestPlatformCheckout,
+} from "@/lib/subscription-checkout";
+import { getTrialNotice, TRIAL_DURATION_DAYS } from "@/lib/trial-notice";
+import {
+  buildAppointmentPaymentFacts,
+  computeAppointmentFinancialSplit,
+  toCents,
+  type AppointmentPaymentFacts,
+  type OnsitePaymentRow,
+  type RefundRow,
+} from "@/lib/financial-ledger";
 
 export const Route = createFileRoute("/_authenticated/admin/")({
   component: OverviewPage,
@@ -42,6 +64,7 @@ export const Route = createFileRoute("/_authenticated/admin/")({
 
 type ServiceLine = {
   price: number;
+  studio_commission_percent_snapshot?: number | null;
   services: ({ name: string } & FinancialRuleSource) | null;
 };
 
@@ -50,20 +73,18 @@ type Appt = {
   starts_at: string;
   status: string;
   total_price: number;
+  studio_commission_percent_snapshot?: number | null;
   clients: {
     id?: string | null;
     name: string;
     avatar_url?: string | null;
-    created_at?: string | null;
-    date_of_birth?: string | null;
-    total_spent?: number | null;
-    total_visits?: number | null;
   } | null;
   staff: ({ id: string; name: string } & FinancialRuleSource) | null;
   appointment_services?: ServiceLine[];
 };
 
 type PaidRow = {
+  id?: string | null;
   appointment_id: string | null;
   amount_cents: number;
   status: string;
@@ -74,8 +95,8 @@ type DailyChartDay = {
   day: string;
   fullDate: string;
   total: number;
-  confirmed: number;
   received: number;
+  pending: number;
   appointments: number;
 };
 
@@ -95,7 +116,8 @@ type StaffMetrics = {
 };
 
 type SummaryPeriod = 7 | 15 | 30;
-type PlanId = "monthly" | "quarterly" | "yearly";
+type DashboardPeriodMode = "7d" | "30d" | "month" | "custom";
+type PlanId = "pro_monthly" | "pro_yearly" | "premium_monthly" | "premium_yearly";
 
 type BillingSummary = {
   available: boolean;
@@ -106,6 +128,10 @@ type BillingSummary = {
   daysRemaining?: number | null;
   cancelAtPeriodEnd: boolean;
   premiumActive: boolean;
+  subscriptionActive?: boolean;
+  hasStripeSubscription?: boolean;
+  effectivePlan?: PlanTier;
+  trialActive?: boolean;
 };
 
 type WithdrawalSummary = {
@@ -136,56 +162,118 @@ type WithdrawalSummary = {
 };
 
 const SUMMARY_PERIODS: SummaryPeriod[] = [7, 15, 30];
+const DASHBOARD_PERIOD_OPTIONS: Array<{ value: DashboardPeriodMode; label: string }> = [
+  { value: "7d", label: "7 dias" },
+  { value: "30d", label: "30 dias" },
+  { value: "month", label: "Este mês" },
+  { value: "custom", label: "Personalizado" },
+];
 const DAY_MS = 86400000;
+const LazyDailyMovementChart = lazy(() =>
+  import("@/components/dashboard/daily-movement-chart").then((module) => ({
+    default: module.DailyMovementChart,
+  })),
+);
 
 function OverviewPage() {
   const { studio } = useCurrentStudio();
   const loadBilling = useServerFn(getPlatformSubscriptionSummary);
-  const startCheckout = useServerFn(createPlatformCheckoutSession);
   const [summaryPeriod, setSummaryPeriod] = useState<SummaryPeriod>(30);
+  const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriodMode>("30d");
+  const [customPeriodStart, setCustomPeriodStart] = useState(() =>
+    formatDateInput(addCalendarDays(startOfLocalDay(new Date()), -6)),
+  );
+  const [customPeriodEnd, setCustomPeriodEnd] = useState(() =>
+    formatDateInput(startOfLocalDay(new Date())),
+  );
   const [checkoutPlan, setCheckoutPlan] = useState<PlanId | null>(null);
   const [planChooserOpen, setPlanChooserOpen] = useState(false);
+  const [desktopLayout, setDesktopLayout] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 768px)");
+    const update = () => setDesktopLayout(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   const billing = useQuery({
-    queryKey: ["dashboard-subscription-summary", studio?.id],
+    queryKey: platformSubscriptionSummaryQueryKey(studio?.id),
     enabled: !!studio,
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
+    staleTime: ADMIN_REFERENCE_STALE_MS,
+    gcTime: ADMIN_REFERENCE_GC_MS,
+    refetchOnMount: false,
+    refetchOnWindowFocus: true,
     retry: 1,
-    queryFn: async () =>
-      (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
+    queryFn: async () => (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
+  const effectivePlan = normalizePlanTier(billing.data?.effectivePlan ?? studio?.plan_tier);
+  const financeEnabled = planHasFeature(effectivePlan, "finance_basic");
   const overview = useQuery({
-    queryKey: ["admin-finance-overview", studio?.id, studio?.role, studio?.staff_id],
-    enabled: !!studio,
+    queryKey: [
+      "admin-finance-overview",
+      studio?.id,
+      studio?.role,
+      studio?.staff_id,
+      financeEnabled,
+    ],
+    enabled: Boolean(studio),
     staleTime: 20 * 1000,
     queryFn: async () => {
-      const since = new Date(Date.now() - 180 * DAY_MS).toISOString();
-      const [appointmentResult, { data: staffRows }, { data: serviceRows }, { data: payments }] =
-        await Promise.all([
-          fetchAppointments(studio!.id, since, studio?.role === "staff" ? studio.staff_id : null),
-          supabase
-            .from("staff")
-            .select("id,name")
-            .eq("studio_id", studio!.id)
-            .eq("is_active", true),
-          supabase.from("services").select("id,name").eq("studio_id", studio!.id).eq("is_active", true),
-          supabase
-            .from("payment_intents")
-            .select("appointment_id,amount_cents,status")
-            .eq("studio_id", studio!.id),
-        ]);
+      const db = supabase as any;
+      const since = new Date(Date.now() - 60 * DAY_MS).toISOString();
+      const [
+        appointmentResult,
+        { count: staffCount },
+        { count: serviceCount },
+        { data: payments },
+        { data: cashPayments },
+        { data: refunds },
+      ] = await Promise.all([
+        fetchAppointments(studio!.id, since, studio?.role === "staff" ? studio.staff_id : null),
+        supabase
+          .from("staff")
+          .select("id", { count: "exact", head: true })
+          .eq("studio_id", studio!.id)
+          .eq("is_active", true),
+        supabase
+          .from("services")
+          .select("id", { count: "exact", head: true })
+          .eq("studio_id", studio!.id)
+          .eq("is_active", true),
+        financeEnabled
+          ? supabase
+              .from("payment_intents")
+              .select("id,appointment_id,amount_cents,status,dispute_status,disputed_amount_cents")
+              .eq("studio_id", studio!.id)
+          : Promise.resolve({ data: [] }),
+        financeEnabled
+          ? db
+              .from("cash_register_movements")
+              .select("id,appointment_id,amount,movement_type")
+              .eq("studio_id", studio!.id)
+              .eq("movement_type", "service_payment")
+          : Promise.resolve({ data: [] }),
+        financeEnabled
+          ? db
+              .from("refund_requests")
+              .select("id,appointment_id,payment_intent_id,amount_cents,status,payment_intents(amount_cents)")
+              .eq("studio_id", studio!.id)
+              .eq("status", "refunded")
+          : Promise.resolve({ data: [] }),
+      ]);
 
       return {
         appts: (appointmentResult ?? []) as unknown as Appt[],
-        staffRows: (staffRows ?? []) as { id: string; name: string }[],
-        serviceRows: (serviceRows ?? []) as { id: string; name: string }[],
-        counts: { services: serviceRows?.length ?? 0, staff: staffRows?.length ?? 0 },
+        counts: { services: Number(serviceCount ?? 0), staff: Number(staffCount ?? 0) },
         paidRows: (payments ?? []) as PaidRow[],
+        cashPaymentRows: (cashPayments ?? []) as unknown as OnsitePaymentRow[],
+        refundRows: (refunds ?? []) as unknown as RefundRow[],
       };
     },
   });
+  const refetchOverview = overview.refetch;
 
   useEffect(() => {
     if (!studio?.id) return;
@@ -193,23 +281,54 @@ function OverviewPage() {
     const scheduleRefresh = () => {
       if (refreshTimer) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
-        void overview.refetch();
+        void refetchOverview();
       }, 650);
     };
     const channel = supabase
       .channel(`admin-overview-live-${studio.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "payment_intents", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "booking_payment_requests", filter: `studio_id=eq.${studio.id}` }, scheduleRefresh)
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, scheduleRefresh)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "appointments",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "payment_intents",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "booking_payment_requests",
+          filter: `studio_id=eq.${studio.id}`,
+        },
+        scheduleRefresh,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "appointment_services" },
+        scheduleRefresh,
+      )
       .subscribe();
     return () => {
       if (refreshTimer) window.clearTimeout(refreshTimer);
       void supabase.removeChannel(channel);
     };
-  }, [overview.refetch, studio?.id]);
+  }, [refetchOverview, studio?.id]);
 
-  if (!studio || overview.isLoading || billing.isLoading || billing.isFetching)
+  if (!studio || overview.isLoading)
     return <p className="text-sm text-muted-foreground">A carregar...</p>;
 
   if (studio.role === "staff") {
@@ -217,6 +336,8 @@ function OverviewPage() {
       <ProfessionalOverview
         appointments={overview.data?.appts ?? []}
         paidRows={overview.data?.paidRows ?? []}
+        cashPaymentRows={overview.data?.cashPaymentRows ?? []}
+        refundRows={overview.data?.refundRows ?? []}
         studio={studio}
         period={summaryPeriod}
         onPeriodChange={setSummaryPeriod}
@@ -224,17 +345,29 @@ function OverviewPage() {
     );
   }
 
-  async function activatePremium(plan: PlanId = "yearly") {
+  if (effectivePlan === "free") {
+    return (
+      <FreeOverview
+        studioName={studio.name}
+        studioSlug={studio.slug}
+        appointments={overview.data?.appts ?? []}
+        serviceCount={overview.data?.counts.services ?? 0}
+        staffCount={overview.data?.counts.staff ?? 0}
+        trialExpired={billing.data?.status === "expired_trial"}
+      />
+    );
+  }
+
+  async function activatePremium(plan: PlanId = "premium_yearly") {
     if (!studio) return;
+    const navigation = prepareStripeBillingNavigation();
     setPlanChooserOpen(false);
     setCheckoutPlan(plan);
     try {
-      const result = (await startCheckout({ data: { studioId: studio.id, plan } })) as {
-        url?: string | null;
-      };
-      if (!result.url) throw new Error("checkout_unavailable");
-      window.location.href = result.url;
+      const url = await requestPlatformCheckout({ studioId: studio.id, plan });
+      navigation.complete(url);
     } catch {
+      navigation.cancel();
       toast.error("Não foi possível abrir o pagamento seguro. Tente novamente.");
     } finally {
       setCheckoutPlan(null);
@@ -243,13 +376,14 @@ function OverviewPage() {
 
   const appts = overview.data?.appts ?? [];
   const counts = overview.data?.counts ?? { services: 0, staff: 0 };
+  const paymentFacts = buildAppointmentPaymentFacts(
+    overview.data?.paidRows ?? [],
+    overview.data?.cashPaymentRows ?? [],
+    overview.data?.refundRows ?? [],
+  );
   const paidByAppointment = new Map<string, number>();
-  for (const p of overview.data?.paidRows ?? []) {
-    if (!p.appointment_id || p.status !== "succeeded") continue;
-    paidByAppointment.set(
-      p.appointment_id,
-      (paidByAppointment.get(p.appointment_id) ?? 0) + p.amount_cents / 100,
-    );
+  for (const [appointmentId, facts] of paymentFacts) {
+    paidByAppointment.set(appointmentId, facts.receivedCents / 100);
   }
 
   const now = Date.now();
@@ -257,21 +391,36 @@ function OverviewPage() {
     appts.filter((a) => new Date(a.starts_at).toDateString() === new Date().toDateString()),
     "future",
   );
-  const upcoming = sortAppointmentsChronologically(appts.filter(
-    (a) => new Date(a.starts_at).getTime() >= now && isBillable(a.status),
-  ), "future");
+  const upcoming = sortAppointmentsChronologically(
+    appts.filter((a) => new Date(a.starts_at).getTime() >= now && isBillable(a.status)),
+    "future",
+  );
   const billable = appts.filter((a) =>
     isFinanciallyRelevantAppointment(a.status, paidByAppointment.get(a.id) ?? 0),
   );
 
   const rows = billable.map((a) => {
-    const split = computeAppointmentSplit(a, studio, paidByAppointment.get(a.id) ?? 0);
+    const split = computeAppointmentSplit(a, studio, paymentFacts.get(a.id) ?? null);
     return { appointment: a, split };
   });
 
-  const periodStart = getPeriodStart(summaryPeriod, now);
-  const previousPeriodStart = new Date(periodStart.getTime() - summaryPeriod * DAY_MS);
-  const periodRows = rows.filter((row) => new Date(row.appointment.starts_at) >= periodStart);
+  const dashboardRange = getDashboardPeriodRange(
+    dashboardPeriod,
+    customPeriodStart,
+    customPeriodEnd,
+    new Date(now),
+  );
+  const {
+    start: periodStart,
+    end: periodEnd,
+    days: periodDays,
+    label: periodLabel,
+  } = dashboardRange;
+  const previousPeriodStart = addCalendarDays(periodStart, -periodDays);
+  const periodRows = rows.filter((row) => {
+    const startsAt = new Date(row.appointment.starts_at);
+    return startsAt >= periodStart && startsAt < periodEnd;
+  });
   const previousRows = rows.filter((row) => {
     const startsAt = new Date(row.appointment.starts_at);
     return startsAt >= previousPeriodStart && startsAt < periodStart;
@@ -280,7 +429,9 @@ function OverviewPage() {
   const previousTotals = sumFinancialRows(previousRows);
   const periodAppointments = appts.filter((a) => {
     const startsAt = new Date(a.starts_at);
-    return startsAt >= periodStart && isScheduledPerformanceStatus(a.status);
+    return (
+      startsAt >= periodStart && startsAt < periodEnd && isScheduledPerformanceStatus(a.status)
+    );
   });
   const previousAppointments = appts.filter((a) => {
     const startsAt = new Date(a.starts_at);
@@ -290,6 +441,14 @@ function OverviewPage() {
       isScheduledPerformanceStatus(a.status)
     );
   });
+  const effectiveStudioPercent =
+    totals.realized > 0
+      ? Math.round((totals.studio * 10_000) / totals.realized) / 100
+      : Number(studio.commission_percent ?? 0);
+  const commissionCaption =
+    Math.abs(effectiveStudioPercent - Number(studio.commission_percent ?? 0)) < 0.005
+      ? `Divisão aplicada: estúdio ${effectiveStudioPercent}% · equipa ${100 - effectiveStudioPercent}%`
+      : `Divisão efetiva: estúdio ${effectiveStudioPercent}% · equipa ${100 - effectiveStudioPercent}% (regra padrão ${studio.commission_percent ?? 0}%)`;
   const attendedCount = periodAppointments.filter((a) => a.status === "completed").length;
   const missedCount = periodAppointments.filter((a) => a.status === "no_show").length;
   const closedAttendanceCount = attendedCount + missedCount;
@@ -313,8 +472,7 @@ function OverviewPage() {
         ? "Comparecimento bom"
         : "Muitas faltas neste período";
 
-  const chartData = buildDailyData(periodRows, summaryPeriod);
-  const maxDayTotal = Math.max(1, ...chartData.map((d) => d.total));
+  const chartData = buildDailyData(periodRows, periodStart, periodEnd);
   return (
     <>
       <TrialPremiumBanner
@@ -332,293 +490,300 @@ function OverviewPage() {
         studio={studio}
       />
 
-      <div className="hidden space-y-4 md:block">
-        <ShareStudioCard
-          studioName={studio.name}
-          studioSlug={studio.slug}
-          variant="compact"
-          className="w-full"
-        />
+      {!desktopLayout && (
+        <div className="mt-3 md:hidden">
+          <Suspense
+            fallback={
+              <div className="h-80 animate-pulse rounded-2xl border border-border bg-muted/35" />
+            }
+          >
+            <LazyDailyMovementChart
+              data={chartData}
+              periodControls={
+                <DashboardPeriodControls
+                  value={dashboardPeriod}
+                  customStart={customPeriodStart}
+                  customEnd={customPeriodEnd}
+                  onChange={setDashboardPeriod}
+                  onCustomStartChange={(value) => {
+                    setCustomPeriodStart(value);
+                    if (value > customPeriodEnd) setCustomPeriodEnd(value);
+                  }}
+                  onCustomEndChange={(value) => {
+                    setCustomPeriodEnd(value);
+                    if (value < customPeriodStart) setCustomPeriodStart(value);
+                  }}
+                />
+              }
+            />
+          </Suspense>
+        </div>
+      )}
 
-        <section className="grid auto-rows-fr gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
-          <div className="flex h-full min-w-0 flex-col rounded-[1.35rem] border border-border bg-card p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
-                  Operação de hoje
-                </p>
-                <h1 className="mt-2 text-2xl font-light tracking-tight">Resumo do estúdio</h1>
+      {desktopLayout && (
+        <div className="hidden space-y-4 md:block">
+          <ShareStudioCard
+            studioName={studio.name}
+            studioSlug={studio.slug}
+            variant="compact"
+            className="w-full"
+          />
+
+          <section className="grid auto-rows-fr gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]">
+            <div className="flex h-full min-w-0 flex-col rounded-[1.35rem] border border-border bg-card p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
+                    Operação de hoje
+                  </p>
+                  <h1 className="mt-2 text-2xl font-light tracking-tight">Resumo do estúdio</h1>
+                </div>
+                <Link
+                  to="/admin/agenda"
+                  className="rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                >
+                  Ver agenda
+                </Link>
               </div>
-              <Link
-                to="/admin/agenda"
-                className="rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:bg-muted hover:text-foreground"
-              >
-                Ver agenda
+
+              <div className="mt-5 grid flex-1 auto-rows-fr gap-3 sm:grid-cols-3">
+                <DashboardFocusCard
+                  label="Agenda de hoje"
+                  value={formatEUR(
+                    today.reduce(
+                      (sum, appointment) =>
+                        sum +
+                        computeAppointmentSplit(
+                          appointment,
+                          studio,
+                          paidByAppointment.get(appointment.id) ?? 0,
+                        ).total,
+                      0,
+                    ),
+                  )}
+                  detail="Valor previsto das marcações válidas de hoje."
+                  featured
+                />
+                <DashboardFocusCard
+                  label="Marcações de hoje"
+                  value={String(today.length)}
+                  detail="Agendamentos previstos para hoje."
+                />
+                <DashboardFocusCard
+                  label="Por receber"
+                  value={formatEUR(totals.pending)}
+                  detail="Valor que ainda falta receber."
+                />
+              </div>
+            </div>
+
+            <Link
+              to="/admin/recebimento"
+              search={{ connect: undefined }}
+              className="flex h-full min-w-0 flex-col rounded-[1.35rem] border border-border bg-card p-5 shadow-sm transition hover:border-emerald-700/30 hover:bg-muted/20"
+            >
+              <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
+                Recebimentos online
+              </p>
+              <MoneyValue
+                value={formatEUR(totals.receivedOnline)}
+                className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.55rem,2.2vw,1.875rem)] leading-tight"
+              />
+              <p className="mt-2 text-sm leading-snug text-muted-foreground">
+                Pagamentos online já enviados para a conta do estúdio.
+              </p>
+              <span className="mt-auto inline-flex w-fit items-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground">
+                Ver acompanhamento
+                <ArrowRight className="h-3.5 w-3.5" />
+              </span>
+            </Link>
+          </section>
+
+          <section className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Euro className="h-4 w-4" />
+                  <span className="text-[10px] uppercase tracking-[0.2em]">
+                    Resumo · {periodLabel}
+                  </span>
+                </div>
+                <MoneyValue value={formatEUR(totals.total)} className="mt-2 text-3xl" />
+                <p className="mt-1 hidden text-xs text-muted-foreground md:block">
+                  Valor das marcações confirmadas no período · {periodRows.length} marcações
+                </p>
+              </div>
+              <DashboardPeriodControls
+                value={dashboardPeriod}
+                customStart={customPeriodStart}
+                customEnd={customPeriodEnd}
+                onChange={setDashboardPeriod}
+                onCustomStartChange={(value) => {
+                  setCustomPeriodStart(value);
+                  if (value > customPeriodEnd) setCustomPeriodEnd(value);
+                }}
+                onCustomEndChange={(value) => {
+                  setCustomPeriodEnd(value);
+                  if (value < customPeriodStart) setCustomPeriodStart(value);
+                }}
+              />
+            </div>
+
+            <div className="mt-5 grid auto-rows-fr gap-3 lg:grid-cols-3">
+              <FinanceSummaryCard
+                title="Receita agendada"
+                icon={<Euro className="h-4 w-4" />}
+                value={formatEUR(totals.total)}
+                caption={`${periodRows.length} ${periodRows.length === 1 ? "marcação confirmada" : "marcações confirmadas"}`}
+                featured
+                items={[
+                  { label: "Recebido", value: formatEUR(totals.received) },
+                  { label: "Por receber", value: formatEUR(totals.pending) },
+                ]}
+              />
+              <FinanceSummaryCard
+                title="Recebido"
+                icon={<Wallet className="h-4 w-4" />}
+                value={formatEUR(totals.received)}
+                caption="Dinheiro efetivamente recebido, líquido de reembolsos."
+                items={[
+                  { label: "Online", value: formatEUR(totals.receivedOnline) },
+                  { label: "Presencial", value: formatEUR(totals.receivedOnsite) },
+                ]}
+              />
+              <FinanceSummaryCard
+                title="Receita realizada"
+                icon={<Users className="h-4 w-4" />}
+                value={formatEUR(totals.realized)}
+                caption={`Apenas atendimentos concluídos · ${commissionCaption}`}
+                items={[
+                  { label: "Estúdio", value: formatEUR(totals.studio) },
+                  { label: "Equipa", value: formatEUR(totals.professional) },
+                ]}
+              />
+            </div>
+
+            <details
+              className="group mt-4 overflow-hidden rounded-[1.25rem] border border-border bg-background/35"
+              onToggle={(event) => setReportsOpen(event.currentTarget.open)}
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
+                    Desempenho e relatórios
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                    Gráfico diário, presença, divisão financeira e upsells.
+                  </p>
+                </div>
+                <span className="rounded-full border border-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+                  Abrir
+                </span>
+              </summary>
+              {reportsOpen && (
+                <div className="grid min-w-0 gap-3 border-t border-border p-3 xl:grid-cols-[minmax(0,1fr)_17rem] 2xl:grid-cols-[minmax(0,1fr)_18rem]">
+                  <div className="min-w-0">
+                    <Suspense
+                      fallback={
+                        <div className="h-80 animate-pulse rounded-2xl border border-border/70 bg-muted/35" />
+                      }
+                    >
+                      <LazyDailyMovementChart data={chartData} />
+                    </Suspense>
+                  </div>
+                  <div className="min-w-0 rounded-2xl border border-border bg-card p-4">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                      Leitura rápida
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                      Comissão sobre o total do serviço. O pré-pagamento indica apenas o que já foi
+                      pago.
+                    </p>
+                    <div className="mt-4 space-y-2.5">
+                      <SignalLine
+                        label={agendaTrend}
+                        value={`${appointmentGrowth >= 0 ? "+" : ""}${appointmentGrowth}%`}
+                      />
+                      <SignalLine
+                        label="Receita vs período anterior"
+                        value={`${revenueGrowth >= 0 ? "+" : ""}${revenueGrowth}%`}
+                      />
+                      <SignalLine label={attendanceSignal} value={`${attendanceRate}%`} />
+                      <ProgressLine
+                        label="Parte do estúdio"
+                        value={totals.studio}
+                        total={totals.realized}
+                      />
+                      <ProgressLine
+                        label="Parte da equipa"
+                        value={totals.professional}
+                        total={totals.realized}
+                      />
+                      <ProgressLine label="Recebido" value={totals.received} total={totals.total} />
+                      <ProgressLine
+                        label="Por receber"
+                        value={totals.pending}
+                        total={totals.total}
+                      />
+                    </div>
+                  </div>
+                  <div className="min-w-0 xl:col-span-2">
+                    <UpsellMetricsCard studioId={studio.id} />
+                  </div>
+                </div>
+              )}
+            </details>
+          </section>
+
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+                Agenda futura
+              </h3>
+              <Link to="/admin/agenda" className="text-xs uppercase tracking-wide hover:underline">
+                Ver todas
               </Link>
             </div>
-
-            <div className="mt-5 grid flex-1 auto-rows-fr gap-3 sm:grid-cols-3">
-              <DashboardFocusCard
-                label="Faturação de hoje"
-                value={formatEUR(
-                  today.reduce(
-                    (sum, appointment) =>
-                      sum + computeAppointmentSplit(appointment, studio, paidByAppointment.get(appointment.id) ?? 0).total,
-                    0,
-                  ),
-                )}
-                detail="Total faturado nas marcações de hoje."
-                featured
-              />
-              <DashboardFocusCard
-                label="Marcações de hoje"
-                value={String(today.length)}
-                detail="Agendamentos previstos para hoje."
-              />
-              <DashboardFocusCard
-                label="Por receber"
-                value={formatEUR(totals.pending)}
-                detail="Valor que ainda falta receber."
-              />
-            </div>
-          </div>
-
-          <Link
-            to="/admin/recebimento"
-            search={{ connect: undefined }}
-            className="flex h-full min-w-0 flex-col rounded-[1.35rem] border border-border bg-card p-5 shadow-sm transition hover:border-emerald-700/30 hover:bg-muted/20"
-          >
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">
-              Recebimentos online
-            </p>
-            <MoneyValue value={formatEUR(totals.received)} className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.55rem,2.2vw,1.875rem)] leading-tight" />
-            <p className="mt-2 text-sm leading-snug text-muted-foreground">
-              Pagamentos online já enviados para a conta do estúdio.
-            </p>
-            <span className="mt-auto inline-flex w-fit items-center gap-2 rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-foreground">
-              Ver acompanhamento
-              <ArrowRight className="h-3.5 w-3.5" />
-            </span>
-          </Link>
-        </section>
-
-        <section className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm md:p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Euro className="h-4 w-4" />
-                <span className="text-[10px] uppercase tracking-[0.2em]">
-                  Resumo {summaryPeriod} dias
-                </span>
-              </div>
-              <MoneyValue value={formatEUR(totals.total)} className="mt-2 text-3xl" />
-              <p className="mt-1 hidden text-xs text-muted-foreground md:block">
-                Valor das marcações confirmadas no período · {periodRows.length} marcações
-              </p>
-            </div>
-            <div className="flex max-w-full flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-background/45 p-1">
-              {SUMMARY_PERIODS.map((period) => (
-                <button
-                  key={period}
-                  type="button"
-                  onClick={() => setSummaryPeriod(period)}
-                  className={`min-w-0 rounded-xl px-3 py-2 text-xs font-semibold transition ${
-                    summaryPeriod === period
-                      ? "bg-emerald-600 text-white shadow-lg shadow-emerald-950/15"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
-                >
-                  {period} dias
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-5 grid auto-rows-fr gap-3 lg:grid-cols-3">
-            <FinanceSummaryCard
-              title="Receita agendada"
-              icon={<Euro className="h-4 w-4" />}
-              value={formatEUR(totals.total)}
-              caption={`${periodRows.length} ${periodRows.length === 1 ? "marcação confirmada" : "marcações confirmadas"}`}
-              featured
-              items={[
-                { label: "Pago", value: formatEUR(totals.confirmed) },
-                { label: "Por receber", value: formatEUR(totals.pending) },
-              ]}
-            />
-            <FinanceSummaryCard
-              title="Recebido online"
-              icon={<Wallet className="h-4 w-4" />}
-              value={formatEUR(totals.received)}
-              caption="Pago online pelos clientes."
-              items={[
-                { label: "Por receber", value: formatEUR(totals.pending) },
-                { label: "Recebido", value: formatEUR(totals.received) },
-              ]}
-            />
-            <FinanceSummaryCard
-              title="Valor do estúdio"
-              icon={<Users className="h-4 w-4" />}
-              value={formatEUR(totals.studio)}
-              caption={`Estúdio ${studio.commission_percent}% · equipa ${100 - studio.commission_percent}%`}
-              items={[
-                { label: "Estúdio", value: formatEUR(totals.studio) },
-                { label: "Equipa", value: formatEUR(totals.professional) },
-              ]}
-            />
-          </div>
-
-          <details className="group mt-4 overflow-hidden rounded-[1.25rem] border border-border bg-background/35">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
-                  Desempenho e relatórios
+            <div className="divide-y divide-border overflow-hidden rounded-[1.25rem] border border-border bg-card shadow-sm">
+              {upcoming.length === 0 && (
+                <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  Sem marcações futuras.
                 </p>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                  Gráfico diário, presença, divisão financeira e upsells.
-                </p>
-              </div>
-              <span className="rounded-full border border-border px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-                Abrir
-              </span>
-            </summary>
-            <div className="grid min-w-0 gap-3 border-t border-border p-3 xl:grid-cols-[minmax(0,1fr)_17rem] 2xl:grid-cols-[minmax(0,1fr)_18rem]">
-              <div className="min-w-0 rounded-2xl border border-border bg-card p-4">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                      Movimento diário
-                    </p>
-                    <p className="mt-1 max-w-xl text-sm text-foreground">
-                      Previsão diária, receita confirmada e sinais pagos.
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-                    <ChartLegend color="bg-emerald-400" label="Marcações" />
-                    <ChartLegend color="bg-sky-400" label="Receita" />
-                    <ChartLegend color="bg-zinc-400" label="Sinais" />
-                  </div>
-                </div>
-                <div className="mt-4 rounded-2xl border border-border/70 bg-background/35 px-4 pb-4 pt-5 shadow-inner shadow-black/5">
-                  <div className="grid h-60 grid-cols-[2.75rem_minmax(0,1fr)] gap-3">
-                    <div className="flex flex-col justify-between pb-8 text-right text-[10px] tabular-nums text-muted-foreground">
-                      <span>{formatEUR(maxDayTotal)}</span>
-                      <span>{formatEUR(maxDayTotal / 2)}</span>
-                      <span>0€</span>
-                    </div>
-                    <div className="min-w-0">
-                      <div className="grid h-52 grid-flow-col auto-cols-fr items-end gap-1.5 border-b border-border/70 bg-[linear-gradient(to_top,color-mix(in_oklch,var(--color-border)_32%,transparent)_1px,transparent_1px)] [background-size:100%_33.333%]">
-                    {chartData.length === 0 && (
-                      <p className="w-full self-center text-center text-sm text-muted-foreground">
-                        Sem dados financeiros neste período.
+              )}
+              {upcoming.slice(0, 5).map((a) => {
+                const split = computeAppointmentSplit(a, studio, paidByAppointment.get(a.id) ?? 0);
+                return (
+                  <div key={a.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                    <ClientAvatar
+                      name={a.clients?.name}
+                      avatarUrl={a.clients?.avatar_url}
+                      className="size-9 text-xs"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="break-words text-sm font-medium leading-snug">
+                        {a.clients?.name ?? "-"}
                       </p>
-                    )}
-                    {chartData.map((day) => (
-                      <div key={day.key} className="group flex min-w-0 flex-col items-center justify-end gap-1">
-                        <div className="flex h-44 w-full max-w-11 items-end justify-center gap-1 rounded-xl bg-muted/35 px-1.5 py-1.5 ring-1 ring-border/35">
-                          <div
-                            className="w-2 rounded-t-lg bg-gradient-to-t from-emerald-700 to-emerald-400 shadow-[0_0_18px_rgba(16,185,129,0.18)] transition-all duration-300 group-hover:from-emerald-600 group-hover:to-emerald-300"
-                            style={{ height: `${Math.max(6, (day.total / maxDayTotal) * 100)}%` }}
-                          />
-                          <div
-                            className="w-2 rounded-t-lg bg-gradient-to-t from-sky-700 to-sky-400 opacity-90 shadow-[0_0_16px_rgba(14,165,233,0.14)] transition-all duration-300"
-                            style={{ height: `${day.confirmed > 0 ? Math.max(6, (day.confirmed / maxDayTotal) * 100) : 2}%` }}
-                          />
-                          <div
-                            className="w-2 rounded-t-lg bg-gradient-to-t from-zinc-500 to-zinc-300 opacity-80 transition-all duration-300 dark:from-zinc-600 dark:to-zinc-400"
-                            style={{ height: `${day.received > 0 ? Math.max(6, (day.received / maxDayTotal) * 100) : 2}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                      </div>
-                      <div className="mt-2 grid grid-flow-col auto-cols-fr gap-1.5 text-center text-[10px] tabular-nums text-muted-foreground">
-                        {chartData.map((day, index) => (
-                          <span key={day.key} className={index % 2 === 0 || chartData.length <= 12 ? "block" : "invisible"}>
-                            {day.day}
-                          </span>
-                        ))}
-                      </div>
+                      <p className="break-words text-xs leading-snug text-muted-foreground">
+                        {new Date(a.starts_at).toLocaleString("pt-PT", {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}{" "}
+                        · {a.staff?.name ?? "-"}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <MoneyValue value={formatEUR(split.total)} className="text-sm" />
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {formatAppointmentStatus(a.status)}
+                      </p>
                     </div>
                   </div>
-                </div>
-              </div>
-              <div className="min-w-0 rounded-2xl border border-border bg-card p-4">
-                <p className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-                  Leitura rápida
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Comissão sobre o total do serviço. O pré-pagamento indica apenas o que já foi pago.
-                </p>
-                <div className="mt-4 space-y-2.5">
-                  <SignalLine
-                    label={agendaTrend}
-                    value={`${appointmentGrowth >= 0 ? "+" : ""}${appointmentGrowth}%`}
-                  />
-                  <SignalLine
-                    label="Receita vs período anterior"
-                    value={`${revenueGrowth >= 0 ? "+" : ""}${revenueGrowth}%`}
-                  />
-                  <SignalLine label={attendanceSignal} value={`${attendanceRate}%`} />
-                  <ProgressLine label="Parte do estúdio" value={totals.studio} total={totals.total} />
-                  <ProgressLine label="Parte da equipa" value={totals.professional} total={totals.total} />
-                  <ProgressLine label="Pré-pagamento recebido" value={totals.received} total={totals.total} />
-                  <ProgressLine label="Restante no estúdio" value={totals.pending} total={totals.total} />
-                </div>
-              </div>
-              <div className="min-w-0 xl:col-span-2">
-                <UpsellMetricsCard studioId={studio.id} />
-              </div>
+                );
+              })}
             </div>
-          </details>
-        </section>
-
-        <section>
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-              Agenda futura
-            </h3>
-            <Link to="/admin/agenda" className="text-xs uppercase tracking-wide hover:underline">
-              Ver todas
-            </Link>
-          </div>
-          <div className="divide-y divide-border overflow-hidden rounded-[1.25rem] border border-border bg-card shadow-sm">
-            {upcoming.length === 0 && (
-              <p className="px-4 py-10 text-center text-sm text-muted-foreground">
-                Sem marcações futuras.
-              </p>
-            )}
-            {upcoming.slice(0, 5).map((a) => {
-              const split = computeAppointmentSplit(a, studio, paidByAppointment.get(a.id) ?? 0);
-              return (
-                <div key={a.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <ClientAvatar
-                    name={a.clients?.name}
-                    avatarUrl={a.clients?.avatar_url}
-                    className="size-9 text-xs"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="break-words text-sm font-medium leading-snug">{a.clients?.name ?? "-"}</p>
-                    <p className="break-words text-xs leading-snug text-muted-foreground">
-                      {new Date(a.starts_at).toLocaleString("pt-PT", {
-                        dateStyle: "short",
-                        timeStyle: "short",
-                      })}{" "}
-                      · {a.staff?.name ?? "-"}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <MoneyValue value={formatEUR(split.total)} className="text-sm" />
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      {formatAppointmentStatus(a.status)}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      </div>
+          </section>
+        </div>
+      )}
 
       {planChooserOpen && (
         <PlanChooserModal
@@ -634,12 +799,16 @@ function OverviewPage() {
 function ProfessionalOverview({
   appointments,
   paidRows,
+  cashPaymentRows,
+  refundRows,
   studio,
   period,
   onPeriodChange,
 }: {
   appointments: Appt[];
   paidRows: PaidRow[];
+  cashPaymentRows: OnsitePaymentRow[];
+  refundRows: RefundRow[];
   studio: FinancialRuleSource & {
     name: string;
     staff_name?: string | null;
@@ -649,17 +818,16 @@ function ProfessionalOverview({
   period: SummaryPeriod;
   onPeriodChange: (period: SummaryPeriod) => void;
 }) {
+  const paymentFacts = buildAppointmentPaymentFacts(paidRows, cashPaymentRows, refundRows);
   const paidByAppointment = new Map<string, number>();
-  for (const p of paidRows) {
-    if (!p.appointment_id || p.status !== "succeeded") continue;
-    paidByAppointment.set(
-      p.appointment_id,
-      (paidByAppointment.get(p.appointment_id) ?? 0) + p.amount_cents / 100,
-    );
+  for (const [appointmentId, facts] of paymentFacts) {
+    paidByAppointment.set(appointmentId, facts.receivedCents / 100);
   }
 
   const now = Date.now();
   const periodStart = getPeriodStart(period, now);
+  const periodEnd = new Date(now);
+  periodEnd.setHours(24, 0, 0, 0);
   const previousPeriodStart = new Date(periodStart.getTime() - period * DAY_MS);
   const ownRows = appointments
     .filter((appointment) =>
@@ -670,9 +838,12 @@ function ProfessionalOverview({
     )
     .map((appointment) => ({
       appointment,
-      split: computeAppointmentSplit(appointment, studio, paidByAppointment.get(appointment.id) ?? 0),
+      split: computeAppointmentSplit(appointment, studio, paymentFacts.get(appointment.id) ?? null),
     }));
-  const periodRows = ownRows.filter((row) => new Date(row.appointment.starts_at) >= periodStart);
+  const periodRows = ownRows.filter((row) => {
+    const startsAt = new Date(row.appointment.starts_at);
+    return startsAt >= periodStart && startsAt < periodEnd;
+  });
   const previousRows = ownRows.filter((row) => {
     const startsAt = new Date(row.appointment.starts_at);
     return startsAt >= previousPeriodStart && startsAt < periodStart;
@@ -687,7 +858,7 @@ function ProfessionalOverview({
     "future",
   );
   const topServices = buildServiceRanking(periodRows);
-  const chartData = buildDailyData(periodRows, period);
+  const chartData = buildDailyData(periodRows, periodStart, periodEnd);
   const maxDayTotal = Math.max(1, ...chartData.map((day) => day.total));
   const professionalName = studio.staff_name ?? "Profissional";
   const [privacyOpen, setPrivacyOpen] = useState(false);
@@ -716,9 +887,9 @@ function ProfessionalOverview({
             featured
           />
           <ProfessionalMetric
-            label="Por receber"
+            label="Parte prevista"
             value={formatEUR(totals.professional)}
-            detail="Valor previsto para si."
+            detail="Parcela da equipa nas marcações válidas."
             icon={<Wallet className="h-4 w-4" />}
           />
           <ProfessionalMetric
@@ -734,9 +905,9 @@ function ProfessionalOverview({
             icon={<TrendingUp className="h-4 w-4" />}
           />
           <ProfessionalMetric
-            label="Comissão"
-            value={formatEUR(totals.commission)}
-            detail="Incluída quando aplicável."
+            label="Parte já recebida"
+            value={formatEUR(totals.signalProfessional)}
+            detail="Parcela proporcional ao dinheiro recebido."
             icon={<CreditCard className="h-4 w-4" />}
           />
           <ProfessionalMetric
@@ -813,10 +984,15 @@ function ProfessionalOverview({
               </p>
             )}
             {topServices.map((service) => (
-              <div key={service.name} className="flex items-center justify-between gap-3 rounded-2xl bg-muted/35 px-3 py-2.5">
+              <div
+                key={service.name}
+                className="flex items-center justify-between gap-3 rounded-2xl bg-muted/35 px-3 py-2.5"
+              >
                 <div className="min-w-0">
                   <p className="break-words text-sm font-semibold leading-snug">{service.name}</p>
-                  <p className="text-xs text-muted-foreground">{service.count} atendimento{service.count === 1 ? "" : "s"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {service.count} atendimento{service.count === 1 ? "" : "s"}
+                  </p>
                 </div>
                 <MoneyValue value={formatEUR(service.total)} className="text-sm" />
               </div>
@@ -852,15 +1028,18 @@ function ProfessionalOverview({
           >
             <div className="min-h-0 overflow-hidden">
               <div className="space-y-2 border-t border-border/70 px-3.5 py-3 text-sm sm:px-4">
-            {[
-              "Agenda, clientes e horários mostram apenas o seu trabalho.",
-              "Dados globais do estúdio, relatórios e configurações ficam ocultos.",
-              "Indicadores financeiros compartilhados dependem das permissões da dona.",
-            ].map((item) => (
-              <div key={item} className="rounded-2xl border border-border/70 bg-background/55 px-3 py-2 text-muted-foreground">
-                {item}
-              </div>
-            ))}
+                {[
+                  "Agenda, clientes e horários mostram apenas o seu trabalho.",
+                  "Dados globais do estúdio, relatórios e configurações ficam ocultos.",
+                  "Indicadores financeiros compartilhados dependem das permissões da dona.",
+                ].map((item) => (
+                  <div
+                    key={item}
+                    className="rounded-2xl border border-border/70 bg-background/55 px-3 py-2 text-muted-foreground"
+                  >
+                    {item}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -886,22 +1065,30 @@ function ProfessionalMetric({
   return (
     <div
       className={`flex h-full min-h-[7rem] min-w-0 flex-col rounded-2xl border p-3 shadow-sm sm:p-3.5 ${
-        featured
-          ? "border-emerald-700/25 bg-emerald-500/10"
-          : "border-border/75 bg-background/65"
+        featured ? "border-emerald-700/25 bg-emerald-500/10" : "border-border/75 bg-background/65"
       }`}
     >
       <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
         <span className="grid size-8 place-items-center rounded-xl bg-card/80">{icon}</span>
-        <p className="min-w-0 whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.12em]">{label}</p>
+        <p className="min-w-0 whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.12em]">
+          {label}
+        </p>
       </div>
-      <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.1rem,3.8vw,1.5rem)] font-semibold leading-tight tracking-tight">{value}</p>
+      <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.1rem,3.8vw,1.5rem)] font-semibold leading-tight tracking-tight">
+        {value}
+      </p>
       <p className="mt-auto pt-1 text-xs leading-snug text-muted-foreground">{detail}</p>
     </div>
   );
 }
 
-function ProfessionalEvolutionChart({ data, maxTotal }: { data: DailyChartDay[]; maxTotal: number }) {
+function ProfessionalEvolutionChart({
+  data,
+  maxTotal,
+}: {
+  data: DailyChartDay[];
+  maxTotal: number;
+}) {
   const chartRef = useRef<HTMLDivElement | null>(null);
   const width = useElementWidth(chartRef);
   const labelStep = useMemo(() => getEvolutionLabelStep(data.length, width), [data.length, width]);
@@ -926,7 +1113,11 @@ function ProfessionalEvolutionChart({ data, maxTotal }: { data: DailyChartDay[];
         {data.map((day, index) => {
           const height = day.total > 0 ? Math.max(5, (day.total / maxTotal) * 100) : 0;
           const tooltipAlign =
-            index === 0 ? "left-0 translate-x-0" : index === data.length - 1 ? "right-0 translate-x-0" : "left-1/2 -translate-x-1/2";
+            index === 0
+              ? "left-0 translate-x-0"
+              : index === data.length - 1
+                ? "right-0 translate-x-0"
+                : "left-1/2 -translate-x-1/2";
           return (
             <button
               key={day.key}
@@ -1084,7 +1275,9 @@ function MobileOverview({
             />
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
-                <p className="break-words text-sm font-semibold leading-snug">{next.clients?.name ?? "Cliente"}</p>
+                <p className="break-words text-sm font-semibold leading-snug">
+                  {next.clients?.name ?? "Cliente"}
+                </p>
                 <span className="shrink-0 rounded-full bg-emerald-600/10 px-2.5 py-1 text-[11px] font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
                   {new Date(next.starts_at).toLocaleTimeString("pt-PT", {
                     hour: "2-digit",
@@ -1156,6 +1349,114 @@ function MobileOverview({
   );
 }
 
+function FreeOverview({
+  studioName,
+  studioSlug,
+  appointments,
+  serviceCount,
+  staffCount,
+  trialExpired,
+}: {
+  studioName: string;
+  studioSlug: string;
+  appointments: Appt[];
+  serviceCount: number;
+  staffCount: number;
+  trialExpired: boolean;
+}) {
+  const now = new Date();
+  const todayCount = appointments.filter(
+    (appointment) =>
+      new Date(appointment.starts_at).toDateString() === now.toDateString() &&
+      !["cancelled", "no_show"].includes(appointment.status),
+  ).length;
+  const upcomingCount = appointments.filter(
+    (appointment) =>
+      Date.parse(appointment.starts_at) >= now.getTime() &&
+      !["cancelled", "no_show"].includes(appointment.status),
+  ).length;
+
+  return (
+    <div className="mx-auto w-full max-w-6xl min-w-0 space-y-4 py-2 md:py-5">
+      <section className="min-w-0 rounded-[1.5rem] border border-border bg-card p-5 shadow-sm md:p-7">
+        <div className="flex min-w-0 flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0">
+            <span className="inline-flex rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+              {trialExpired ? "Trial encerrado · Plano Free" : "Plano Free"}
+            </span>
+            <h1 className="mt-3 break-words text-2xl font-light tracking-tight md:text-4xl">
+              {trialExpired
+                ? `${studioName}, o teste terminou e os seus dados continuam seguros.`
+                : `${studioName}, o essencial está pronto.`}
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              {trialExpired
+                ? "A conta passou automaticamente para o Free. A agenda, os clientes, os serviços e as marcações foram preservados."
+                : "Receba marcações online, organize a agenda e mantenha clientes e serviços num painel simples."}
+            </p>
+          </div>
+          <Link
+            to="/admin/premium"
+            className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-foreground px-5 text-xs font-bold uppercase tracking-wide text-background sm:w-auto"
+          >
+            {trialExpired ? "Fazer upgrade" : "Conhecer o Pro"} <ArrowRight className="size-4" />
+          </Link>
+        </div>
+      </section>
+
+      <section className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <DashboardFocusCard
+          label="Hoje"
+          value={String(todayCount)}
+          detail="Marcações válidas para hoje."
+          featured
+        />
+        <DashboardFocusCard
+          label="Próximas"
+          value={String(upcomingCount)}
+          detail="Marcações futuras na agenda."
+        />
+        <DashboardFocusCard
+          label="Serviços"
+          value={String(serviceCount)}
+          detail="Serviços ativos na página."
+        />
+        <DashboardFocusCard
+          label="Profissionais"
+          value={`${staffCount}/1`}
+          detail="Limite incluído no Free."
+        />
+      </section>
+
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.72fr)]">
+        <ShareStudioCard
+          studioName={studioName}
+          studioSlug={studioSlug}
+          variant="compact"
+          className="w-full min-w-0"
+        />
+        <section className="min-w-0 rounded-[1.35rem] border border-emerald-500/20 bg-emerald-500/[0.045] p-5">
+          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-300">
+            Quando precisar
+          </p>
+          <h2 className="mt-2 break-words text-lg font-semibold">
+            Receba sinal antes da marcação.
+          </h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            Pagamentos online, notificações e gestão de equipa estão disponíveis no Pro.
+          </p>
+          <Link
+            to="/admin/premium"
+            className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-emerald-700 dark:text-emerald-300"
+          >
+            Comparar planos <ArrowRight className="size-3.5" />
+          </Link>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function TrialPremiumBanner({
   billing,
   checkoutPlan,
@@ -1165,19 +1466,24 @@ function TrialPremiumBanner({
   checkoutPlan: PlanId | null;
   onChoosePremiumPlan: () => void;
 }) {
-  if (!billing || billing.status !== "trialing") return null;
-  const hasStripeSubscription = ["monthly", "quarterly", "yearly"].includes(billing.plan ?? "");
-  if (hasStripeSubscription) return null;
-  const remaining = getRemainingDays(billing);
-  const urgent = remaining !== null && remaining <= 3;
+  if (!billing?.trialActive || billing.status !== "trialing") return null;
+  const hasStripeSubscription = Boolean(billing.hasStripeSubscription);
+  const notice = getTrialNotice(billing.trialEndsAt);
+  if (!notice) return null;
+  const remaining = notice.daysRemaining;
+  const urgent = notice.level === "warning" || notice.level === "critical";
+  const critical = notice.level === "critical";
   const planLabel = formatPlan(billing.plan);
   const dateLabel = formatDate(billing.nextBillingAt ?? billing.trialEndsAt);
-  const progress = remaining === null ? 35 : Math.min(100, Math.max(6, ((14 - remaining) / 14) * 100));
+  const progress =
+    Math.min(100, Math.max(6, ((TRIAL_DURATION_DAYS - remaining) / TRIAL_DURATION_DAYS) * 100));
 
   return (
     <section
       className={`mb-4 overflow-hidden rounded-[1.35rem] border p-4 shadow-lg md:rounded-[1.6rem] md:p-5 ${
-        urgent
+        critical
+          ? "border-rose-500/40 bg-[linear-gradient(135deg,rgba(244,63,94,0.16),rgba(255,255,255,0.02)_48%,rgba(245,158,11,0.08))] shadow-rose-950/10"
+          : urgent
           ? "border-amber-500/35 bg-[linear-gradient(135deg,rgba(245,158,11,0.16),rgba(255,255,255,0.02)_48%,rgba(16,185,129,0.08))] shadow-amber-950/10"
           : "border-emerald-700/25 bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_48%,rgba(16,185,129,0.05))] shadow-black/10"
       }`}
@@ -1193,16 +1499,12 @@ function TrialPremiumBanner({
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 className="text-xl font-light tracking-tight md:text-2xl">
-                {hasStripeSubscription
-                  ? `${planLabel} ativo em período experimental`
-                  : remaining === 1
-                    ? "Resta 1 dia do teste gratuito"
-                    : `Restam ${remaining ?? "--"} dias do teste gratuito`}
+                {hasStripeSubscription ? `${planLabel} · ${notice.title}` : notice.title}
               </h2>
               <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
                 {hasStripeSubscription
-                  ? `O cartão foi validado e a primeira cobrança está agendada para ${dateLabel}.`
-                  : "Pode escolher um plano antecipadamente sem cancelar o teste atual."}
+                  ? `A assinatura está preparada e o período experimental termina em ${dateLabel}.`
+                  : notice.description}
               </p>
             </div>
             <span className="w-fit rounded-full bg-background/80 px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm">
@@ -1212,7 +1514,7 @@ function TrialPremiumBanner({
           <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-background/75 ring-1 ring-border/60">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
-                urgent ? "bg-amber-500" : "bg-emerald-600"
+                critical ? "bg-rose-500" : urgent ? "bg-amber-500" : "bg-emerald-600"
               }`}
               style={{ width: `${progress}%` }}
             />
@@ -1235,7 +1537,7 @@ function TrialPremiumBanner({
               disabled={checkoutPlan !== null}
               className="flex h-11 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background transition hover:opacity-90 disabled:opacity-60"
             >
-              {checkoutPlan ? "A abrir pagamento..." : "Ativar Premium"}
+              {checkoutPlan ? "A abrir pagamento..." : "Fazer upgrade"}
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
           )}
@@ -1259,7 +1561,12 @@ function SubscriptionSnapshotCard({
   compact?: boolean;
 }) {
   const remaining = billing ? getRemainingDays(billing) : null;
-  const hasStripeSubscription = ["monthly", "quarterly", "yearly"].includes(billing?.plan ?? "");
+  const hasStripeSubscription = [
+    "pro_monthly",
+    "pro_yearly",
+    "premium_monthly",
+    "premium_yearly",
+  ].includes(billing?.plan ?? "");
   const dateLabel = formatDate(billing?.nextBillingAt ?? billing?.trialEndsAt);
   return (
     <section
@@ -1274,12 +1581,12 @@ function SubscriptionSnapshotCard({
         </div>
         <span
           className={`rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
-            billing?.premiumActive
+            billing?.subscriptionActive
               ? "bg-emerald-600 text-white"
               : "bg-muted text-muted-foreground"
           }`}
         >
-          {billing?.premiumActive ? "Ativo" : "Pendente"}
+          {billing?.subscriptionActive ? "Ativo" : "Pendente"}
         </span>
       </div>
 
@@ -1343,7 +1650,9 @@ function WithdrawalStatusCard({
             Dados de recebimento
           </p>
           <p className="mt-1 text-sm font-semibold">
-            {withdrawal?.settings ? formatPayoutMethod(withdrawal.settings.payoutMethod) : "Por configurar"}
+            {withdrawal?.settings
+              ? formatPayoutMethod(withdrawal.settings.payoutMethod)
+              : "Por configurar"}
           </p>
           {withdrawal?.settings && (
             <p className="mt-1 text-xs text-muted-foreground">
@@ -1379,19 +1688,22 @@ function WithdrawalStatusCard({
             getKey={(request) => request.id}
             moreLabel={(hidden) => `Ver mais ${hidden} registo${hidden !== 1 ? "s" : ""}`}
             renderItem={(request) => (
-              <article
-                className="rounded-[1.15rem] border border-border/70 bg-background/60 p-3.5 shadow-sm"
-              >
+              <article className="rounded-[1.15rem] border border-border/70 bg-background/60 p-3.5 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold">{formatWithdrawalStatus(request.status)}</p>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${withdrawalStatusPill(request.status)}`}>
+                      <p className="text-sm font-semibold">
+                        {formatWithdrawalStatus(request.status)}
+                      </p>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${withdrawalStatusPill(request.status)}`}
+                      >
                         {formatWithdrawalStatus(request.status)}
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Registo em {formatDate(request.requestedAt)} · {formatPayoutMethod(request.payoutMethod)}
+                      Registo em {formatDate(request.requestedAt)} ·{" "}
+                      {formatPayoutMethod(request.payoutMethod)}
                     </p>
                     {request.failureReason && (
                       <p className="mt-2 text-xs leading-relaxed text-red-600 dark:text-red-400">
@@ -1440,7 +1752,11 @@ function WithdrawalStatusCard({
 }
 
 function WithdrawalTimeline({ request }: { request: WithdrawalSummary["requests"][number] }) {
-  const steps: { key: WithdrawalSummary["requests"][number]["status"]; label: string; date: string | null }[] = [
+  const steps: {
+    key: WithdrawalSummary["requests"][number]["status"];
+    label: string;
+    date: string | null;
+  }[] = [
     { key: "in_review", label: "Em análise", date: request.reviewedAt ?? request.requestedAt },
     { key: "processing", label: "Processando", date: request.processedAt },
     { key: "completed", label: "Concluído", date: request.paidAt },
@@ -1499,28 +1815,40 @@ function PlanChooserModal({
   onChoose: (plan: PlanId) => void;
 }) {
   const plans: { id: PlanId; name: string; price: string; detail: string; badge?: string }[] = [
-    { id: "monthly", name: "Mensal", price: "8,99 €/mês", detail: "Flexível, sem fidelização." },
     {
-      id: "quarterly",
-      name: "Trimestral",
-      price: "22,49 € total",
-      detail: "Equivale a 7,50 €/mês.",
-      badge: "Mais popular",
+      id: "pro_monthly",
+      name: "Pro Mensal",
+      price: `${formatCents(PLAN_DEFINITIONS.pro.monthlyCents)}/mês`,
+      detail: "Gestão, pagamentos e até 3 profissionais.",
+      badge: "Mais escolhido",
     },
     {
-      id: "yearly",
-      name: "Anual",
-      price: "89,99 € total",
-      detail: "Equivale a 7,50 €/mês.",
+      id: "pro_yearly",
+      name: "Pro Anual",
+      price: `${formatCents(PLAN_DEFINITIONS.pro.yearlyCents)}/ano`,
+      detail: "Poupe 26,88 € por ano.",
+    },
+    {
+      id: "premium_monthly",
+      name: "Premium Mensal",
+      price: `${formatCents(PLAN_DEFINITIONS.premium.monthlyCents)}/mês`,
+      detail: "WhatsApp, fidelidade e recursos avançados.",
+    },
+    {
+      id: "premium_yearly",
+      name: "Premium Anual",
+      price: `${formatCents(PLAN_DEFINITIONS.premium.yearlyCents)}/ano`,
+      detail: "WhatsApp, fidelidade e recursos avançados.",
       badge: "Melhor valor",
     },
   ];
 
   return (
-    <ModalShell onClose={onClose} title="Escolha o plano Premium">
+    <ModalShell onClose={onClose} title="Escolha o plano">
       <p className="text-sm leading-relaxed text-muted-foreground">
-        Pode escolher o plano agora e manter o teste gratuito até ao fim. O pagamento é
-        confirmado com segurança antes de libertar o acesso premium. As funcionalidades atuais estão incluídas nesta fase de lançamento.
+        Pode escolher o plano agora e manter o teste gratuito até ao fim. O pagamento é confirmado
+        com segurança antes de libertar o acesso premium. As funcionalidades atuais estão incluídas
+        nesta fase de lançamento.
       </p>
       <div className="mt-5 grid gap-3">
         {plans.map((plan) => (
@@ -1595,7 +1923,13 @@ function WithdrawalSetupModal({
     }
     setSaving(true);
     try {
-      await onSave({ fiscalName: fiscalName.trim(), nif: cleanNif, payoutMethod, iban, mbWayPhone });
+      await onSave({
+        fiscalName: fiscalName.trim(),
+        nif: cleanNif,
+        payoutMethod,
+        iban,
+        mbWayPhone,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (message.includes("invalid_iban")) {
@@ -1782,7 +2116,9 @@ function MobileMiniMetric({
       >
         {value}
       </p>
-      {detail && <p className="mt-auto pt-1 text-[11px] leading-snug text-muted-foreground">{detail}</p>}
+      {detail && (
+        <p className="mt-auto pt-1 text-[11px] leading-snug text-muted-foreground">{detail}</p>
+      )}
     </div>
   );
 }
@@ -1823,7 +2159,11 @@ async function fetchAppointments(studioId: string, since: string, staffId?: stri
       .eq("studio_id", studioId)
       .match(staffId ? { staff_id: staffId } : {});
     const [recent, future] = await Promise.all([
-      basePast.gte("starts_at", since).lt("starts_at", nowIso).order("starts_at", { ascending: false }).limit(limit),
+      basePast
+        .gte("starts_at", since)
+        .lt("starts_at", nowIso)
+        .order("starts_at", { ascending: false })
+        .limit(limit),
       baseFuture.gte("starts_at", nowIso).order("starts_at", { ascending: true }).limit(limit),
     ]);
     if (recent.error || future.error) return { error: recent.error ?? future.error, data: null };
@@ -1831,13 +2171,13 @@ async function fetchAppointments(studioId: string, since: string, staffId?: stri
   };
 
   const withAvatar = await loadPair(
-    "id,starts_at,status,total_price,clients(id,name,avatar_url,created_at,date_of_birth,total_spent,total_visits),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
+    "id,starts_at,status,total_price,studio_commission_percent_snapshot,clients(id,name,avatar_url),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,studio_commission_percent_snapshot,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
     500,
   );
   if (!withAvatar.error) return withAvatar.data ?? [];
 
   const full = await loadPair(
-    "id,starts_at,status,total_price,clients(id,name,created_at,date_of_birth,total_spent,total_visits),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
+    "id,starts_at,status,total_price,studio_commission_percent_snapshot,clients(id,name),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,studio_commission_percent_snapshot,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
     500,
   );
   if (!full.error) return full.data ?? [];
@@ -1853,58 +2193,21 @@ async function fetchAppointments(studioId: string, since: string, staffId?: stri
 function computeAppointmentSplit(
   a: Appt,
   studio: FinancialRuleSource & { deposit_percent: number; payment_policy: string },
-  paidAmount: number,
+  payment: AppointmentPaymentFacts | number | null,
 ) {
-  const revenue = computeAttendanceRevenue(Number(a.total_price), paidAmount, a.status);
-  const lines = a.appointment_services?.length
-    ? a.appointment_services
-    : [{ price: Number(a.total_price), services: null }];
-  return lines.reduce(
-    (acc, line) => {
-      const rule = line.services ?? a.staff ?? studio;
-      const studioPercent =
-        rule.commission_percent ?? a.staff?.commission_percent ?? studio.commission_percent ?? 0;
-      const linePaid =
-        Number(a.total_price) > 0 ? (paidAmount * Number(line.price)) / Number(a.total_price) : 0;
-      const lineConfirmed =
-        Number(a.total_price) > 0
-          ? (revenue.confirmed * Number(line.price)) / Number(a.total_price)
-          : Number(line.price);
-      const linePredicted =
-        Number(a.total_price) > 0
-          ? (revenue.predicted * Number(line.price)) / Number(a.total_price)
-          : 0;
-      const lineTotal = round(lineConfirmed + linePredicted);
-      const onlinePaid = round(Math.min(Number(line.price), Math.max(0, linePaid)));
-      const split = computeFinancialSplit(lineTotal, studioPercent, {
-        depositPercent: studio.deposit_percent,
-        requiresDeposit: false,
-        receivedAmount: onlinePaid,
-      });
-      return {
-        total: acc.total + lineTotal,
-        confirmed: acc.confirmed + round(lineConfirmed),
-        professional: acc.professional + split.professional,
-        studio: acc.studio + split.studio,
-        received: acc.received + onlinePaid,
-        pending: acc.pending + split.pending,
-        commission: acc.commission + split.commission,
-        deposit: acc.deposit + split.deposit,
-        predicted: acc.predicted + round(linePredicted),
-      };
-    },
-    {
-      total: 0,
-      confirmed: 0,
-      professional: 0,
-      studio: 0,
-      received: 0,
-      pending: 0,
-      commission: 0,
-      deposit: 0,
-      predicted: 0,
-    },
-  );
+  const facts =
+    typeof payment === "number"
+      ? {
+          appointmentId: a.id,
+          onlineGrossCents: toCents(payment),
+          onsiteGrossCents: 0,
+          refundedCents: 0,
+          onlineNetCents: toCents(payment),
+          onsiteNetCents: 0,
+          receivedCents: toCents(payment),
+        }
+      : payment;
+  return computeAppointmentFinancialSplit(a.id, a, studio.commission_percent ?? 0, facts);
 }
 
 function buildStaffMetrics(
@@ -1951,7 +2254,7 @@ function buildStaffMetrics(
     if (new Date(row.appointment.starts_at).getTime() >= now) current.appointmentsFuture += 1;
     else current.appointmentsDone += 1;
     current.generated += row.split.total;
-    current.confirmed += row.split.confirmed;
+    current.confirmed += row.split.total;
     current.professional += row.split.professional;
     current.studio += row.split.studio;
     current.received += row.split.received;
@@ -1964,7 +2267,8 @@ function buildStaffMetrics(
 
 function buildDailyData(
   rows: { appointment: Appt; split: ReturnType<typeof computeAppointmentSplit> }[],
-  periodDays: SummaryPeriod,
+  startInclusive: Date,
+  endExclusive: Date,
 ) {
   const map = new Map<
     string,
@@ -1973,15 +2277,13 @@ function buildDailyData(
       day: string;
       fullDate: string;
       total: number;
-      confirmed: number;
       received: number;
+      pending: number;
       appointments: number;
     }
   >();
-  for (let index = periodDays - 1; index >= 0; index -= 1) {
-    const date = new Date();
-    date.setDate(date.getDate() - index);
-    const key = date.toISOString().slice(0, 10);
+  for (let date = new Date(startInclusive); date < endExclusive; date = addCalendarDays(date, 1)) {
+    const key = formatDateInput(date);
     map.set(key, {
       key,
       day: date.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }),
@@ -1991,43 +2293,44 @@ function buildDailyData(
         year: "numeric",
       }),
       total: 0,
-      confirmed: 0,
       received: 0,
+      pending: 0,
       appointments: 0,
     });
   }
   for (const row of rows) {
     const date = new Date(row.appointment.starts_at);
-    const key = date.toISOString().slice(0, 10);
-    const current =
-      map.get(key) ?? {
-        key,
-        day: date.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }),
-        fullDate: date.toLocaleDateString("pt-PT", {
-          day: "2-digit",
-          month: "long",
-          year: "numeric",
-        }),
-        total: 0,
-        confirmed: 0,
-        received: 0,
-        appointments: 0,
-      };
+    const key = formatDateInput(date);
+    const current = map.get(key) ?? {
+      key,
+      day: date.toLocaleDateString("pt-PT", { day: "2-digit", month: "2-digit" }),
+      fullDate: date.toLocaleDateString("pt-PT", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      }),
+      total: 0,
+      received: 0,
+      pending: 0,
+      appointments: 0,
+    };
     current.total += row.split.total;
-    current.confirmed += row.split.confirmed;
     current.received += row.split.received;
+    current.pending += row.split.pending;
     current.appointments += 1;
     map.set(key, current);
   }
   return Array.from(map.values()).map((d) => ({
     ...d,
-      total: round(d.total),
-      confirmed: round(d.confirmed),
-      received: round(d.received),
+    total: round(d.total),
+    received: round(d.received),
+    pending: round(d.pending),
   }));
 }
 
-function buildServiceRanking(rows: { appointment: Appt; split: ReturnType<typeof computeAppointmentSplit> }[]) {
+function buildServiceRanking(
+  rows: { appointment: Appt; split: ReturnType<typeof computeAppointmentSplit> }[],
+) {
   const map = new Map<string, { name: string; count: number; total: number }>();
   for (const row of rows) {
     const services =
@@ -2049,20 +2352,16 @@ function buildServiceRanking(rows: { appointment: Appt; split: ReturnType<typeof
 }
 
 function sumFinancialRows(rows: { split: ReturnType<typeof computeAppointmentSplit> }[]) {
-  return rows.reduce(
-    (acc, row) => ({
-      total: acc.total + row.split.total,
-      confirmed: acc.confirmed + row.split.confirmed,
-      professional: acc.professional + row.split.professional,
-      studio: acc.studio + row.split.studio,
-      received: acc.received + row.split.received,
-      pending: acc.pending + row.split.pending,
-      commission: acc.commission + row.split.commission,
-      deposit: acc.deposit + row.split.deposit,
-      predicted: acc.predicted + row.split.predicted,
-    }),
+  const cents = rows.reduce(
+    (acc, row) => {
+      for (const key of Object.keys(acc) as Array<keyof typeof acc>) {
+        acc[key] += toCents(row.split[key]);
+      }
+      return acc;
+    },
     {
       total: 0,
+      realized: 0,
       confirmed: 0,
       professional: 0,
       studio: 0,
@@ -2071,14 +2370,177 @@ function sumFinancialRows(rows: { split: ReturnType<typeof computeAppointmentSpl
       commission: 0,
       deposit: 0,
       predicted: 0,
+      receivedOnline: 0,
+      receivedOnsite: 0,
+      refunded: 0,
+      signalProfessional: 0,
+      signalStudio: 0,
     },
   );
+  return Object.fromEntries(
+    Object.entries(cents).map(([key, value]) => [key, value / 100]),
+  ) as typeof cents;
 }
 
 function getPeriodStart(periodDays: SummaryPeriod, now: number) {
   const start = new Date(now - (periodDays - 1) * DAY_MS);
   start.setHours(0, 0, 0, 0);
   return start;
+}
+
+function DashboardPeriodControls({
+  value,
+  customStart,
+  customEnd,
+  onChange,
+  onCustomStartChange,
+  onCustomEndChange,
+}: {
+  value: DashboardPeriodMode;
+  customStart: string;
+  customEnd: string;
+  onChange: (value: DashboardPeriodMode) => void;
+  onCustomStartChange: (value: string) => void;
+  onCustomEndChange: (value: string) => void;
+}) {
+  const today = startOfLocalDay(new Date());
+  const minDate = formatDateInput(addCalendarDays(today, -59));
+  const maxDate = formatDateInput(today);
+
+  return (
+    <div className="w-full max-w-xl space-y-2 lg:w-auto">
+      <div className="grid grid-cols-2 gap-1 rounded-2xl border border-border bg-background/45 p-1 sm:grid-cols-4">
+        {DASHBOARD_PERIOD_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            aria-pressed={value === option.value}
+            className={`min-w-0 rounded-xl px-2.5 py-2 text-xs font-semibold transition ${
+              value === option.value
+                ? "bg-emerald-600 text-white shadow-sm shadow-emerald-950/15"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      {value === "custom" && (
+        <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/70 bg-background/35 p-2">
+          <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            De
+            <input
+              type="date"
+              min={minDate}
+              max={customEnd || maxDate}
+              value={customStart}
+              onChange={(event) => onCustomStartChange(event.target.value)}
+              className="mt-1 h-9 w-full min-w-0 rounded-lg border border-border bg-background px-2 text-xs font-medium text-foreground outline-none focus:border-emerald-500"
+            />
+          </label>
+          <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Até
+            <input
+              type="date"
+              min={customStart || minDate}
+              max={maxDate}
+              value={customEnd}
+              onChange={(event) => onCustomEndChange(event.target.value)}
+              className="mt-1 h-9 w-full min-w-0 rounded-lg border border-border bg-background px-2 text-xs font-medium text-foreground outline-none focus:border-emerald-500"
+            />
+          </label>
+          <p className="col-span-2 text-[10px] leading-snug text-muted-foreground">
+            Intervalo disponível: últimos 60 dias.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function getDashboardPeriodRange(
+  mode: DashboardPeriodMode,
+  customStart: string,
+  customEnd: string,
+  now: Date,
+) {
+  const today = startOfLocalDay(now);
+  const end = addCalendarDays(today, 1);
+  const earliest = addCalendarDays(today, -59);
+
+  if (mode === "7d" || mode === "30d") {
+    const days = mode === "7d" ? 7 : 30;
+    return {
+      start: addCalendarDays(today, -(days - 1)),
+      end,
+      days,
+      label: `${days} dias`,
+    };
+  }
+
+  if (mode === "month") {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return {
+      start,
+      end,
+      days: countCalendarDays(start, end),
+      label: "este mês",
+    };
+  }
+
+  const requestedStart = clampDate(parseDateInput(customStart, earliest), earliest, today);
+  const requestedEnd = clampDate(parseDateInput(customEnd, today), requestedStart, today);
+  return {
+    start: requestedStart,
+    end: addCalendarDays(requestedEnd, 1),
+    days: countCalendarDays(requestedStart, addCalendarDays(requestedEnd, 1)),
+    label: `${requestedStart.toLocaleDateString("pt-PT")}–${requestedEnd.toLocaleDateString("pt-PT")}`,
+  };
+}
+
+function startOfLocalDay(value: Date) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function addCalendarDays(value: Date, days: number) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+function countCalendarDays(startInclusive: Date, endExclusive: Date) {
+  let count = 0;
+  for (
+    let cursor = new Date(startInclusive);
+    cursor < endExclusive;
+    cursor = addCalendarDays(cursor, 1)
+  ) {
+    count += 1;
+  }
+  return Math.max(1, count);
+}
+
+function parseDateInput(value: string, fallback: Date) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return new Date(fallback);
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? new Date(fallback) : startOfLocalDay(date);
+}
+
+function clampDate(value: Date, min: Date, max: Date) {
+  if (value < min) return new Date(min);
+  if (value > max) return new Date(max);
+  return new Date(value);
+}
+
+function formatDateInput(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function getGrowthPercent(current: number, previous: number) {
@@ -2096,6 +2558,10 @@ function getRemainingDays(billing: BillingSummary) {
 function formatPlan(plan?: string | null) {
   const labels: Record<string, string> = {
     trial: "Teste gratuito",
+    pro_monthly: "Pro Mensal",
+    pro_yearly: "Pro Anual",
+    premium_monthly: "Premium Mensal",
+    premium_yearly: "Premium Anual",
     monthly: "Premium Mensal",
     quarterly: "Premium Trimestral",
     yearly: "Premium Anual",
@@ -2226,15 +2692,6 @@ function Stat({ label, value, icon }: { label: string; value: string; icon: Reac
   );
 }
 
-function ChartLegend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-      <span className={`size-2.5 rounded-full ${color}`} />
-      {label}
-    </span>
-  );
-}
-
 function DashboardFocusCard({
   label,
   value,
@@ -2254,8 +2711,12 @@ function DashboardFocusCard({
           : "border-border bg-background/55"
       }`}
     >
-      <p className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
-      <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.45rem,2.1vw,1.5rem)] font-light leading-tight tracking-tight text-foreground">{value}</p>
+      <p className="whitespace-nowrap text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.45rem,2.1vw,1.5rem)] font-light leading-tight tracking-tight text-foreground">
+        {value}
+      </p>
       <p className="mt-auto pt-3 text-xs leading-snug text-muted-foreground">{detail}</p>
     </article>
   );
@@ -2339,10 +2800,11 @@ function MoneyCard({
           {label}
         </span>
       </div>
-      <MoneyValue value={formatEUR(value)} className="mt-4 whitespace-nowrap text-2xl leading-none tabular-nums" />
-      <p className="mt-auto min-h-8 pt-4 text-[11px] leading-4 text-muted-foreground">
-        {note}
-      </p>
+      <MoneyValue
+        value={formatEUR(value)}
+        className="mt-4 whitespace-nowrap text-2xl leading-none tabular-nums"
+      />
+      <p className="mt-auto min-h-8 pt-4 text-[11px] leading-4 text-muted-foreground">{note}</p>
     </div>
   );
 }
@@ -2363,7 +2825,9 @@ function InsightCard({
       <p className="min-h-4 text-[10px] font-semibold uppercase leading-4 tracking-[0.18em] text-muted-foreground">
         {label}
       </p>
-      <p className={`mt-3 text-2xl font-semibold leading-none tabular-nums ${danger ? "text-red-500" : ""}`}>
+      <p
+        className={`mt-3 text-2xl font-semibold leading-none tabular-nums ${danger ? "text-red-500" : ""}`}
+      >
         {value}
       </p>
       <p className="mt-auto min-h-5 pt-3 text-[11px] leading-4 text-muted-foreground">{note}</p>
@@ -2407,6 +2871,3 @@ function MoneyValue({ value, className = "" }: { value: string; className?: stri
     </p>
   );
 }
-
-
-

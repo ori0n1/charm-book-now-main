@@ -56,6 +56,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ExpandableList } from "@/components/ui/expandable-list";
+import {
+  buildAppointmentPaymentFacts,
+  computeAppointmentFinancialSplit,
+  type OnsitePaymentRow,
+  type RefundRow,
+} from "@/lib/financial-ledger";
 
 const DAY_MS = 86400000;
 
@@ -90,8 +96,13 @@ type TeamAppointment = {
   status: string;
   total_price: number;
   staff_id: string | null;
+  studio_commission_percent_snapshot?: number | null;
+  appointment_services?: {
+    price: number;
+    studio_commission_percent_snapshot?: number | null;
+  }[];
 };
-type PaidRow = { appointment_id: string | null; amount_cents: number; status: string };
+type PaidRow = { id?: string | null; appointment_id: string | null; amount_cents: number; status: string };
 type StaffPerformance = {
   appointments: number;
   generated: number;
@@ -386,16 +397,11 @@ function buildStaffPerformance(
   staff: Staff[],
   appointments: TeamAppointment[],
   payments: PaidRow[],
+  onsitePayments: OnsitePaymentRow[],
+  refunds: RefundRow[],
   fallbackCommissionPercent: number,
 ) {
-  const paidByAppointment = new Map<string, number>();
-  for (const payment of payments) {
-    if (!payment.appointment_id || payment.status !== "succeeded") continue;
-    paidByAppointment.set(
-      payment.appointment_id,
-      (paidByAppointment.get(payment.appointment_id) ?? 0) + Number(payment.amount_cents || 0) / 100,
-    );
-  }
+  const paymentFacts = buildAppointmentPaymentFacts(payments, onsitePayments, refunds);
 
   const now = Date.now();
   const currentStart = now - 30 * DAY_MS;
@@ -408,14 +414,17 @@ function buildStaffPerformance(
     if (!appointment.staff_id || !staffById.has(appointment.staff_id)) continue;
     const startsAt = new Date(appointment.starts_at).getTime();
     if (startsAt < previousStart || startsAt > now) continue;
-    const paidAmount = paidByAppointment.get(appointment.id) ?? 0;
+    const paidAmount = (paymentFacts.get(appointment.id)?.receivedCents ?? 0) / 100;
     if (!isFinanciallyRelevantAppointment(appointment.status, paidAmount)) continue;
 
     const total = Number(appointment.total_price || 0);
-    const revenue = computeAttendanceRevenue(total, paidAmount, appointment.status);
     const member = staffById.get(appointment.staff_id);
-    const studioPercent = Number(member?.commission_percent ?? fallbackCommissionPercent ?? 0);
-    const split = computeFinancialSplit(total, studioPercent, { receivedAmount: paidAmount });
+    const split = computeAppointmentFinancialSplit(
+      appointment.id,
+      { ...appointment, staff: member },
+      fallbackCommissionPercent,
+      paymentFacts.get(appointment.id),
+    );
 
     if (startsAt >= currentStart) {
       const item = current.get(appointment.staff_id) ?? emptyPerformance();
@@ -423,7 +432,7 @@ function buildStaffPerformance(
       item.generated += total;
       item.professional += split.professional;
       item.studio += split.studio;
-      item.received += revenue.depositReceived;
+      item.received += split.received;
       current.set(appointment.staff_id, item);
     } else {
       previousGenerated.set(
@@ -506,6 +515,8 @@ function TeamPage() {
       { data: ss },
       { data: appts },
       { data: payments },
+      { data: onsitePayments },
+      { data: refunds },
     ] =
       await Promise.all([
         supabase
@@ -527,15 +538,25 @@ function TeamPage() {
           .order("sort_order"),
         supabase.from("service_category_suggestions").select("id,label").order("sort_order"),
         supabase.from("staff_services").select("staff_id,service_id"),
-        supabase
+        (supabase as any)
           .from("appointments")
-          .select("id,starts_at,status,total_price,staff_id")
+          .select("id,starts_at,status,total_price,staff_id,studio_commission_percent_snapshot,appointment_services(price,studio_commission_percent_snapshot)")
           .eq("studio_id", studio.id)
           .gte("starts_at", since),
         supabase
           .from("payment_intents")
-          .select("appointment_id,amount_cents,status")
+          .select("id,appointment_id,amount_cents,status,dispute_status,disputed_amount_cents")
           .eq("studio_id", studio.id),
+        (supabase as any)
+          .from("cash_register_movements")
+          .select("id,appointment_id,amount,movement_type")
+          .eq("studio_id", studio.id)
+          .eq("movement_type", "service_payment"),
+        (supabase as any)
+          .from("refund_requests")
+          .select("id,appointment_id,payment_intent_id,amount_cents,status,payment_intents(amount_cents)")
+          .eq("studio_id", studio.id)
+          .eq("status", "refunded"),
       ]);
     const staffList = (st ?? []) as Staff[];
     setStaff(staffList);
@@ -545,8 +566,10 @@ function TeamPage() {
     setPerformance(
       buildStaffPerformance(
         staffList,
-        (appts ?? []) as TeamAppointment[],
+        (appts ?? []) as unknown as TeamAppointment[],
         (payments ?? []) as PaidRow[],
+        (onsitePayments ?? []) as unknown as OnsitePaymentRow[],
+        (refunds ?? []) as unknown as RefundRow[],
         Number((studio as any).commission_percent ?? 0),
       ),
     );

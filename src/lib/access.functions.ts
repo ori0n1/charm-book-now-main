@@ -2,8 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertStudioPremiumAccess } from "@/lib/server-security";
+import {
+  assertStudioEntitlement,
+  getRequestFingerprint,
+  rateLimitOrThrow,
+} from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { resolveStripeAppBaseUrl } from "@/lib/stripe.server";
 
 type AccessRole = "manager" | "staff" | "desk_staff";
 type InviteStatus =
@@ -21,6 +26,8 @@ function admin(): any {
 
 const OWNER_ROLES = ["saas_owner", "studio_owner", "manager"];
 const MANAGED_ROLES: AccessRole[] = ["manager", "staff", "desk_staff"];
+const DEFAULT_INVITE_TTL_MS = 48 * 60 * 60 * 1000;
+const MAX_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const getTeamAccess = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -117,6 +124,7 @@ export const createStaffInviteLink = createServerFn({ method: "POST" })
 
     const token = generateInviteToken();
     const inviteCode = generateInviteCode();
+    const inviteExpiresAt = resolveInviteExpiry(data.expiresAt);
     const { error } = await sb
       .from("staff")
       .update({
@@ -124,7 +132,7 @@ export const createStaffInviteLink = createServerFn({ method: "POST" })
         invite_code: inviteCode,
         invite_role: data.role,
         invite_status: "pending",
-        invite_expires_at: data.expiresAt ?? null,
+        invite_expires_at: inviteExpiresAt,
         updated_at: new Date().toISOString(),
       })
       .eq("id", data.staffId)
@@ -140,13 +148,18 @@ export const createStaffInviteLink = createServerFn({ method: "POST" })
       role: data.role,
       inviteUrl: `${getOrigin()}/convite-equipa/${token}`,
       inviteCode,
-      inviteExpiresAt: data.expiresAt ?? null,
+      inviteExpiresAt,
     };
   });
 
 export const getStaffInviteLink = createServerFn({ method: "POST" })
   .inputValidator((input) => z.object({ token: z.string().min(12) }).parse(input))
   .handler(async ({ data }) => {
+    await rateLimitOrThrow({
+      key: `staff-invite-lookup:${getRequestFingerprint()}`,
+      limit: 30,
+      windowMs: 10 * 60 * 1000,
+    });
     const sb = admin();
     const { data: staff, error } = await sb
       .from("staff")
@@ -181,7 +194,7 @@ export const getStaffInviteLink = createServerFn({ method: "POST" })
       whatsapp: staff.whatsapp ?? "",
       photoUrl: staff.photo_url ?? null,
       status: staff.user_id ? "active" : expired ? "expired" : (staff.invite_status ?? "pending"),
-      inviteCode: staff.invite_code ?? null,
+      requiresCode: Boolean(staff.invite_code),
       expiresAt: staff.invite_expires_at ?? null,
     };
   });
@@ -191,12 +204,17 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
     z
       .object({
         token: z.string().min(12),
-        password: z.string().min(6),
+        password: z.string().min(10).max(128),
         code: z.string().optional(),
       })
       .parse(input),
   )
   .handler(async ({ data }) => {
+    await rateLimitOrThrow({
+      key: `staff-invite-accept:${getRequestFingerprint()}`,
+      limit: 8,
+      windowMs: 15 * 60 * 1000,
+    });
     const sb = admin();
     const { data: staff, error } = await sb
       .from("staff")
@@ -219,8 +237,23 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
         .eq("id", staff.id);
       throw new Error("Este convite expirou.");
     }
-    if (staff.invite_code && data.code?.trim() && data.code.trim().toUpperCase() !== staff.invite_code) {
+    if (staff.invite_code && data.code?.trim().toUpperCase() !== staff.invite_code) {
       throw new Error("Codigo de acesso invalido.");
+    }
+
+    // Atomically consume the invite before touching Auth. This prevents two
+    // concurrent requests from both setting a password for the same account.
+    const { data: claimed, error: claimError } = await sb
+      .from("staff")
+      .update({ invite_status: "password_created", updated_at: new Date().toISOString() })
+      .eq("id", staff.id)
+      .eq("invite_token", data.token)
+      .is("user_id", null)
+      .in("invite_status", ["pending", "sent", "viewed"])
+      .select("id")
+      .maybeSingle();
+    if (claimError || !claimed?.id) {
+      throw new Error("Este convite já está a ser utilizado ou deixou de estar ativo.");
     }
 
     const role = (staff.invite_role as AccessRole | null) ?? "desk_staff";
@@ -283,6 +316,11 @@ export const acceptStaffInviteLink = createServerFn({ method: "POST" })
 export const resolveTeamLoginIdentifier = createServerFn({ method: "POST" })
   .inputValidator((input) => z.object({ identifier: z.string().min(1) }).parse(input))
   .handler(async ({ data }) => {
+    await rateLimitOrThrow({
+      key: `team-login-resolve:${getRequestFingerprint()}`,
+      limit: 20,
+      windowMs: 10 * 60 * 1000,
+    });
     const raw = data.identifier.trim();
     if (raw.includes("@")) return { loginId: raw.toLowerCase() };
 
@@ -359,17 +397,25 @@ export const resendStaffInvite = createServerFn({ method: "POST" })
     if (!staff.user_id) {
       const shouldRegenerate =
         !staff.invite_token ||
+        !staff.invite_expires_at ||
         ["cancelled", "expired"].includes(staff.invite_status ?? "") ||
-        Boolean(staff.invite_expires_at && new Date(staff.invite_expires_at).getTime() < Date.now());
+        Boolean(staff.invite_expires_at && new Date(staff.invite_expires_at).getTime() < Date.now()) ||
+        Boolean(
+          staff.invite_expires_at &&
+            new Date(staff.invite_expires_at).getTime() > Date.now() + MAX_INVITE_TTL_MS,
+        );
       const token = shouldRegenerate ? generateInviteToken() : staff.invite_token;
       const inviteCode = shouldRegenerate ? generateInviteCode() : staff.invite_code;
+      const inviteExpiresAt = shouldRegenerate
+        ? resolveInviteExpiry(null)
+        : staff.invite_expires_at;
       const { error } = await sb
         .from("staff")
         .update({
           invite_token: token,
           invite_code: inviteCode,
           invite_status: "sent",
-          invite_expires_at: shouldRegenerate ? null : staff.invite_expires_at,
+          invite_expires_at: inviteExpiresAt,
           updated_at: new Date().toISOString(),
         })
         .eq("id", data.staffId)
@@ -383,7 +429,7 @@ export const resendStaffInvite = createServerFn({ method: "POST" })
         status: "sent",
         inviteUrl: `${getOrigin()}/convite-equipa/${token}`,
         inviteCode,
-        inviteExpiresAt: shouldRegenerate ? null : staff.invite_expires_at,
+        inviteExpiresAt,
         whatsapp: staff.whatsapp ?? null,
       };
     }
@@ -465,7 +511,7 @@ async function assertCanManageStudioAccess(sb: any, userId: string, studioId: st
     .maybeSingle();
 
   if (error || !data?.role) throw new Response("forbidden", { status: 403 });
-  await assertStudioPremiumAccess(sb, studioId);
+  await assertStudioEntitlement(sb, studioId, "team_management");
 }
 
 async function assertStaffInStudio(sb: any, staffId: string, studioId: string) {
@@ -573,20 +619,26 @@ async function studioNameForMetadata(sb: any, studioId: string) {
 }
 
 function getOrigin() {
-  const request = getRequest();
-  const origin = request?.headers.get("origin");
-  if (origin) return origin;
-  const host = request?.headers.get("host");
-  const proto = request?.headers.get("x-forwarded-proto") || "https";
-  return host ? `${proto}://${host}` : "http://localhost:8081";
+  return resolveStripeAppBaseUrl({ request: getRequest(), fallback: "http://localhost:8081" });
 }
 
 function generateInviteCode() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }
 
 function generateInviteToken() {
   return crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+}
+
+function resolveInviteExpiry(requested: string | null | undefined) {
+  const now = Date.now();
+  const requestedTime = requested ? new Date(requested).getTime() : now + DEFAULT_INVITE_TTL_MS;
+  if (!Number.isFinite(requestedTime) || requestedTime <= now) {
+    throw new Response("invite_expiry_invalid", { status: 400 });
+  }
+  return new Date(Math.min(requestedTime, now + MAX_INVITE_TTL_MS)).toISOString();
 }
 
 function normalizeInvitePhone(value: string | null) {

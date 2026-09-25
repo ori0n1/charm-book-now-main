@@ -1,9 +1,10 @@
 import { getRequest } from "@tanstack/react-start/server";
 import { getAdminClient } from "@/lib/supabase-admin.server";
-import { getStudioSubscriptionAccess } from "@/lib/subscription-access";
+import type { PlanFeature } from "@/lib/plan-entitlements";
 
 type SupabaseLike = {
   from: (table: string) => any;
+  rpc: (fn: string, args?: Record<string, unknown>) => any;
 };
 
 type RateLimitOptions = {
@@ -13,8 +14,10 @@ type RateLimitOptions = {
 };
 
 type StudioAccessOptions = {
+  /** @deprecated Free is a valid access state; retained for rolling compatibility. */
   allowExpiredTrial?: boolean;
   requirePremium?: boolean;
+  entitlement?: PlanFeature;
 };
 
 type Bucket = {
@@ -37,42 +40,44 @@ export async function assertStudioAccess(
   await assertStudioAccessWithOptions(sb, userId, studioId, options);
 }
 
-export async function assertStudioPremiumAccess(sb: SupabaseLike, studioId: string) {
-  if (!studioId) forbidden("premium_required");
+export async function assertStudioOwnerAccess(
+  sb: SupabaseLike,
+  userId: string,
+  studioId: string,
+  options: StudioAccessOptions = {},
+) {
+  if (!userId || !studioId) forbidden();
 
-  const { data: studio, error: studioError } = await sb
-    .from("studios")
-    .select("subscription_status, subscription_current_period_end, trial_ends_at, premium_access_until, is_active")
-    .eq("id", studioId)
-    .maybeSingle();
-
-  if (studioError || !studio?.is_active) forbidden("premium_required");
-  if (getStudioSubscriptionAccess(studio).premiumActive) return;
-
-  const { data: subscription, error: subscriptionError } = await sb
-    .from("subscriptions")
-    .select("status, current_period_end")
+  const { data, error } = await sb
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
     .eq("studio_id", studioId)
-    .in("status", ["active", "trialing"])
-    .order("updated_at", { ascending: false })
+    .in("role", ["studio_owner", "saas_owner"])
     .limit(1)
     .maybeSingle();
 
-  if (subscriptionError) forbidden("premium_required");
+  if (error || !data?.role) forbidden("studio_owner_required");
+  if (options.requirePremium) await assertStudioPremiumAccess(sb, studioId);
+  if (options.entitlement) await assertStudioEntitlement(sb, studioId, options.entitlement);
+}
 
-  const currentPeriodEnd = subscription?.current_period_end
-    ? new Date(subscription.current_period_end).getTime()
-    : 0;
+export async function assertStudioPremiumAccess(sb: SupabaseLike, studioId: string) {
+  await assertStudioEntitlement(sb, studioId, "whatsapp", "premium_required");
+}
 
-  if (
-    subscription &&
-    ["active", "trialing"].includes(String(subscription.status)) &&
-    currentPeriodEnd > Date.now()
-  ) {
-    return;
-  }
-
-  forbidden("premium_required");
+export async function assertStudioEntitlement(
+  sb: SupabaseLike,
+  studioId: string,
+  entitlement: PlanFeature,
+  errorCode = `plan_feature_required:${entitlement}`,
+) {
+  if (!studioId) forbidden(errorCode);
+  const { data, error } = await sb.rpc("studio_has_entitlement", {
+    _studio_id: studioId,
+    _feature: entitlement,
+  });
+  if (error || data !== true) forbidden(errorCode);
 }
 
 export async function assertStudioAccessWithOptions(
@@ -92,7 +97,13 @@ export async function assertStudioAccessWithOptions(
     .maybeSingle();
 
   if (error || !data?.studio_id) forbidden();
-  if (!options.allowExpiredTrial) await assertStudioPremiumAccess(sb, studioId);
+  const { data: canUseStudio, error: accessError } = await sb.rpc("can_use_studio", {
+    _user_id: userId,
+    _studio_id: studioId,
+  });
+  if (accessError || canUseStudio !== true) forbidden();
+  if (options.requirePremium) await assertStudioPremiumAccess(sb, studioId);
+  if (options.entitlement) await assertStudioEntitlement(sb, studioId, options.entitlement);
 }
 
 export async function assertAppointmentAccess(
@@ -103,12 +114,34 @@ export async function assertAppointmentAccess(
 ) {
   const { data, error } = await sb
     .from("appointments")
-    .select("studio_id")
+    .select("studio_id,staff_id")
     .eq("id", appointmentId)
     .maybeSingle();
 
   if (error || !data?.studio_id) forbidden();
   await assertStudioAccessWithOptions(sb, userId, data.studio_id as string, options);
+
+  const { data: roles, error: rolesError } = await sb
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("studio_id", data.studio_id);
+  if (rolesError || !roles?.length) forbidden();
+  if (roles.some((row: { role?: string }) => ["saas_owner", "studio_owner", "manager"].includes(String(row.role)))) {
+    return;
+  }
+  if (!roles.some((row: { role?: string }) => row.role === "staff")) forbidden();
+
+  const { data: staff, error: staffError } = await sb
+    .from("staff")
+    .select("id")
+    .eq("studio_id", data.studio_id)
+    .eq("user_id", userId)
+    .eq("id", data.staff_id)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  if (staffError || !staff?.id) forbidden();
 }
 
 export function getRequestFingerprint() {

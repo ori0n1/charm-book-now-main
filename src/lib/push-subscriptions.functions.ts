@@ -3,18 +3,20 @@ import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
-import { sendWebPush } from "@/lib/web-push.server";
+import { assertStudioEntitlement, rateLimitOrThrow } from "@/lib/server-security";
+import { isTrustedWebPushEndpoint, sendWebPush } from "@/lib/web-push.server";
 import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
+import { BELLZA_APP_ICON_192, BELLZA_NOTIFICATION_BADGE } from "@/lib/brand-assets";
 
 const PushSubscriptionInput = z.object({
   audience: z.enum(["client", "studio"]),
   studioId: z.string().uuid().optional(),
   subscription: z.object({
-    endpoint: z.string().url(),
+    endpoint: z.string().url().max(2048).refine(isTrustedWebPushEndpoint, "untrusted_push_endpoint"),
     expirationTime: z.number().nullable().optional(),
     keys: z.object({
-      p256dh: z.string().min(1),
-      auth: z.string().min(1),
+      p256dh: z.string().min(40).max(256).regex(/^[A-Za-z0-9_-]+$/),
+      auth: z.string().min(8).max(128).regex(/^[A-Za-z0-9_-]+$/),
     }),
   }),
 });
@@ -29,10 +31,11 @@ const StudioPushHealthInput = z.object({
 });
 
 const RevokeCurrentDeviceInput = z.object({
-  endpoint: z.string().url(),
+  endpoint: z.string().url().max(2048).refine(isTrustedWebPushEndpoint, "untrusted_push_endpoint"),
 });
 
-const MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_STUDIO_USER = 12;
+const MAX_ACTIVE_PUSH_SUBSCRIPTIONS_PER_STUDIO_USER = 3;
+const ACTIVE_PUSH_DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export const getStudioPushHealth = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -44,6 +47,7 @@ export const getStudioPushHealth = createServerFn({ method: "POST" })
     const sb = getAdminClient();
     const studioId = await resolvePrimaryStudioId(sb, userId, data.studioId);
     if (!studioId) throw new Response("forbidden", { status: 403 });
+    await assertStudioEntitlement(sb, studioId, "notifications");
 
     const now = Date.now();
     const { data: subscriptions, error } = await (sb as any)
@@ -58,8 +62,10 @@ export const getStudioPushHealth = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     const active = (subscriptions ?? []).filter(
-      (row: { expiration_time: number | null }) =>
-        row.expiration_time === null || row.expiration_time > now,
+      (row: { expiration_time: number | null; last_seen_at?: string | null }) =>
+        (row.expiration_time === null || row.expiration_time > now) &&
+        Boolean(row.last_seen_at) &&
+        new Date(row.last_seen_at as string).getTime() >= now - ACTIVE_PUSH_DEVICE_TTL_MS,
     );
 
     return {
@@ -78,15 +84,40 @@ export const savePushSubscription = createServerFn({ method: "POST" })
     if (!userId) throw new Response("Unauthorized", { status: 401 });
 
     const sb = getAdminClient();
+    await rateLimitOrThrow({
+      key: `push-subscription:${userId}`,
+      limit: 20,
+      windowMs: 10 * 60 * 1000,
+    });
     const studioId =
       data.audience === "client"
         ? data.studioId
         : await resolvePrimaryStudioId(sb, userId, data.studioId);
 
     if (!studioId) throw new Error("push_studio_missing");
+    await assertStudioEntitlement(sb, studioId, "notifications");
+
+    if (data.audience === "studio") {
+      const now = new Date().toISOString();
+      const { error: previousStudioError } = await (sb as any)
+        .from("push_subscriptions")
+        .update({
+          revoked_at: now,
+          revocation_reason: "device_moved_to_another_studio",
+          updated_at: now,
+        })
+        .eq("endpoint", data.subscription.endpoint)
+        .neq("studio_id", studioId)
+        .in("audience", ["studio", "both"])
+        .is("revoked_at", null);
+      if (previousStudioError) throw new Error(previousStudioError.message);
+    }
 
     const clientId =
       data.audience === "client" ? await resolveClientId(sb, userId, studioId, claims) : null;
+    if (data.audience === "client" && !clientId) {
+      throw new Response("client_membership_required", { status: 403 });
+    }
 
     const { data: existing, error: existingError } = await (sb as any)
       .from("push_subscriptions")
@@ -261,6 +292,19 @@ export const sendTestPushNotification = createServerFn({ method: "POST" })
         ? data.studioId
         : await resolvePrimaryStudioId(sb, userId, data.studioId);
     if (!studioId) throw new Error("push_studio_missing");
+    await assertStudioEntitlement(sb, studioId, "notifications");
+    const clientId =
+      data.audience === "client"
+        ? await resolveClientId(sb, userId, studioId, ((context as any).claims ?? {}) as Record<string, unknown>)
+        : null;
+    if (data.audience === "client" && !clientId) {
+      throw new Response("client_membership_required", { status: 403 });
+    }
+    await rateLimitOrThrow({
+      key: `push-test:${userId}:${studioId}:${data.audience}`,
+      limit: 4,
+      windowMs: 10 * 60 * 1000,
+    });
 
     const audiences = data.audience === "client" ? ["client", "both"] : ["studio", "both"];
     const { data: primarySubscriptions, error } = await (sb as any)
@@ -311,8 +355,8 @@ export const sendTestPushNotification = createServerFn({ method: "POST" })
             ? "Este PWA já pode receber avisos das suas reservas."
             : "Este PWA já pode receber avisos do painel.",
         url: data.audience === "client" ? "/" : "/admin",
-        icon: "/pwa-icon.svg",
-        badge: "/pwa-icon.svg",
+        icon: BELLZA_APP_ICON_192,
+        badge: BELLZA_NOTIFICATION_BADGE,
         tag: `bellza-push-test-${data.audience}-${studioId}`,
         data: { kind: "push_test", studioId, audience: data.audience },
       });

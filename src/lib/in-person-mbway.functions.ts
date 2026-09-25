@@ -2,7 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccess, getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
-import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
+import { createStripeClient, getConfiguredStripeEnv, type StripeEnv } from "@/lib/stripe.server";
+import { assertConnectedAccountReadyForCharge } from "@/lib/stripe-connect-integrity.server";
+import {
+  assertDirectChargeAccount,
+  assertExactStripeAmount,
+  resolveBookingPaymentStatus,
+} from "@/lib/stripe-financial-integrity";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 
 const CreateInPersonMbWayInput = z.object({
@@ -33,10 +39,7 @@ function sb() {
 }
 
 function stripeEnv(): StripeEnv {
-  if (process.env.STRIPE_ENV !== "live") {
-    throw new Error("stripe_live_required");
-  }
-  return "live";
+  return getConfiguredStripeEnv();
 }
 
 export function isInPersonMbWayEnabled() {
@@ -185,7 +188,9 @@ export const createInPersonMbWayPayment = createServerFn({ method: "POST" })
     });
 
     const source = await loadAppointmentSource(data.appointmentId);
-    await assertStudioAccess(sb(), (context as any).userId, source.appt.studio_id as string);
+    await assertStudioAccess(sb(), (context as any).userId, source.appt.studio_id as string, {
+      entitlement: "online_payments",
+    });
 
     if (["cancelled", "no_show"].includes(String(source.appt.status))) {
       throw new Error("appointment_not_payable");
@@ -225,6 +230,12 @@ export const createInPersonMbWayPayment = createServerFn({ method: "POST" })
     }
 
     const stripe = createStripeClient(stripeEnv());
+    await assertConnectedAccountReadyForCharge(stripe, {
+      accountId: source.studio.stripe_connect_account_id as string,
+      studioId: source.appt.studio_id as string,
+      method: "mb_way",
+      requirePayouts: true,
+    });
     const stripePaymentIntent = await stripe.paymentIntents.create(
       {
         amount: amountCents,
@@ -296,6 +307,7 @@ export const createInPersonMbWayPayment = createServerFn({ method: "POST" })
 export async function handleInPersonMbWayPaymentIntent(
   stripePaymentIntent: StripePayload,
   kind: "succeeded" | "failed" | "processing" | "canceled",
+  eventAccount?: string | null,
 ): Promise<FinalizeResult> {
   if (stripePaymentIntent.metadata?.payment_kind !== "studio_in_person_mb_way") {
     return { handled: false };
@@ -314,6 +326,7 @@ export async function handleInPersonMbWayPaymentIntent(
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!paymentRow?.id) throw new Error("in_person_mbway_payment_missing");
+  assertDirectChargeAccount(paymentRow.stripe_connect_account_id, eventAccount);
   if (paymentRow.appointment_id !== appointmentId || paymentRow.studio_id !== studioId) {
     throw new Error("in_person_mbway_scope_mismatch");
   }
@@ -322,18 +335,21 @@ export async function handleInPersonMbWayPaymentIntent(
   }
 
   const expectedAmount = Number(paymentRow.amount_cents || 0);
-  const receivedAmount = Number(stripePaymentIntent.amount_received ?? stripePaymentIntent.amount ?? 0);
-  if (kind === "succeeded" && (expectedAmount <= 0 || receivedAmount < expectedAmount)) {
-    throw new Error("in_person_mbway_amount_mismatch");
-  }
+  assertExactStripeAmount({
+    expectedAmountCents: expectedAmount,
+    stripeAmountCents: Number(stripePaymentIntent.amount ?? 0),
+    receivedAmountCents: Number(stripePaymentIntent.amount_received ?? 0),
+    succeeded: kind === "succeeded",
+  });
 
-  const status = kind === "succeeded"
+  const incomingStatus = kind === "succeeded"
     ? "succeeded"
     : kind === "processing"
       ? "processing"
       : kind === "canceled"
         ? "canceled"
         : "failed";
+  const status = resolveBookingPaymentStatus(paymentRow.status, incomingStatus);
 
   const financialPatch =
     kind === "succeeded"
@@ -348,12 +364,24 @@ export async function handleInPersonMbWayPaymentIntent(
         })
       : {};
 
-  await sb()
+  let paymentUpdate = sb()
     .from("payment_intents")
     .update({ status, ...financialPatch, updated_at: new Date().toISOString() })
     .eq("id", paymentRow.id);
+  if (kind !== "succeeded") paymentUpdate = paymentUpdate.neq("status", "succeeded");
+  const { data: updated, error: updateError } = await paymentUpdate.select("id");
+  if (updateError) throw new Error(updateError.message);
+  if (kind !== "succeeded" && (!updated || updated.length === 0)) {
+    return {
+      handled: true,
+      appointmentId,
+      studioId,
+      previousStatus: "succeeded",
+      status: "succeeded",
+    };
+  }
 
-  if (kind === "succeeded" && paymentRow.status !== "succeeded") {
+  if (status === "succeeded" && paymentRow.status !== "succeeded") {
     await sb()
       .from("appointments")
       .update({ status: "completed", updated_at: new Date().toISOString() } as any)

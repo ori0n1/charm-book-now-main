@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { CalendarDays, CheckCircle2, Clock, Loader2, MessageCircle, RefreshCcw, ShieldCheck, XCircle } from "lucide-react";
+import { BrandLoadingState } from "@/components/brand-loading-state";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
@@ -219,8 +220,8 @@ function ClientAppointmentPage() {
 
   if (loading) {
     return (
-      <main className="grid min-h-screen place-items-center bg-background px-6">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      <main className="public-shell public-site-theme public-landing-theme min-h-screen bg-background">
+        <BrandLoadingState label="A carregar marcação..." tone="light" fullScreen />
       </main>
     );
   }

@@ -1,18 +1,18 @@
 import { Link } from "@tanstack/react-router";
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
-import { BellzaLogo } from "@/components/bellza-logo";
+import { BellzaLogo, type BellzaLogoTone } from "@/components/bellza-logo";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
+  { href: "/#produto", label: "Produto" },
   { href: "/#como-funciona", label: "Como funciona" },
   { href: "/#funcionalidades", label: "Funcionalidades" },
-  { href: "/#produto", label: "Produto" },
   { href: "/#planos", label: "Planos" },
   { href: "/#faq", label: "FAQ" },
 ] as const;
 
-export function LandingHeader() {
+export function LandingHeader({ brandTone = "auto" }: { brandTone?: BellzaLogoTone } = {}) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
@@ -21,7 +21,7 @@ export function LandingHeader() {
         className="relative mx-auto flex w-full max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6"
         aria-label="Principal"
       >
-        <BellzaLogo variant="navbar" className="min-w-0 shrink" />
+        <BellzaLogo variant="navbar" tone={brandTone} className="min-w-0" />
 
         <div className="hidden items-center gap-1 lg:flex">
           {NAV_LINKS.map((link) => (
@@ -40,7 +40,7 @@ export function LandingHeader() {
             search={{ ref: undefined }}
             className="public-btn-primary hidden h-10 px-4 text-sm sm:inline-flex"
           >
-            Começar grátis
+            Experimentar grátis
           </Link>
           <button
             type="button"
@@ -86,7 +86,7 @@ export function LandingHeader() {
             onClick={() => setMobileOpen(false)}
             className="public-btn-primary mt-2 min-h-11 rounded-xl px-3 py-2.5 text-sm"
           >
-            Começar 14 dias grátis
+            Experimentar 14 dias grátis
           </Link>
         </div>
       </div>

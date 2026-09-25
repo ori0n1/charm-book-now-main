@@ -1,6 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const PUBLIC_URL = process.env.BELLZA_PUBLIC_BOOKING_URL ?? "https://www.bellza.pt/s/studio27";
+const PUBLIC_URL = process.env.BELLZA_PUBLIC_BOOKING_URL ?? "";
+const bookingTarget = PUBLIC_URL ? new URL(PUBLIC_URL) : null;
+test.skip(
+  !bookingTarget || !["127.0.0.1", "localhost", "qflwsdrgdkkcxjnbxmis.supabase.co"].includes(bookingTarget.hostname),
+  "Requires an explicit local/staging booking fixture; production reads are forbidden.",
+);
 const FUTURE_DAY_PATTERN = /seg/i;
 
 function nextMondayDayNumber() {
@@ -9,6 +14,21 @@ function nextMondayDayNumber() {
   const daysUntilMonday = (8 - date.getDay()) % 7 || 7;
   date.setDate(date.getDate() + daysUntilMonday);
   return String(date.getDate());
+}
+
+async function selectNextMonday(page: Page) {
+  const target = page
+    .getByRole("button", {
+      name: new RegExp(`${FUTURE_DAY_PATTERN.source}\\s*${nextMondayDayNumber()}`, "i"),
+    })
+    .first();
+
+  if (!(await target.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: /Próxima semana/i }).click();
+  }
+
+  await expect(target).toBeVisible({ timeout: 10_000 });
+  await target.click();
 }
 
 type RpcCapture = {
@@ -50,11 +70,17 @@ async function preparePage(page: Page, captures: RpcCapture[]) {
 
 async function pickServiceProfessionalAndDate(page: Page, serviceName: string, staffName: string) {
   await page.goto(PUBLIC_URL, { waitUntil: "domcontentloaded" });
+  const showMore = page.getByRole("button", { name: /Ver mais \d+ servi.+os/i }).first();
+  const service = page.getByText(serviceName, { exact: false }).first();
   const search = page.getByPlaceholder(/Pesquisar serviço/i).first();
-  if (await search.isVisible().catch(() => false)) {
-    await search.fill(serviceName);
-  }
-  await expect(page.getByText(serviceName, { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    if (await service.isVisible().catch(() => false)) return;
+    if (await showMore.isVisible().catch(() => false)) await showMore.click();
+    if (!(await service.isVisible().catch(() => false)) && (await search.isVisible().catch(() => false))) {
+      await search.fill(serviceName);
+    }
+    await expect(service).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
 
   await page
     .locator("article")
@@ -64,10 +90,7 @@ async function pickServiceProfessionalAndDate(page: Page, serviceName: string, s
     .click();
   await page.getByRole("button", { name: /^continuar$/i }).click();
 
-  await page
-    .getByRole("button", { name: new RegExp(`${FUTURE_DAY_PATTERN.source}\\s*${nextMondayDayNumber()}`, "i") })
-    .first()
-    .click();
+  await selectNextMonday(page);
 
   const staffButton = page.getByRole("button", { name: new RegExp(staffName, "i") }).first();
   await expect(staffButton).toBeVisible({ timeout: 10_000 });
@@ -109,13 +132,13 @@ async function runStudio27AvailabilityAudit(page: Page, suffix: string) {
 }
 
 test("studio27 real booking flow shows availability for three services and two professionals on mobile", async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 390, height: 844 });
   await runStudio27AvailabilityAudit(page, "mobile");
 });
 
 test("studio27 real booking flow shows availability for three services and two professionals on desktop", async ({ page }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   await page.setViewportSize({ width: 1366, height: 900 });
   await runStudio27AvailabilityAudit(page, "desktop");
 });

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
+import { assertStudioEntitlement } from "@/lib/server-security";
 
 // ── Types ────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ export const submitStudioReview = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId as string;
+    await assertStudioEntitlement(sb, data.studioId, "reviews");
 
     // If appointmentId provided: verify ownership, status, and no duplicate
     if (data.appointmentId) {
@@ -45,6 +47,10 @@ export const submitStudioReview = createServerFn({ method: "POST" })
         .maybeSingle();
 
       if (!appt) throw new Error("Marcação não encontrada.");
+
+      if ((appt as any).studio_id !== data.studioId) {
+        throw new Response("forbidden", { status: 403 });
+      }
 
       // Verify appointment belongs to the authenticated user via clients table
       const clientId = (appt as any).client_id;
@@ -110,6 +116,11 @@ export const getStudioReviews = createServerFn({ method: "POST" })
   .inputValidator((input) => GetReviewsInput.parse(input))
   .handler(async ({ data }) => {
     const sb = getAdminClient();
+    try {
+      await assertStudioEntitlement(sb, data.studioId, "reviews");
+    } catch {
+      return { reviews: [] as StudioReview[] };
+    }
     const { data: rows, error } = await sb
       .from("studio_reviews")
       .select("id,studio_id,user_id,appointment_id,rating,comment,staff_ids,reviewer_name,created_at")
@@ -146,6 +157,18 @@ export const canReviewAppointment = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId as string;
+
+    const { data: appointment } = await sb
+      .from("appointments")
+      .select("studio_id")
+      .eq("id", data.appointmentId)
+      .maybeSingle();
+    if (!appointment?.studio_id) return { canReview: false, alreadyReviewed: false };
+    try {
+      await assertStudioEntitlement(sb, appointment.studio_id as string, "reviews");
+    } catch {
+      return { canReview: false, alreadyReviewed: false };
+    }
 
     // Check if already reviewed
     const { data: existing } = await sb

@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { allocateCents, clampPercent, fromCents, toCents } from "@/lib/financial-ledger";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -23,6 +24,18 @@ export function formatEUR(value: number) {
     style: "currency",
     currency: "EUR",
   }).format(Number(value || 0));
+}
+
+/**
+ * Allocates the immutable appointment total across its stored service lines.
+ * The total_price snapshot is authoritative; line prices are weights used for
+ * commission reporting. Integer cents guarantee that allocations reconcile.
+ */
+export function allocateAuthoritativeLineTotals(total: number, linePrices: number[]) {
+  return allocateCents(
+    toCents(total),
+    linePrices.map((price) => toCents(price)),
+  ).map(fromCents);
 }
 
 export type FinancialSplit = {
@@ -50,36 +63,37 @@ export type AttendanceRevenue = {
 };
 
 export function computeAttendanceRevenue(total: number, paidAmount: number, status?: string | null) {
-  const safeTotal = roundMoney(Math.max(0, Number(total) || 0));
-  const paid = roundMoney(Math.min(safeTotal, Math.max(0, Number(paidAmount) || 0)));
+  const totalCents = toCents(total);
+  const paidCents = Math.min(totalCents, toCents(paidAmount));
+  const paid = fromCents(paidCents);
   const isOnlinePaid = paid > 0;
-  const attended = status === "completed";
-  const missed = status === "no_show";
-  const excluded = status === "cancelled" || status === "pending_payment" || (missed && !isOnlinePaid);
+  const active = status === "confirmed" || status === "completed";
+  const retainedNoShow = status === "no_show" && paidCents > 0;
+  const excluded = !active && !retainedNoShow;
   if (excluded) {
     return {
       isOnlinePaid,
       confirmed: 0,
       predicted: 0,
       depositReceived: paid,
-      remaining: roundMoney(Math.max(0, safeTotal - paid)),
+      remaining: 0,
     };
   }
-  const confirmed = isOnlinePaid && !attended ? paid : safeTotal;
-  const predicted = isOnlinePaid && !attended && !missed ? roundMoney(safeTotal - paid) : 0;
+  const confirmed = paid;
+  const predicted = retainedNoShow ? 0 : fromCents(totalCents - paidCents);
 
   return {
     isOnlinePaid,
     confirmed,
     predicted,
     depositReceived: paid,
-    remaining: roundMoney(Math.max(0, safeTotal - paid)),
+    remaining: predicted,
   };
 }
 
 export function isFinanciallyRelevantAppointment(status: string, paidAmount = 0) {
-  if (status === "cancelled" || status === "pending_payment") return false;
-  if (status === "no_show") return paidAmount > 0;
+  if (status === "pending_payment") return false;
+  if (status === "cancelled" || status === "no_show") return paidAmount > 0;
   return status === "confirmed" || status === "completed";
 }
 
@@ -100,17 +114,23 @@ export function computeFinancialSplit(
     isFullyPaid?: boolean;
   },
 ): FinancialSplit {
-  const safeTotal = roundMoney(Math.max(0, Number(total) || 0));
+  const totalCents = toCents(total);
+  const safeTotal = fromCents(totalCents);
   const pct = clampPercent(studioPercent);
   const requires = options?.requiresDeposit ?? false;
   const depositPct = requires ? clampPercent(options?.depositPercent ?? 0) : 0;
-  const deposit = roundMoney(safeTotal * (depositPct / 100));
-  const received = options?.isFullyPaid
-    ? safeTotal
-    : roundMoney(Math.min(safeTotal, Math.max(0, options?.receivedAmount ?? deposit)));
-  const pending = roundMoney(Math.max(0, safeTotal - received));
-  const studio = roundMoney(safeTotal * (pct / 100));
-  const professional = roundMoney(safeTotal - studio);
+  const depositCents = Math.round((totalCents * depositPct) / 100);
+  const receivedCents = options?.isFullyPaid
+    ? totalCents
+    : Math.min(totalCents, toCents(options?.receivedAmount ?? fromCents(depositCents)));
+  const pendingCents = totalCents - receivedCents;
+  const studioCents = Math.round((totalCents * pct) / 100);
+  const professionalCents = totalCents - studioCents;
+  const deposit = fromCents(depositCents);
+  const received = fromCents(receivedCents);
+  const pending = fromCents(pendingCents);
+  const studio = fromCents(studioCents);
+  const professional = fromCents(professionalCents);
 
   return {
     total: safeTotal,
@@ -147,10 +167,6 @@ export function resolveDepositProfessionalPercent(rule?: FinancialRuleSource | n
 export function describeDepositRule(percent: number) {
   clampPercent(percent);
   return "O sinal conta como parte do valor total";
-}
-
-function clampPercent(value: number) {
-  return Math.min(100, Math.max(0, Number(value) || 0));
 }
 
 function roundMoney(value: number) {

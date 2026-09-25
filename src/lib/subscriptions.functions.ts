@@ -2,17 +2,20 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import type Stripe from "stripe";
 import { z } from "zod";
-import { createStripeClient, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
+import { createStripeClient, getConfiguredStripeEnv, resolveStripeAppBaseUrl, type StripeEnv } from "@/lib/stripe.server";
 import {
   getSubscriptionPlans,
+  getSubscriptionPlan,
   getPlanByPriceId,
   getPlanIdFromSubscription,
+  getPlanConfigFromSubscription,
   getSubscriptionPriceId,
   isSubscriptionPlanId,
+  validateStripeRecurringPrice,
   type SubscriptionPlanId,
 } from "@/lib/subscription-plans.server";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertStudioAccess, rateLimitOrThrow } from "@/lib/server-security";
+import { assertStudioOwnerAccess, rateLimitOrThrow } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import {
   loadPrimaryStudio,
@@ -38,6 +41,7 @@ function checkoutIdempotencyKey(input: {
   userId: string;
   planId: SubscriptionPlanId;
   priceId: string;
+  checkoutAttemptId: string;
 }) {
   return [
     "platform-subscription",
@@ -45,6 +49,7 @@ function checkoutIdempotencyKey(input: {
     input.userId,
     input.planId,
     input.priceId,
+    input.checkoutAttemptId,
   ].join(":");
 }
 
@@ -65,10 +70,7 @@ function logCheckoutError(error: unknown, details: Record<string, unknown>) {
 }
 
 function stripeEnv(): StripeEnv {
-  if (process.env.STRIPE_ENV !== "live") {
-    throw new Error("stripe_live_required");
-  }
-  return "live";
+  return getConfiguredStripeEnv();
 }
 
 function appBaseUrl() {
@@ -76,19 +78,20 @@ function appBaseUrl() {
 }
 
 function defaultPlanId(): SubscriptionPlanId {
-  const value = process.env.DEFAULT_SUBSCRIPTION_PLAN ?? "monthly";
-  return isSubscriptionPlanId(value) ? value : "monthly";
+  const value = process.env.DEFAULT_SUBSCRIPTION_PLAN ?? "premium_monthly";
+  return isSubscriptionPlanId(value) ? value : "premium_monthly";
 }
 
 const StudioInput = z.object({
   studioId: z.string().uuid(),
-  plan: z.enum(["monthly", "yearly"]).optional(),
+  plan: z.enum(["pro_monthly", "pro_yearly", "premium_monthly", "premium_yearly"]).optional(),
   action: z.enum(["manage", "cancel"]).optional(),
+  checkoutAttemptId: z.string().uuid().optional(),
 });
 
 const PlanChangeInput = z.object({
   studioId: z.string().uuid(),
-  plan: z.enum(["monthly", "yearly"]),
+  plan: z.enum(["pro_monthly", "pro_yearly", "premium_monthly", "premium_yearly"]),
 });
 
 const CheckoutReturnInput = z.object({
@@ -104,10 +107,10 @@ function getCurrentPeriodEnd(subscription: Stripe.Subscription) {
   };
   const direct = extended.current_period_end;
   if (typeof direct === "number") return direct;
-  const trialEnd = extended.trial_end;
-  if (typeof trialEnd === "number") return trialEnd;
   const itemPeriodEnd = extended.items?.data?.[0]?.current_period_end;
-  return typeof itemPeriodEnd === "number" ? itemPeriodEnd : null;
+  if (typeof itemPeriodEnd === "number") return itemPeriodEnd;
+  const trialEnd = extended.trial_end;
+  return typeof trialEnd === "number" ? trialEnd : null;
 }
 
 function hasPeriodAccess(status: string, currentPeriodEnd: string | null) {
@@ -250,7 +253,8 @@ function shouldRefreshFromStripe(input: {
 
 function subscriptionScore(subscription: Stripe.Subscription, env: StripeEnv, studioId?: string) {
   const priceId = getSubscriptionPriceId(subscription);
-  const planId = getPlanIdFromSubscription(env, subscription);
+  const planConfig = getPlanConfigFromSubscription(env, subscription);
+  const planId = planConfig?.id ?? null;
   if (!planId) return 999;
   const mappedPricePenalty = getPlanByPriceId(env, priceId) ? 0 : 0.25;
   const metadataStudioId = subscription.metadata?.studio_id;
@@ -279,15 +283,39 @@ async function findStripeSubscriptionForStudio(
     emails?: Array<string | null | undefined>;
   },
 ) {
+  const isBoundToStudio = (subscription: Stripe.Subscription, allowedCustomerIds: Set<string>) => {
+    const customerId =
+      typeof subscription.customer === "string"
+        ? subscription.customer
+        : subscription.customer?.id ?? null;
+    const metadataStudioId = subscription.metadata?.studio_id;
+    if (!customerId) return false;
+    if (allowedCustomerIds.size > 0 && !allowedCustomerIds.has(customerId)) return false;
+    if (allowedCustomerIds.size === 0 && metadataStudioId !== input.studioId) return false;
+    if (metadataStudioId && metadataStudioId !== input.studioId) return false;
+    // Subscriptions discovered only through an email fallback must carry an
+    // explicit studio binding. Legacy metadata-free subscriptions are accepted
+    // solely for the customer already reserved by this studio.
+    if (!metadataStudioId && customerId !== input.customerId) return false;
+    return true;
+  };
+
   if (input.studioSubscriptionId && !input.studioSubscriptionId.startsWith("checkout_pending:")) {
     try {
       const subscription = await stripe.subscriptions.retrieve(
         input.studioSubscriptionId,
         { expand: ["schedule"] },
       );
-      if (getPlanIdFromSubscription(input.env, subscription)) {
+      const directCustomerIds = new Set(
+        input.customerId ? [input.customerId] : [],
+      );
+      if (
+        getPlanIdFromSubscription(input.env, subscription) &&
+        isBoundToStudio(subscription, directCustomerIds)
+      ) {
         return subscription;
       }
+      throw new Error("stripe_subscription_owner_mismatch");
     } catch (error) {
       console.warn("stripe_subscription_direct_lookup_failed", {
         studioId: input.studioId,
@@ -318,7 +346,11 @@ async function findStripeSubscriptionForStudio(
   }
 
   return subscriptions
-    .filter((subscription) => getPlanIdFromSubscription(input.env, subscription))
+    .filter(
+      (subscription) =>
+        getPlanIdFromSubscription(input.env, subscription) &&
+        isBoundToStudio(subscription, customerIds),
+    )
     .sort(
       (a, b) =>
         subscriptionScore(a, input.env, input.studioId) -
@@ -441,17 +473,27 @@ async function syncCheckoutSubscription(
   fallback: { userId: string; studioId: string; customerId: string | null },
 ) {
   const metadata = subscription.metadata ?? {};
-  const userId = metadata.user_id === fallback.userId ? metadata.user_id : fallback.userId;
-  const studioId = metadata.studio_id === fallback.studioId ? metadata.studio_id : fallback.studioId;
+  if (metadata.user_id && metadata.user_id !== fallback.userId) {
+    throw new Error("stripe_subscription_user_mismatch");
+  }
+  if (metadata.studio_id && metadata.studio_id !== fallback.studioId) {
+    throw new Error("stripe_subscription_studio_mismatch");
+  }
+  const userId = fallback.userId;
+  const studioId = fallback.studioId;
   const customerId =
     typeof subscription.customer === "string" ? subscription.customer : fallback.customerId;
+  if (fallback.customerId && customerId !== fallback.customerId) {
+    throw new Error("stripe_subscription_customer_mismatch");
+  }
   const priceId = getSubscriptionPriceId(subscription);
-  const planId = getPlanIdFromSubscription(env, subscription);
+  const planConfig = getPlanConfigFromSubscription(env, subscription);
+  const planId = planConfig?.id ?? null;
   const status = subscription.status ?? "incomplete";
   const periodEnd = getCurrentPeriodEnd(subscription);
   const currentPeriodEnd = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
 
-  if (!userId || !studioId || !customerId || !priceId || !planId) {
+  if (!userId || !studioId || !customerId || !priceId || !planConfig || !planId) {
     throw new Error("stripe_subscription_sync_incomplete");
   }
 
@@ -462,7 +504,8 @@ async function syncCheckoutSubscription(
     stripe_customer_id: customerId,
     stripe_subscription_id: subscription.id,
     stripe_price_id: priceId,
-    plan: planId,
+    plan: planConfig.billingInterval,
+    plan_tier: planConfig.tier,
     status,
     current_period_end: currentPeriodEnd,
     cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
@@ -499,13 +542,14 @@ async function syncCheckoutSubscription(
       subscription_current_period_end: currentPeriodEnd,
       subscription_cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
       premium_access_until: activeAccess ? currentPeriodEnd : null,
+      plan_tier: activeAccess ? planConfig.tier : "free",
       plan: activeAccess ? "pro" : "trial",
       updated_at: new Date().toISOString(),
     })
     .eq("id", studioId);
   if (studioError) throw studioError;
 
-  return { status, plan: planId, currentPeriodEnd };
+  return { status, plan: planConfig.billingInterval, plan_tier: planConfig.tier, currentPeriodEnd };
 }
 
 async function repairSubscriptionPeriodIfMissing(
@@ -587,18 +631,48 @@ async function recoverPendingCheckout(
   return true;
 }
 
+async function findReusableOpenCheckout(
+  stripe: Stripe,
+  input: {
+    customerId: string;
+    studioId: string;
+    userId: string;
+    plan: SubscriptionPlanId;
+    priceId: string;
+  },
+) {
+  const sessions = await stripe.checkout.sessions.list({
+    customer: input.customerId,
+    limit: 10,
+  });
+  const now = Math.floor(Date.now() / 1000);
+  return (
+    sessions.data.find(
+      (session) =>
+        session.mode === "subscription" &&
+        session.status === "open" &&
+        Boolean(session.url) &&
+        (session.expires_at ?? 0) > now &&
+        session.metadata?.studio_id === input.studioId &&
+        session.metadata?.user_id === input.userId &&
+        session.metadata?.plan === input.plan &&
+        (!session.metadata?.price_id || session.metadata.price_id === input.priceId),
+    ) ?? null
+  );
+}
+
 export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertStudioAccess(sb, (context as any).userId, data.studioId, {
+    await assertStudioOwnerAccess(sb, (context as any).userId, data.studioId, {
       allowExpiredTrial: true,
     });
     const { data: studio, error } = await sb
       .from("studios")
       .select(
-        "id,email,plan,stripe_customer_id,stripe_subscription_id,subscription_status,subscription_current_period_end,subscription_cancel_at_period_end,premium_access_until,trial_ends_at",
+        "id,email,plan,plan_tier,stripe_customer_id,stripe_subscription_id,subscription_status,subscription_current_period_end,subscription_cancel_at_period_end,premium_access_until,trial_ends_at,trial_used_at",
       )
       .eq("id", data.studioId)
       .maybeSingle();
@@ -612,7 +686,10 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         trialEndsAt: null,
         daysRemaining: null,
         cancelAtPeriodEnd: false,
+        subscriptionActive: false,
         premiumActive: false,
+        effectivePlan: "free" as const,
+        trialActive: false,
         invoices: [],
       };
     }
@@ -620,6 +697,10 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
     if (!studio) throw new Error("studio_not_found");
 
     const userId = (context as any).userId as string;
+    // A product trial is single-use. Once a verified Stripe subscription has
+    // consumed it, terminal cancellation must fall back to Free rather than
+    // resurrecting the original trial window.
+    const productTrialEndsAt = studio.trial_used_at ? null : studio.trial_ends_at;
     const userEmail = await getUserEmail(sb, userId).catch(() => null);
     let subscription = await loadSubscriptionForStudio(sb, studio.id as string, userId);
     if (subscription?.status === "checkout_pending") {
@@ -628,7 +709,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         studioId: studio.id as string,
         customerId: studio.stripe_customer_id as string | null,
         env: stripeEnv(),
-        trialEndsAt: studio.trial_ends_at as string | null,
+        trialEndsAt: productTrialEndsAt as string | null,
       }).catch((error) => {
         console.error("stripe_checkout_recovery_failed", {
           studioId: studio.id,
@@ -670,7 +751,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         subscription,
         env: stripeEnv(),
         reason: "summary",
-        trialEndsAt: studio.trial_ends_at as string | null,
+        trialEndsAt: productTrialEndsAt as string | null,
       }).catch((error) => {
         console.error("stripe_subscription_reconcile_failed", {
           studioId: studio.id,
@@ -679,8 +760,8 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         return subscription;
       })) ?? subscription;
     const studioTrialActiveByDate = Boolean(
-      studio.trial_ends_at &&
-        new Date(studio.trial_ends_at as string).getTime() > Date.now(),
+      productTrialEndsAt &&
+        new Date(productTrialEndsAt as string).getTime() > Date.now(),
     );
     if (
       studioTrialActiveByDate &&
@@ -695,7 +776,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       subscription?.current_period_end ??
       studio.premium_access_until ??
       studio.subscription_current_period_end;
-    const trialEndsAt = studio.trial_ends_at ?? null;
+    const trialEndsAt = productTrialEndsAt ?? null;
     const hasStripePlan = ["monthly", "quarterly", "yearly"].includes(subscription?.plan ?? ""); // quarterly kept for historical data
     const studioTrialActive =
       studio.subscription_status === "trialing" &&
@@ -705,8 +786,10 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
     const paidActive =
       hasPeriodAccess(rawStatus, premiumUntil) ||
       hasPeriodAccess(studio.subscription_status as string, premiumUntil);
-    const trialActive = Boolean(studioTrialActive || subscriptionTrialActive);
+    const detectedTrialActive = Boolean(studioTrialActive || subscriptionTrialActive);
     const access = getStudioSubscriptionAccess({
+      plan_tier: studio.plan_tier as string | null,
+      subscription_plan_tier: subscription?.plan_tier ?? null,
       subscription_status: rawStatus,
       subscription_current_period_end:
         subscription?.current_period_end ?? studio.subscription_current_period_end ?? null,
@@ -714,7 +797,9 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       trial_ends_at: trialEndsAt,
       is_active: true,
     });
-    const premiumActive = paidActive || trialActive || access.premiumActive;
+    const trialActive = access.trialActive && detectedTrialActive;
+    const subscriptionActive = access.subscriptionActive;
+    const premiumActive = access.premiumActive;
     const status =
       rawStatus === "canceled" && paidActive
         ? "active"
@@ -722,7 +807,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
           ? rawStatus
           : trialActive
             ? "trialing"
-            : rawStatus;
+            : access.status;
     const rawNextBillingAt =
       trialActive && !paidActive
         ? studio.trial_ends_at ?? null
@@ -880,25 +965,39 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       }
     }
     const visibleCancelAtPeriodEnd = Boolean(
-      cancelAtPeriodEnd &&
+        cancelAtPeriodEnd &&
         hasStripePlan &&
-        premiumActive &&
+        subscriptionActive &&
         status !== "trialing" &&
         rawStatus !== "checkout_pending",
     );
-    const displayPlan =
-      status === "trialing" && trialActive && !paidActive
-        ? studio.plan ?? "trial"
-        : subscription?.plan ?? studio.plan ?? "trial";
+    const billingInterval =
+      subscription?.plan === "yearly" ? "yearly" : subscription?.plan === "monthly" ? "monthly" : null;
+    const paidTier =
+      subscription?.plan_tier === "pro" || subscription?.plan_tier === "premium"
+        ? subscription.plan_tier
+        : studio.plan_tier === "pro"
+          ? "pro"
+          : "premium";
+    const displayPlan = billingInterval ? `${paidTier}_${billingInterval}` : null;
     return {
       available: true,
       plan: displayPlan,
+      billingInterval,
+      planTier: subscription?.plan_tier ?? studio.plan_tier ?? "free",
+      effectivePlan: access.effectivePlan,
+      trialActive,
+      hasStripeSubscription: Boolean(
+        stripeSubscription &&
+          !["canceled", "incomplete_expired", "unpaid"].includes(stripeSubscription.status),
+      ),
       status,
       nextBillingAt,
       trialEndsAt,
       daysRemaining,
       cancelAtPeriodEnd: visibleCancelAtPeriodEnd,
       pendingChange,
+      subscriptionActive,
       premiumActive,
       invoices: await loadRecentInvoices(
         env,
@@ -913,7 +1012,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId;
-    await assertStudioAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
+    await assertStudioOwnerAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
     await rateLimitOrThrow({
       key: `billing-checkout:${userId}:${data.studioId}`,
       limit: 6,
@@ -921,7 +1020,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
     });
     const studio = await loadStudioForBilling(sb, data.studioId);
     const env = stripeEnv();
-    const plan = getSubscriptionPlans(env)[data.plan ?? defaultPlanId()];
+    const plan = getSubscriptionPlan(env, data.plan ?? defaultPlanId());
     const stripe = createStripeClient(env);
     const userEmail = await getUserEmail(sb, userId).catch(() => null);
     const customerId = await ensureCustomer(sb, stripe, studio);
@@ -973,10 +1072,7 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
     }
     await assertNoDuplicateActiveSubscription(sb, studio.id);
     try {
-      const price = await stripe.prices.retrieve(plan.priceId);
-      if (price.livemode !== (env === "live")) {
-        throw new Error("stripe_price_environment_mismatch");
-      }
+      await validateStripeRecurringPrice(stripe, env, plan);
     } catch (error) {
       logCheckoutError(error, {
         stage: "price_lookup",
@@ -987,10 +1083,22 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       });
       throw error;
     }
+    const reusableCheckout = await findReusableOpenCheckout(stripe, {
+      customerId,
+      studioId: studio.id,
+      userId,
+      plan: plan.id,
+      priceId: plan.priceId,
+    });
+    if (reusableCheckout?.url) {
+      return { url: reusableCheckout.url, sessionId: reusableCheckout.id, reused: true };
+    }
     await reserveCheckoutSession(sb, {
       userId,
       studioId: studio.id,
       planId: plan.id,
+      planTier: plan.tier,
+      billingInterval: plan.billingInterval,
       priceId: plan.priceId,
       customerId,
     });
@@ -999,25 +1107,44 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       studio.subscription_status,
       studio.trial_used_at,
     );
+    const checkoutAttemptId = data.checkoutAttemptId ?? crypto.randomUUID();
     let session: Stripe.Checkout.Session;
     try {
       session = await stripe.checkout.sessions.create({
         mode: "subscription",
         customer: customerId,
+        client_reference_id: studio.id,
         line_items: [{ price: plan.priceId, quantity: 1 }],
         success_url: `${appBaseUrl()}/admin/premium?billing=success&session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${appBaseUrl()}/admin/premium?billing=cancelled`,
-        metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
+        metadata: {
+          studio_id: studio.id,
+          user_id: userId,
+          plan: plan.id,
+          plan_tier: plan.tier,
+          billing_interval: plan.billingInterval,
+          price_id: plan.priceId,
+          checkout_attempt_id: checkoutAttemptId,
+        },
         subscription_data: {
-          metadata: { studio_id: studio.id, user_id: userId, plan: plan.id },
+          metadata: {
+            studio_id: studio.id,
+            user_id: userId,
+            plan: plan.id,
+            plan_tier: plan.tier,
+            billing_interval: plan.billingInterval,
+            price_id: plan.priceId,
+          },
           ...(trialEnd ? { trial_end: trialEnd } : {}),
         },
+        expires_at: Math.floor(Date.now() / 1000) + 60 * 60,
       }, {
         idempotencyKey: checkoutIdempotencyKey({
           studioId: studio.id,
           userId,
           planId: plan.id,
           priceId: plan.priceId,
+          checkoutAttemptId,
         }),
       });
     } catch (error) {
@@ -1031,7 +1158,11 @@ export const createPlatformCheckoutSession = createServerFn({ method: "POST" })
       });
       throw error;
     }
-    return { url: session.url };
+    if (!session.url) {
+      await releaseCheckoutSession(sb, { userId, studioId: studio.id });
+      throw new Error("checkout_url_missing");
+    }
+    return { url: session.url, sessionId: session.id, reused: false };
   });
 
 export const syncPlatformCheckoutReturn = createServerFn({ method: "POST" })
@@ -1040,7 +1171,7 @@ export const syncPlatformCheckoutReturn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId as string;
-    await assertStudioAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
+    await assertStudioOwnerAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
     await rateLimitOrThrow({
       key: `billing-checkout-sync:${userId}:${data.studioId}`,
       limit: 12,
@@ -1076,7 +1207,7 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId;
-    await assertStudioAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
+    await assertStudioOwnerAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
     await rateLimitOrThrow({
       key: `billing-portal:${userId}:${data.studioId}`,
       limit: 8,
@@ -1270,13 +1401,159 @@ export const createPlatformBillingPortalSession = createServerFn({ method: "POST
     return { url: session.url };
   });
 
+export const schedulePlatformSubscriptionCancellation = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => StudioInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = getAdminClient();
+    const userId = (context as any).userId as string;
+    await assertStudioOwnerAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
+    await rateLimitOrThrow({
+      key: `billing-cancel:${userId}:${data.studioId}`,
+      limit: 6,
+      windowMs: 10 * 60 * 1000,
+    });
+
+    const studio = await loadStudioForBilling(sb, data.studioId);
+    const env = stripeEnv();
+    const stripe = createStripeClient(env);
+    const userEmail = await getUserEmail(sb, userId).catch(() => null);
+    const storedSubscription = await loadSubscriptionForStudio(sb, studio.id, userId);
+    const stripeSubscription = await findStripeSubscriptionForStudio(stripe, {
+      customerId: storedSubscription?.stripe_customer_id ?? studio.stripe_customer_id ?? null,
+      studioSubscriptionId:
+        storedSubscription?.stripe_subscription_id ?? studio.stripe_subscription_id ?? null,
+      studioId: studio.id,
+      env,
+      emails: [userEmail, studio.email],
+    });
+
+    if (!stripeSubscription || ["canceled", "incomplete_expired"].includes(stripeSubscription.status)) {
+      return { scheduled: false, alreadyFree: true, effectiveAt: null };
+    }
+
+    let cancellableSubscription = stripeSubscription;
+    const scheduleId = getSubscriptionScheduleId(stripeSubscription);
+    if (scheduleId) {
+      const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+      if (["active", "not_started"].includes(schedule.status)) {
+        await stripe.subscriptionSchedules.release(schedule.id);
+        cancellableSubscription = await stripe.subscriptions.retrieve(stripeSubscription.id);
+      }
+    }
+
+    const updated = cancellableSubscription.cancel_at_period_end
+      ? cancellableSubscription
+      : await stripe.subscriptions.update(cancellableSubscription.id, {
+          cancel_at_period_end: true,
+        });
+
+    await syncCheckoutSubscription(sb, updated, env, {
+      userId,
+      studioId: studio.id,
+      customerId:
+        typeof updated.customer === "string"
+          ? updated.customer
+          : storedSubscription?.stripe_customer_id ?? studio.stripe_customer_id ?? null,
+    });
+
+    const periodEnd = getCurrentPeriodEnd(updated);
+    return {
+      scheduled: true,
+      alreadyFree: false,
+      effectiveAt: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
+    };
+  });
+
+export const reactivatePlatformSubscription = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => StudioInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = getAdminClient();
+    const userId = (context as any).userId as string;
+    await assertStudioOwnerAccess(sb, userId, data.studioId, { allowExpiredTrial: true });
+    await rateLimitOrThrow({
+      key: `billing-reactivate:${userId}:${data.studioId}`,
+      limit: 6,
+      windowMs: 10 * 60 * 1000,
+    });
+
+    const studio = await loadStudioForBilling(sb, data.studioId);
+    const storedSubscription = await loadSubscriptionForStudio(sb, studio.id, userId);
+    const env = stripeEnv();
+    const stripe = createStripeClient(env);
+    const userEmail = await getUserEmail(sb, userId).catch(() => null);
+    let subscription = await findStripeSubscriptionForStudio(stripe, {
+      customerId: storedSubscription?.stripe_customer_id ?? studio.stripe_customer_id ?? null,
+      studioSubscriptionId:
+        storedSubscription?.stripe_subscription_id ?? studio.stripe_subscription_id ?? null,
+      studioId: studio.id,
+      env,
+      emails: [userEmail, studio.email],
+    });
+
+    if (!subscription || ["canceled", "incomplete_expired"].includes(subscription.status)) {
+      return { reactivated: false, requiresCheckout: true, paidAccess: false };
+    }
+    if (!["active", "trialing", "past_due", "unpaid"].includes(subscription.status)) {
+      throw new Error("stripe_subscription_not_reactivatable");
+    }
+
+    let changed = false;
+    const scheduleId = getSubscriptionScheduleId(subscription);
+    if (scheduleId) {
+      const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+      if (["active", "not_started"].includes(schedule.status) && schedule.end_behavior === "cancel") {
+        await stripe.subscriptionSchedules.release(schedule.id, {
+          preserve_cancel_date: false,
+        });
+        subscription = await stripe.subscriptions.retrieve(subscription.id, {
+          expand: ["schedule"],
+        });
+        changed = true;
+      }
+    }
+
+    if (subscription.cancel_at_period_end) {
+      subscription = await stripe.subscriptions.update(subscription.id, {
+        cancel_at_period_end: false,
+      });
+      changed = true;
+    }
+
+    // Persist only the final Stripe object. The UI result never grants access;
+    // entitlement continues to depend on an official active/trialing state.
+    subscription = await stripe.subscriptions.retrieve(subscription.id, {
+      expand: ["schedule"],
+    });
+    await syncCheckoutSubscription(sb, subscription, env, {
+      userId,
+      studioId: studio.id,
+      customerId:
+        typeof subscription.customer === "string"
+          ? subscription.customer
+          : storedSubscription?.stripe_customer_id ?? studio.stripe_customer_id ?? null,
+    });
+
+    const periodEnd = getCurrentPeriodEnd(subscription);
+    const currentPeriodEnd = periodEnd ? new Date(periodEnd * 1000).toISOString() : null;
+    return {
+      reactivated: changed,
+      requiresCheckout: false,
+      paidAccess: hasPeriodAccess(subscription.status, currentPeriodEnd),
+      status: subscription.status,
+      cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+      currentPeriodEnd,
+    };
+  });
+
 export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => PlanChangeInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
     const userId = (context as any).userId as string;
-    await assertStudioAccess(sb, userId, data.studioId);
+    await assertStudioOwnerAccess(sb, userId, data.studioId);
     await rateLimitOrThrow({
       key: `billing-plan-change:${userId}:${data.studioId}`,
       limit: 6,
@@ -1328,12 +1605,16 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
     if (!stripeSubscription) {
       throw new Error("stripe_subscription_missing");
     }
+    if (!["active", "trialing"].includes(stripeSubscription.status)) {
+      throw new Error("stripe_checkout_required");
+    }
 
-    const plan = getSubscriptionPlans(env)[data.plan];
+    const plan = getSubscriptionPlan(env, data.plan);
+    await validateStripeRecurringPrice(stripe, env, plan);
     const itemId = stripeSubscription.items.data[0]?.id;
     if (!itemId) throw new Error("stripe_subscription_item_missing");
     const currentPlanId = getPlanIdFromSubscription(env, stripeSubscription);
-    if (currentPlanId === plan.id) {
+    if (stripeSubscription.items.data[0]?.price.id === plan.priceId) {
       return {
         pending: false,
         plan: currentPlanId,
@@ -1373,7 +1654,9 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
             ...stripeSubscription.metadata,
             studio_id: studio.id,
             user_id: userId,
-            plan: currentPlanId ?? "monthly",
+            plan: currentPlanId ?? "premium_monthly",
+            plan_tier: existingSubscription?.plan_tier ?? "premium",
+            billing_interval: existingSubscription?.plan ?? "monthly",
           },
         },
         {
@@ -1384,6 +1667,8 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
             studio_id: studio.id,
             user_id: userId,
             plan: plan.id,
+            plan_tier: plan.tier,
+            billing_interval: plan.billingInterval,
           },
         },
       ],
@@ -1392,6 +1677,7 @@ export const updatePlatformSubscriptionPlan = createServerFn({ method: "POST" })
         studio_id: studio.id,
         user_id: userId,
         pending_plan: plan.id,
+        pending_plan_tier: plan.tier,
       },
     } as any);
 

@@ -37,6 +37,7 @@ import { Route as ApiCreateCheckoutSessionRouteImport } from './routes/api/creat
 import { Route as AuthenticatedOnboardingRouteImport } from './routes/_authenticated/onboarding'
 import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/admin'
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin.index'
+import { Route as ApiAuthSessionRouteImport } from './routes/api/auth/session'
 import { Route as AuthenticatedAdminWhatsappRouteImport } from './routes/_authenticated/admin.whatsapp'
 import { Route as AuthenticatedAdminSinalRouteImport } from './routes/_authenticated/admin.sinal'
 import { Route as AuthenticatedAdminServicosRouteImport } from './routes/_authenticated/admin.servicos'
@@ -202,6 +203,11 @@ const AuthenticatedAdminIndexRoute = AuthenticatedAdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AuthenticatedAdminRoute,
+} as any)
+const ApiAuthSessionRoute = ApiAuthSessionRouteImport.update({
+  id: '/api/auth/session',
+  path: '/api/auth/session',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedAdminWhatsappRoute =
   AuthenticatedAdminWhatsappRouteImport.update({
@@ -400,6 +406,7 @@ export interface FileRoutesByFullPath {
   '/admin/servicos': typeof AuthenticatedAdminServicosRoute
   '/admin/sinal': typeof AuthenticatedAdminSinalRoute
   '/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
+  '/api/auth/session': typeof ApiAuthSessionRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
   '/api/public/payments/webhook': typeof ApiPublicPaymentsWebhookRoute
   '/api/public/push/receipt': typeof ApiPublicPushReceiptRoute
@@ -452,6 +459,7 @@ export interface FileRoutesByTo {
   '/admin/servicos': typeof AuthenticatedAdminServicosRoute
   '/admin/sinal': typeof AuthenticatedAdminSinalRoute
   '/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
+  '/api/auth/session': typeof ApiAuthSessionRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
   '/api/public/payments/webhook': typeof ApiPublicPaymentsWebhookRoute
   '/api/public/push/receipt': typeof ApiPublicPushReceiptRoute
@@ -508,6 +516,7 @@ export interface FileRoutesById {
   '/_authenticated/admin/servicos': typeof AuthenticatedAdminServicosRoute
   '/_authenticated/admin/sinal': typeof AuthenticatedAdminSinalRoute
   '/_authenticated/admin/whatsapp': typeof AuthenticatedAdminWhatsappRoute
+  '/api/auth/session': typeof ApiAuthSessionRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
   '/api/public/payments/webhook': typeof ApiPublicPaymentsWebhookRoute
   '/api/public/push/receipt': typeof ApiPublicPushReceiptRoute
@@ -564,6 +573,7 @@ export interface FileRouteTypes {
     | '/admin/servicos'
     | '/admin/sinal'
     | '/admin/whatsapp'
+    | '/api/auth/session'
     | '/admin/'
     | '/api/public/payments/webhook'
     | '/api/public/push/receipt'
@@ -616,6 +626,7 @@ export interface FileRouteTypes {
     | '/admin/servicos'
     | '/admin/sinal'
     | '/admin/whatsapp'
+    | '/api/auth/session'
     | '/admin'
     | '/api/public/payments/webhook'
     | '/api/public/push/receipt'
@@ -671,6 +682,7 @@ export interface FileRouteTypes {
     | '/_authenticated/admin/servicos'
     | '/_authenticated/admin/sinal'
     | '/_authenticated/admin/whatsapp'
+    | '/api/auth/session'
     | '/_authenticated/admin/'
     | '/api/public/payments/webhook'
     | '/api/public/push/receipt'
@@ -701,6 +713,7 @@ export interface RootRouteChildren {
   MarcacaoTokenRoute: typeof MarcacaoTokenRoute
   ROrderIdRoute: typeof ROrderIdRoute
   SSlugRoute: typeof SSlugRoute
+  ApiAuthSessionRoute: typeof ApiAuthSessionRoute
   ApiPublicPaymentsWebhookRoute: typeof ApiPublicPaymentsWebhookRoute
   ApiPublicPushReceiptRoute: typeof ApiPublicPushReceiptRoute
   ApiPublicStudioManifestSlugRoute: typeof ApiPublicStudioManifestSlugRoute
@@ -903,6 +916,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/'
       preLoaderRoute: typeof AuthenticatedAdminIndexRouteImport
       parentRoute: typeof AuthenticatedAdminRoute
+    }
+    '/api/auth/session': {
+      id: '/api/auth/session'
+      path: '/api/auth/session'
+      fullPath: '/api/auth/session'
+      preLoaderRoute: typeof ApiAuthSessionRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authenticated/admin/whatsapp': {
       id: '/_authenticated/admin/whatsapp'
@@ -1190,6 +1210,7 @@ const rootRouteChildren: RootRouteChildren = {
   MarcacaoTokenRoute: MarcacaoTokenRoute,
   ROrderIdRoute: ROrderIdRoute,
   SSlugRoute: SSlugRoute,
+  ApiAuthSessionRoute: ApiAuthSessionRoute,
   ApiPublicPaymentsWebhookRoute: ApiPublicPaymentsWebhookRoute,
   ApiPublicPushReceiptRoute: ApiPublicPushReceiptRoute,
   ApiPublicStudioManifestSlugRoute: ApiPublicStudioManifestSlugRoute,

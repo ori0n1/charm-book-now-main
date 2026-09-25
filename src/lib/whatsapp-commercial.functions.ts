@@ -71,6 +71,7 @@ export const getWhatsAppCommercialStatus = createServerFn({ method: "GET" })
     const sb = admin();
     await assertStudioAccessWithOptions(sb, (context as any).userId, data.studioId, {
       allowExpiredTrial: true,
+      entitlement: "whatsapp",
     });
     return loadStudioCommercialStatus(sb, data.studioId);
   });

@@ -153,25 +153,24 @@ test.describe("reschedule startsAt contract", () => {
       readFile("src/routes/_authenticated/admin.agenda.tsx", "utf8"),
       readFile("src/lib/studio-appointment.functions.ts", "utf8"),
       readFile(
-        "supabase/migrations/20260808101500_fix_reschedule_false_slot_conflicts.sql",
+        "supabase/migrations/20260907170000_studio_local_datetime_source.sql",
         "utf8",
       ),
     ]);
 
-    expect(agendaSource).toContain("rescheduleStudioAppointment");
-    expect(agendaSource).toContain("date,");
-    expect(agendaSource).toContain("time,");
+    expect(agendaSource).toContain("resolveStudioLocalDateTime");
+    expect(agendaSource).toContain("moveStudioAppointment");
+    expect(agendaSource).not.toContain('new Date(`${date}T${time}:00`).toISOString()');
     expect(serverSource).toContain("requireSupabaseAuth");
     expect(serverSource).toContain("assertStudioAccess");
-    expect(serverSource).toContain('rpc("reschedule_studio_appointment"');
-    expect(serverSource).toContain("sendAppointmentLifecycleMessage");
-    expect(serverSource).toContain("dispatchPendingStudioPushNotifications");
+    expect(serverSource).toContain('rpc("resolve_studio_local_datetime"');
+    expect(serverSource).toContain('rpc("move_studio_appointment"');
+    expect(serverSource).toContain("dispatchRescheduleNotifications");
     expect(migrationSource).toContain(
-      "v_starts_at := (p_local_date::timestamp + p_local_time) AT TIME ZONE v_tz",
+      "v_instant := (p_local_date::timestamp + p_local_time) AT TIME ZONE v_timezone",
     );
-    expect(migrationSource).toContain(
-      "REVOKE ALL ON FUNCTION public.reschedule_studio_appointment",
-    );
+    expect(migrationSource).toContain("invalid_schedule_datetime_for_timezone");
+    expect(migrationSource).toContain("TO service_role");
   });
 
   test("keeps back-office walk-ins movable without weakening public availability", async () => {

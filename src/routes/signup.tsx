@@ -111,7 +111,7 @@ function SignupPage() {
             <span>ou email</span>
             <span className="h-px flex-1 bg-border" />
           </div>
-          <form onSubmit={onSubmit} className="space-y-4">
+          <form method="post" action="/signup" onSubmit={onSubmit} className="space-y-4">
             <AuthField
               label="Nome"
               name="name"

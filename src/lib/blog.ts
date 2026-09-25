@@ -1,4 +1,5 @@
 import { APP_BRAND, CANONICAL_ORIGIN } from "@/lib/app-brand";
+import { BELLZA_APP_ICON_512 } from "@/lib/brand-assets";
 import type { BlogArticle } from "@/lib/blog-types";
 
 type ArticleModule = { default: BlogArticle };
@@ -101,7 +102,7 @@ export function getArticleSchema(article: NormalizedBlogArticle) {
       name: APP_BRAND.name,
       logo: {
         "@type": "ImageObject",
-        url: `${BLOG_BASE_URL}/bellza-logo.png`,
+        url: `${BLOG_BASE_URL}${BELLZA_APP_ICON_512}`,
       },
     },
     mainEntityOfPage: {

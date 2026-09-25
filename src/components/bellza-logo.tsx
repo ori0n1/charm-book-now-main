@@ -1,35 +1,37 @@
 import { Link } from "@tanstack/react-router";
-import { cn } from "@/lib/utils";
 import { APP_BRAND } from "@/lib/app-brand";
+import {
+  BELLZA_LOGO,
+  BELLZA_LOGO_WHITE,
+  BELLZA_SYMBOL,
+  BELLZA_SYMBOL_WHITE,
+} from "@/lib/brand-assets";
+import { cn } from "@/lib/utils";
 
-const LOGO_SRC = "/bellza-logo.png";
-
-const variantStyles = {
-  navbar: {
-    image: "size-10 shrink-0",
-    wordmark: "text-[1.05rem] font-semibold tracking-[-0.02em]",
-    gap: "gap-3",
+const BRAND_ASSETS = {
+  logo: {
+    light: BELLZA_LOGO,
+    dark: BELLZA_LOGO_WHITE,
   },
-  footer: {
-    image: "size-10 shrink-0",
-    wordmark: "text-[1.05rem] font-semibold tracking-[-0.02em] text-inherit",
-    gap: "gap-3",
-  },
-  mobile: {
-    image: "size-8 shrink-0",
-    wordmark: "text-base font-semibold tracking-tight",
-    gap: "gap-2",
-  },
-  icon: {
-    image: "size-8 shrink-0",
-    wordmark: "sr-only",
-    gap: "gap-0",
+  symbol: {
+    light: BELLZA_SYMBOL,
+    dark: BELLZA_SYMBOL_WHITE,
   },
 } as const;
+
+const variantStyles = {
+  navbar: "h-10 w-40",
+  footer: "h-10 w-40",
+  mobile: "h-8 w-32",
+  icon: "size-8",
+} as const;
+
+export type BellzaLogoTone = "auto" | "light" | "dark";
 
 type BellzaLogoProps = {
   variant?: keyof typeof variantStyles;
   showWordmark?: boolean;
+  tone?: BellzaLogoTone;
   className?: string;
   href?: string | null;
 };
@@ -37,33 +39,56 @@ type BellzaLogoProps = {
 export function BellzaLogo({
   variant = "navbar",
   showWordmark = true,
+  tone = "auto",
   className,
   href = "/",
 }: BellzaLogoProps) {
-  const styles = variantStyles[variant];
-  const content = (
-    <>
-      <img
-        src={LOGO_SRC}
-        alt={APP_BRAND.name}
-        width={40}
-        height={40}
-        className={cn(styles.image, "rounded-full object-cover")}
-        decoding="async"
-      />
-      {showWordmark && <span className={cn(styles.wordmark, "min-w-0 truncate")}>{APP_BRAND.name}</span>}
-    </>
+  const symbolOnly = variant === "icon" || !showWordmark;
+  const assets = symbolOnly ? BRAND_ASSETS.symbol : BRAND_ASSETS.logo;
+  const imageClass = cn(
+    "block h-full w-full object-contain",
+    symbolOnly ? "object-center" : "object-left",
   );
 
-  const rootClass = cn("inline-flex items-center", styles.gap, className);
+  const renderImage = (src: string) => (
+    <img
+      src={src}
+      alt={APP_BRAND.name}
+      width={symbolOnly ? 128 : 720}
+      height={symbolOnly ? 128 : 180}
+      className={imageClass}
+      decoding="async"
+    />
+  );
+
+  const content =
+    tone === "auto" ? (
+      <>
+        <span className="block h-full w-full dark:hidden">{renderImage(assets.light)}</span>
+        <span className="hidden h-full w-full dark:block">{renderImage(assets.dark)}</span>
+      </>
+    ) : (
+      renderImage(assets[tone])
+    );
+
+  const rootClass = cn(
+    "inline-flex shrink-0 items-center overflow-hidden",
+    variantStyles[variant],
+    className,
+  );
+  const label = href ? `${APP_BRAND.name} — início` : APP_BRAND.name;
 
   if (href) {
     return (
-      <Link to={href} className={rootClass} aria-label={`${APP_BRAND.name} — início`}>
+      <Link to={href} className={rootClass} aria-label={label}>
         {content}
       </Link>
     );
   }
 
-  return <div className={rootClass}>{content}</div>;
+  return (
+    <div className={rootClass} role="img" aria-label={label}>
+      {content}
+    </div>
+  );
 }

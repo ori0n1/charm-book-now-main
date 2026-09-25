@@ -1,5 +1,17 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// The app otherwise inherits a public production URL from wrangler.jsonc.
+// End-to-end runs must opt in to the isolated Bellza staging project.
+const stagingRef = "qflwsdrgdkkcxjnbxmis";
+const stagingUrl = `https://${stagingRef}.supabase.co`;
+if (
+  process.env.VITE_SUPABASE_URL?.replace(/\/$/, "") !== stagingUrl ||
+  !process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  (process.env.SUPABASE_URL && process.env.SUPABASE_URL.replace(/\/$/, "") !== stagingUrl)
+) {
+  throw new Error("playwright_requires_explicit_bellza_staging_supabase_config");
+}
+
 /**
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv

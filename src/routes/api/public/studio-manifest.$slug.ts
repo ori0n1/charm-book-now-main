@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { BELLZA_APP_ICON_SVG } from "@/lib/brand-assets";
 
 export const Route = createFileRoute("/api/public/studio-manifest/$slug")({
   server: {
@@ -23,7 +24,9 @@ export const Route = createFileRoute("/api/public/studio-manifest/$slug")({
           const shortName =
             studioName.length > 12 ? studioName.split(/\s+/)[0] : studioName;
           const manifestVersion = encodeURIComponent(data.updated_at ?? new Date().toISOString());
-          const iconSrc = withAssetVersion(data.logo_url ?? "/pwa-icon.svg", manifestVersion);
+          const iconSrc = data.logo_url
+            ? withAssetVersion(data.logo_url, manifestVersion)
+            : BELLZA_APP_ICON_SVG;
           const iconType = iconSrc.split("?")[0].toLowerCase().endsWith(".svg") ? "image/svg+xml" : "image/png";
           // Use the studio brand color if available, fallback to a neutral app color.
           const themeColor = data?.brand_color ?? "#111318";

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
+import { CalendarPlus, Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
 import {
   getTimelineSlotMinutes,
   getProfessionalTimelineBounds,
@@ -7,6 +7,7 @@ import {
   type ProfessionalTimelineAppointment,
   type ProfessionalTimelinePerson,
 } from "./professional-timeline-utils";
+import { formatStudioTime, getZonedDateParts, getZonedMinutes } from "@/lib/studio-time";
 
 const MOBILE_HOUR_HEIGHT = 56;
 const DESKTOP_HOUR_HEIGHT = 82;
@@ -19,6 +20,7 @@ export function ProfessionalTimeline({
   professionals,
   appointments,
   availability,
+  timeZone,
   focusRequestKey = 0,
   onOpenAppointment,
   onOpenBlock,
@@ -30,6 +32,7 @@ export function ProfessionalTimeline({
   professionals: ProfessionalTimelinePerson[];
   appointments: ProfessionalTimelineAppointment[];
   availability?: Array<{ startMinutes: number; endMinutes: number }>;
+  timeZone: string;
   focusRequestKey?: number;
   onOpenAppointment: (appointment: ProfessionalTimelineAppointment) => void;
   onOpenBlock: (block: ProfessionalTimelineAppointment) => void;
@@ -55,8 +58,8 @@ export function ProfessionalTimeline({
     [appointments],
   );
   const bounds = useMemo(
-    () => getProfessionalTimelineBounds(operationalAppointments, availability),
-    [availability, operationalAppointments],
+    () => getProfessionalTimelineBounds(operationalAppointments, availability, timeZone),
+    [availability, operationalAppointments, timeZone],
   );
   const timelineHeight = (bounds.endHour - bounds.startHour) * hourHeight;
   const hours = Array.from(
@@ -89,11 +92,11 @@ export function ProfessionalTimeline({
     for (const [staffId, staffAppointments] of grouped) {
       positioned.set(
         staffId,
-        layoutProfessionalAppointments(staffAppointments, bounds.startHour, hourHeight),
+        layoutProfessionalAppointments(staffAppointments, bounds.startHour, hourHeight, timeZone),
       );
     }
     return positioned;
-  }, [bounds.startHour, hourHeight, operationalAppointments]);
+  }, [bounds.startHour, hourHeight, operationalAppointments, timeZone]);
   const visibleProfessionals = useMemo(
     () =>
       mobile
@@ -105,8 +108,8 @@ export function ProfessionalTimeline({
     visibleProfessionals.length > 0 ? visibleProfessionals : [displayProfessionals[0]];
   const columnWidth = mobile ? "minmax(0, 1fr)" : "minmax(13rem, 1fr)";
   const gridColumns = `${timeGutter}px repeat(${safeVisibleProfessionals.length}, ${columnWidth})`;
-  const today = sameLocalDay(date, now);
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const today = sameStudioDay(date, now, timeZone);
+  const nowMinutes = getZonedMinutes(now, timeZone);
   const currentTop = ((nowMinutes - bounds.startHour * 60) / 60) * hourHeight;
   const showCurrentTime = today && currentTop >= 0 && currentTop <= timelineHeight;
   const dateKey = date.getTime();
@@ -417,13 +420,13 @@ export function ProfessionalTimeline({
                           left: `calc(${left}% + 3px)`,
                           width: `calc(${width}% - 6px)`,
                         }}
-                        aria-label={`Bloqueado, ${formatTime(appointment.startsAt)} a ${formatTime(appointment.endsAt)}, ${appointment.clientName}`}
+                        aria-label={`Bloqueado, ${formatTime(appointment.startsAt, timeZone)} a ${formatTime(appointment.endsAt, timeZone)}, ${appointment.clientName}`}
                         data-timeline-entry="block"
                       >
                         <span className="flex min-w-0 items-center gap-1 font-mono text-[9px] font-black leading-none tabular-nums">
                           <LockKeyhole className="size-2.5 shrink-0" />
                           <span className="truncate">
-                            {formatTime(appointment.startsAt)} – {formatTime(appointment.endsAt)}
+                            {formatTime(appointment.startsAt, timeZone)} – {formatTime(appointment.endsAt, timeZone)}
                           </span>
                         </span>
                         {appointment.height >= 28 && (
@@ -444,19 +447,42 @@ export function ProfessionalTimeline({
                           left: `calc(${left}% + 3px)`,
                           width: `calc(${width}% - 6px)`,
                         }}
-                        aria-label={`${formatTime(appointment.startsAt)}, ${appointment.clientName}, ${appointment.serviceName}`}
+                        aria-label={`${formatTime(appointment.startsAt, timeZone)}, ${appointment.clientName}, ${appointment.serviceName}`}
                         data-timeline-entry="appointment"
                       >
                         <span className="flex min-w-0 items-center justify-between gap-1">
                           <span className="shrink-0 whitespace-nowrap font-mono text-[9px] font-black leading-none tabular-nums md:text-[10px]">
-                            {formatTime(appointment.startsAt)} – {formatTime(appointment.endsAt)}
+                            {formatTime(appointment.startsAt, timeZone)} – {formatTime(appointment.endsAt, timeZone)}
                           </span>
-                          <span
-                            className="shrink-0 text-xs font-black leading-none opacity-60"
-                            aria-hidden="true"
-                          >
-                            ···
-                          </span>
+                          {appointment.attendancePending ? (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.04em] text-amber-900 dark:text-amber-200">
+                              <Clock3 className="size-2.5" />
+                              Confirmar
+                            </span>
+                          ) : appointment.status === "completed" ? (
+                            <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[8px] font-black uppercase text-emerald-900 dark:text-emerald-200">
+                              Compareceu
+                            </span>
+                          ) : appointment.status === "no_show" ? (
+                            <span className="shrink-0 rounded-full bg-rose-500/15 px-1.5 py-0.5 text-[8px] font-black uppercase text-rose-900 dark:text-rose-200">
+                              Faltou
+                            </span>
+                          ) : appointment.manualFit ? (
+                            <span
+                              className="shrink-0 rounded-full border border-violet-500/25 bg-violet-500/12 px-1.5 py-0.5 text-[7px] font-black uppercase tracking-[0.05em] text-violet-800 dark:text-violet-200"
+                              title="Encaixe manual"
+                            >
+                              <span className="md:hidden">E</span>
+                              <span className="hidden md:inline">Encaixe</span>
+                            </span>
+                          ) : (
+                            <span
+                              className="shrink-0 text-xs font-black leading-none opacity-60"
+                              aria-hidden="true"
+                            >
+                              ···
+                            </span>
+                          )}
                         </span>
                         <span className="mt-0.5 block truncate text-[10px] font-black leading-tight md:mt-1 md:text-xs">
                           {appointment.clientName}
@@ -502,7 +528,7 @@ export function ProfessionalTimeline({
                 >
                   <span className="absolute left-0 top-0 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500" />
                   <span className="absolute right-1 top-0 -translate-y-1/2 whitespace-nowrap rounded-full bg-rose-500 px-1.5 py-0.5 font-mono text-[8px] font-black leading-none tabular-nums text-white shadow-sm">
-                    Agora {formatTime(now.toISOString())}
+                    Agora {formatTime(now.toISOString(), timeZone)}
                   </span>
                 </span>
               </div>
@@ -536,6 +562,14 @@ export function ProfessionalTimeline({
           </div>
           <div className="grid gap-1">
             <SlotAction
+              icon={<CalendarPlus className="size-4" />}
+              label="Nova Marcação"
+              onClick={() => {
+                onCreateAtSlot(slotMenu.staffId, slotMenu.minutes, "standard");
+                setSlotMenu(null);
+              }}
+            />
+            <SlotAction
               icon={<Sparkles className="size-4" />}
               label="Criar encaixe"
               onClick={() => {
@@ -565,6 +599,7 @@ export function ProfessionalTimeline({
         <Legend tone="bg-amber-300" label="Pendente" />
         <Legend tone="bg-emerald-300" label="Concluída" />
         <Legend tone="bg-rose-300" label="Cancelada" />
+        <Legend tone="bg-violet-300" label="Encaixe" />
         <span className="ml-auto hidden whitespace-nowrap sm:inline">
           Toque ou mantenha pressionado um horário livre
         </span>
@@ -675,17 +710,12 @@ function statusLabel(status: string) {
   return "Confirmada";
 }
 
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString("pt-PT", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+function formatTime(value: string, timeZone: string) {
+  return formatStudioTime(value, timeZone);
 }
 
-function sameLocalDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+function sameStudioDay(a: Date, b: Date, timeZone: string) {
+  const first = getZonedDateParts(a, timeZone);
+  const second = getZonedDateParts(b, timeZone);
+  return first.year === second.year && first.month === second.month && first.day === second.day;
 }

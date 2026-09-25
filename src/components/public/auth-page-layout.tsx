@@ -25,9 +25,9 @@ export function AuthPageLayout({
   const isLogin = variant === "login";
 
   return (
-    <div className="public-shell public-site-theme public-auth-surface min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme public-landing-theme public-auth-surface min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
-      <LandingHeader />
+      <LandingHeader brandTone="light" />
       <div
         className={cn(
           "relative mx-auto grid w-full max-w-7xl gap-8 px-4 py-8 sm:px-6 sm:py-10 lg:grid-cols-[1fr_0.92fr] lg:items-center lg:py-14",
@@ -47,7 +47,7 @@ export function AuthPageLayout({
               Voltar ao site
             </Link>
             <div className="hidden items-center justify-between lg:mb-5 lg:flex">
-              <BellzaLogo variant="mobile" />
+              <BellzaLogo variant="mobile" tone="light" />
               <span className="rounded-full bg-muted/60 px-3 py-1 text-[11px] font-semibold text-muted-foreground">
                 Painel seguro
               </span>
@@ -65,7 +65,7 @@ export function AuthPageLayout({
           </div>
         </main>
       </div>
-      <LandingFooter />
+      <LandingFooter brandTone="light" />
     </div>
   );
 }
@@ -73,7 +73,7 @@ export function AuthPageLayout({
 function DefaultAside() {
   return (
     <div className="max-w-md space-y-6">
-      <BellzaLogo variant="navbar" />
+      <BellzaLogo variant="navbar" tone="light" />
       <div className="space-y-3">
         <p className="public-section-label">{APP_BRAND.name}</p>
         <h2 className="text-balance text-4xl font-semibold leading-tight tracking-tight">
@@ -90,7 +90,7 @@ function LoginAside() {
   return (
     <div className="relative max-w-xl">
       <div className="public-auth-preview">
-        <BellzaLogo variant="navbar" />
+        <BellzaLogo variant="navbar" tone="light" />
         <div className="mt-8 max-w-md space-y-3">
           <p className="public-section-label">Painel Bellza</p>
           <h2 className="text-balance text-4xl font-semibold leading-tight tracking-tight">

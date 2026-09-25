@@ -1,14 +1,16 @@
 ﻿import { createFileRoute, Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
+  BadgePercent,
   BookOpenCheck,
   Calendar,
   CalendarPlus,
   Check,
+  CircleDollarSign,
   Clock,
   CreditCard,
   Gift,
@@ -27,7 +29,8 @@ import {
   Wallet,
   X,
 } from "lucide-react";
-import { AdminNotifications } from "@/components/admin-notifications";
+import { BellzaLogo } from "@/components/bellza-logo";
+import { BrandLoadingState } from "@/components/brand-loading-state";
 import { PwaInstallGuide } from "@/components/pwa-install-guide";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { supabase } from "@/integrations/supabase/client";
@@ -35,14 +38,32 @@ import { useCurrentStudio, type AppRole } from "@/hooks/use-current-studio";
 import { APP_BRAND } from "@/lib/app-brand";
 import { getSegmentConfig } from "@/lib/segments";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
-import { getSettledSession } from "@/lib/auth-landing";
 import { revokeCurrentDevicePushSubscription } from "@/lib/push-subscriptions.functions";
 import { getCurrentPushSubscription, unsubscribeCurrentPushSubscription } from "@/lib/pwa-push";
+import {
+  ADMIN_REFERENCE_GC_MS,
+  ADMIN_REFERENCE_STALE_MS,
+  platformSubscriptionSummaryQueryKey,
+} from "@/lib/admin-query-cache";
+import {
+  PLAN_DEFINITIONS,
+  normalizePlanTier,
+  planHasFeature,
+  requiredFeatureForAdminPath,
+  type PlanFeature,
+  type PlanTier,
+} from "@/lib/plan-entitlements";
 
 export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: APP_BRAND.name }] }),
   component: AdminLayout,
 });
+
+const LazyAdminNotifications = lazy(() =>
+  import("@/components/admin-notifications").then((module) => ({
+    default: module.AdminNotifications,
+  })),
+);
 
 const NAV = [
   {
@@ -125,6 +146,22 @@ const NAV = [
     group: "Gestão",
   },
   {
+    to: "/admin/sinal",
+    label: "Sinal online",
+    mobileLabel: "Sinal",
+    icon: CircleDollarSign,
+    exact: false,
+    group: "Gestão",
+  },
+  {
+    to: "/admin/comissoes",
+    label: "Comissões",
+    mobileLabel: "Comissões",
+    icon: BadgePercent,
+    exact: false,
+    group: "Gestão",
+  },
+  {
     to: "/admin/whatsapp",
     label: "Comunicação",
     mobileLabel: "Avisos",
@@ -150,8 +187,8 @@ const NAV = [
   },
   {
     to: "/admin/marca",
-    label: "Marca",
-    mobileLabel: "Marca",
+    label: "Minha Página",
+    mobileLabel: "Página",
     icon: Palette,
     exact: false,
     group: "Configuração",
@@ -244,6 +281,9 @@ type BillingSummary = {
   daysRemaining?: number | null;
   cancelAtPeriodEnd?: boolean;
   premiumActive: boolean;
+  subscriptionActive?: boolean;
+  effectivePlan?: PlanTier;
+  trialActive?: boolean;
 };
 
 function AdminLayout() {
@@ -263,23 +303,24 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
   const [sidebarStateReady, setSidebarStateReady] = useState(false);
-  const [sessionReady, setSessionReady] = useState(false);
+  const [notificationsReady, setNotificationsReady] = useState(false);
   const [studioResolveTimedOut, setStudioResolveTimedOut] = useState(false);
   const studioRecoveryAttempted = useRef(false);
   const accessMode =
     studio?.role === "desk_staff" ? "desk" : studio?.role === "staff" ? "limited" : "full";
   const billingQuery = useQuery({
-    queryKey: ["platform-subscription-summary", studio?.id],
-    enabled: sessionReady && !!studio,
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
+    queryKey: platformSubscriptionSummaryQueryKey(studio?.id),
+    enabled: !!studio,
+    staleTime: ADMIN_REFERENCE_STALE_MS,
+    gcTime: ADMIN_REFERENCE_GC_MS,
+    refetchOnMount: false,
+    refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async () => (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
-  const premiumLocked = Boolean(billingQuery.data && !billingQuery.data.premiumActive);
-  const premiumActive = Boolean(accessMode === "full" && billingQuery.data?.premiumActive);
+  const effectivePlan = normalizePlanTier(billingQuery.data?.effectivePlan ?? studio?.plan_tier);
+  const premiumLocked = false;
+  const premiumActive = Boolean(accessMode === "full" && effectivePlan === "premium");
   const premiumCancelScheduled = Boolean(
     premiumActive &&
     billingQuery.data &&
@@ -305,34 +346,21 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     billingQuery.data &&
     isPaidSubscriptionBilling(billingQuery.data) &&
     billingQuery.data.cancelAtPeriodEnd &&
-    billingQuery.data.premiumActive &&
+    billingQuery.data.subscriptionActive &&
     !isPremiumPage,
   );
 
   useEffect(() => {
-    let cancelled = false;
-    void getSettledSession().then((session) => {
-      if (!cancelled) {
-        setSessionReady(Boolean(session?.access_token));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionReady) return;
-    if (!loading && studios.length === 0) {
+    if (!loading && !error && studios.length === 0) {
       navigate({ to: "/onboarding", replace: true });
     }
-  }, [loading, sessionReady, studios.length, navigate]);
+  }, [error, loading, studios.length, navigate]);
 
   useEffect(() => {
-    if (!sessionReady || loading || studio || studioRecoveryAttempted.current) return;
+    if (loading || error || studio || studioRecoveryAttempted.current) return;
     studioRecoveryAttempted.current = true;
     void refetch();
-  }, [loading, refetch, sessionReady, studio]);
+  }, [error, loading, refetch, studio]);
 
   useEffect(() => {
     if (loading || studio) {
@@ -358,14 +386,18 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   }, [accessMode, loading, navigate, pathname, premiumLocked]);
 
   useEffect(() => {
-    if (loading || billingQuery.isLoading || !premiumLocked || isPremiumPage) return;
-    navigate({ to: "/admin/premium", replace: true });
-  }, [billingQuery.isLoading, isPremiumPage, loading, navigate, premiumLocked]);
-
-  useEffect(() => {
     setDesktopSidebarCollapsed(localStorage.getItem("admin-sidebar-collapsed") === "true");
     setSidebarStateReady(true);
   }, []);
+
+  useEffect(() => {
+    if (!studio?.id) {
+      setNotificationsReady(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setNotificationsReady(true), 700);
+    return () => window.clearTimeout(timer);
+  }, [studio?.id]);
 
   useEffect(() => {
     if (sidebarStateReady) {
@@ -391,15 +423,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-6">
-        <p className="text-sm text-muted-foreground">A carregar o painel...</p>
-      </div>
-    );
-  }
-
-  if (studio && (billingQuery.isLoading || billingQuery.isFetching)) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background px-6">
-        <p className="text-sm text-muted-foreground">A confirmar dados atuais...</p>
+        <BrandLoadingState label="A carregar o painel..." />
       </div>
     );
   }
@@ -437,7 +461,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-6">
         {!studioResolveTimedOut ? (
-          <p className="text-sm text-muted-foreground">A carregar o painel...</p>
+          <BrandLoadingState label="A carregar o painel..." />
         ) : (
           <div className="w-full max-w-sm rounded-3xl border border-border bg-card p-5 text-center shadow-sm">
             <p className="text-sm font-semibold">Não foi possível abrir a configuração.</p>
@@ -483,9 +507,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
       <div className="min-h-screen overflow-x-hidden bg-background">
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border/70 bg-background/88 px-4 py-3 backdrop-blur-2xl md:px-8 md:py-4">
           <div className="min-w-0">
-            <p className="text-[9px] uppercase tracking-[0.25em] text-muted-foreground">
-              {APP_BRAND.shortName}
-            </p>
+            <BellzaLogo variant="mobile" href={null} />
             <h1 className="truncate text-base font-light tracking-tight">{studio.name}</h1>
           </div>
           <div className="flex items-center gap-2">
@@ -509,7 +531,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const isActive = (to: string, exact: boolean) =>
     exact ? pathname === to : pathname.startsWith(to);
   const segment = getSegmentConfig(studio.business_segment);
-  const allowedNav =
+  const allowedNavByRole =
     accessMode === "desk"
       ? NAV.filter((item) => item.to === "/admin/balcao")
       : accessMode === "limited"
@@ -523,7 +545,33 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
             ].includes(item.to),
           )
         : NAV.filter((item) => !("saasOnly" in item) || studio.role === "saas_owner");
-  const roleNav = allowedNav;
+  const freeNavigation = new Set([
+    "/admin",
+    "/admin/agenda",
+    "/admin/clientes",
+    "/admin/servicos",
+    "/admin/marca",
+    "/admin/premium",
+  ]);
+  const roleNav = allowedNavByRole.filter((item) => {
+    if (studio.role === "saas_owner" && item.to === "/admin/central") return true;
+    if (accessMode !== "full") return true;
+    if (effectivePlan === "free") return freeNavigation.has(item.to);
+    const requiredFeature = requiredFeatureForAdminPath(item.to);
+    return !requiredFeature || planHasFeature(effectivePlan, requiredFeature);
+  });
+  const requiredRouteFeature = requiredFeatureForAdminPath(pathname);
+  const routeEntitlementPending = Boolean(
+    accessMode === "full" &&
+      requiredRouteFeature &&
+      !billingQuery.data &&
+      billingQuery.isLoading,
+  );
+  const routePlanBlocked = Boolean(
+    accessMode === "full" &&
+      requiredRouteFeature &&
+      !planHasFeature(effectivePlan, requiredRouteFeature),
+  );
 
   const navGroups = groupNavItems(roleNav);
   const primaryMobileNav = roleNav.filter((item) => "primary" in item && item.primary).slice(0, 4);
@@ -586,9 +634,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
             <div className="min-w-0">
               {!desktopSidebarCollapsed && (
                 <>
-                  <p className="text-[10px] uppercase tracking-[0.28em] text-muted-foreground/85">
-                    {APP_BRAND.name}
-                  </p>
+                  <BellzaLogo variant="mobile" href={null} />
                   <div className="mt-1.5 flex min-w-0 items-center gap-2">
                     <h1 className="truncate text-lg font-light tracking-tight">{studio.name}</h1>
                     {premiumIndicatorVisible && (
@@ -602,11 +648,8 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
                 </>
               )}
               {desktopSidebarCollapsed && (
-                <span
-                  className="grid size-9 place-items-center rounded-full bg-foreground text-sm font-black text-background shadow-sm"
-                  title={studio.name}
-                >
-                  {studio.name.slice(0, 1).toUpperCase()}
+                <span title={`${APP_BRAND.name} — ${studio.name}`}>
+                  <BellzaLogo variant="icon" showWordmark={false} className="size-9" href={null} />
                 </span>
               )}
             </div>
@@ -710,24 +753,43 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           isAgendaPage ? "h-[var(--admin-mobile-header-height)] py-1" : "py-3"
         } ${desktopSidebarCollapsed ? "md:ml-20" : "md:ml-60"}`}
       >
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <h1 className="truncate text-[17px] font-light tracking-tight md:text-xl">
-              {ownerGreeting.title}
-            </h1>
-            {premiumIndicatorVisible && (
-              <PremiumHeaderBadge tone={premiumIndicatorTone} tooltip={premiumTooltip} />
-            )}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <BellzaLogo
+            variant="icon"
+            showWordmark={false}
+            className="size-8 md:hidden"
+            href={null}
+          />
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-[17px] font-light tracking-tight md:text-xl">
+                {ownerGreeting.title}
+              </h1>
+              {premiumIndicatorVisible && (
+                <PremiumHeaderBadge tone={premiumIndicatorTone} tooltip={premiumTooltip} />
+              )}
+            </div>
+            <p
+              className={`mt-0.5 truncate text-[11px] font-medium text-muted-foreground md:text-xs ${isAgendaPage ? "hidden md:block" : ""}`}
+            >
+              {ownerGreeting.subtitle}
+            </p>
           </div>
-          <p
-            className={`mt-0.5 truncate text-[11px] font-medium text-muted-foreground md:text-xs ${isAgendaPage ? "hidden md:block" : ""}`}
-          >
-            {ownerGreeting.subtitle}
-          </p>
         </div>
         <div className="flex items-center gap-2">
-          {accessMode === "full" && (
-            <AdminNotifications studioId={studio.id} studioName={studio.name} />
+          {accessMode === "full" && planHasFeature(effectivePlan, "notifications") && (
+            notificationsReady ? (
+              <Suspense fallback={<span className="block size-10" aria-hidden="true" />}>
+                <LazyAdminNotifications
+                  key={studio.id}
+                  studioId={studio.id}
+                  studioName={studio.name}
+                  timeZone={studio.timezone}
+                />
+              </Suspense>
+            ) : (
+              <span className="block size-10" aria-hidden="true" />
+            )
           )}
           <ThemeToggle className="h-9 w-9" />
           <button
@@ -755,7 +817,13 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           {showCancellationBanner && (
             <CancellationScheduledBanner endDate={billingQuery.data!.nextBillingAt} />
           )}
-          <Outlet />
+          {routeEntitlementPending ? (
+            <BrandLoadingState label="A confirmar o acesso..." />
+          ) : routePlanBlocked && requiredRouteFeature ? (
+            <PlanUpgradeGate feature={requiredRouteFeature} currentPlan={effectivePlan} />
+          ) : (
+            <Outlet />
+          )}
         </div>
       </main>
 
@@ -914,6 +982,50 @@ function groupNavItems(items: Array<(typeof NAV)[number]>) {
       items: items.filter((item) => item.group === label),
     }))
     .filter((group) => group.items.length > 0);
+}
+
+const UPGRADE_BENEFITS: Partial<Record<PlanFeature, string>> = {
+  online_payments: "Receba sinal antes da marcação e reduza faltas.",
+  finance_basic: "Acompanhe pagamentos, caixa e comissões num único lugar.",
+  finance_advanced: "Tenha levantamentos e controlo financeiro avançado.",
+  team_management: "Adicione profissionais e organize as agendas da equipa.",
+  notifications: "Envie avisos automáticos e acompanhe as notificações.",
+  whatsapp: "Automatize confirmações e lembretes pelo WhatsApp.",
+  loyalty: "Fidelize clientes com recompensas, promoções e campanhas.",
+};
+
+function PlanUpgradeGate({
+  feature,
+  currentPlan,
+}: {
+  feature: PlanFeature;
+  currentPlan: PlanTier;
+}) {
+  const requiredPlan = ["whatsapp", "loyalty", "promotions", "finance_advanced", "team_advanced", "future_integrations"].includes(feature)
+    ? "Premium"
+    : "Pro";
+  return (
+    <section className="mx-auto mt-8 w-full max-w-xl min-w-0 rounded-[1.5rem] border border-border bg-card p-5 text-center shadow-sm sm:p-7">
+      <span className="mx-auto grid size-11 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-700 dark:text-emerald-300">
+        <Sparkles className="size-5" />
+      </span>
+      <p className="mt-4 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
+        Plano {PLAN_DEFINITIONS[currentPlan].name}
+      </p>
+      <h2 className="mt-2 break-words text-2xl font-semibold tracking-tight">
+        {UPGRADE_BENEFITS[feature] ?? "Desbloqueie esta funcionalidade na Bellza."}
+      </h2>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+        Disponível no {requiredPlan}. Os seus dados atuais permanecem guardados e nada será apagado ao mudar de plano.
+      </p>
+      <Link
+        to="/admin/premium"
+        className="mt-5 inline-flex min-h-11 max-w-full items-center justify-center gap-2 rounded-xl bg-foreground px-5 text-center text-xs font-bold uppercase tracking-wide text-background"
+      >
+        Ver planos <ArrowRight className="size-4 shrink-0" />
+      </Link>
+    </section>
+  );
 }
 
 function AdminQuickTour({
@@ -1311,7 +1423,15 @@ function CancellationScheduledBanner({ endDate }: { endDate: string | null }) {
 }
 
 function isStripePlan(plan?: string | null) {
-  return plan === "monthly" || plan === "quarterly" || plan === "yearly";
+  return [
+    "pro_monthly",
+    "pro_yearly",
+    "premium_monthly",
+    "premium_yearly",
+    "monthly",
+    "quarterly",
+    "yearly",
+  ].includes(plan ?? "");
 }
 
 function isPaidSubscriptionBilling(billing: BillingSummary) {

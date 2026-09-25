@@ -4,6 +4,8 @@ const BUCKET = "studio-assets";
 const MAX_IMAGE_EDGE = 2200;
 const IMAGE_QUALITY = 0.86;
 const DIRECT_UPLOAD_LIMIT = 1_200_000;
+const MAX_VIDEO_SIZE = 25 * 1024 * 1024;
+const ALLOWED_VIDEO_TYPES = new Set(["video/mp4", "video/webm"]);
 
 type UploadStage = "preparing" | "uploading" | "done";
 
@@ -42,7 +44,15 @@ function withAssetVersion(url: string) {
 }
 
 async function prepareUploadFile(file: File, options: UploadOptions) {
-  if (file.type.startsWith("video/")) return file;
+  if (file.type.startsWith("video/")) {
+    if (!ALLOWED_VIDEO_TYPES.has(file.type)) {
+      throw new Error("Escolha um vídeo MP4 ou WEBM válido.");
+    }
+    if (file.size > MAX_VIDEO_SIZE) {
+      throw new Error("O vídeo não pode exceder 25 MB.");
+    }
+    return file;
+  }
   if (!isImageLike(file)) {
     throw new Error("Escolha um ficheiro de imagem válido.");
   }

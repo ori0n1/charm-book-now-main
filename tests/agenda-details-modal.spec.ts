@@ -2,15 +2,20 @@ import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 
 const agendaSource = readFile("src/routes/_authenticated/admin.agenda.tsx", "utf8");
+const agendaAccessSource = readFile("src/lib/agenda-access.functions.ts", "utf8");
 const drawerSource = readFile(
   "src/components/agenda/timeline-appointment-drawer.tsx",
   "utf8",
 );
 
 test("appointment details use the existing client profile avatar with a shared fallback", async () => {
-  const [agenda, drawer] = await Promise.all([agendaSource, drawerSource]);
+  const [agenda, agendaAccess, drawer] = await Promise.all([
+    agendaSource,
+    agendaAccessSource,
+    drawerSource,
+  ]);
 
-  expect(agenda).toContain("clients(name,phone,avatar_url,date_of_birth)");
+  expect(agendaAccess).toContain("clients(name,phone,avatar_url,date_of_birth)");
   expect(agenda).toContain("clientAvatarUrl: timelineDetailAppt.clients?.avatar_url");
   expect(drawer).toContain('import { ClientAvatar } from "@/components/client-avatar"');
   expect(drawer).toContain("avatarUrl={details.clientAvatarUrl}");

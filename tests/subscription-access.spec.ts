@@ -13,27 +13,33 @@ test.describe("trial and subscription access", () => {
     );
 
     expect(access.premiumActive).toBe(true);
+    expect(access.effectivePlan).toBe("premium");
+    expect(access.trialActive).toBe(true);
+    expect(access.subscriptionActive).toBe(false);
     expect(access.locked).toBe(false);
     expect(access.status).toBe("trialing");
   });
 
-  test("blocks an expired trial without active subscription", () => {
+  test("falls back to Free after the Premium trial without losing studio access", () => {
     const access = getStudioSubscriptionAccess(
       { subscription_status: "trialing", trial_ends_at: past, is_active: true },
       now,
     );
 
     expect(access.premiumActive).toBe(false);
-    expect(access.locked).toBe(true);
+    expect(access.effectivePlan).toBe("free");
+    expect(access.subscriptionActive).toBe(false);
+    expect(access.locked).toBe(false);
     expect(access.status).toBe("expired_trial");
     expect(access.redirectTo).toBe("/admin/premium");
     expect(access.message).toContain("teste gratuito terminou");
   });
 
-  test("allows an active subscription even after trial expiration", () => {
+  test("allows an active Premium subscription even after trial expiration", () => {
     const access = getStudioSubscriptionAccess(
       {
         subscription_status: "active",
+        plan_tier: "premium",
         subscription_current_period_end: future,
         trial_ends_at: past,
         is_active: true,
@@ -42,11 +48,12 @@ test.describe("trial and subscription access", () => {
     );
 
     expect(access.premiumActive).toBe(true);
+    expect(access.effectivePlan).toBe("premium");
     expect(access.locked).toBe(false);
     expect(access.status).toBe("active");
   });
 
-  test("blocks a cancelled subscription after trial expiration", () => {
+  test("falls back to Free when a cancelled subscription period has ended", () => {
     const access = getStudioSubscriptionAccess(
       {
         subscription_status: "canceled",
@@ -58,18 +65,38 @@ test.describe("trial and subscription access", () => {
     );
 
     expect(access.premiumActive).toBe(false);
-    expect(access.locked).toBe(true);
+    expect(access.effectivePlan).toBe("free");
+    expect(access.locked).toBe(false);
     expect(access.status).toBe("expired_trial");
   });
 
-  test("direct protected URL gets the renewal destination when access is locked", () => {
+  test("payment failure keeps the studio available on Free", () => {
     const access = getStudioSubscriptionAccess(
       { subscription_status: "past_due", trial_ends_at: past, is_active: true },
       now,
     );
 
-    expect(access.locked).toBe(true);
+    expect(access.locked).toBe(false);
+    expect(access.effectivePlan).toBe("free");
     expect(access.redirectTo).toBe("/admin/premium");
+  });
+
+  test("keeps Pro entitlements until a cancelled paid period ends", () => {
+    const access = getStudioSubscriptionAccess(
+      {
+        subscription_status: "canceled",
+        subscription_current_period_end: future,
+        plan_tier: "pro",
+        trial_ends_at: past,
+        is_active: true,
+      },
+      now,
+    );
+
+    expect(access.subscriptionActive).toBe(true);
+    expect(access.premiumActive).toBe(false);
+    expect(access.effectivePlan).toBe("pro");
+    expect(access.locked).toBe(false);
   });
 
   test("new trial snapshots are allowed for the full 14-day window", () => {

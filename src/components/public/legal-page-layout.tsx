@@ -12,9 +12,9 @@ type LegalPageLayoutProps = {
 
 export function LegalPageLayout({ title, updatedAt, description, children }: LegalPageLayoutProps) {
   return (
-    <div className="public-shell public-site-theme min-h-screen overflow-x-hidden">
+    <div className="public-shell public-site-theme public-landing-theme min-h-screen overflow-x-hidden">
       <div className="public-grid-bg pointer-events-none fixed inset-0 opacity-35" aria-hidden="true" />
-      <LandingHeader />
+      <LandingHeader brandTone="light" />
 
       <main className="relative mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
         <header className="public-card p-6 sm:p-8">
@@ -26,7 +26,7 @@ export function LegalPageLayout({ title, updatedAt, description, children }: Leg
         <div className="public-card public-prose mt-5 p-6 sm:p-8">{children}</div>
       </main>
 
-      <LandingFooter />
+      <LandingFooter brandTone="light" />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownLeft,
@@ -20,6 +21,7 @@ import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import { PremiumTimeSelect } from "@/components/ui/premium-time-select";
+import { searchProtectedStudioClients } from "@/lib/agenda-access.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/balcao")({
   head: () => ({ meta: [{ title: "Balcão - Painel" }] }),
@@ -109,6 +111,7 @@ const selectItemClass =
 
 function BalcaoPage() {
   const { studio: currentStudio } = useCurrentStudio();
+  const searchStudioClients = useServerFn(searchProtectedStudioClients);
   const [studio, setStudio] = useState<StudioRow | null>(null);
   const [serviceOptions, setServiceOptions] = useState<ServiceOption[]>([]);
   const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
@@ -158,6 +161,29 @@ function BalcaoPage() {
     void loadAvailableTimes(studio.slug, walkStaffId, walkServiceId, walkDateTime.slice(0, 10));
   }, [studio?.slug, walkStaffId, walkServiceId, walkDateTime]);
 
+  useEffect(() => {
+    const query = clientSearch.trim();
+    if (!studio?.id || selectedClientId || query.length < 2) {
+      if (!selectedClientId) setClients([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void searchStudioClients({ data: { studioId: studio.id, query } })
+        .then((rows) => {
+          if (!cancelled) setClients(rows as ClientOption[]);
+        })
+        .catch((error) => {
+          console.error("[balcao] protected client search failed", error);
+          if (!cancelled) setClients([]);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [clientSearch, searchStudioClients, selectedClientId, studio?.id]);
+
   async function boot() {
     setLoading(true);
     const studioId = currentStudio?.id;
@@ -167,7 +193,7 @@ function BalcaoPage() {
     }
     const ownStaffId = currentStudio.role === "staff" ? currentStudio.staff_id : null;
 
-    const [servicesResult, staffResult, clientsResult] = await Promise.all([
+    const [servicesResult, staffResult] = await Promise.all([
       supabase
         .from("services")
         .select("id,name,price,duration_min")
@@ -181,15 +207,6 @@ function BalcaoPage() {
         .eq("is_active", true)
         .match(ownStaffId ? { id: ownStaffId } : {})
         .order("sort_order"),
-      ownStaffId
-        ? (supabase as any)
-            .from("appointments")
-            .select("clients(id,name,phone)")
-            .eq("studio_id", studioId)
-            .eq("staff_id", ownStaffId)
-            .not("client_id", "is", null)
-            .order("starts_at", { ascending: false })
-        : supabase.from("clients").select("id,name,phone").eq("studio_id", studioId).order("name"),
     ]);
 
     const services = (servicesResult.data ?? []) as ServiceOption[];
@@ -197,7 +214,7 @@ function BalcaoPage() {
     setStudio({ id: studioId, slug: currentStudio.slug });
     setServiceOptions(services);
     setStaffOptions(staff);
-    setClients(normalizeBalcaoClients(clientsResult.data ?? [], Boolean(ownStaffId)));
+    setClients([]);
     if (services[0]) {
       setWalkServiceId(services[0].id);
       setWalkAmount(String(services[0].price));
@@ -1317,17 +1334,6 @@ function ClientPill({ client, onClear }: { client: ClientOption; onClear: () => 
       </button>
     </div>
   );
-}
-
-function normalizeBalcaoClients(rows: unknown[], nested: boolean): ClientOption[] {
-  if (!nested) return rows as ClientOption[];
-  const map = new Map<string, ClientOption>();
-  for (const row of rows) {
-    const client = (row as { clients?: ClientOption | ClientOption[] | null }).clients;
-    const value = Array.isArray(client) ? client[0] : client;
-    if (value?.id) map.set(value.id, value);
-  }
-  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function DateTimePicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {

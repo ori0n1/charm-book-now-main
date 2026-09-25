@@ -15,7 +15,8 @@ test("mantem os seletores da marcacao acima do modal e dentro do viewport", asyn
   expect(agendaSource).toContain('fixed inset-0 z-[100]');
   expect(agendaSource).toContain('const modalSelectContentCls =');
   expect(agendaSource).toContain('"z-[120] rounded-2xl');
-  expect(agendaSource.match(/<SelectContent className=\{modalSelectContentCls\}>/g)).toHaveLength(4);
+  const safelyLayeredSelectContents = agendaSource.match(/<SelectContent className=\{modalSelectContentCls\}>/g) ?? [];
+  expect(safelyLayeredSelectContents).toHaveLength(5);
 
   expect(selectSource).toContain("<SelectPrimitive.Portal>");
   expect(selectSource).toContain('position = "popper"');

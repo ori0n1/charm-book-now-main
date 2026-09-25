@@ -5,10 +5,11 @@ import { GoogleAuthButton } from "@/components/google-auth-button";
 import { AuthField, AuthPrimaryButton } from "@/components/public/auth-field";
 import { AuthPageLayout } from "@/components/public/auth-page-layout";
 import { useAuthRedirectError } from "@/hooks/use-auth-redirect-error";
-import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/integrations/supabase/client";
 import { APP_BRAND } from "@/lib/app-brand";
 import { syncCurrentSessionAccountType } from "@/lib/auth-context";
 import { resolveAuthLanding, settleSessionFromCurrentUrl } from "@/lib/auth-landing";
+import { sanitizePrivateReturnTo } from "@/lib/auth-return";
 import { resolveTeamLoginIdentifier } from "@/lib/access.functions";
 import { toast } from "sonner";
 
@@ -17,14 +18,20 @@ export const Route = createFileRoute("/login")({
     meta: [
       { title: `Entrar - ${APP_BRAND.name}` },
       { name: "robots", content: "noindex,nofollow,noarchive" },
+      { name: "referrer", content: "no-referrer" },
       { name: "theme-color", content: "#FAF8F4" },
     ],
+  }),
+  validateSearch: (search: Record<string, unknown>): { error?: string; returnTo?: string } => ({
+    error: typeof search.error === "string" ? search.error : undefined,
+    returnTo: sanitizePrivateReturnTo(search.returnTo),
   }),
   component: LoginPage,
 });
 
 function LoginPage() {
   const navigate = useNavigate();
+  const { returnTo } = Route.useSearch();
   useAuthRedirectError();
   const resolveLoginIdentifier = useServerFn(resolveTeamLoginIdentifier);
   const [email, setEmail] = useState("");
@@ -32,7 +39,6 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [needsConfirm, setNeedsConfirm] = useState(false);
   const [resending, setResending] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,19 +47,17 @@ function LoginPage() {
       try {
         const session = await settleSessionFromCurrentUrl("/login");
         if (cancelled) return;
-        if (!session?.user?.id) {
-          setCheckingSession(false);
-          return;
-        }
+        if (!session?.user?.id) return;
 
         const landing = await resolveAuthLanding(session.user.id);
         if (landing !== "/onboarding") {
           await syncCurrentSessionAccountType("studio");
         }
-        if (!cancelled) navigate({ to: landing as never, replace: true });
+        const destination = returnTo && landing !== "/onboarding" ? returnTo : landing;
+        if (!cancelled) navigate({ to: destination as never, replace: true });
       } catch {
-        // Let the user submit the login form if an existing session cannot be resolved.
-        if (!cancelled) setCheckingSession(false);
+        // The POST fallback keeps credentials out of the URL, so a failed background
+        // session check must never prevent the user from submitting the login form.
       }
     }
 
@@ -61,7 +65,7 @@ function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [navigate]);
+  }, [navigate, returnTo]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -69,10 +73,8 @@ function LoginPage() {
     setLoading(true);
     setNeedsConfirm(false);
     const loginId = await normalizeLoginIdentifier(email, resolveLoginIdentifier);
-    recordAuthDebugEvent({ kind: "password_login_start", message: loginId.includes("@") ? "email" : "identifier" });
     const { data, error } = await supabase.auth.signInWithPassword({ email: loginId, password });
     if (error) {
-      recordAuthDebugEvent({ kind: "password_login_error", message: error.message });
       setLoading(false);
       const msg = error.message.toLowerCase();
       if (msg.includes("not confirmed") || msg.includes("email not confirmed")) {
@@ -84,12 +86,12 @@ function LoginPage() {
       return;
     }
     if (data.session) {
-      recordAuthDebugEvent({ kind: "password_login_success" });
       const landing = await resolveAuthLanding(data.user.id);
       if (landing !== "/onboarding") {
         await syncCurrentSessionAccountType("studio");
       }
-      navigate({ to: landing as never });
+      const destination = returnTo && landing !== "/onboarding" ? returnTo : landing;
+      navigate({ to: destination as never });
     } else {
       setLoading(false);
       toast.error("Não foi possível iniciar sessão. Tente novamente.");
@@ -139,12 +141,7 @@ function LoginPage() {
         <span>ou email</span>
         <span className="h-px flex-1 bg-border" />
       </div>
-      {checkingSession && (
-        <div className="mb-2.5 rounded-xl border border-border/70 bg-muted/30 px-3.5 py-2.5 text-xs text-muted-foreground">
-          A verificar sessão...
-        </div>
-      )}
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form method="post" action="/login" onSubmit={onSubmit} className="space-y-3">
         <AuthField
           label="Email ou WhatsApp"
           labelClassName="text-[11px] uppercase"

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccess } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
-import { createStripeClient, resolveStripeAppBaseUrl } from "@/lib/stripe.server";
+import { createStripeClient, getConfiguredStripeEnv, resolveStripeAppBaseUrl } from "@/lib/stripe.server";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ function sb() {
 }
 
 function stripeEnv(): "live" | "sandbox" {
-  return process.env.STRIPE_ENV === "live" ? "live" : "sandbox";
+  return getConfiguredStripeEnv();
 }
 
 // ── Code generation ───────────────────────────────────────────────────────────
@@ -87,7 +87,9 @@ export const claimReferral = createServerFn({ method: "POST" })
     z.object({ studioId: z.string().uuid(), refCode: z.string().optional() }).parse(input),
   )
   .handler(async ({ data, context }): Promise<{ claimed: boolean }> => {
-    await assertStudioAccess(sb(), (context as any).userId, data.studioId);
+    await assertStudioAccess(sb(), (context as any).userId, data.studioId, {
+      entitlement: "loyalty",
+    });
 
     // Prefer user_metadata (set on email signup), fall back to client-passed refCode (Google auth)
     const { data: userData } = await sb().auth.admin.getUserById((context as any).userId);
@@ -108,7 +110,9 @@ export const getMyReferralInfo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({ studioId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<ReferralInfo> => {
-    await assertStudioAccess(sb(), (context as any).userId, data.studioId);
+    await assertStudioAccess(sb(), (context as any).userId, data.studioId, {
+      entitlement: "loyalty",
+    });
 
     const code = await getOrCreateReferralCode(data.studioId);
     const referralUrl = `${appBaseUrl()}/signup?ref=${code}`;

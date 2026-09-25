@@ -1,5 +1,5 @@
 import type { Session } from "@supabase/supabase-js";
-import { recordAuthDebugEvent, supabase } from "@/integrations/supabase/client";
+import { ensureBrowserAuthReady, supabase } from "@/integrations/supabase/client";
 
 export type AuthLandingPath = "/admin" | "/admin/agenda" | "/admin/balcao" | "/admin/premium" | "/onboarding";
 
@@ -25,59 +25,30 @@ type SubscriptionRow = {
 };
 
 export async function getSettledSession(maxAttempts = 8): Promise<Session | null> {
+  if (typeof window === "undefined") return null;
+  await ensureBrowserAuthReady();
+
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const { data, error } = await supabase.auth.getSession();
-    if (data.session) {
-      recordAuthDebugEvent({
-        kind: "session_settled",
-        message: `attempt=${attempt + 1}`,
-      });
-      return data.session;
-    }
+    if (data.session) return data.session;
     if (error && attempt === maxAttempts - 1) throw error;
     await delay(150);
   }
-  recordAuthDebugEvent({ kind: "session_missing_after_settle" });
   return null;
 }
 
 export async function settleSessionFromCurrentUrl(
   cleanPath?: string,
-  options: { forceCodeExchange?: boolean } = {},
 ): Promise<Session | null> {
   const url = new URL(window.location.href);
   const code = url.searchParams.get("code");
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  recordAuthDebugEvent({
-    kind: "settle_current_url",
-    url: `${url.origin}${url.pathname}`,
-    message: JSON.stringify({
-      hasCode: Boolean(code),
-      hashKeys: [...hash.keys()],
-      cleanPath: cleanPath ?? window.location.pathname,
-      forceCodeExchange: Boolean(options.forceCodeExchange),
-    }),
-  });
 
   if (code) {
-    const codeKey = `bellza:pkce-code:${code}`;
-    const alreadyHandled = sessionStorage.getItem(codeKey) === "1";
-    const currentSession = options.forceCodeExchange ? null : await getSettledSession(1);
     window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
-
-    if (currentSession) return currentSession;
-
-    if (alreadyHandled) {
-      return getSettledSession();
-    }
-
+    // The code is removed before the client is created, preventing the
+    // browser client's automatic detector from racing this explicit exchange.
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    recordAuthDebugEvent({
-      kind: "exchange_code_for_session",
-      url: `${url.origin}${url.pathname}`,
-      ok: !error,
-      message: error?.message,
-    });
     if (error) {
       const existingSession = await getSettledSession(2);
       const message = error.message.toLowerCase();
@@ -87,26 +58,19 @@ export async function settleSessionFromCurrentUrl(
         message.includes("auth code");
 
       if (existingSession && isDuplicatePkceExchange) return existingSession;
-      sessionStorage.removeItem(codeKey);
       throw error;
     }
-    sessionStorage.setItem(codeKey, "1");
+    return getSettledSession();
   }
 
   const accessToken = hash.get("access_token");
   const refreshToken = hash.get("refresh_token");
   if (accessToken && refreshToken) {
+    window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
     const { error } = await supabase.auth.setSession({
       access_token: accessToken,
       refresh_token: refreshToken,
     });
-    recordAuthDebugEvent({
-      kind: "set_session_from_hash",
-      url: `${url.origin}${url.pathname}`,
-      ok: !error,
-      message: error?.message,
-    });
-    window.history.replaceState({}, document.title, cleanPath ?? window.location.pathname);
     if (error) throw error;
     return getSettledSession();
   }
@@ -134,11 +98,6 @@ export async function resolveAuthLanding(userId: string): Promise<AuthLandingPat
     return hasUsableSubscription(subscription) ? "/admin/agenda" : "/onboarding";
   }
 
-  const primary = studioRoles[0];
-  const subscription = await loadCurrentSubscription(userId, primary.studio_id);
-  const access = resolveAccess(primary.studios, subscription);
-
-  if (access === "expired") return "/admin/premium";
   return resolveRoleLanding(studioRoles);
 }
 

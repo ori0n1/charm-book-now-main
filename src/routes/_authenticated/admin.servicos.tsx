@@ -14,6 +14,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ExpandableList } from "@/components/ui/expandable-list";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/servicos")({
@@ -227,6 +237,8 @@ function ServicesPage() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Service | null>(null);
   const [creating, setCreating] = useState(false);
+  const [servicePendingRemoval, setServicePendingRemoval] = useState<Service | null>(null);
+  const [removingServiceId, setRemovingServiceId] = useState<string | null>(null);
 
   async function load() {
     if (!studio) return;
@@ -256,12 +268,45 @@ function ServicesPage() {
     void load();
   }, [studio]);
 
-  async function remove(id: string) {
-    if (!confirm("Eliminar este serviço?")) return;
-    const { error } = await supabase.from("services").delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    toast.success("Serviço eliminado");
-    load();
+  async function remove(service: Service) {
+    if (!studio || removingServiceId) return;
+    setRemovingServiceId(service.id);
+
+    try {
+      const { data: outcome, error } = await supabase.rpc("remove_or_archive_service", {
+        p_service_id: service.id,
+        p_studio_id: studio.id,
+      });
+
+      if (error || (outcome !== "deleted" && outcome !== "archived")) {
+        console.error("[services] remove_or_archive_service_failed", {
+          serviceId: service.id,
+          studioId: studio.id,
+          code: error?.code,
+          message: error?.message ?? "unexpected_outcome",
+          outcome,
+        });
+        toast.error("Não foi possível remover o serviço. Tente novamente.");
+        return;
+      }
+
+      setServicePendingRemoval(null);
+      await load();
+      toast.success(
+        outcome === "deleted"
+          ? "Serviço excluído com sucesso."
+          : "Este serviço possui agendamentos anteriores e foi arquivado para preservar o histórico.",
+      );
+    } catch (error) {
+      console.error("[services] remove_or_archive_service_failed", {
+        serviceId: service.id,
+        studioId: studio.id,
+        error,
+      });
+      toast.error("Não foi possível remover o serviço. Tente novamente.");
+    } finally {
+      setRemovingServiceId(null);
+    }
   }
 
   if (loading) return <p className="text-sm text-muted-foreground">A carregar…</p>;
@@ -315,6 +360,11 @@ function ServicesPage() {
                       <h3 className="mt-1 text-base font-medium">{s.name}</h3>
                     </div>
                     <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                      {!s.is_active && (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">
+                          Arquivado
+                        </span>
+                      )}
                       {trend && <ServiceTrendBadge trend={trend} />}
                       {s.is_recommended && (
                         <span className="rounded-full bg-foreground px-2 py-0.5 text-[9px] uppercase tracking-wide text-background">
@@ -335,7 +385,8 @@ function ServicesPage() {
                       <Pencil className="h-3 w-3" /> Editar
                     </button>
                     <button
-                      onClick={() => remove(s.id)}
+                      onClick={() => setServicePendingRemoval(s)}
+                      aria-label={`Excluir ${s.name}`}
                       className="rounded-md border border-border p-1.5 text-xs"
                     >
                       <Trash2 className="h-3 w-3" />
@@ -347,6 +398,42 @@ function ServicesPage() {
           }}
         />
       )}
+
+      <AlertDialog
+        open={Boolean(servicePendingRemoval)}
+        onOpenChange={(open) => {
+          if (!open && !removingServiceId) setServicePendingRemoval(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir serviço?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Este serviço não ficará mais disponível para novas marcações. O histórico de
+              agendamentos será preservado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(removingServiceId)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={Boolean(removingServiceId)}
+              onClick={(event) => {
+                event.preventDefault();
+                if (servicePendingRemoval) void remove(servicePendingRemoval);
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {removingServiceId ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> A remover…
+                </>
+              ) : (
+                "Excluir serviço"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {(editing || creating) && studio && (
         <ServiceModal

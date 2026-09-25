@@ -15,6 +15,14 @@ function admin(): any {
   return getAdminClient();
 }
 
+async function studioHasEntitlement(sb: any, studioId: string, feature: string) {
+  const { data, error } = await sb.rpc("studio_has_entitlement", {
+    _studio_id: studioId,
+    _feature: feature,
+  });
+  return !error && data === true;
+}
+
 export const getClientAppointment = createServerFn({ method: "POST" })
   .inputValidator((input) => z.object({ token: z.string().min(16) }).parse(input))
   .handler(async ({ data }) => {
@@ -232,6 +240,14 @@ async function loadAppointmentByToken(sb: any, token: string) {
     .eq("public_token", token)
     .maybeSingle();
   if (error) throw new Error(error.message);
+  if (data && !(await studioHasEntitlement(sb, data.studio_id, "online_payments"))) {
+    const studio = Array.isArray(data.studios) ? data.studios[0] : data.studios;
+    if (studio) {
+      studio.refund_requests_enabled = false;
+      studio.payment_policy = "pay_in_studio";
+      studio.deposit_percent = 0;
+    }
+  }
   return data;
 }
 
@@ -331,6 +347,7 @@ async function getAppointmentDuration(sb: any, appt: any) {
 }
 
 async function notifyStudioAppointmentAction(sb: any, appt: any, kind: "appointment_rescheduled" | "appointment_cancelled") {
+  if (!(await studioHasEntitlement(sb, appt.studio_id, "notifications"))) return;
   const clientName = appt.clients?.name ?? "Cliente";
   const when = formatStudioDateTime(appt.starts_at, appt.studios?.timezone);
   const title = kind === "appointment_rescheduled" ? "Marcação remarcada" : "Marcação cancelada";

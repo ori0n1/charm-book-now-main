@@ -66,10 +66,21 @@ import { getSegmentConfig, type SegmentLabels } from "@/lib/segments";
 import heroImg from "@/assets/studio-hero.jpg";
 import { cn } from "@/lib/utils";
 import {
+  formatStudioDate,
+  formatStudioDateTime,
+  formatStudioTime,
+  normalizeStudioTimeZone,
+} from "@/lib/studio-time";
+import {
   sortAppointmentsChronologically,
 } from "@/lib/appointment-ordering";
 import { buildPublicAuthCallbackUrl, rememberPublicAuthReturn } from "@/lib/auth-context";
-import { createPublicBooking } from "@/lib/booking";
+import {
+  createProtectedPublicBooking,
+  getProtectedPublicBookingQuote,
+} from "@/lib/public-booking.functions";
+import type { BookingQuote } from "@/lib/booking";
+import { buildBookingRequestWhatsappUrl } from "@/lib/booking-request";
 import {
   buildPublicServiceCategories,
   filterPublicServices,
@@ -95,7 +106,7 @@ import {
   canReviewAppointment,
   type StudioReview,
 } from "@/lib/reviews.functions";
-import { dispatchRecentStudioAppointmentPushNotification } from "@/lib/notification-dispatcher.server";
+import { dispatchRecentStudioAppointmentPushNotification } from "@/lib/notification-dispatcher.functions";
 import { sendPublicAppointmentConfirmationForAppointment } from "@/lib/whatsapp.functions";
 import { savePushSubscription, sendTestPushNotification } from "@/lib/push-subscriptions.functions";
 import {
@@ -109,7 +120,6 @@ import {
   getGoogleIdentity,
   loadGoogleIdentityScript,
 } from "@/lib/google-id-token";
-import { submitRefundRequest } from "@/lib/refunds";
 import {
   buildPolicyPlainText,
   getPolicyParts,
@@ -124,6 +134,7 @@ import {
 } from "@/lib/upsell-pricing";
 import type { AvailableSlot } from "@/lib/availability";
 import { PaymentPendingView } from "@/components/payment-pending";
+import { BrandLoadingState } from "@/components/brand-loading-state";
 import { CookieBanner } from "@/components/cookie-banner";
 import { PublicFooter } from "@/components/public-footer";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -136,6 +147,7 @@ import {
 } from "@/components/ui/international-phone-input";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
+import { BELLZA_APP_ICON_SVG, BELLZA_APPLE_TOUCH_ICON } from "@/lib/brand-assets";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 type ConfirmedPaymentStatus = "paid_online" | "pay_in_studio" | "unknown";
@@ -461,6 +473,16 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const services = live.services;
   const categories = live.categories;
   const professionals = live.professionals;
+  const bookingFlowMode = studio.booking_flow_mode === "request" ? "request" : "online";
+  const isBookingRequest = bookingFlowMode === "request";
+  const requestProfessionalMode =
+    studio.booking_request_professional_mode === "showcase" ||
+    studio.booking_request_professional_mode === "preference"
+      ? studio.booking_request_professional_mode
+      : "hidden";
+  const showProfessionalsTab = !isBookingRequest || requestProfessionalMode !== "hidden";
+  const allowProfessionalPreference =
+    !isBookingRequest || requestProfessionalMode === "preference";
   const [step, setStep] = useState<Step>(0);
   const [categoryId, setCategoryId] = useState<string>("all");
   const [service, setService] = useState<Service | null>(null);
@@ -476,6 +498,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [requestPrepared, setRequestPrepared] = useState(false);
+  const [confirmedTotal, setConfirmedTotal] = useState<number | null>(null);
+  const [confirmedStartsAt, setConfirmedStartsAt] = useState<string | null>(null);
+  const [bookingQuote, setBookingQuote] = useState<(BookingQuote & { key: string }) | null>(null);
   const [confirmedPaymentStatus, setConfirmedPaymentStatus] =
     useState<ConfirmedPaymentStatus>("unknown");
   const [pendingPayment, setPendingPayment] = useState<{
@@ -493,6 +519,8 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const [heroIndex, setHeroIndex] = useState(0);
   const [showHeroControls, setShowHeroControls] = useState(false);
   const sendAppointmentConfirmation = useServerFn(sendPublicAppointmentConfirmationForAppointment);
+  const createPublicBooking = useServerFn(createProtectedPublicBooking);
+  const quotePublicBooking = useServerFn(getProtectedPublicBookingQuote);
   const dispatchStudioAppointmentPush = useServerFn(dispatchRecentStudioAppointmentPushNotification);
   const loadPublicClientArea = useServerFn(getPublicClientArea);
   const finalizeClientBooking = useServerFn(finalizePublicClientBooking);
@@ -652,8 +680,13 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     isValidSharedInternationalPhone(client.phone) &&
     (client.email === "" || /\S+@\S+\.\S+/.test(client.email)) &&
     (contactConsent || hasSavedContactConsent) &&
-    (policyAccepted || hasSavedPolicyAcceptance) &&
+    (isBookingRequest || policyAccepted || hasSavedPolicyAcceptance) &&
     (!hasSensitiveNotes || sensitiveNotesConsent);
+
+  useEffect(() => {
+    if (showProfessionalsTab || publicTab !== "professionals") return;
+    setPublicTab("services");
+  }, [publicTab, showProfessionalsTab]);
 
   async function syncPublicClientProfile(options?: {
     phone?: string;
@@ -772,26 +805,21 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     }
   }
 
-  function dispatchPublicBookingSideEffects(appointmentId?: string | null) {
+  async function dispatchPublicBookingSideEffects(appointmentId?: string | null) {
     if (!appointmentId) return;
-    void sendAppointmentConfirmation({
-      data: { studioId: studio.id, appointmentId },
-    }).catch((error) => {
-      console.error("[public-booking] whatsapp confirmation dispatch failed", {
-        studioId: studio.id,
-        appointmentId,
-        error,
-      });
-    });
-    void dispatchStudioAppointmentPush({
-      data: { studioId: studio.id, appointmentId },
-    }).catch((error) => {
-      console.error("[public-booking] studio push dispatch failed", {
-        studioId: studio.id,
-        appointmentId,
-        error,
-      });
-    });
+    const results = await Promise.allSettled([
+      sendAppointmentConfirmation({ data: { studioId: studio.id, appointmentId } }),
+      dispatchStudioAppointmentPush({ data: { studioId: studio.id, appointmentId } }),
+    ]);
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error("[public-booking] appointment notification dispatch failed", {
+          studioId: studio.id,
+          appointmentId,
+          error: result.reason,
+        });
+      }
+    }
   }
 
   useEffect(() => {
@@ -1023,8 +1051,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       professional && professional !== "any" && professionalCanPerformServices(professional, requiredIds)
         ? professional
         : null;
-    if (currentProfessional) setProfessional(currentProfessional);
-    else if (eligible.length === 1) setProfessional(eligible[0]);
+    if (isBookingRequest && !allowProfessionalPreference) setProfessional("any");
+    else if (currentProfessional) setProfessional(currentProfessional);
+    else if (!isBookingRequest && eligible.length === 1) setProfessional(eligible[0]);
+    else if (isBookingRequest) setProfessional("any");
     else setProfessional(null);
     resetBookingSlot();
     setStep(2);
@@ -1041,6 +1071,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       else if (!contactConsent || !policyAccepted)
         toast.error("Aceite os consentimentos obrigatórios para concluir a reserva.");
       else toast.error("Confirme os dados da reserva antes de continuar.");
+      return;
+    }
+    if (!bookingQuote || bookingQuote.key !== bookingQuoteKey) {
+      toast.message("A validar o preço final. Aguarde um instante e tente novamente.");
       return;
     }
 
@@ -1090,22 +1124,28 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
         });
       }
       const result = await createPublicBooking({
-        studioSlug: studio.slug,
-        staffDbId,
-        startsAt,
-        serviceDbIds,
-        clientName: client.name.trim(),
-        clientPhone: normalizeSharedInternationalPhone(client.phone),
-        clientEmail: client.email.trim() || undefined,
-        notes: client.notes.trim() || undefined,
-        customerReferralCode: customerReferralCode || undefined,
-        policyAcceptance: {
-          studioId: studio.id,
-          policyVersion: getPolicyVersion(studio),
-          cancellationNoticeHours: getCancellationNoticeHours(studio),
-          afterDeadlinePolicy: getAfterDeadlinePolicy(studio),
+        data: {
+          studioSlug: studio.slug,
+          staffDbId,
+          startsAt,
+          serviceDbIds,
+          clientName: client.name.trim(),
+          clientPhone: normalizeSharedInternationalPhone(client.phone),
+          clientEmail: client.email.trim() || undefined,
+          notes: client.notes.trim() || undefined,
+          customerReferralCode: customerReferralCode || undefined,
+          policyAcceptance: {
+            studioId: studio.id,
+            policyVersion: getPolicyVersion(studio),
+            cancellationNoticeHours: getCancellationNoticeHours(studio),
+            afterDeadlinePolicy: getAfterDeadlinePolicy(studio),
+          },
         },
       });
+      // From this point onwards the backend snapshot is authoritative. The
+      // browser total remains useful only as a preview before submission.
+      setConfirmedTotal(result.total_price);
+      setConfirmedStartsAt(result.starts_at);
       try {
         localStorage.removeItem(getDraftStorageKey(studio.slug));
         localStorage.removeItem(STORAGE_KEY);
@@ -1124,7 +1164,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           throw new Error("Não foi possível confirmar a reserva. Atualize a página e tente novamente.");
         }
       } else {
-        dispatchPublicBookingSideEffects(result.appointment_id);
+        await dispatchPublicBookingSideEffects(result.appointment_id);
         await finalizeClientBookingState({
           appointmentId: result.appointment_id,
           bookingRequestId: result.booking_request_id,
@@ -1139,7 +1179,12 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
         setConfirmed(true);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Erro ao reservar.");
+      const message = err instanceof Error ? err.message : "Erro ao reservar.";
+      toast.error(
+        /rate[_ -]?limit|too many requests|429/i.test(message)
+          ? "Foram feitas muitas tentativas. Aguarde alguns minutos e tente novamente."
+          : message,
+      );
     } finally {
       setSubmitting(false);
     }
@@ -1247,18 +1292,6 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     });
   }, [compatibleUpsells]);
 
-  // Track upsell views once per session per offer
-  const viewedRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (step !== 3) return;
-    const ids = upsells
-      .map((u) => u.id)
-      .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(id) && !viewedRef.current.has(id));
-    if (ids.length === 0) return;
-    ids.forEach((id) => viewedRef.current.add(id));
-    void supabase.rpc("track_upsell_views", { p_offer_ids: ids });
-  }, [step, upsells]);
-
   const upsellsTotal = addedUpsellsPricing.finalTotal;
   const upsellsDuration = sumServiceDuration(addedUpsells);
   const upsellsSavings = addedUpsellsPricing.savingsTotal;
@@ -1267,6 +1300,50 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
 
   const total = servicesTotal + upsellsTotal;
   const totalDuration = servicesDuration + upsellsDuration;
+  const pricedServiceDbIds = useMemo(
+    () => [
+      ...selectedServices.map((item) => resolveServiceId(item.id)),
+      ...(addedUpsells
+        .map((upsell) => getUpsellOfferedServiceId(upsell))
+        .filter(Boolean)
+        .map((id) => resolveServiceId(id!)) as string[]),
+    ].filter(Boolean),
+    [selectedServices, addedUpsells],
+  );
+  const bookingQuoteKey = `${studio.slug}:${pricedServiceDbIds.join(",")}`;
+
+  useEffect(() => {
+    if (pricedServiceDbIds.length === 0) {
+      setBookingQuote(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void quotePublicBooking({
+        data: { studioSlug: studio.slug, serviceDbIds: pricedServiceDbIds },
+      })
+        .then((quote) => {
+          if (!cancelled) setBookingQuote({ ...(quote as BookingQuote), key: bookingQuoteKey });
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setBookingQuote(null);
+            console.warn("[public-booking] backend price quote unavailable", error);
+          }
+        });
+    }, 120);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [bookingQuoteKey, pricedServiceDbIds, quotePublicBooking, studio.slug]);
+
+  const quotedTotal = bookingQuote?.key === bookingQuoteKey ? bookingQuote.total_price : total;
+  const quotedDuration =
+    bookingQuote?.key === bookingQuoteKey ? bookingQuote.total_duration_min : totalDuration;
+  const quotedSavings =
+    Math.round((upsellsSavings + Math.max(0, total - quotedTotal)) * 100) / 100;
+  const authoritativeTotal = confirmedTotal ?? quotedTotal;
 
   const handleToggleExtra = async (id: string) => {
     const isSelected = Boolean(extras[id]);
@@ -1327,8 +1404,13 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     }
   };
 
-  const proLabel =
-    professional === "any"
+  const proLabel = isBookingRequest
+    ? requestProfessionalMode !== "preference"
+      ? "A definir pelo estúdio"
+      : professional && professional !== "any"
+        ? `Preferência: ${professional.name}`
+        : "Sem preferência"
+    : professional === "any"
       ? selectedSlot
         ? (professionals.find((p) => resolveStaffId(p.id) === selectedSlot.staff_id)?.name ??
           `${segment.labels.professional} disponível`)
@@ -1382,10 +1464,11 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       }
       el.href = href;
     };
-    const publicIconSrc = logoSrc ?? "/pwa-icon.svg";
+    const publicIconSrc = logoSrc ?? BELLZA_APP_ICON_SVG;
+    const publicAppleTouchIconSrc = logoSrc ?? BELLZA_APPLE_TOUCH_ICON;
     const visualVersion = encodeURIComponent(studio.updated_at ?? "");
     setLink("icon", publicIconSrc);
-    setLink("apple-touch-icon", publicIconSrc);
+    setLink("apple-touch-icon", publicAppleTouchIconSrc);
     setLink(
       "manifest",
       `/api/public/studio-manifest/${studio.slug}${visualVersion ? `?v=${visualVersion}` : ""}`,
@@ -1463,13 +1546,28 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   // services and professionals) before live data arrives.
   if (!live.ready) {
     return (
-      <div className="grid min-h-screen place-items-center bg-background">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <div className="size-8 animate-spin rounded-full border-2 border-foreground/20 border-t-foreground" />
-          <p className="font-mono text-[10px] uppercase tracking-[0.3em]">A carregar estúdio…</p>
-        </div>
+      <div className="public-shell public-site-theme public-landing-theme min-h-screen bg-background">
+        <BrandLoadingState label="A carregar estúdio..." tone="light" fullScreen />
         <CookieBanner />
       </div>
+    );
+  }
+
+  if (requestPrepared) {
+    return (
+      <BookingRequestPreparedView
+        studioName={studio.name}
+        onBack={() => setRequestPrepared(false)}
+        onReset={() => {
+          setRequestPrepared(false);
+          setStep(0);
+          setSelectedServices([]);
+          setService(null);
+          setProfessional(null);
+          resetBookingSlot();
+          setExtras({});
+        }}
+      />
     );
   }
 
@@ -1483,18 +1581,24 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
             connectReady: Boolean(studio.stripe_connect_charges_enabled && studio.stripe_connect_onboarding_completed),
             mbWayReady: Boolean(studio.stripe_connect_mb_way_payments_enabled),
           })}
-          totalPrice={total}
+          totalPrice={authoritativeTotal}
           reservationSummary={{
             service: service?.name ?? "Serviço",
             professional: proLabel,
-            date: date ? formatDate(date) : "Data selecionada",
-            time: time ?? "Hora selecionada",
+            date: confirmedStartsAt
+              ? formatStudioDate(confirmedStartsAt, studio.timezone)
+              : date
+                ? formatDate(date)
+                : "Data selecionada",
+            time: confirmedStartsAt
+              ? formatStudioTime(confirmedStartsAt, studio.timezone)
+              : time ?? "Hora selecionada",
             clientName: client.name.trim() || "Cliente",
             clientPhone: client.phone.trim() || "Telefone",
             depositLabel: (() => {
               if (studio.payment_policy !== "pre_payment") return "Pago no estúdio";
               const pct = Number(studio.deposit_percent ?? 100);
-              const amt = formatMoney(Math.round(total * pct) / 100);
+              const amt = formatMoney(Math.round(authoritativeTotal * pct) / 100);
               return pct >= 100 ? `${amt} — Pagamento integral` : `${amt} (${pct}% de sinal)`;
             })(),
           }}
@@ -1517,14 +1621,17 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   }
 
   if (confirmed) {
+    const confirmedWhen = confirmedStartsAt
+      ? formatStudioDateTime(confirmedStartsAt, studio.timezone)
+      : `${date && formatDate(date)} • ${time}`;
     return (
       <ConfirmationView
         studioName={studio.name}
-        when={`${date && formatDate(date)} • ${time}`}
+        when={confirmedWhen}
         clientName={client.name}
         pro={proLabel}
-        total={total}
-        savings={upsellsSavings}
+        total={authoritativeTotal}
+        savings={quotedSavings}
         paymentStatus={confirmedPaymentStatus}
         refundEnabled={Boolean(studio.refund_requests_enabled)}
         refundTarget={confirmedTarget}
@@ -1542,6 +1649,8 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           setPolicyAccepted(hasSavedPolicyAcceptance);
           setConfirmedTarget(null);
           setConfirmedPaymentStatus("unknown");
+          setConfirmedTotal(null);
+          setConfirmedStartsAt(null);
           setConfirmed(false);
         }}
       />
@@ -1576,6 +1685,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   }
 
   async function handleNotificationConsent() {
+    if (studio.notifications_enabled === false) {
+      toast.message("Lembretes automáticos estão disponíveis no plano Pro deste estúdio.");
+      return;
+    }
     // iOS Safari in browser mode: Notification API is only available inside a
     // PWA (home screen). Guide the user to install first instead of showing a
     // generic "not supported" error.
@@ -1673,6 +1786,41 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           ? "A sessão expirou. Inicie sessão novamente para ativar notificações."
           : "Erro temporário do servidor. Tente ativar novamente.",
       );
+    }
+  }
+
+  function submitBookingRequest() {
+    if (!service || !date || !time || !clientValid) return;
+    if (!bookingQuote || bookingQuote.key !== bookingQuoteKey) {
+      toast.message("A validar o valor informado. Aguarde um instante e tente novamente.");
+      return;
+    }
+    try {
+      const preferredProfessional =
+        requestProfessionalMode === "preference" && professional && professional !== "any"
+          ? professional.name
+          : null;
+      const url = buildBookingRequestWhatsappUrl({
+        studioWhatsapp: String(studio.whatsapp ?? ""),
+        studioName: studio.name,
+        clientName: client.name,
+        clientPhone: normalizeSharedInternationalPhone(client.phone),
+        clientEmail: client.email,
+        serviceNames: [
+          ...selectedServices.map((item) => item.name),
+          ...addedUpsells.map((item) => item.name),
+        ],
+        preferredProfessional,
+        intendedDate: date,
+        intendedTime: time,
+        quotedTotal,
+        notes: client.notes,
+      });
+      const opened = window.open(url, "_blank", "noopener,noreferrer");
+      if (!opened) window.location.assign(url);
+      setRequestPrepared(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível abrir o WhatsApp.");
     }
   }
 
@@ -1835,9 +1983,9 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                   </button>
                 )}
                 <div className="min-w-0 flex-1 text-left md:max-w-[58rem]">
-                  <h1 className="max-w-[18rem] text-balance text-[1.24rem] font-extrabold leading-[1.14] tracking-tight text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] md:max-w-[52rem] md:text-[2.55rem] md:leading-[1.02]">
+                  <h2 className="max-w-[18rem] text-balance text-[1.24rem] font-extrabold leading-[1.14] tracking-tight text-white drop-shadow-[0_2px_14px_rgba(0,0,0,0.35)] md:max-w-[52rem] md:text-[2.55rem] md:leading-[1.02]">
                     {studio.name}
-                  </h1>
+                  </h2>
                   {/* Rating prominently below the name */}
                   {studioRating > 0 && (
                     <div className="mt-1.5 flex items-center gap-1.5 md:mt-2">
@@ -2034,6 +2182,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               <PublicTabs
                 active={publicTab}
                 professionalPlural={segment.labels.professionalPlural}
+                showProfessionals={showProfessionalsTab}
                 onChange={setPublicTab}
               />
               {publicTab === "services" ? (
@@ -2046,6 +2195,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                       setCategoryId(id);
                     }}
                     selectedServices={selectedServices}
+                    selectedTotal={bookingQuote?.key === bookingQuoteKey ? quotedTotal : null}
                     onToggleService={handleToggleService}
                     onContinue={continueWithSelectedServices}
                       // Auto-select when only 1 professional is eligible — skip step 1
@@ -2057,6 +2207,8 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
                   labels={segment.labels}
                   studioSlug={studio.slug}
                   studioTimezone={studio.timezone}
+                  allowSelection={allowProfessionalPreference}
+                  requestMode={isBookingRequest}
                   onPick={(picked) => {
                     setProfessional(picked);
                     setService(null);
@@ -2125,10 +2277,12 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               }
               date={date}
               time={time}
-              professionals={eligiblePros}
+              professionals={isBookingRequest && !allowProfessionalPreference ? [] : eligiblePros}
               selectedProfessional={professional === "any" ? null : professional}
+              professionalOptional={isBookingRequest}
+              requestMode={isBookingRequest}
               onPickProfessional={(p) => {
-                setProfessional(p);
+                setProfessional(p ?? "any");
                 setTime(null);
                 setSelectedSlot(null);
               }}
@@ -2163,9 +2317,9 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               date={date}
               time={time}
               extras={addedUpsells}
-              total={total}
-              duration={totalDuration}
-              savings={upsellsSavings}
+              total={quotedTotal}
+              duration={quotedDuration}
+              savings={quotedSavings}
               client={client}
                 clientAccountEmail={clientArea?.profile?.email ?? user?.email ?? null}
                 clientAccountName={clientArea?.profile?.name || getGoogleDisplayName(user)}
@@ -2184,6 +2338,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               policyParts={getStudioPolicyParts(studio)}
               paymentPolicy={studio.payment_policy}
               depositPercent={studio.deposit_percent}
+              requestMode={isBookingRequest}
               onOpenPolicy={() => setPolicyModalOpen(true)}
             />
           )}
@@ -2196,12 +2351,16 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           step={step}
           canContinue={canContinue(step, { service, professional, date, time, clientValid })}
           submitting={submitting}
-          total={total}
-          duration={totalDuration}
+          total={quotedTotal}
+          duration={quotedDuration}
           proLabel={service ? proLabel : null}
-          savings={upsellsSavings}
+          savings={quotedSavings}
+          requestMode={isBookingRequest}
           onPrimary={() => {
-            if (step === 4) submitBooking();
+            if (step === 4) {
+              if (isBookingRequest) submitBookingRequest();
+              else submitBooking();
+            }
             else goNext();
           }}
         />
@@ -2264,7 +2423,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
             (typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches));
         const installed = pwaInstalled || isStandalone;
         const shouldShowInstall = !installed && !installDismissed && (Boolean(installPrompt) || isIos);
-        const shouldShowNotifications = installed && notificationsConsent !== "granted";
+        const shouldShowNotifications =
+          studio.notifications_enabled !== false &&
+          installed &&
+          notificationsConsent !== "granted";
         const hasInstallPrompt = Boolean(installPrompt) && shouldShowInstall;
         const bannerMode = shouldShowNotifications ? "notifications" : "install";
         // Show banner if: has Chrome install prompt, OR can ask for notifications,
@@ -2577,6 +2739,7 @@ function formatDateTimeShort(value: string) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return value;
   return new Intl.DateTimeFormat("pt-PT", {
+    timeZone: normalizeStudioTimeZone(),
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -2587,10 +2750,7 @@ function formatDateTimeShort(value: string) {
 function formatTimeOnly(value: string) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return value;
-  return new Intl.DateTimeFormat("pt-PT", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return formatStudioTime(date);
 }
 
 /* ---------- Stepper ---------- */
@@ -2636,16 +2796,21 @@ const publicTabs = [
 function PublicTabs({
   active,
   professionalPlural,
+  showProfessionals,
   onChange,
 }: {
   active: string;
   professionalPlural: string;
+  showProfessionals: boolean;
   onChange: (id: string) => void;
 }) {
+  const visibleTabs = showProfessionals
+    ? publicTabs
+    : publicTabs.filter((tab) => tab.id !== "professionals");
   return (
     <nav className="sticky top-0 z-20 -mx-4 border-b border-border/70 bg-background/90 px-4 py-2 backdrop-blur-2xl md:static md:mx-0 md:rounded-2xl md:border md:bg-card/72 md:p-1.5">
-      <div className="grid grid-cols-4 gap-1.5">
-        {publicTabs.map((tab) => {
+      <div className={cn("grid gap-1.5", showProfessionals ? "grid-cols-4" : "grid-cols-3")}>
+        {visibleTabs.map((tab) => {
           const selected = active === tab.id;
           return (
             <button
@@ -2772,12 +2937,16 @@ function ProfessionalsPublicTab({
   labels,
   studioSlug,
   studioTimezone,
+  allowSelection,
+  requestMode,
   onPick,
 }: {
   professionals: Professional[];
   labels: SegmentLabels;
   studioSlug: string;
   studioTimezone?: string | null;
+  allowSelection: boolean;
+  requestMode: boolean;
   onPick: (professional: Professional) => void;
 }) {
   return (
@@ -2785,10 +2954,12 @@ function ProfessionalsPublicTab({
       <div>
         <SectionTitle>{capitalizeLabel(labels.professionalPlural)}</SectionTitle>
         <h2 className="mt-1 text-2xl font-extrabold tracking-tight">
-          Escolha por {labels.professional}
+          {allowSelection ? "Indique a sua preferência" : "Conheça a nossa equipa"}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Veja a equipa e escolha {labels.professional} que preferir no app do estúdio.
+          {allowSelection
+            ? `Pode indicar ${labels.professional} da sua preferência. A atribuição não é garantida e será confirmada pelo estúdio.`
+            : "Conheça os profissionais do estúdio. A equipa que realizará o atendimento será definida posteriormente."}
         </p>
       </div>
       <ExpandableList
@@ -2834,13 +3005,17 @@ function ProfessionalsPublicTab({
                 </div>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => onPick(professional)}
-              className="mt-3 h-11 w-full rounded-2xl bg-accent text-xs font-extrabold text-accent-foreground shadow-lg shadow-black/10 transition active:scale-[0.98]"
-            >
-              Agendar com {labels.professional}
-            </button>
+            {allowSelection && (
+              <button
+                type="button"
+                onClick={() => onPick(professional)}
+                className="mt-3 h-11 w-full rounded-2xl bg-accent text-xs font-extrabold text-accent-foreground shadow-lg shadow-black/10 transition active:scale-[0.98]"
+              >
+                {requestMode
+                  ? `Indicar preferência por ${professional.name}`
+                  : `Agendar com ${labels.professional}`}
+              </button>
+            )}
           </article>
         )}
       />
@@ -3278,6 +3453,7 @@ function CategoryStep({
   activeId,
   onPick,
   selectedServices,
+  selectedTotal,
   onToggleService,
   onContinue,
 }: {
@@ -3286,6 +3462,7 @@ function CategoryStep({
   activeId: string;
   onPick: (id: string) => void;
   selectedServices: Service[];
+  selectedTotal: number | null;
   onToggleService: (s: Service) => void;
   onContinue: () => void;
 }) {
@@ -3300,7 +3477,6 @@ function CategoryStep({
     `${service.name} ${service.description ?? ""}`.toLowerCase().includes(query.toLowerCase()),
   );
   const selectedIds = new Set(selectedServices.map((service) => service.id));
-  const selectedTotal = selectedServices.reduce((sum, service) => sum + service.price, 0);
   const selectedDuration = selectedServices.reduce((sum, service) => sum + service.durationMin, 0);
 
   return (
@@ -3395,7 +3571,9 @@ function CategoryStep({
                 </div>
               </div>
               <div className="shrink-0 text-right">
-                <p className={moneyClass("text-base")}>{formatMoney(selectedTotal)}</p>
+                <p className={moneyClass("text-base")}>
+                  {selectedTotal == null ? "A calcular…" : formatMoney(selectedTotal)}
+                </p>
                 <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                   {selectedDuration} min
                 </p>
@@ -3404,7 +3582,8 @@ function CategoryStep({
             <button
               type="button"
               onClick={onContinue}
-              className="mt-3 flex h-11 w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-extrabold text-background shadow-sm transition active:scale-[0.98]"
+              disabled={selectedTotal == null}
+              className="mt-3 flex h-11 w-full items-center justify-center rounded-xl bg-foreground px-4 text-sm font-extrabold text-background shadow-sm transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-55"
             >
               Continuar
             </button>
@@ -3819,11 +3998,13 @@ function ProfessionalStep({
 function PublicProfessionalChooser({
   pros,
   selected,
+  allowNone = false,
   onSelect,
 }: {
   pros: Professional[];
   selected: Professional | null;
-  onSelect: (p: Professional) => void;
+  allowNone?: boolean;
+  onSelect: (p: Professional | null) => void;
 }) {
   if (pros.length === 0) return null;
 
@@ -3838,6 +4019,21 @@ function PublicProfessionalChooser({
       </div>
 
       <div className="-mx-1 flex gap-2.5 overflow-x-auto px-1 pb-1 scrollbar-hide md:grid md:grid-cols-4 md:overflow-visible">
+        {allowNone && (
+          <button
+            type="button"
+            onClick={() => onSelect(null)}
+            className={cn(
+              "flex h-[6.8rem] w-[5.65rem] shrink-0 flex-col items-center justify-center gap-1.5 rounded-[1.05rem] border px-2 py-2.5 text-center shadow-sm transition-all md:w-full",
+              !selected
+                ? "border-accent bg-accent text-accent-foreground"
+                : "border-border bg-background/78 text-foreground",
+            )}
+          >
+            <UserRound className="size-8" />
+            <span className="text-[11px] font-extrabold leading-tight">Sem preferência</span>
+          </button>
+        )}
         <ExpandableList
           items={pros}
           initialCount={6}
@@ -3918,6 +4114,8 @@ function DateTimeStep({
   time,
   professionals,
   selectedProfessional,
+  professionalOptional,
+  requestMode,
   onPickProfessional,
   onPickDate,
   onPickTime,
@@ -3935,6 +4133,8 @@ function DateTimeStep({
   time: string | null;
   professionals: Professional[];
   selectedProfessional: Professional | null;
+  professionalOptional: boolean;
+  requestMode: boolean;
   onPickProfessional: (p: Professional | null) => void;
   onPickDate: (d: Date) => void;
   onPickTime: (slot: AvailableSlot) => void;
@@ -4164,8 +4364,12 @@ function DateTimeStep({
         : [],
     [selectedDateKey, slots, studioTimezone],
   );
-  const visibleSlots =
-    selectedSlotsFromAllStaff.length > 0 ? selectedSlotsFromAllStaff : selectedStaffSlots;
+  const useAnyProfessional = professionalOptional && !selectedProfessional;
+  const visibleSlots = useAnyProfessional
+    ? allStaffSlots
+    : selectedSlotsFromAllStaff.length > 0
+      ? selectedSlotsFromAllStaff
+      : selectedStaffSlots;
 
   const grouped = useMemo(() => {
     if (visibleSlots.length === 0) return { morning: [], afternoon: [], evening: [] };
@@ -4290,6 +4494,12 @@ function DateTimeStep({
 
   return (
     <section className="animate-slide-up space-y-4 rounded-[1.45rem] border border-border bg-card/76 p-3.5 shadow-sm backdrop-blur md:p-5">
+      {requestMode && (
+        <div className="rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-amber-900 dark:text-amber-100">
+          <p className="font-extrabold">Escolha a data e o horário pretendidos</p>
+          <p className="mt-1">Esta escolha não bloqueia a agenda. O estúdio confirmará a disponibilidade pelo WhatsApp.</p>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -4387,6 +4597,7 @@ function DateTimeStep({
         <PublicProfessionalChooser
           pros={availableProfessionals}
           selected={selectedProfessional}
+          allowNone={professionalOptional}
           onSelect={onPickProfessional}
         />
       )}
@@ -4401,7 +4612,7 @@ function DateTimeStep({
           </p>
         )}
 
-        {date && !selectedProfessional && allStaffSlots.length > 0 && (
+        {date && !selectedProfessional && !professionalOptional && allStaffSlots.length > 0 && (
           <p className="mt-3 rounded-2xl bg-surface p-5 text-center text-sm text-muted-foreground">
             Escolha um profissional para ver os horarios.
           </p>
@@ -4413,13 +4624,13 @@ function DateTimeStep({
           </p>
         )}
 
-        {date && selectedProfessional && loading && visibleSlots.length === 0 && (
+        {date && (selectedProfessional || professionalOptional) && loading && visibleSlots.length === 0 && (
           <p className="mt-3 rounded-2xl bg-surface p-6 text-center text-sm text-muted-foreground">
             A verificar disponibilidade…
           </p>
         )}
 
-        {date && selectedProfessional && error && (
+        {date && (selectedProfessional || professionalOptional) && error && (
           <div className="mt-3 rounded-2xl bg-destructive/10 p-5 text-center text-sm text-destructive ring-1 ring-destructive/15">
             <p className="font-bold">A agenda não carregou.</p>
             <p className="mt-1 text-xs">{error}</p>
@@ -4433,7 +4644,7 @@ function DateTimeStep({
           </div>
         )}
 
-        {date && selectedProfessional && !loading && !error && blockedImmediateSlots.length > 0 && (
+        {date && (selectedProfessional || professionalOptional) && !loading && !error && blockedImmediateSlots.length > 0 && (
           <div className="mt-4">
             <BlockedImmediateSlots slots={blockedImmediateSlots} />
           </div>
@@ -4455,7 +4666,7 @@ function DateTimeStep({
           />
         )}
 
-        {date && selectedProfessional && !error && visibleSlots.length > 0 && (
+        {date && (selectedProfessional || professionalOptional) && !error && visibleSlots.length > 0 && (
           <div className="mt-4 space-y-4">
             <SlotGroup label="Manhã" slots={grouped.morning} time={time} onPick={onPickTime} />
             <SlotGroup label="Tarde" slots={grouped.afternoon} time={time} onPick={onPickTime} />
@@ -5086,6 +5297,7 @@ function ReviewStepPremium({
   policyParts,
   paymentPolicy,
   depositPercent,
+  requestMode,
   onOpenPolicy,
 }: {
   service: Service;
@@ -5115,6 +5327,7 @@ function ReviewStepPremium({
   policyParts: PolicyTextParts;
   paymentPolicy?: string | null;
   depositPercent?: number | null;
+  requestMode: boolean;
   onOpenPolicy: () => void;
 }) {
   const [editingClientDetails, setEditingClientDetails] = useState(false);
@@ -5155,11 +5368,17 @@ function ReviewStepPremium({
 
   return (
     <section className="animate-slide-up space-y-5 pt-4">
+      {requestMode && (
+        <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-950 dark:text-amber-100">
+          <p className="font-extrabold">Isto é uma solicitação, não uma marcação confirmada.</p>
+          <p className="mt-1 text-xs">Nenhum horário será bloqueado e nenhum pagamento será solicitado. O estúdio responderá pelo WhatsApp.</p>
+        </div>
+      )}
       {(!clientDetailsComplete ||
         editingClientDetails ||
         hasSensitiveNotes ||
         !hasSavedContactConsent ||
-        !hasSavedPolicyAcceptance) && (
+        (!requestMode && !hasSavedPolicyAcceptance)) && (
       <div className="space-y-3">
         <SectionTitle>Os seus dados</SectionTitle>
         {clientAccountEmail && (
@@ -5245,7 +5464,9 @@ function ReviewStepPremium({
             <ConsentCheckbox
               checked={contactConsent}
               onChange={onContactConsentChange}
-              label="Autorizo o uso dos meus dados para gerir esta marcação e receber mensagens sobre a reserva."
+              label={requestMode
+                ? "Autorizo o envio destes dados ao estúdio pelo WhatsApp para tratar esta solicitação."
+                : "Autorizo o uso dos meus dados para gerir esta marcação e receber mensagens sobre a reserva."}
             />
           )}
           {hasSensitiveNotes && (
@@ -5255,7 +5476,7 @@ function ReviewStepPremium({
               label="Quero partilhar estas observações com o estúdio para preparar melhor o atendimento."
             />
           )}
-          {!hasSavedPolicyAcceptance && (
+          {!requestMode && !hasSavedPolicyAcceptance && (
             <ConsentCheckbox
               checked={policyAccepted}
               onChange={onPolicyAcceptedChange}
@@ -5386,9 +5607,9 @@ function ReviewStepPremium({
         <SectionTitle>Resumo</SectionTitle>
         <div className="mt-3 space-y-px overflow-hidden rounded-2xl bg-card ring-1 ring-border">
           <Row label="Serviço" value={service.name} />
-          <Row label="Profissional" value={proLabel} />
-          <Row label="Data" value={formatDate(date)} />
-          <Row label="Hora" value={time} />
+          <Row label={requestMode ? "Profissional" : "Profissional"} value={proLabel} />
+          <Row label={requestMode ? "Data pretendida" : "Data"} value={formatDate(date)} />
+          <Row label={requestMode ? "Horário pretendido" : "Hora"} value={time} />
           {extras.map((e) => (
             <Row
               key={e.id}
@@ -5407,7 +5628,7 @@ function ReviewStepPremium({
           )}
           <div className="flex items-center justify-between bg-surface px-4 py-4">
             <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-              Total
+              {requestMode ? "Valor informado" : "Total"}
             </span>
             <span className={moneyClass("text-xl")}>{formatMoney(total)}</span>
           </div>
@@ -5470,7 +5691,9 @@ function ReviewStepPremium({
       </div>
       )}
       <p className="px-2 text-center text-[11px] text-muted-foreground">
-        Receberá a confirmação quando o WhatsApp do estúdio estiver ativo.
+        {requestMode
+          ? "O envio abre o WhatsApp. A confirmação depende da resposta do estúdio."
+          : "Receberá a confirmação quando o WhatsApp do estúdio estiver ativo."}
       </p>
     </section>
   );
@@ -7962,7 +8185,7 @@ function PublicClientAuthForm({ studioName }: { studioName: string }) {
       </div>
 
       {/* ── Email / password ── */}
-      <form onSubmit={submitEmail} className="space-y-2">
+                <form method="post" action="/login" onSubmit={submitEmail} className="space-y-2">
         {mode === "signup" && (
           <>
             <input
@@ -8519,6 +8742,7 @@ function StickyFooter({
   duration,
   proLabel,
   savings,
+  requestMode,
   onPrimary,
 }: {
   step: Step;
@@ -8528,6 +8752,7 @@ function StickyFooter({
   duration: number;
   proLabel: string | null;
   savings: number;
+  requestMode: boolean;
   onPrimary: () => void;
 }) {
   const labels: Record<Step, string> = {
@@ -8535,7 +8760,11 @@ function StickyFooter({
     1: "Continuar",
     2: "Continuar",
     3: "Continuar",
-    4: submitting ? "A confirmar…" : "Confirmar marcação",
+    4: requestMode
+      ? "Solicitar agendamento pelo WhatsApp"
+      : submitting
+        ? "A confirmar…"
+        : "Confirmar marcação",
   };
   const disabled = !canContinue || submitting;
 
@@ -8546,7 +8775,7 @@ function StickyFooter({
           <div className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3 px-1">
             <div className="min-w-0">
               <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-                Total{" "}
+                {requestMode ? "Valor informado" : "Total"}{" "}
                 {savings > 0 && (
                   <span className="text-emerald-600 dark:text-emerald-400">
                     · poupa {formatUpsellMoney(savings)}
@@ -8584,6 +8813,50 @@ function StickyFooter({
 }
 
 /* ---------- Confirmation ---------- */
+function BookingRequestPreparedView({
+  studioName,
+  onBack,
+  onReset,
+}: {
+  studioName: string;
+  onBack: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 py-12 text-center">
+      <div className="animate-slide-up flex w-full max-w-[420px] flex-col items-center">
+        <div className="grid size-20 place-items-center rounded-full bg-emerald-500/12 text-emerald-600">
+          <FaWhatsapp className="size-9" />
+        </div>
+        <p className="mt-6 font-mono text-[10px] font-bold uppercase tracking-widest text-emerald-600">
+          Solicitação preparada
+        </p>
+        <h1 className="mt-2 text-3xl font-extrabold tracking-tight">Continue no WhatsApp</h1>
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+          Envie a mensagem a {studioName}. Isto ainda não é uma marcação e o horário não ficou
+          bloqueado. Aguarde a confirmação do estúdio.
+        </p>
+        <div className="mt-7 grid w-full gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="h-12 rounded-xl bg-accent text-sm font-bold text-accent-foreground"
+          >
+            Voltar e abrir novamente
+          </button>
+          <button
+            type="button"
+            onClick={onReset}
+            className="h-11 rounded-xl text-sm font-semibold text-muted-foreground ring-1 ring-border"
+          >
+            Fazer outra solicitação
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConfirmationView({
   studioName,
   when,
@@ -8608,28 +8881,6 @@ function ConfirmationView({
   onReset: () => void;
 }) {
   const isPaidOnline = paymentStatus === "paid_online";
-  const [refundOpen, setRefundOpen] = useState(false);
-  const [refundReason, setRefundReason] = useState("");
-  const [refundBusy, setRefundBusy] = useState(false);
-
-  async function sendRefundRequest() {
-    if (!refundTarget || refundBusy) return;
-    setRefundBusy(true);
-    try {
-      await submitRefundRequest({
-        bookingRequestId: refundTarget.bookingRequestId,
-        appointmentId: refundTarget.appointmentId,
-        reason: refundReason,
-      });
-      toast.success("Pedido de reembolso enviado para o estúdio.");
-      setRefundOpen(false);
-      setRefundReason("");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível enviar o pedido.");
-    } finally {
-      setRefundBusy(false);
-    }
-  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-6 py-12 text-center">
@@ -8675,58 +8926,11 @@ function ConfirmationView({
         </div>
         {isPaidOnline && refundEnabled && refundTarget && (
           <div className="mt-3 w-full rounded-2xl bg-card p-4 text-left ring-1 ring-border">
-            {!refundOpen ? (
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-semibold">Pedido de reembolso</p>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    Pode enviar um pedido para análise do estúdio, conforme a política aceite.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setRefundOpen(true)}
-                  className="h-10 rounded-xl bg-surface px-4 text-xs font-bold text-foreground ring-1 ring-border transition hover:bg-surface-strong"
-                >
-                  Solicitar reembolso
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <label className="block">
-                  <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                    Motivo
-                  </span>
-                  <textarea
-                    value={refundReason}
-                    onChange={(event) => setRefundReason(event.target.value)}
-                    rows={3}
-                    placeholder="Explique brevemente o motivo do pedido."
-                    className="mt-2 w-full resize-none rounded-xl bg-background px-4 py-3 text-sm ring-1 ring-border placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-foreground"
-                  />
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRefundOpen(false);
-                      setRefundReason("");
-                    }}
-                    className="h-11 rounded-xl bg-surface text-xs font-bold ring-1 ring-border"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={sendRefundRequest}
-                    disabled={refundBusy || refundReason.trim().length < 4}
-                    className="h-11 rounded-xl bg-foreground text-xs font-bold text-background transition disabled:opacity-50"
-                  >
-                    {refundBusy ? "A enviar" : "Enviar pedido"}
-                  </button>
-                </div>
-              </div>
-            )}
+            <p className="text-sm font-semibold">Pedido de reembolso</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              Por segurança, utilize o link privado “Gerir marcação” enviado na confirmação para
+              solicitar um reembolso conforme a política aceite.
+            </p>
           </div>
         )}
         <button

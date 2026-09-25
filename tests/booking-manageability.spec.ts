@@ -148,6 +148,7 @@ test.describe("booking manageability", () => {
     expect(result.canCancel).toBe(false);
     expect(result.canReschedule).toBe(false);
     expect(result.statusReason).toBe("created_after_deadline");
-    expect(result.deadlineText).toContain("01 de julho");
+    expect(result.deadlineText).toContain("01/07/2026");
+    expect(result.deadlineText).toContain("18:00");
   });
 });

@@ -20,6 +20,9 @@ dist-ssr
 .wrangler/
 .dev.vars
 
+# Supabase CLI link state is machine-local and must never select a remote target.
+/supabase/.temp/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -46,3 +49,65 @@ dist-ssr
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Local database snapshots may contain operational credentials.
+/backups/**/*.sql
+
+# Disposable schema-only Stripe staging audit artifacts.
+/artifacts/stripe-audit-prod-public-schema-*.sql
+/artifacts/stripe-staging-local/
+/artifacts/bellza-staging-remote/
+
+# Local rollback point for the official Option 1 identity migration.
+/backups/20260910-before-option1-brand-migration/
+
+# Local reconciliation material: never commit or package these sources.
+/backups/
+/artifacts/
+/bellza-brand-kit/
+/marketing/
+/SECURITY-REPORT.md
+/SECURITY-TODO.md
+**/.fuse_hidden*
+
+# Local audit/report documents that are evidence, not release sources.
+/docs/*audit*.md
+/docs/*report*.md
+/docs/*readiness*.md
+/docs/*blocker*.md
+/docs/*redesign*.md
+/docs/*implementation*.md
+/docs/*settlement*.md
+/docs/*hardening*.md
+/docs/*update*.md
+/docs/stripe-sandbox-runbook-*.md
+
+# Staging-only SQL fixtures are intentionally outside the release snapshot.
+/tests/sql/staging-*.sql
+
+# One-off local probes, fixture setup, captures, and external-service exercises.
+/scripts/capture-commercial-flyer.mjs
+/scripts/generate-stripe-test-kyc-links.mjs
+/scripts/import-studio-clients.mjs
+/scripts/link-staging-stripe-fixtures.mjs
+/scripts/render-commercial-flyer.mjs
+/scripts/staging-auth-storage-smoke.mjs
+/scripts/staging-connect-webhook-audit.mjs
+/scripts/staging-sca-candidate-readonly.mjs
+/scripts/staging-sca-checkout-inspect.mjs
+/scripts/staging-sca-fixture-setup.mjs
+/scripts/staging-sca-state-readonly.mjs
+/scripts/staging-sca-ui-e2e.mjs
+/scripts/staging-test-fixture-inspect.mjs
+/scripts/staging-ui-inspect.mjs
+/scripts/stripe-checkout-inspect.mjs
+/scripts/stripe-connect-events-readonly.mjs
+/scripts/stripe-connect-financial-e2e.mjs
+/scripts/stripe-connect-permission-probe.mjs
+/scripts/stripe-connect-status-readonly.mjs
+/scripts/stripe-subscription-e2e.mjs
+/scripts/stripe-subscription-e2e-finish.mjs
+/scripts/stripe-subscription-e2e-resume.mjs
+/scripts/stripe-subscription-new-checkout-after-cancel.mjs
+/scripts/stripe-subscription-reactivation-finish.mjs
+/scripts/stripe-subscription-state.mjs

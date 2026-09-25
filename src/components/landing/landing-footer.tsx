@@ -1,16 +1,16 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { APP_BRAND } from "@/lib/app-brand";
-import { BellzaLogo } from "@/components/bellza-logo";
+import { BellzaLogo, type BellzaLogoTone } from "@/components/bellza-logo";
 
-export function LandingFooter() {
+export function LandingFooter({ brandTone = "auto" }: { brandTone?: BellzaLogoTone } = {}) {
   const year = new Date().getFullYear();
 
   return (
     <footer className="border-t border-border bg-surface-muted text-foreground">
-      <div className="mx-auto grid max-w-7xl gap-8 px-4 py-10 sm:px-6 md:grid-cols-[1.35fr_1fr_1fr_1fr]">
-        <div className="space-y-4">
-          <BellzaLogo variant="navbar" href={null} />
+      <div className="mx-auto grid max-w-7xl gap-5 px-4 py-8 sm:px-6 md:grid-cols-[1.35fr_1fr_1fr_1fr] md:gap-8 md:py-10">
+        <div className="space-y-3 pb-2 md:space-y-4 md:pb-0">
+          <BellzaLogo variant="footer" tone={brandTone} href={null} />
           <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{APP_BRAND.description}</p>
         </div>
 
@@ -48,10 +48,14 @@ export function LandingFooter() {
 
 function FooterCol({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="space-y-3">
-      <h2 className="text-xs font-semibold uppercase text-muted-foreground">{title}</h2>
-      <ul className="grid gap-2 text-sm">{children}</ul>
-    </div>
+    <details className="group min-w-0 border-t border-border/70 pt-1 md:border-0 md:pt-0">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-xs font-semibold uppercase text-muted-foreground marker:hidden md:hidden [&::-webkit-details-marker]:hidden">
+        {title}
+        <span className="text-base font-light transition-transform group-open:rotate-45" aria-hidden="true">+</span>
+      </summary>
+      <h2 className="hidden text-xs font-semibold uppercase text-muted-foreground md:block">{title}</h2>
+      <ul className="hidden gap-2 pb-3 text-sm group-open:grid md:mt-3 md:grid md:pb-0">{children}</ul>
+    </details>
   );
 }
 

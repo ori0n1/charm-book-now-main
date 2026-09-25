@@ -4,6 +4,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccess } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendWebPush } from "@/lib/web-push.server";
+import { BELLZA_APP_ICON_192, BELLZA_NOTIFICATION_BADGE } from "@/lib/brand-assets";
 
 const StaffStatusInput = z.object({
   staffId: z.string().uuid(),
@@ -53,7 +54,7 @@ export const updateStaffPresenceStatus = createServerFn({ method: "POST" })
   });
 
 async function assertCanManageStudio(sb: any, userId: string, studioId: string) {
-  await assertStudioAccess(sb, userId, studioId);
+  await assertStudioAccess(sb, userId, studioId, { entitlement: "notifications" });
 }
 
 function normalizePresenceStatus(status?: string | null) {
@@ -103,8 +104,10 @@ async function notifyFollowersThatStaffIsOnline(
     title: "Agenda disponível",
     body: `${staffName} tem horários disponíveis para reserva. Consulte a agenda se desejar.`,
     url: studio?.slug ? `/s/${studio.slug}` : "/",
-    icon: withPushAssetVersion(studio?.logo_url || "/pwa-icon.svg", studio?.updated_at),
-    badge: "/pwa-icon.svg",
+    icon: studio?.logo_url
+      ? withPushAssetVersion(studio.logo_url, studio.updated_at)
+      : BELLZA_APP_ICON_192,
+    badge: BELLZA_NOTIFICATION_BADGE,
     tag: `staff-online-${studioId}`,
     data: { studioId, kind: "staff_online" },
   };

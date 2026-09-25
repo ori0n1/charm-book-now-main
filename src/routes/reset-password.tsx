@@ -12,6 +12,7 @@ export const Route = createFileRoute("/reset-password")({
     meta: [
       { title: `Nova palavra-passe - ${APP_BRAND.name}` },
       { name: "robots", content: "noindex,nofollow,noarchive" },
+      { name: "referrer", content: "no-referrer" },
     ],
   }),
   component: ResetPasswordPage,
@@ -34,7 +35,7 @@ function ResetPasswordPage() {
     async function validateRecoverySession() {
       try {
         const cleanPath = `/reset-password${isTeamInvite ? "?invite=team" : ""}`;
-        const session = await settleSessionFromCurrentUrl(cleanPath, { forceCodeExchange: true });
+        const session = await settleSessionFromCurrentUrl(cleanPath);
         if (cancelled) return;
         if (!session) {
           setErrorMessage("O link expirou, já foi usado ou foi substituído por um pedido mais recente.");
@@ -110,7 +111,7 @@ function ResetPasswordPage() {
       title={isTeamInvite ? "Criar acesso ao painel" : "Nova palavra-passe"}
       description="Defina uma palavra-passe segura para a sua conta."
     >
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form method="post" action="/reset-password" onSubmit={onSubmit} className="space-y-4">
         <AuthField
           label="Nova palavra-passe"
           name="password"

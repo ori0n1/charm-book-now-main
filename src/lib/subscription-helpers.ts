@@ -9,8 +9,9 @@ import { createStripeClient, type StripeEnv } from "@/lib/stripe.server";
 export async function loadPrimaryStudio(sb: SupabaseClient, userId: string) {
   const { data } = await sb
     .from("user_roles")
-    .select("studio_id,studios(id,name,email,stripe_customer_id,subscription_status,trial_ends_at,trial_used_at)")
+    .select("studio_id,studios(id,name,email,plan_tier,stripe_customer_id,subscription_status,trial_ends_at,trial_used_at)")
     .eq("user_id", userId)
+    .in("role", ["studio_owner", "saas_owner"])
     .limit(1)
     .maybeSingle();
 
@@ -19,6 +20,7 @@ export async function loadPrimaryStudio(sb: SupabaseClient, userId: string) {
         id: string;
         name: string | null;
         email: string | null;
+        plan_tier: string | null;
         stripe_customer_id: string | null;
         subscription_status: string | null;
         trial_ends_at: string | null;
@@ -33,7 +35,7 @@ export async function loadPrimaryStudio(sb: SupabaseClient, userId: string) {
 export async function loadStudioForBilling(sb: SupabaseClient, studioId: string) {
   const { data, error } = await sb
     .from("studios")
-    .select("id,name,email,stripe_customer_id,stripe_subscription_id,subscription_status,trial_ends_at,trial_used_at")
+    .select("id,name,email,plan_tier,stripe_customer_id,stripe_subscription_id,subscription_status,trial_ends_at,trial_used_at")
     .eq("id", studioId)
     .maybeSingle();
   if (error || !data) throw new Error("studio_not_found");
@@ -41,6 +43,7 @@ export async function loadStudioForBilling(sb: SupabaseClient, studioId: string)
     id: string;
     name: string;
     email: string | null;
+    plan_tier: string | null;
     stripe_customer_id: string | null;
     stripe_subscription_id: string | null;
     subscription_status: string | null;
@@ -88,10 +91,12 @@ export async function assertNoDuplicateActiveSubscription(sb: SupabaseClient, st
     .from("subscriptions")
     .select("id,status")
     .eq("studio_id", studioId)
-    .in("status", ["active", "trialing", "incomplete"])
+    .in("status", ["active", "trialing", "incomplete", "past_due", "unpaid", "paused"])
+    .limit(1)
     .maybeSingle();
 
-  if (!error && data?.id) throw new Error("subscription_already_exists");
+  if (error) throw error;
+  if (data?.id) throw new Error("subscription_already_exists");
 }
 
 /**
@@ -100,7 +105,7 @@ export async function assertNoDuplicateActiveSubscription(sb: SupabaseClient, st
 export async function loadSubscriptionForStudio(sb: SupabaseClient, studioId: string, userId: string) {
   const { data } = await sb
     .from("subscriptions")
-    .select("plan,status,current_period_end,cancel_at_period_end,stripe_customer_id,stripe_subscription_id")
+    .select("plan,plan_tier,status,current_period_end,cancel_at_period_end,stripe_customer_id,stripe_subscription_id")
     .eq("user_id", userId)
     .eq("studio_id", studioId)
     .order("updated_at", { ascending: false })
@@ -110,6 +115,7 @@ export async function loadSubscriptionForStudio(sb: SupabaseClient, studioId: st
   return data as
     | {
         plan: string;
+        plan_tier: string | null;
         status: string;
         current_period_end: string | null;
         cancel_at_period_end: boolean;
@@ -123,7 +129,12 @@ export async function loadSubscriptionForStudio(sb: SupabaseClient, studioId: st
  * Get trial end time as Unix timestamp
  * Only valid if status is "trialing" and trial hasn't expired
  */
-export function trialEndUnix(trialEndsAt?: string | null, status?: string | null, trialUsedAt?: string | null): number | null {
+export function trialEndUnix(
+  trialEndsAt?: string | null,
+  status?: string | null,
+  trialUsedAt?: string | null,
+  now = new Date(),
+): number | null {
   // Only return if currently in trialing status
   if (status && status !== "trialing") return null;
   if (!trialEndsAt) return null;
@@ -131,8 +142,15 @@ export function trialEndUnix(trialEndsAt?: string | null, status?: string | null
   if (trialUsedAt) return null;
 
   const timestamp = Math.floor(new Date(trialEndsAt).getTime() / 1000);
-  // Only return if trial hasn't expired yet
-  return timestamp > Math.floor(Date.now() / 1000) ? timestamp : null;
+  if (!Number.isFinite(timestamp)) return null;
+
+  // Stripe only accepts an explicit trial_end when it is at least 48 hours in
+  // the future. Omitting it near the boundary lets checkout charge normally
+  // instead of failing every paid-plan button.
+  const minimumStripeLeadSeconds = 48 * 60 * 60;
+  return timestamp >= Math.floor(now.getTime() / 1000) + minimumStripeLeadSeconds
+    ? timestamp
+    : null;
 }
 
 /**
@@ -169,6 +187,8 @@ export async function reserveCheckoutSession(
     userId: string;
     studioId: string;
     planId: string;
+    planTier: "pro" | "premium";
+    billingInterval: "monthly" | "yearly";
     priceId: string;
     customerId: string;
   },
@@ -186,7 +206,8 @@ export async function reserveCheckoutSession(
     stripe_customer_id: input.customerId,
     stripe_subscription_id: `checkout_pending:${input.studioId}`,
     stripe_price_id: input.priceId,
-    plan: input.planId,
+    plan: input.billingInterval,
+    plan_tier: input.planTier,
     status: "checkout_pending",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

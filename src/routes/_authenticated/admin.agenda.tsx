@@ -14,6 +14,8 @@ import {
   CalendarClock,
   CalendarDays,
   Check,
+  AlertTriangle,
+  ArrowLeftRight,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -34,6 +36,8 @@ import {
   Plus,
   Printer,
   Search,
+  Sparkles,
+  Timer,
   TrendingDown,
   TrendingUp,
   Users,
@@ -57,10 +61,18 @@ import { ExpandableList } from "@/components/ui/expandable-list";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { sortAppointmentsChronologically as sortAppointmentsChronologicallyShared } from "@/lib/appointment-ordering";
-import { getRescheduleUserMessage } from "@/lib/appointment-reschedule-errors";
 import { getPublicReservationCode } from "@/lib/reservation-code";
-import { rescheduleStudioAppointment } from "@/lib/studio-appointment.functions";
+import { csvCell, escapeHtml, neutralizeSpreadsheetFormula } from "@/lib/output-safety";
 import {
+  createStudioManualFit,
+  moveStudioAppointment,
+  previewStudioScheduleChange,
+  resolveStudioLocalDateTime,
+  swapStudioAppointments,
+  type StudioSchedulePreview,
+} from "@/lib/studio-appointment.functions";
+import {
+  allocateAuthoritativeLineTotals,
   computeAttendanceRevenue,
   computeFinancialSplit,
   formatAppointmentStatus,
@@ -68,7 +80,11 @@ import {
   isFinanciallyRelevantAppointment,
   type FinancialRuleSource,
 } from "@/lib/utils";
-import { sendAppointmentConfirmationForAppointment } from "@/lib/whatsapp.functions";
+import {
+  sendAppointmentConfirmationForAppointment,
+  sendManualAppointmentConfirmationForAppointment,
+} from "@/lib/whatsapp.functions";
+import { dispatchRecentStudioAppointmentPushNotification } from "@/lib/notification-dispatcher.functions";
 import {
   buildPastAppointmentWhatsAppMessage,
   buildWhatsAppComposeUrl,
@@ -84,15 +100,42 @@ import {
   createInPersonMbWayPayment,
   getInPersonMbWaySettings,
 } from "@/lib/in-person-mbway.functions";
+import {
+  getProtectedAgendaData,
+  resolveProtectedAppointmentAttendance,
+} from "@/lib/agenda-access.functions";
+import {
+  DEFAULT_ATTENDANCE_GRACE_MINUTES,
+  getAppointmentLifecycleStage,
+  lifecycleStageLabel,
+} from "@/lib/appointment-lifecycle";
 import { ProfessionalTimeline } from "@/components/agenda/professional-timeline";
 import type {
   ProfessionalTimelineAppointment,
   ProfessionalTimelinePerson,
 } from "@/components/agenda/professional-timeline-utils";
 import {
+  buildAppointmentPaymentFacts,
+  computeAppointmentLedger,
+  computeAppointmentFinancialSplit,
+  toCents,
+  type AppointmentPaymentFacts,
+  type RefundRow,
+} from "@/lib/financial-ledger";
+import {
   TimelineAppointmentDrawer,
   type TimelineDrawerAction,
 } from "@/components/agenda/timeline-appointment-drawer";
+import {
+  AttendancePendingSheet,
+  type AttendancePendingSheetItem,
+} from "@/components/agenda/attendance-pending-sheet";
+import {
+  attendancePendingSummaryLabel,
+  buildAttendanceReviewState,
+  isAttendanceClosingReview,
+} from "@/lib/attendance-confirmation-ui";
+import { formatStudioDate, formatStudioTime, getStudioDateKey } from "@/lib/studio-time";
 
 export const Route = createFileRoute("/_authenticated/admin/agenda")({
   component: AgendaPage,
@@ -107,8 +150,11 @@ type Appt = {
   ends_at: string;
   status: string;
   total_price: number;
+  studio_commission_percent_snapshot?: number | null;
   total_duration_min?: number | null;
   notes: string | null;
+  is_manual_fit?: boolean;
+  duration_overridden?: boolean;
   clients: {
     name: string;
     phone: string;
@@ -118,16 +164,36 @@ type Appt = {
   staff: ({ id: string; name: string } & FinancialRuleSource) | null;
   appointment_services?: {
     price: number;
+    studio_commission_percent_snapshot?: number | null;
     services: ({ name: string } & FinancialRuleSource) | null;
   }[];
 };
 
-type PaidRow = { appointment_id: string | null; amount_cents: number; status: string };
-type CashPaymentRow = { appointment_id: string | null; amount: number; movement_type: string };
+type PaidRow = {
+  id?: string | null;
+  appointment_id: string | null;
+  amount_cents: number;
+  status: string;
+};
+type CashPaymentRow = {
+  id?: string | null;
+  appointment_id: string | null;
+  amount: number;
+  movement_type: string;
+};
 type MessageLog = {
   appointment_id: string | null;
   status: "pending" | "sent" | "failed" | "skipped";
   reason: string | null;
+  created_at: string;
+};
+type ScheduleEventRow = {
+  appointment_id: string;
+  related_appointment_id: string | null;
+  operation: "move" | "swap" | "duration" | "manual_fit";
+  overlap_confirmed: boolean;
+  previous_state: Record<string, unknown> | null;
+  next_state: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -179,6 +245,8 @@ const EMPTY_FILTERS: AgendaFilters = {
 function AgendaPage() {
   const { studio } = useCurrentStudio();
   const resendWhatsApp = useServerFn(sendAppointmentConfirmationForAppointment);
+  const loadProtectedAgenda = useServerFn(getProtectedAgendaData);
+  const resolveAttendance = useServerFn(resolveProtectedAppointmentAttendance);
   const getMbWaySettings = useServerFn(getInPersonMbWaySettings);
   const createMbWayCharge = useServerFn(createInPersonMbWayPayment);
   const exportBtnRef = useRef<HTMLButtonElement>(null);
@@ -186,13 +254,20 @@ function AgendaPage() {
   const [appts, setAppts] = useState<Appt[]>([]);
   const [paidRows, setPaidRows] = useState<PaidRow[]>([]);
   const [cashPaymentRows, setCashPaymentRows] = useState<CashPaymentRow[]>([]);
+  const [refundRows, setRefundRows] = useState<RefundRow[]>([]);
   const [messageLogs, setMessageLogs] = useState<MessageLog[]>([]);
+  const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [groupCollapseOverrides, setGroupCollapseOverrides] = useState<Map<string, boolean>>(
     new Map(),
   );
   const [savingPresenceId, setSavingPresenceId] = useState<string | null>(null);
+  const [attendancePanelOpen, setAttendancePanelOpen] = useState(false);
+  const [attendancePanelFocusId, setAttendancePanelFocusId] = useState<string | null>(null);
+  const [attendanceGraceMinutes, setAttendanceGraceMinutes] = useState(
+    DEFAULT_ATTENDANCE_GRACE_MINUTES,
+  );
   const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const [receivingPaymentId, setReceivingPaymentId] = useState<string | null>(null);
   const [paymentDialogAppt, setPaymentDialogAppt] = useState<Appt | null>(null);
@@ -212,6 +287,7 @@ function AgendaPage() {
     staffId?: string;
     date?: string;
     time?: string;
+    mode?: "standard" | "fit";
   } | null>(null);
   const [blockTimeDefaults, setBlockTimeDefaults] = useState<{
     staffId: string;
@@ -221,6 +297,8 @@ function AgendaPage() {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [editApptId, setEditApptId] = useState<string | null>(null);
   const [rescheduleApptId, setRescheduleApptId] = useState<string | null>(null);
+  const [swapApptId, setSwapApptId] = useState<string | null>(null);
+  const [durationApptId, setDurationApptId] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<"csv" | "excel" | "pdf" | null>(null);
   const [enableInPersonMbWay, setEnableInPersonMbWay] = useState(false);
@@ -363,67 +441,25 @@ function AgendaPage() {
   async function loadData(options?: { silent?: boolean }) {
     if (!studio) return;
     if (!options?.silent) setLoading(true);
-    const staffAgendaVisibility = (studio.staff_agenda_visibility ??
-      "private") as StaffAgendaVisibility;
-    const canStaffLoadTeamAgenda = studio.role === "staff" && staffAgendaVisibility !== "private";
-    const staffDataFilter =
-      studio.role === "staff" && !canStaffLoadTeamAgenda ? studio.staff_id : null;
-    const [{ data }, staffResult, availabilityResult] = await Promise.all([
-      fetchAgendaAppointments(studio.id, staffDataFilter),
-      supabase
-        .from("staff")
-        .select("id,name,photo_url,is_active")
-        .eq("studio_id", studio.id)
-        .eq("is_active", true)
-        .order("sort_order")
-        .order("name"),
-      supabase
-        .from("staff_availability")
-        .select("staff_id,weekday,start_time,end_time")
-        .eq("studio_id", studio.id),
-    ]);
-    const appointmentRows = sortAppointmentsChronologically((data ?? []) as unknown as Appt[]);
-    const sensitiveAppointmentIds =
-      studio.role === "staff"
-        ? appointmentRows
-            .filter((appt) => appt.staff?.id === studio.staff_id)
-            .map((appt) => appt.id)
-        : appointmentRows.map((appt) => appt.id);
-    const shouldLoadSensitiveRows = studio.role !== "staff" || sensitiveAppointmentIds.length > 0;
-    const [paymentsResult, cashPaymentsResult, logsResult] = shouldLoadSensitiveRows
-      ? await Promise.all([
-          scopeAppointmentRows(
-            supabase
-              .from("payment_intents")
-              .select("appointment_id,amount_cents,status")
-              .eq("studio_id", studio.id),
-            studio.role === "staff" ? sensitiveAppointmentIds : null,
-          ),
-          scopeAppointmentRows(
-            (supabase as any)
-              .from("cash_register_movements")
-              .select("appointment_id,amount,movement_type")
-              .eq("studio_id", studio.id)
-              .eq("movement_type", "service_payment"),
-            studio.role === "staff" ? sensitiveAppointmentIds : null,
-          ),
-          scopeAppointmentRows(
-            (supabase as any)
-              .from("whatsapp_message_logs")
-              .select("appointment_id,status,reason,created_at")
-              .eq("studio_id", studio.id)
-              .order("created_at", { ascending: false }),
-            studio.role === "staff" ? sensitiveAppointmentIds : null,
-          ),
-        ])
-      : [{ data: [] }, { data: [] }, { data: [] }];
-    setAppts(appointmentRows);
-    setAgendaStaff((staffResult.data ?? []) as StudioStaff[]);
-    setStaffAvailability((availabilityResult.data ?? []) as StaffAvailabilityRow[]);
-    setPaidRows((paymentsResult.data ?? []) as PaidRow[]);
-    setCashPaymentRows((cashPaymentsResult.data ?? []) as CashPaymentRow[]);
-    setMessageLogs((logsResult.data ?? []) as MessageLog[]);
-    if (!options?.silent) setLoading(false);
+    try {
+      const payload = await loadProtectedAgenda({ data: { studioId: studio.id } });
+      setAppts(sortAppointmentsChronologically((payload.appointments ?? []) as unknown as Appt[]));
+      setAgendaStaff((payload.staff ?? []) as StudioStaff[]);
+      setStaffAvailability((payload.availability ?? []) as StaffAvailabilityRow[]);
+      setAttendanceGraceMinutes(
+        Number(payload.lifecycleSettings?.graceMinutes ?? DEFAULT_ATTENDANCE_GRACE_MINUTES),
+      );
+      setPaidRows((payload.payments ?? []) as PaidRow[]);
+      setCashPaymentRows((payload.cashPayments ?? []) as CashPaymentRow[]);
+      setRefundRows((payload.refunds ?? []) as RefundRow[]);
+      setMessageLogs((payload.messageLogs ?? []) as MessageLog[]);
+      setScheduleEvents((payload.scheduleEvents ?? []) as ScheduleEventRow[]);
+    } catch (error) {
+      console.error("[agenda] protected load failed", error);
+      if (!options?.silent) toast.error("Não foi possível carregar a agenda.");
+    } finally {
+      if (!options?.silent) setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -491,21 +527,25 @@ function AgendaPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [studio?.id, studio?.role, studio?.staff_id]);
 
+  useEffect(() => {
+    const visibility = (studio?.staff_agenda_visibility ?? "private") as StaffAgendaVisibility;
+    if (studio?.role !== "staff" || visibility === "private") return;
+
+    // RLS intentionally hides colleagues' raw appointment rows from Realtime.
+    // Refresh the protected, masked projection so team availability remains current.
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadData({ silent: true });
+    }, 30_000);
+    return () => window.clearInterval(timer);
+    // loadData intentionally reads the latest studio state from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studio?.id, studio?.role, studio?.staff_agenda_visibility]);
+
   // Derived maps
+  const paymentFacts = buildAppointmentPaymentFacts(paidRows, cashPaymentRows, refundRows);
   const paidByAppointment = new Map<string, number>();
-  for (const p of paidRows) {
-    if (!p.appointment_id || p.status !== "succeeded") continue;
-    paidByAppointment.set(
-      p.appointment_id,
-      (paidByAppointment.get(p.appointment_id) ?? 0) + p.amount_cents / 100,
-    );
-  }
-  for (const p of cashPaymentRows) {
-    if (!p.appointment_id || p.movement_type !== "service_payment") continue;
-    paidByAppointment.set(
-      p.appointment_id,
-      (paidByAppointment.get(p.appointment_id) ?? 0) + Number(p.amount || 0),
-    );
+  for (const [appointmentId, facts] of paymentFacts) {
+    paidByAppointment.set(appointmentId, facts.receivedCents / 100);
   }
   const latestMessageByAppointment = new Map<string, MessageLog>();
   for (const log of messageLogs) {
@@ -528,7 +568,7 @@ function AgendaPage() {
           if (a.staff?.id !== studio?.staff_id) return false;
         }
       }
-      if (!appointmentMatchesFilters(a, filters, paidByAppointment)) return false;
+      if (!appointmentMatchesFilters(a, filters, paymentFacts, studio?.timezone)) return false;
       if (searchQuery.trim()) {
         const q = normalizeFilterText(searchQuery);
         const canSeeSensitive = canViewSensitiveAppointment(a, studio);
@@ -654,7 +694,10 @@ function AgendaPage() {
     timelineProfessionals.push({ id: "unassigned", name: "Sem profissional" });
   }
   const timelineAppointments: ProfessionalTimelineAppointment[] = filteredAppts
-    .filter((appointment) => isSameLocalDay(new Date(appointment.starts_at), selectedDate))
+    .filter(
+      (appointment) =>
+        getStudioDateKey(appointment.starts_at, studio?.timezone) === toDateInputValue(selectedDate),
+    )
     .map((appointment) => {
       const canSeeSensitive = canViewSensitiveAppointment(appointment, studio);
       const canSeeBasic = canSeeSensitive || canStaffViewBasicDetails;
@@ -676,6 +719,15 @@ function AgendaPage() {
           appointment.total_duration_min,
         ),
         privateDetails: canSeeSensitive,
+        attendancePending:
+          canSeeSensitive &&
+          getAppointmentLifecycleStage({
+            status: appointment.status,
+            startsAt: appointment.starts_at,
+            now: agendaNow,
+            graceMinutes: attendanceGraceMinutes,
+          }) === "awaiting_confirmation",
+        manualFit: Boolean(appointment.is_manual_fit),
       };
     });
   const visibleProfessionalIds = new Set(timelineProfessionals.map((person) => person.id));
@@ -789,21 +841,42 @@ function AgendaPage() {
   }
 
   // Actions
-  async function markPresence(appt: Appt, nextStatus: "completed" | "no_show") {
-    if (!studio) return;
-    setSavingPresenceId(appt.id);
-    const { error } = await supabase
-      .from("appointments")
-      .update({ status: nextStatus, updated_at: new Date().toISOString() } as any)
-      .eq("id", appt.id)
-      .eq("studio_id", studio.id);
-    setSavingPresenceId(null);
-    if (error) {
-      toast.error(error.message);
-      return;
+  async function markPresenceMany(apptsToResolve: Appt[], nextStatus: "completed" | "no_show") {
+    if (!studio) return false;
+    if (apptsToResolve.length === 0) return false;
+    setSavingPresenceId(apptsToResolve.length === 1 ? apptsToResolve[0].id : "bulk");
+    try {
+      await resolveAttendance({
+        data: {
+          studioId: studio.id,
+          appointmentIds: apptsToResolve.map((appointment) => appointment.id),
+          outcome: nextStatus,
+        },
+      });
+    } catch (error) {
+      toast.error(attendanceResolutionErrorMessage(error));
+      setSavingPresenceId(null);
+      return false;
     }
-    setAppts((c) => c.map((i) => (i.id === appt.id ? { ...i, status: nextStatus } : i)));
-    toast.success(nextStatus === "completed" ? "Atendimento confirmado." : "Falta registada.");
+    setSavingPresenceId(null);
+    const resolvedIds = new Set(apptsToResolve.map((appointment) => appointment.id));
+    setAppts((c) => c.map((i) => (resolvedIds.has(i.id) ? { ...i, status: nextStatus } : i)));
+    await loadData({ silent: true });
+    const plural = apptsToResolve.length > 1;
+    toast.success(
+      nextStatus === "completed"
+        ? plural
+          ? `${apptsToResolve.length} atendimentos confirmados e liquidados.`
+          : "Atendimento confirmado e liquidado."
+        : plural
+          ? `${apptsToResolve.length} faltas registadas sem nova receita.`
+          : "Falta registada sem nova receita.",
+    );
+    return true;
+  }
+
+  async function markPresence(appt: Appt, nextStatus: "completed" | "no_show") {
+    return markPresenceMany([appt], nextStatus);
   }
 
   async function confirmStudioPayment(
@@ -920,12 +993,18 @@ function AgendaPage() {
         Telefone: canSeeSensitive ? (a.clients?.phone ?? "-") : "-",
         Serviço: service,
         Profissional: a.staff?.name ?? "-",
-        Data: new Date(a.starts_at).toLocaleDateString("pt-PT"),
-        Hora: new Date(a.starts_at).toLocaleTimeString("pt-PT", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        Estado: canSeeSensitive ? formatAppointmentStatus(a.status) : "Ocupado",
+        Data: formatStudioDate(a.starts_at, studio?.timezone),
+        Hora: formatStudioTime(a.starts_at, studio?.timezone),
+        Estado: canSeeSensitive
+          ? lifecycleStageLabel(
+              getAppointmentLifecycleStage({
+                status: a.status,
+                startsAt: a.starts_at,
+                now: agendaNow,
+                graceMinutes: attendanceGraceMinutes,
+              }),
+            )
+          : "Ocupado",
         Valor: canSeeSensitive ? formatEUR(a.total_price) : "-",
         Pagamento: canSeeSensitive ? payLabel : "-",
       };
@@ -945,11 +1024,9 @@ function AgendaPage() {
       if (format === "csv") {
         const headers = Object.keys(rows[0]);
         const csvLines = [
-          headers.join(";"),
+          headers.map(csvCell).join(";"),
           ...rows.map((row) =>
-            headers
-              .map((h) => `"${String((row as Record<string, string>)[h]).replace(/"/g, '""')}"`)
-              .join(";"),
+            headers.map((h) => csvCell((row as Record<string, string>)[h])).join(";"),
           ),
         ];
         const blob = new Blob(["﻿" + csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
@@ -957,11 +1034,11 @@ function AgendaPage() {
         toast.success("CSV exportado com sucesso.");
       } else if (format === "excel") {
         const headers = Object.keys(rows[0]);
-        const th = headers.map((h) => `<th>${h}</th>`).join("");
+        const th = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
         const trs = rows
           .map(
             (row) =>
-              `<tr>${headers.map((h) => `<td>${(row as Record<string, string>)[h]}</td>`).join("")}</tr>`,
+              `<tr>${headers.map((h) => `<td>${escapeHtml(neutralizeSpreadsheetFormula((row as Record<string, string>)[h]))}</td>`).join("")}</tr>`,
           )
           .join("");
         const html = `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body><table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></body></html>`;
@@ -970,11 +1047,11 @@ function AgendaPage() {
         toast.success("Excel exportado com sucesso.");
       } else {
         const headers = Object.keys(rows[0]);
-        const th = headers.map((h) => `<th>${h}</th>`).join("");
+        const th = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
         const trs = rows
           .map(
             (row) =>
-              `<tr>${headers.map((h) => `<td>${(row as Record<string, string>)[h]}</td>`).join("")}</tr>`,
+              `<tr>${headers.map((h) => `<td>${escapeHtml((row as Record<string, string>)[h])}</td>`).join("")}</tr>`,
           )
           .join("");
         const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Marcações</title><style>body{font-family:sans-serif;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:4px 8px;text-align:left}th{background:#f5f5f5}</style></head><body><h2>Marcações - ${new Date().toLocaleDateString("pt-PT")}</h2><table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table></body></html>`;
@@ -1010,6 +1087,39 @@ function AgendaPage() {
   const rescheduleAppt = rescheduleApptId
     ? (appts.find((a) => a.id === rescheduleApptId) ?? null)
     : null;
+  const swapAppt = swapApptId ? (appts.find((a) => a.id === swapApptId) ?? null) : null;
+  const durationAppt = durationApptId ? (appts.find((a) => a.id === durationApptId) ?? null) : null;
+  const pendingAttendanceAppointments = sortAppointmentsChronologically(
+    appts.filter(
+      (appointment) =>
+        canViewSensitiveAppointment(appointment, studio) &&
+        getAppointmentLifecycleStage({
+          status: appointment.status,
+          startsAt: appointment.starts_at,
+          now: agendaNow,
+          graceMinutes: attendanceGraceMinutes,
+        }) === "awaiting_confirmation",
+    ),
+    "history",
+  );
+  const attendanceReview = buildAttendanceReviewState(
+    pendingAttendanceAppointments,
+    attendancePanelFocusId,
+  );
+  const attendanceSheetItems: AttendancePendingSheetItem[] = attendanceReview.visibleItems.map(
+    (appointment) => ({
+      id: appointment.id,
+      startsAt: appointment.starts_at,
+      clientName: appointment.clients?.name ?? "Cliente",
+      serviceName: appointmentServiceLabel(appointment),
+      professionalName: appointment.staff?.name ?? "Sem profissional",
+    }),
+  );
+  const attendanceClosingReview = isAttendanceClosingReview(
+    agendaNow,
+    selectedDate,
+    selectedAvailability,
+  );
 
   return (
     <div
@@ -1078,6 +1188,26 @@ function AgendaPage() {
           </button>
         </div>
       </header>
+
+      {pendingAttendanceAppointments.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setAttendancePanelFocusId(null);
+            setAttendancePanelOpen(true);
+          }}
+          className="mx-2 flex min-h-10 items-center gap-2 rounded-xl border border-amber-300/55 bg-amber-50/65 px-3 py-2 text-left text-amber-950 shadow-sm transition hover:bg-amber-100/70 dark:border-amber-700/35 dark:bg-amber-500/10 dark:text-amber-100 dark:hover:bg-amber-500/15 md:mx-0 md:min-h-11 md:px-3.5"
+          aria-label="Atendimentos aguardando confirmação"
+          data-testid="attendance-pending-summary"
+        >
+          <Clock className="size-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-xs font-black md:text-sm">
+            {attendanceClosingReview ? "Fechar o dia · " : ""}
+            {attendancePendingSummaryLabel(pendingAttendanceAppointments.length)}
+          </span>
+          <ChevronRight className="size-4 shrink-0 opacity-60" />
+        </button>
+      )}
 
       <nav
         className="agenda-date-navigation agenda-touch-surface relative z-30 select-none border-y border-border/70 bg-card/95 py-1 backdrop-blur-xl touch-pan-x md:static md:rounded-2xl md:border md:px-1 md:py-2 md:shadow-sm"
@@ -1198,7 +1328,7 @@ function AgendaPage() {
             {formatAgendaDateTitle(selectedDate)}
           </p>
           <p className="hidden font-mono text-[10px] font-semibold tabular-nums text-muted-foreground min-[390px]:block">
-            {agendaNow.toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
+            {formatStudioTime(agendaNow, studio?.timezone)}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -1352,21 +1482,24 @@ function AgendaPage() {
         <ProfessionalTimeline
           date={selectedDate}
           now={agendaNow}
+          timeZone={studio?.timezone ?? "Europe/Lisbon"}
           professionals={timelineProfessionals}
           appointments={timelineEntries}
           availability={selectedAvailability}
           focusRequestKey={timelineFocusRequest}
           onOpenAppointment={(appointment) => {
-            if (appointment.privateDetails) setTimelineDetailId(appointment.id);
+            if (!appointment.privateDetails) return;
+            setTimelineDetailId(appointment.id);
           }}
           onOpenBlock={(block) => {
             if (block.sourceId) setSelectedBlockId(block.sourceId);
           }}
-          onCreateAtSlot={(staffId, minutes) => {
+          onCreateAtSlot={(staffId, minutes, mode) => {
             setNewApptDefaults({
               staffId: staffId === "unassigned" ? undefined : staffId,
               date: toDateInputValue(selectedDate),
               time: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
+              mode,
             });
             setNewApptOpen(true);
           }}
@@ -1388,11 +1521,10 @@ function AgendaPage() {
         canViewSensitiveAppointment(timelineDetailAppt, studio) &&
         (() => {
           const paid = paidByAppointment.get(timelineDetailAppt.id) ?? 0;
-          const split = computeAppointmentSplit(timelineDetailAppt, studio, paid);
-          const revenue = computeAttendanceRevenue(
-            timelineDetailAppt.total_price,
-            paid,
-            timelineDetailAppt.status,
+          const split = computeAppointmentSplit(
+            timelineDetailAppt,
+            studio,
+            paymentFacts.get(timelineDetailAppt.id) ?? null,
           );
           const financialSummary = getAppointmentFinancialSummary(timelineDetailAppt, split, paid);
           const messageState = formatMessageState(
@@ -1400,7 +1532,13 @@ function AgendaPage() {
             paid,
             latestMessageByAppointment.get(timelineDetailAppt.id),
           );
-          const canConfirm = revenue.isOnlinePaid && timelineDetailAppt.status !== "cancelled";
+          const canConfirm =
+            getAppointmentLifecycleStage({
+              status: timelineDetailAppt.status,
+              startsAt: timelineDetailAppt.starts_at,
+              now: agendaNow,
+              graceMinutes: attendanceGraceMinutes,
+            }) === "awaiting_confirmation";
           const canResend =
             messageState?.tone === "danger" ||
             (isPastAppointment(timelineDetailAppt.ends_at) &&
@@ -1409,6 +1547,40 @@ function AgendaPage() {
                 normalizePhoneForDisplay(timelineDetailAppt.clients.phone),
               ));
           const actions: TimelineDrawerAction[] = [
+            {
+              id: "move",
+              label: "Mover",
+              icon: <CalendarClock className="h-3.5 w-3.5" />,
+              onClick: () => {
+                setRescheduleApptId(timelineDetailAppt.id);
+                setTimelineDetailId(null);
+              },
+            },
+            {
+              id: "swap",
+              label: "Trocar",
+              icon: <ArrowLeftRight className="h-3.5 w-3.5" />,
+              onClick: () => {
+                setSwapApptId(timelineDetailAppt.id);
+                setTimelineDetailId(null);
+              },
+            },
+            {
+              id: "fit",
+              label: "Encaixar",
+              icon: <Sparkles className="h-3.5 w-3.5" />,
+              onClick: () => {
+                const start = new Date(timelineDetailAppt.starts_at);
+                setNewApptDefaults({
+                  staffId: timelineDetailAppt.staff?.id,
+                  date: getStudioDateKey(start, studio?.timezone),
+                  time: formatStudioTime(start, studio?.timezone),
+                  mode: "fit",
+                });
+                setNewApptOpen(true);
+                setTimelineDetailId(null);
+              },
+            },
             {
               id: "edit",
               label: "Editar",
@@ -1419,11 +1591,11 @@ function AgendaPage() {
               },
             },
             {
-              id: "reschedule",
-              label: "Reagendar",
-              icon: <CalendarClock className="h-3.5 w-3.5" />,
+              id: "duration",
+              label: "Duração",
+              icon: <Timer className="h-3.5 w-3.5" />,
               onClick: () => {
-                setRescheduleApptId(timelineDetailAppt.id);
+                setDurationApptId(timelineDetailAppt.id);
                 setTimelineDetailId(null);
               },
             },
@@ -1480,6 +1652,7 @@ function AgendaPage() {
           }
           return (
             <TimelineAppointmentDrawer
+              timeZone={studio?.timezone ?? "Europe/Lisbon"}
               details={{
                 clientName: timelineDetailAppt.clients?.name ?? "Sem cliente",
                 clientAvatarUrl: timelineDetailAppt.clients?.avatar_url,
@@ -1493,11 +1666,21 @@ function AgendaPage() {
                   timelineDetailAppt.ends_at,
                   timelineDetailAppt.total_duration_min,
                 ),
-                statusLabel: formatAppointmentStatus(timelineDetailAppt.status),
+                statusLabel: lifecycleStageLabel(
+                  getAppointmentLifecycleStage({
+                    status: timelineDetailAppt.status,
+                    startsAt: timelineDetailAppt.starts_at,
+                    now: agendaNow,
+                    graceMinutes: attendanceGraceMinutes,
+                  }),
+                ),
                 paymentLabel: formatPaymentState(timelineDetailAppt, paid),
                 messageLabel: messageState?.label ?? null,
                 notes: timelineDetailAppt.notes,
                 valueLabel: formatEUR(split.serviceTotal),
+                scheduleHistory: formatScheduleHistory(
+                  scheduleEvents.filter((event) => event.appointment_id === timelineDetailAppt.id),
+                ),
               }}
               actions={actions}
               onClose={() => setTimelineDetailId(null)}
@@ -1508,6 +1691,36 @@ function AgendaPage() {
             />
           );
         })()}
+
+      {attendancePanelOpen && (
+        <AttendancePendingSheet
+          items={attendanceSheetItems}
+          timeZone={studio?.timezone}
+          mode={attendanceReview.mode}
+          closingReview={attendanceClosingReview}
+          savingId={savingPresenceId}
+          onClose={() => {
+            setAttendancePanelOpen(false);
+            setAttendancePanelFocusId(null);
+          }}
+          onResolve={(item, outcome) => {
+            const appointment = appts.find((candidate) => candidate.id === item.id);
+            if (!appointment) return;
+            void markPresence(appointment, outcome).then((resolved) => {
+              if (resolved && attendancePanelFocusId === appointment.id) {
+                setAttendancePanelOpen(false);
+                setAttendancePanelFocusId(null);
+              }
+            });
+          }}
+          onResolveMany={(items, outcome) => {
+            const selected = items
+              .map((item) => appts.find((candidate) => candidate.id === item.id))
+              .filter((appointment): appointment is Appt => Boolean(appointment));
+            void markPresenceMany(selected, outcome);
+          }}
+        />
+      )}
 
       {/* Mobile Filter Bottom Sheet */}
       {mobileFiltersOpen && (
@@ -1576,6 +1789,7 @@ function AgendaPage() {
           initialStaffId={newApptDefaults?.staffId}
           initialDate={newApptDefaults?.date}
           initialTime={newApptDefaults?.time}
+          creationMode={newApptDefaults?.mode ?? "standard"}
           onClose={() => {
             setNewApptOpen(false);
             setNewApptDefaults(null);
@@ -1639,11 +1853,37 @@ function AgendaPage() {
       {rescheduleAppt && studio && (
         <RescheduleModal
           studioId={studio.id}
+          studioTimezone={studio.timezone}
           staffId={studio.role === "staff" ? studio.staff_id : null}
           appt={rescheduleAppt}
           onClose={() => setRescheduleApptId(null)}
           onSaved={() => {
             setRescheduleApptId(null);
+            loadData();
+          }}
+        />
+      )}
+
+      {swapAppt && studio && (
+        <SwapAppointmentModal
+          studioId={studio.id}
+          appt={swapAppt}
+          appointments={appts}
+          onClose={() => setSwapApptId(null)}
+          onSaved={() => {
+            setSwapApptId(null);
+            loadData();
+          }}
+        />
+      )}
+
+      {durationAppt && studio && (
+        <AppointmentDurationModal
+          studioId={studio.id}
+          appt={durationAppt}
+          onClose={() => setDurationApptId(null)}
+          onSaved={() => {
+            setDurationApptId(null);
             loadData();
           }}
         />
@@ -2223,6 +2463,7 @@ function NewAppointmentModal({
   initialStaffId,
   initialDate,
   initialTime,
+  creationMode = "standard",
   onClose,
   onCreated,
 }: {
@@ -2231,9 +2472,19 @@ function NewAppointmentModal({
   initialStaffId?: string;
   initialDate?: string;
   initialTime?: string;
+  creationMode?: "standard" | "fit";
   onClose: () => void;
   onCreated: () => void;
 }) {
+  const sendManualAppointmentConfirmation = useServerFn(
+    sendManualAppointmentConfirmationForAppointment,
+  );
+  const dispatchStudioAppointmentPush = useServerFn(
+    dispatchRecentStudioAppointmentPushNotification,
+  );
+  const previewSchedule = useServerFn(previewStudioScheduleChange);
+  const createManualFit = useServerFn(createStudioManualFit);
+  const resolveScheduleDateTime = useServerFn(resolveStudioLocalDateTime);
   const [services, setServices] = useState<StudioService[]>([]);
   const [staffList, setStaffList] = useState<StudioStaff[]>([]);
   const [clients, setClients] = useState<StudioClient[]>([]);
@@ -2249,6 +2500,7 @@ function NewAppointmentModal({
   const [time, setTime] = useState(initialTime ?? "09:00");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [conflictPreview, setConflictPreview] = useState<StudioSchedulePreview | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -2296,6 +2548,10 @@ function NewAppointmentModal({
   });
   const chosenService = services.find((s) => s.id === selectedService);
 
+  useEffect(() => {
+    setConflictPreview(null);
+  }, [date, time, selectedService, selectedStaff]);
+
   async function handleSave() {
     if (!date || !time || !selectedService || !selectedStaff) {
       toast.error("Preencha todos os campos obrigatórios.");
@@ -2306,64 +2562,92 @@ function NewAppointmentModal({
       return;
     }
     const normalizedNewClientPhone = normalizeInternationalPhone(newClientPhone);
-    if (isNewClient && (!newClientName.trim() || !isValidInternationalPhone(newClientPhone))) {
+    const normalizedNewClientName = newClientName.trim();
+    if (isNewClient && (!normalizedNewClientName || !isValidInternationalPhone(newClientPhone))) {
       toast.error("Nome e telefone são obrigatórios.");
       return;
     }
     setSaving(true);
     try {
-      let clientId: string;
-      if (isNewClient) {
-        const { data: existing } = await supabase
-          .from("clients" as any)
-          .select("id")
-          .eq("studio_id", studioId)
-          .eq("phone", normalizedNewClientPhone)
-          .maybeSingle();
-        if (existing) {
-          clientId = (existing as any).id;
-        } else {
-          const { data: created, error: ce } = await supabase
-            .from("clients" as any)
-            .insert({
-              studio_id: studioId,
-              name: newClientName.trim(),
-              phone: normalizedNewClientPhone,
-            })
-            .select("id")
-            .single();
-          if (ce || !created) throw new Error(ce?.message ?? "Erro ao criar cliente");
-          clientId = (created as any).id;
-        }
-      } else {
-        clientId = selectedClient!.id;
-      }
       const svc = chosenService!;
-      const startsAt = new Date(`${date}T${time}:00`);
-      const endsAt = new Date(startsAt.getTime() + svc.duration_min * 60000);
-      const { data: appt, error: ae } = await supabase
-        .from("appointments" as any)
-        .insert({
-          studio_id: studioId,
-          client_id: clientId,
-          staff_id: selectedStaff,
-          starts_at: startsAt.toISOString(),
-          ends_at: endsAt.toISOString(),
-          status: "confirmed",
-          total_price: svc.price,
-          total_duration_min: svc.duration_min,
-          notes: notes.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-      if (ae || !appt) throw new Error(ae?.message ?? "Erro ao criar marcação");
-      await supabase.from("appointment_services" as any).insert({
-        appointment_id: (appt as any).id,
-        service_id: svc.id,
-        price: svc.price,
-        duration_min: svc.duration_min,
+      const { startsAt } = await resolveScheduleDateTime({
+        data: { studioId, date, time },
       });
+      let appointmentId: string;
+      if (creationMode === "fit") {
+        const preview = await previewSchedule({
+          data: {
+            studioId,
+            staffId: selectedStaff,
+            startsAt,
+            durationMin: svc.duration_min,
+            ignoreAppointmentIds: [],
+          },
+        });
+        if (preview.hardBlocked) {
+          setConflictPreview(preview);
+          throw new Error("O horário contém um bloqueio, folga ou pagamento em processamento.");
+        }
+        const decisionPreview = !preview.withinAvailability
+          ? { ...preview, hasConflict: true, canOverride: true }
+          : preview;
+        if (
+          decisionPreview.hasConflict &&
+          !sameScheduleDecision(decisionPreview, conflictPreview)
+        ) {
+          setConflictPreview(decisionPreview);
+          return;
+        }
+        const created = await createManualFit({
+          data: {
+            studioId,
+            staffId: selectedStaff,
+            serviceId: svc.id,
+            startsAt,
+            clientId: isNewClient ? null : selectedClient!.id,
+            clientName: isNewClient ? normalizedNewClientName : null,
+            clientPhone: isNewClient ? normalizedNewClientPhone : null,
+            notes: notes.trim() || null,
+            confirmOverlap: preview.hasConflict,
+            expectedConflictIds: preview.conflicts.map((conflict) => conflict.appointmentId),
+          },
+        });
+        appointmentId = created.appointmentId;
+      } else {
+        const { data: created, error: createError } = await (supabase as any).rpc(
+          "create_manual_appointment",
+          {
+            p_studio_id: studioId,
+            p_staff_id: selectedStaff,
+            p_service_id: svc.id,
+            p_starts_at: startsAt,
+            p_client_id: isNewClient ? null : selectedClient!.id,
+            p_client_name: isNewClient ? normalizedNewClientName : null,
+            p_client_phone: isNewClient ? normalizedNewClientPhone : null,
+            p_notes: notes.trim() || null,
+            p_is_fit: false,
+          },
+        );
+        if (createError || !created?.appointment_id) {
+          throw new Error(formatManualAppointmentError(createError?.message));
+        }
+        appointmentId = created.appointment_id as string;
+      }
+      if (creationMode === "standard") {
+        const notificationResults = await Promise.allSettled([
+          sendManualAppointmentConfirmation({ data: { appointmentId } }),
+          dispatchStudioAppointmentPush({ data: { studioId, appointmentId } }),
+        ]);
+        for (const result of notificationResults) {
+          if (result.status === "rejected") {
+            console.error("[admin-agenda] appointment notification dispatch failed", {
+              studioId,
+              appointmentId,
+              error: result.reason,
+            });
+          }
+        }
+      }
       toast.success("Marcação criada com sucesso!");
       onCreated();
     } catch (err) {
@@ -2374,7 +2658,10 @@ function NewAppointmentModal({
   }
 
   return (
-    <ModalShell title="Nova marcação" onClose={onClose}>
+    <ModalShell
+      title={creationMode === "fit" ? "Criar encaixe" : "Nova marcação"}
+      onClose={onClose}
+    >
       {loadingData ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -2553,6 +2840,7 @@ function NewAppointmentModal({
               className={textareaCls}
             />
           </ModalField>
+          {conflictPreview && <ScheduleConflictWarning preview={conflictPreview} mode="create" />}
           {chosenService && date && time && (
             <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/8 px-3 py-2">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -2578,7 +2866,19 @@ function NewAppointmentModal({
           )}
         </div>
       )}
-      <ModalFooter onClose={onClose} onSave={handleSave} saving={saving} disabled={loadingData} />
+      <ModalFooter
+        onClose={onClose}
+        onSave={handleSave}
+        saving={saving}
+        disabled={loadingData || Boolean(conflictPreview?.hardBlocked)}
+        label={
+          conflictPreview?.hasConflict
+            ? "Confirmar encaixe"
+            : creationMode === "fit"
+              ? "Verificar encaixe"
+              : undefined
+        }
+      />
     </ModalShell>
   );
 }
@@ -2645,25 +2945,14 @@ function EditAppointmentModal({
     const svc = chosenService!;
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from("appointments" as any)
-        .update({
-          staff_id: selectedStaff,
-          total_price: svc.price,
-          total_duration_min: svc.duration_min,
-          notes: notes.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", appt.id)
-        .eq("studio_id", studioId);
-      if (error) throw error;
-      // Update appointment_services if present
-      if (appt.appointment_services?.length) {
-        await supabase
-          .from("appointment_services" as any)
-          .update({ service_id: svc.id, price: svc.price, duration_min: svc.duration_min })
-          .eq("appointment_id", appt.id);
-      }
+      const { error } = await (supabase as any).rpc("update_manual_appointment_service", {
+        p_appointment_id: appt.id,
+        p_studio_id: studioId,
+        p_staff_id: selectedStaff,
+        p_service_id: svc.id,
+        p_notes: notes.trim() || null,
+      });
+      if (error) throw new Error(formatManualAppointmentError(error.message));
       toast.success("Marcação atualizada.");
       onSaved();
     } catch (err) {
@@ -2759,27 +3048,34 @@ function EditAppointmentModal({
 
 function RescheduleModal({
   studioId,
+  studioTimezone,
   appt,
   onClose,
   onSaved,
 }: {
   studioId: string;
+  studioTimezone?: string | null;
   staffId?: string | null;
   appt: Appt;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const rescheduleAppointment = useServerFn(rescheduleStudioAppointment);
+  const previewSchedule = useServerFn(previewStudioScheduleChange);
+  const moveAppointment = useServerFn(moveStudioAppointment);
+  const resolveScheduleDateTime = useServerFn(resolveStudioLocalDateTime);
   const durationMin = Math.round(
     (new Date(appt.ends_at).getTime() - new Date(appt.starts_at).getTime()) / 60000,
   );
-  const currentDate = toDateInputValue(new Date(appt.starts_at));
-  const currentTime = new Date(appt.starts_at)
-    .toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })
-    .replace(":", ":");
+  const currentDate = getStudioDateKey(appt.starts_at, studioTimezone);
+  const currentTime = formatStudioTime(appt.starts_at, studioTimezone);
   const [date, setDate] = useState(currentDate);
   const [time, setTime] = useState(currentTime);
   const [saving, setSaving] = useState(false);
+  const [conflictPreview, setConflictPreview] = useState<StudioSchedulePreview | null>(null);
+
+  useEffect(() => {
+    setConflictPreview(null);
+  }, [date, time]);
 
   async function handleSave() {
     if (!date || !time) {
@@ -2788,18 +3084,48 @@ function RescheduleModal({
     }
     setSaving(true);
     try {
-      await rescheduleAppointment({
+      if (!appt.staff?.id) throw new Error("appointment_without_staff");
+      const { startsAt } = await resolveScheduleDateTime({
+        data: { studioId, date, time },
+      });
+      const preview = await previewSchedule({
+        data: {
+          studioId,
+          staffId: appt.staff.id,
+          startsAt,
+          durationMin,
+          ignoreAppointmentIds: [appt.id],
+        },
+      });
+      if (preview.hardBlocked || (!preview.withinAvailability && !appt.is_manual_fit)) {
+        const blockedPreview = !preview.withinAvailability
+          ? { ...preview, hardBlocked: true }
+          : preview;
+        setConflictPreview(blockedPreview);
+        throw new Error("O novo horário contém um bloqueio, folga ou pagamento em processamento.");
+      }
+      const decisionPreview = !preview.withinAvailability
+        ? { ...preview, hasConflict: true, canOverride: true }
+        : preview;
+      if (decisionPreview.hasConflict && !sameScheduleDecision(decisionPreview, conflictPreview)) {
+        setConflictPreview(decisionPreview);
+        return;
+      }
+      await moveAppointment({
         data: {
           studioId,
           appointmentId: appt.id,
-          date,
-          time,
+          startsAt,
+          durationMin,
+          confirmOverlap: preview.hasConflict,
+          expectedConflictIds: preview.conflicts.map((conflict) => conflict.appointmentId),
+          operation: "move",
         },
       });
       toast.success("Marcação reagendada.");
       onSaved();
     } catch (err) {
-      toast.error(getRescheduleUserMessage(err));
+      toast.error(scheduleChangeMessage(err));
     } finally {
       setSaving(false);
     }
@@ -2852,6 +3178,7 @@ function RescheduleModal({
             />
           </ModalField>
         </div>
+        {conflictPreview && <ScheduleConflictWarning preview={conflictPreview} mode="move" />}
         {date && time && (
           <div className="rounded-xl border border-blue-500/25 bg-blue-500/8 px-3 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -2877,13 +3204,501 @@ function RescheduleModal({
         onClose={onClose}
         onSave={handleSave}
         saving={saving}
-        label="Confirmar reagendamento"
+        disabled={Boolean(conflictPreview?.hardBlocked)}
+        label={conflictPreview?.hasConflict ? "Confirmar encaixe" : "Verificar e mover"}
       />
     </ModalShell>
   );
 }
 
 // ─── Modal Shell & helpers ────────────────────────────────────────────────────
+
+function SwapAppointmentModal({
+  studioId,
+  appt,
+  appointments,
+  onClose,
+  onSaved,
+}: {
+  studioId: string;
+  appt: Appt;
+  appointments: Appt[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const previewSchedule = useServerFn(previewStudioScheduleChange);
+  const swapAppointments = useServerFn(swapStudioAppointments);
+  const candidates = appointments.filter(
+    (candidate) =>
+      candidate.id !== appt.id &&
+      candidate.clients &&
+      candidate.staff?.id &&
+      !["cancelled", "canceled", "no_show", "completed"].includes(candidate.status),
+  );
+  const [selectedId, setSelectedId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [conflictPreview, setConflictPreview] = useState<StudioSchedulePreview | null>(null);
+  const selected = candidates.find((candidate) => candidate.id === selectedId) ?? null;
+
+  useEffect(() => setConflictPreview(null), [selectedId]);
+
+  async function handleSwap() {
+    if (!selected || !appt.staff?.id || !selected.staff?.id) {
+      toast.error("Escolha a marcação que deseja trocar.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const ignoreAppointmentIds = [appt.id, selected.id];
+      const [firstPreview, secondPreview] = await Promise.all([
+        previewSchedule({
+          data: {
+            studioId,
+            staffId: appt.staff.id,
+            startsAt: selected.starts_at,
+            durationMin: appointmentDurationMinutes(appt),
+            ignoreAppointmentIds,
+          },
+        }),
+        previewSchedule({
+          data: {
+            studioId,
+            staffId: selected.staff.id,
+            startsAt: appt.starts_at,
+            durationMin: appointmentDurationMinutes(selected),
+            ignoreAppointmentIds,
+          },
+        }),
+      ]);
+      const combined = combineSchedulePreviews(firstPreview, secondPreview);
+      const outsideAvailability =
+        (!firstPreview.withinAvailability && !appt.is_manual_fit) ||
+        (!secondPreview.withinAvailability && !selected.is_manual_fit);
+      if (combined.hardBlocked || outsideAvailability) {
+        setConflictPreview(outsideAvailability ? { ...combined, hardBlocked: true } : combined);
+        throw new Error(
+          "Uma das marcações encontra um bloqueio, folga ou pagamento em processamento.",
+        );
+      }
+      if (combined.hasConflict && !sameScheduleDecision(combined, conflictPreview)) {
+        setConflictPreview(combined);
+        return;
+      }
+      await swapAppointments({
+        data: {
+          studioId,
+          firstAppointmentId: appt.id,
+          secondAppointmentId: selected.id,
+          confirmOverlap: combined.hasConflict,
+          expectedConflictIds: combined.conflicts.map((conflict) => conflict.appointmentId),
+        },
+      });
+      toast.success("Horários trocados de forma atómica.");
+      onSaved();
+    } catch (error) {
+      toast.error(scheduleChangeMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ModalShell title="Trocar horários" onClose={onClose}>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        <ModalField label="Trocar com *">
+          <Select value={selectedId} onValueChange={setSelectedId}>
+            <SelectTrigger className={selectTriggerCls}>
+              <SelectValue placeholder="Escolher outra marcação" />
+            </SelectTrigger>
+            <SelectContent className={modalSelectContentCls}>
+              {candidates.map((candidate) => (
+                <SelectItem key={candidate.id} value={candidate.id}>
+                  {formatShortAppointment(candidate)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ModalField>
+        {selected && (
+          <div
+            className="rounded-2xl border border-border bg-muted/20 p-3"
+            data-testid="agenda-swap-preview"
+          >
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-muted-foreground">
+              Antes → Depois
+            </p>
+            <SwapPreviewRow appointment={appt} nextStartsAt={selected.starts_at} />
+            <SwapPreviewRow appointment={selected} nextStartsAt={appt.starts_at} />
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              Cliente, serviço, profissional, preço e pagamentos permanecem nas marcações originais.
+            </p>
+          </div>
+        )}
+        {conflictPreview && <ScheduleConflictWarning preview={conflictPreview} mode="swap" />}
+      </div>
+      <ModalFooter
+        onClose={onClose}
+        onSave={handleSwap}
+        saving={saving}
+        disabled={!selected || Boolean(conflictPreview?.hardBlocked)}
+        label={conflictPreview?.hasConflict ? "Confirmar troca com encaixe" : "Confirmar troca"}
+      />
+    </ModalShell>
+  );
+}
+
+function AppointmentDurationModal({
+  studioId,
+  appt,
+  onClose,
+  onSaved,
+}: {
+  studioId: string;
+  appt: Appt;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const previewSchedule = useServerFn(previewStudioScheduleChange);
+  const moveAppointment = useServerFn(moveStudioAppointment);
+  const originalDuration = appointmentDurationMinutes(appt);
+  const [duration, setDuration] = useState(String(originalDuration));
+  const [saving, setSaving] = useState(false);
+  const [conflictPreview, setConflictPreview] = useState<StudioSchedulePreview | null>(null);
+  const durationMin = Number(duration);
+
+  useEffect(() => setConflictPreview(null), [duration]);
+
+  async function handleSave() {
+    if (!appt.staff?.id || !Number.isInteger(durationMin) || durationMin < 5 || durationMin > 720) {
+      toast.error("Indique uma duração entre 5 e 720 minutos.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const preview = await previewSchedule({
+        data: {
+          studioId,
+          staffId: appt.staff.id,
+          startsAt: appt.starts_at,
+          durationMin,
+          ignoreAppointmentIds: [appt.id],
+        },
+      });
+      if (preview.hardBlocked || (!preview.withinAvailability && !appt.is_manual_fit)) {
+        setConflictPreview(
+          !preview.withinAvailability ? { ...preview, hardBlocked: true } : preview,
+        );
+        throw new Error("A nova duração encontra um bloqueio ou pagamento em processamento.");
+      }
+      const decisionPreview = !preview.withinAvailability
+        ? { ...preview, hasConflict: true, canOverride: true }
+        : preview;
+      if (decisionPreview.hasConflict && !sameScheduleDecision(decisionPreview, conflictPreview)) {
+        setConflictPreview(decisionPreview);
+        return;
+      }
+      await moveAppointment({
+        data: {
+          studioId,
+          appointmentId: appt.id,
+          startsAt: appt.starts_at,
+          durationMin,
+          confirmOverlap: preview.hasConflict,
+          expectedConflictIds: preview.conflicts.map((conflict) => conflict.appointmentId),
+          operation: "duration",
+        },
+      });
+      toast.success("Duração desta marcação atualizada.");
+      onSaved();
+    } catch (error) {
+      toast.error(scheduleChangeMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const nextEnd = Number.isFinite(durationMin)
+    ? new Date(new Date(appt.starts_at).getTime() + durationMin * 60_000).toISOString()
+    : appt.ends_at;
+
+  return (
+    <ModalShell title="Ajustar duração" onClose={onClose}>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        <div className="rounded-xl border border-border bg-muted/25 px-3 py-2.5">
+          <p className="text-sm font-black">{appt.clients?.name ?? "Cliente"}</p>
+          <p className="text-xs text-muted-foreground">{appointmentServiceLabel(appt)}</p>
+        </div>
+        <ModalField label="Duração desta marcação">
+          <div className="relative">
+            <input
+              type="number"
+              min={5}
+              max={720}
+              step={5}
+              value={duration}
+              onChange={(event) => setDuration(event.target.value)}
+              className={`${inputCls} pr-14`}
+            />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">
+              min
+            </span>
+          </div>
+        </ModalField>
+        <div className="grid grid-cols-2 gap-2 rounded-xl border border-blue-500/25 bg-blue-500/8 p-3 text-xs">
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+              Antes
+            </p>
+            <p className="mt-1 font-black">
+              {formatScheduleTime(appt.starts_at)}–{formatScheduleTime(appt.ends_at)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
+              Depois
+            </p>
+            <p className="mt-1 font-black">
+              {formatScheduleTime(appt.starts_at)}–{formatScheduleTime(nextEnd)}
+            </p>
+          </div>
+        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          A duração padrão do serviço não será alterada. Preço e pagamentos também permanecem
+          iguais.
+        </p>
+        {conflictPreview && <ScheduleConflictWarning preview={conflictPreview} mode="duration" />}
+      </div>
+      <ModalFooter
+        onClose={onClose}
+        onSave={handleSave}
+        saving={saving}
+        disabled={
+          !Number.isInteger(durationMin) ||
+          durationMin < 5 ||
+          durationMin > 720 ||
+          Boolean(conflictPreview?.hardBlocked)
+        }
+        label={conflictPreview?.hasConflict ? "Confirmar duração com encaixe" : "Guardar duração"}
+      />
+    </ModalShell>
+  );
+}
+
+function ScheduleConflictWarning({
+  preview,
+  mode,
+}: {
+  preview: StudioSchedulePreview;
+  mode: "move" | "swap" | "duration" | "create";
+}) {
+  const title = preview.hardBlocked
+    ? "Este horário não pode ser utilizado"
+    : !preview.withinAvailability
+      ? "Fora do horário habitual da profissional"
+      : mode === "create"
+        ? "Já existe uma marcação neste período"
+        : "Este horário já está ocupado";
+  return (
+    <div
+      className={`rounded-2xl border p-3 ${preview.hardBlocked ? "border-rose-300/70 bg-rose-50/80 dark:border-rose-500/30 dark:bg-rose-500/10" : "border-amber-300/70 bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10"}`}
+      data-testid="agenda-schedule-conflict"
+    >
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-300" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-black">{title}</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {preview.hardBlocked
+              ? "Bloqueios, folgas e pagamentos em processamento não podem ser ignorados."
+              : "A Bellza não fará a alteração silenciosamente. Reveja o impacto e confirme apenas se consegue atender as duas marcações."}
+          </p>
+        </div>
+      </div>
+      {preview.conflicts.map((conflict) => (
+        <div
+          key={`${conflict.appointmentId}-${conflict.overlapStartsAt}`}
+          className="mt-2 rounded-xl border border-current/10 bg-background/65 px-3 py-2 text-xs"
+        >
+          <p className="break-words font-black">
+            {conflict.clientName} · {conflict.serviceName}
+          </p>
+          <p className="mt-0.5 break-words text-muted-foreground">
+            {conflict.professionalName} · ocupado{" "}
+            {formatScheduleRange(conflict.startsAt, conflict.endsAt)}
+          </p>
+          <p className="mt-1 font-bold text-amber-800 dark:text-amber-200">
+            Sobreposição: {formatScheduleRange(conflict.overlapStartsAt, conflict.overlapEndsAt)}
+          </p>
+        </div>
+      ))}
+      {preview.blocks.map((block) => (
+        <p
+          key={block.blockId}
+          className="mt-2 rounded-xl bg-background/65 px-3 py-2 text-xs font-semibold"
+        >
+          Bloqueio: {block.reason || "indisponível"} ·{" "}
+          {formatScheduleRange(block.startsAt, block.endsAt)}
+        </p>
+      ))}
+      {preview.paymentHolds.length > 0 && (
+        <p className="mt-2 rounded-xl bg-background/65 px-3 py-2 text-xs font-semibold">
+          Existe um pagamento online em processamento neste período.
+        </p>
+      )}
+      {!preview.withinAvailability && !preview.hardBlocked && (
+        <p className="mt-2 rounded-xl bg-background/65 px-3 py-2 text-xs font-semibold">
+          Este encaixe fica fora da disponibilidade recorrente configurada.
+        </p>
+      )}
+      {!preview.hardBlocked && preview.hasConflict && (
+        <p className="mt-2 text-xs font-black">Deseja criar um encaixe mesmo assim?</p>
+      )}
+    </div>
+  );
+}
+
+function SwapPreviewRow({
+  appointment,
+  nextStartsAt,
+}: {
+  appointment: Appt;
+  nextStartsAt: string;
+}) {
+  return (
+    <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border bg-background/70 px-3 py-2">
+      <div className="min-w-0">
+        <p className="truncate text-xs font-black">{appointment.clients?.name ?? "Cliente"}</p>
+        <p className="truncate text-[11px] text-muted-foreground">
+          {appointmentServiceLabel(appointment)}
+        </p>
+      </div>
+      <p className="shrink-0 font-mono text-xs font-black tabular-nums">
+        {formatScheduleTime(appointment.starts_at)} → {formatScheduleTime(nextStartsAt)}
+      </p>
+    </div>
+  );
+}
+
+function combineSchedulePreviews(
+  first: StudioSchedulePreview,
+  second: StudioSchedulePreview,
+): StudioSchedulePreview {
+  return {
+    ...first,
+    conflicts: [...first.conflicts, ...second.conflicts],
+    blocks: [...first.blocks, ...second.blocks],
+    paymentHolds: [...first.paymentHolds, ...second.paymentHolds],
+    staffAvailable: first.staffAvailable && second.staffAvailable,
+    withinAvailability: first.withinAvailability && second.withinAvailability,
+    hasConflict: first.hasConflict || second.hasConflict,
+    hardBlocked: first.hardBlocked || second.hardBlocked,
+    canOverride: first.canOverride || second.canOverride,
+  };
+}
+
+function sameScheduleDecision(
+  current: StudioSchedulePreview,
+  previous: StudioSchedulePreview | null,
+) {
+  if (!previous) return false;
+  const signature = (preview: StudioSchedulePreview) =>
+    JSON.stringify({
+      withinAvailability: preview.withinAvailability,
+      staffAvailable: preview.staffAvailable,
+      conflicts: preview.conflicts.map((conflict) => [
+        conflict.appointmentId,
+        conflict.overlapStartsAt,
+        conflict.overlapEndsAt,
+      ]),
+      blocks: preview.blocks.map((block) => [block.blockId, block.startsAt, block.endsAt]),
+      paymentHolds: preview.paymentHolds.map((hold) => [
+        hold.requestId,
+        hold.startsAt,
+        hold.endsAt,
+      ]),
+    });
+  return signature(current) === signature(previous);
+}
+
+function appointmentDurationMinutes(appointment: Appt) {
+  return Math.max(
+    5,
+    Math.round(
+      (new Date(appointment.ends_at).getTime() - new Date(appointment.starts_at).getTime()) /
+        60_000,
+    ),
+  );
+}
+
+function formatShortAppointment(appointment: Appt) {
+  return `${appointment.clients?.name ?? "Cliente"} · ${formatStudioDate(appointment.starts_at, null, { day: "2-digit", month: "2-digit", year: undefined })} ${formatScheduleTime(appointment.starts_at)}`;
+}
+
+function formatScheduleRange(startsAt: string, endsAt: string) {
+  return `${formatScheduleTime(startsAt)}–${formatScheduleTime(endsAt)}`;
+}
+
+function formatScheduleTime(value: string) {
+  return formatStudioTime(value);
+}
+
+function formatScheduleHistory(events: ScheduleEventRow[]) {
+  return events.slice(0, 10).map((event) => {
+    const previousStart = String(event.previous_state?.startsAt ?? "");
+    const nextStart = String(event.next_state?.startsAt ?? "");
+    const previousDuration = Number(event.previous_state?.durationMin ?? 0);
+    const nextDuration = Number(event.next_state?.durationMin ?? 0);
+    if (event.operation === "swap") {
+      return {
+        label: "Horário trocado",
+        detail:
+          previousStart && nextStart
+            ? `${formatScheduleTime(previousStart)} → ${formatScheduleTime(nextStart)}`
+            : "Troca atómica com outra marcação",
+        createdAt: event.created_at,
+      };
+    }
+    if (event.operation === "duration") {
+      return {
+        label: "Duração ajustada",
+        detail: `${previousDuration || "—"} min → ${nextDuration || "—"} min`,
+        createdAt: event.created_at,
+      };
+    }
+    if (event.operation === "manual_fit") {
+      return {
+        label: event.overlap_confirmed ? "Encaixe manual confirmado" : "Encaixe manual criado",
+        detail:
+          previousStart && nextStart
+            ? `${formatScheduleTime(previousStart)} → ${formatScheduleTime(nextStart)}`
+            : "Criado pelo estúdio",
+        createdAt: event.created_at,
+      };
+    }
+    return {
+      label: "Horário movido",
+      detail:
+        previousStart && nextStart
+          ? `${formatScheduleTime(previousStart)} → ${formatScheduleTime(nextStart)}`
+          : "Alterado pelo estúdio",
+      createdAt: event.created_at,
+    };
+  });
+}
+
+function scheduleChangeMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("schedule_hard_blocked"))
+    return "O horário contém uma folga, bloqueio ou pagamento em processamento.";
+  if (message.includes("schedule_conflict"))
+    return "A agenda mudou. Reveja o conflito antes de confirmar novamente.";
+  if (message.includes("appointment_not_reschedulable"))
+    return "Esta marcação já não pode ser alterada.";
+  if (message.includes("outside_staff_availability"))
+    return "O horário está fora da disponibilidade da profissional.";
+  if (message.includes("not_authorized")) return "Sem permissão para alterar esta marcação.";
+  return message || "Não foi possível alterar a agenda.";
+}
 
 function ModalShell({
   title,
@@ -3627,12 +4442,19 @@ function AppointmentCard({
                 value={formatEUR(split.serviceTotal)}
                 featured
               />
-              <FinancialMetricCard label="Recebido online" value={formatEUR(split.received)} />
-              <FinancialMetricCard label="Restante" value={formatEUR(split.pending)} />
               <FinancialMetricCard
-                label={a.status === "completed" ? "Faturado" : "Pendente"}
+                label="Recebido online"
+                value={formatEUR(split.receivedOnline)}
+              />
+              <FinancialMetricCard
+                label="Recebido presencial"
+                value={formatEUR(split.receivedOnsite)}
+              />
+              <FinancialMetricCard label="Por receber" value={formatEUR(split.pending)} />
+              <FinancialMetricCard
+                label="Recebido total"
                 value={formatEUR(split.confirmed)}
-                muted={a.status !== "completed"}
+                muted={split.confirmed === 0}
               />
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
@@ -4709,17 +5531,19 @@ function isBirthdayThisWeek(value: string | null | undefined) {
 function appointmentMatchesFilters(
   a: Appt,
   filters: AgendaFilters,
-  paidByAppointment: Map<string, number>,
+  paymentFacts: Map<string, AppointmentPaymentFacts>,
+  timeZone?: string | null,
 ) {
   const start = new Date(a.starts_at);
   const now = new Date();
-  const paid = paidByAppointment.get(a.id) ?? 0;
+  const facts = paymentFacts.get(a.id);
+  const ledger = computeAppointmentLedger(a.id, a.total_price, a.status, facts);
   const svcNames = a.appointment_services?.map((l) => l.services?.name).filter(Boolean) as
     | string[]
     | undefined;
-  if (filters.dateMode === "today" && start.toDateString() !== now.toDateString()) return false;
+  if (filters.dateMode === "today" && getStudioDateKey(start, timeZone) !== getStudioDateKey(now, timeZone)) return false;
   if (filters.dateMode === "upcoming" && start.getTime() < now.getTime()) return false;
-  if (filters.dateMode === "specific" && filters.date && toDateInputValue(start) !== filters.date)
+  if (filters.dateMode === "specific" && filters.date && getStudioDateKey(start, timeZone) !== filters.date)
     return false;
   if (filters.staffId !== "all" && a.staff?.id !== filters.staffId) return false;
   if (filters.service !== "all" && !svcNames?.includes(filters.service)) return false;
@@ -4729,9 +5553,9 @@ function appointmentMatchesFilters(
     const hay = normalizeFilterText(`${a.clients?.name ?? ""} ${a.clients?.phone ?? ""}`);
     if (!hay.includes(q)) return false;
   }
-  if (filters.payment === "online" && paid <= 0) return false;
-  if (filters.payment === "studio" && paid > 0) return false;
-  if (filters.payment === "pending" && a.status !== "pending_payment") return false;
+  if (filters.payment === "online" && ledger.onlineNetCents <= 0) return false;
+  if (filters.payment === "studio" && ledger.onsiteNetCents <= 0) return false;
+  if (filters.payment === "pending" && ledger.pendingCents <= 0) return false;
   if (filters.confirmation === "confirmed" && !["confirmed", "completed"].includes(a.status))
     return false;
   if (filters.confirmation === "unconfirmed" && ["confirmed", "completed"].includes(a.status))
@@ -4768,18 +5592,10 @@ function toLocalDateTimeValue(value: string) {
   ).padStart(2, "0")}`;
 }
 function formatBlockDate(value: string) {
-  return new Date(value).toLocaleDateString("pt-PT", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  return formatStudioDate(value);
 }
 function formatBlockTime(value: string) {
-  return new Date(value).toLocaleTimeString("pt-PT", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return formatStudioTime(value);
 }
 function startOfLocalDay(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -4868,124 +5684,45 @@ function formatDurationBetween(startsAt: string, endsAt: string, explicitDuratio
   const rest = minutes % 60;
   return rest ? `${hours}h ${rest}min` : `${hours}h`;
 }
-function scopeAppointmentRows<T extends { in: (column: string, values: string[]) => T }>(
-  query: T,
-  appointmentIds: string[] | null,
-) {
-  return appointmentIds ? query.in("appointment_id", appointmentIds) : query;
-}
-function sortAppointmentsChronologically(items: Appt[]) {
-  return sortAppointmentsChronologicallyShared(items, "future");
+function sortAppointmentsChronologically(items: Appt[], mode: "future" | "history" = "future") {
+  return sortAppointmentsChronologicallyShared(items, mode);
 }
 
-async function fetchAgendaAppointments(studioId: string, staffId?: string | null) {
-  // Try with avatar_url (present if clients table has that column)
-  const withAvatar = await supabase
-    .from("appointments")
-    .select(
-      "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,avatar_url,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
-    )
-    .eq("studio_id", studioId)
-    .match(staffId ? { staff_id: staffId } : {})
-    .order("starts_at", { ascending: true })
-    .limit(1000);
-  if (!withAvatar.error) return withAvatar;
-
-  // Fallback: full schema without avatar_url
-  const full = await supabase
-    .from("appointments")
-    .select(
-      "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
-    )
-    .eq("studio_id", studioId)
-    .match(staffId ? { staff_id: staffId } : {})
-    .order("starts_at", { ascending: true })
-    .limit(1000);
-  if (!full.error) return full;
-
-  // Legacy fallback
-  return supabase
-    .from("appointments")
-    .select(
-      "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,notes,clients(name,phone,date_of_birth),staff(id,name),appointment_services(price,services(name))",
-    )
-    .eq("studio_id", studioId)
-    .match(staffId ? { staff_id: staffId } : {})
-    .order("starts_at", { ascending: true })
-    .limit(1000);
+function formatManualAppointmentError(message?: string) {
+  const value = String(message ?? "");
+  if (value.includes("slot_unavailable")) return "Este horário já não está disponível.";
+  if (value.includes("staff_unavailable"))
+    return "A profissional não está disponível neste horário.";
+  if (value.includes("staff_service_unavailable")) {
+    return "A profissional selecionada não realiza este serviço.";
+  }
+  if (value.includes("multi_service_edit_not_supported")) {
+    return "Marcações com vários serviços devem ser reagendadas sem alterar o serviço aqui.";
+  }
+  if (value.includes("outside_staff_availability")) {
+    return "O horário está fora da disponibilidade da profissional.";
+  }
+  return value || "Não foi possível guardar a marcação.";
 }
 
 function computeAppointmentSplit(
   a: Appt,
   studio: (FinancialRuleSource & { deposit_percent: number; payment_policy: string }) | null,
-  paidAmount: number,
+  payment: AppointmentPaymentFacts | number | null,
 ) {
-  const revenue = computeAttendanceRevenue(Number(a.total_price), paidAmount, a.status);
-  const lines = a.appointment_services?.length
-    ? a.appointment_services
-    : [{ price: Number(a.total_price), services: null }];
-  return lines.reduce(
-    (acc, line) => {
-      const rule = line.services ?? a.staff ?? studio;
-      const studioPercent =
-        rule?.commission_percent ?? a.staff?.commission_percent ?? studio?.commission_percent ?? 0;
-      const linePaid =
-        Number(a.total_price) > 0 ? (paidAmount * Number(line.price)) / Number(a.total_price) : 0;
-      const lineTotal = Number(line.price);
-      const lineConfirmed =
-        Number(a.total_price) > 0
-          ? (revenue.confirmed * lineTotal) / Number(a.total_price)
-          : lineTotal;
-      const linePredicted =
-        Number(a.total_price) > 0 ? (revenue.predicted * lineTotal) / Number(a.total_price) : 0;
-      const finalSplit = computeFinancialSplit(lineTotal, studioPercent, {
-        depositPercent: studio?.deposit_percent ?? 0,
-        requiresDeposit: false,
-        receivedAmount: linePaid,
-      });
-      const signalSplit = computeFinancialSplit(linePaid, studioPercent, {
-        depositPercent: studio?.deposit_percent ?? 0,
-        requiresDeposit: false,
-        receivedAmount: linePaid,
-      });
-      return {
-        total: acc.total + lineTotal,
-        serviceTotal: acc.serviceTotal + lineTotal,
-        confirmed: acc.confirmed + lineConfirmed,
-        predicted: acc.predicted + linePredicted,
-        deposit: acc.deposit + signalSplit.deposit,
-        remaining: acc.remaining + linePredicted,
-        commissionBase: acc.commissionBase + finalSplit.commissionBase,
-        commission: acc.commission + finalSplit.commission,
-        professional: acc.professional + finalSplit.professional,
-        studio: acc.studio + finalSplit.studio,
-        signalProfessional: acc.signalProfessional + signalSplit.professional,
-        signalStudio: acc.signalStudio + signalSplit.studio,
-        received: acc.received + Math.min(lineTotal, Math.max(0, linePaid)),
-        pending: acc.pending + linePredicted,
-        commissionPercent: studioPercent,
-        depositProfessionalPercent: 0,
-      };
-    },
-    {
-      total: 0,
-      serviceTotal: 0,
-      confirmed: 0,
-      predicted: 0,
-      deposit: 0,
-      remaining: 0,
-      commissionBase: 0,
-      commission: 0,
-      professional: 0,
-      studio: 0,
-      signalProfessional: 0,
-      signalStudio: 0,
-      received: 0,
-      pending: 0,
-      commissionPercent: 0,
-      depositProfessionalPercent: 0,
-    },
-  );
+  const facts =
+    typeof payment === "number"
+      ? {
+          appointmentId: a.id,
+          onlineGrossCents: toCents(payment),
+          onsiteGrossCents: 0,
+          refundedCents: 0,
+          onlineNetCents: toCents(payment),
+          onsiteNetCents: 0,
+          receivedCents: toCents(payment),
+        }
+      : payment;
+  return computeAppointmentFinancialSplit(a.id, a, studio?.commission_percent ?? 0, facts);
 }
 
 function formatPaymentState(a: Appt, paid: number) {
@@ -5011,6 +5748,19 @@ function studioPaymentErrorMessage(message: string) {
   if (message.includes("invalid_amount")) return "O valor deste agendamento não é válido.";
   if (message.includes("not_authorized")) return "Sem permissão para confirmar este pagamento.";
   return message || "Não foi possível confirmar o pagamento.";
+}
+
+function attendanceResolutionErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (message.includes("cash_register_not_open"))
+    return "Abra o caixa antes de confirmar atendimentos com saldo presencial.";
+  if (message.includes("appointment_cancelled")) return "Esta marcação está cancelada.";
+  if (message.includes("attendance_already_resolved"))
+    return "A presença deste atendimento já foi resolvida.";
+  if (message.includes("appointment_not_confirmed"))
+    return "Este atendimento já não está aguardando confirmação.";
+  if (message.includes("forbidden")) return "Sem permissão para resolver este atendimento.";
+  return "Não foi possível atualizar a presença. Atualize a Agenda e tente novamente.";
 }
 
 function inPersonMbWayErrorMessage(message: string) {

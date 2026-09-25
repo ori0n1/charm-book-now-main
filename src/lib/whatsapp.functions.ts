@@ -21,6 +21,10 @@ import {
 } from "@/lib/senddm-whatsapp";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { formatStudioDate, formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
+import {
+  appointmentConfirmationIdempotencyKey,
+  shouldSendAutomaticManualAppointmentConfirmation,
+} from "@/lib/appointment-whatsapp-policy";
 
 const DEFAULT_TEMPLATE =
   "Ola, {nomeCliente}. Confirmamos a sua marcacao de {servico} com {profissional} para {data} as {hora}.";
@@ -113,7 +117,7 @@ export const getWhatsAppSettings = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = admin();
     await assertStudioAccessWithOptions(sb, (context as any).userId, data.studioId, {
-      requirePremium: true,
+      entitlement: "whatsapp",
     });
     const studio = await loadStudioWhatsApp(sb, data.studioId);
     return normalizeWhatsAppStudio(studio);
@@ -133,7 +137,7 @@ export const saveWhatsAppSettings = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = admin();
     await assertStudioAccessWithOptions(sb, (context as any).userId, data.studioId, {
-      requirePremium: true,
+      entitlement: "whatsapp",
     });
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (typeof data.autoSendEnabled === "boolean") {
@@ -158,7 +162,9 @@ export const testWhatsAppMessage = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = admin();
     const userId = (context as any).userId;
-    await assertStudioAccessWithOptions(sb, userId, data.studioId, { requirePremium: true });
+    await assertStudioAccessWithOptions(sb, userId, data.studioId, {
+      entitlement: "whatsapp",
+    });
     await rateLimitOrThrow({
       key: `whatsapp-test:${userId}:${data.studioId}`,
       limit: 5,
@@ -209,7 +215,10 @@ export async function sendAppointmentConfirmationMessage(
   const ctx = await loadConfirmationContext(sb, input);
   if (!ctx) return null;
 
-  const idempotencyKey = `senddm-whatsapp-payment-${ctx.paymentRowId}`;
+  const idempotencyKey = appointmentConfirmationIdempotencyKey(
+    ctx.appointmentId,
+    `senddm-whatsapp-payment-${ctx.paymentRowId}`,
+  );
   return sendConfirmationFromContext(sb, ctx, idempotencyKey);
 }
 
@@ -219,15 +228,61 @@ export const sendAppointmentConfirmationForAppointment = createServerFn({ method
   .handler(async ({ data, context }) => {
     const sb = admin();
     await assertAppointmentAccess(sb, (context as any).userId, data.appointmentId, {
-      requirePremium: true,
+      entitlement: "whatsapp",
     });
     const ctx = await loadAppointmentConfirmationContext(sb, data.appointmentId);
     if (!ctx) return null;
     return sendConfirmationFromContext(
       sb,
       ctx,
-      `senddm-whatsapp-appointment-${data.appointmentId}`,
+      appointmentConfirmationIdempotencyKey(
+        data.appointmentId,
+        `senddm-whatsapp-appointment-${data.appointmentId}`,
+      ),
     );
+  });
+
+export const sendManualAppointmentConfirmationForAppointment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => z.object({ appointmentId: z.string().uuid() }).parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = admin();
+    await assertAppointmentAccess(sb, (context as any).userId, data.appointmentId, {
+      entitlement: "whatsapp",
+    });
+
+    const { data: appointment, error } = await sb
+      .from("appointments")
+      .select("id,status")
+      .eq("id", data.appointmentId)
+      .maybeSingle();
+    if (error || !appointment?.id) {
+      return { ok: false, skipped: "appointment_missing" };
+    }
+    if (!shouldSendAutomaticManualAppointmentConfirmation(appointment.status)) {
+      console.info("[whatsapp] manual_confirmation_skipped", {
+        appointment_id: data.appointmentId,
+        status: appointment.status,
+        reason: "non_scheduled_appointment",
+      });
+      return { ok: false, skipped: "non_scheduled_appointment" };
+    }
+
+    const ctx = await loadAppointmentConfirmationContext(sb, data.appointmentId);
+    if (!ctx) return { ok: false, skipped: "confirmation_context_missing" };
+    const result = await sendConfirmationFromContext(
+      sb,
+      ctx,
+      appointmentConfirmationIdempotencyKey(
+        data.appointmentId,
+        `senddm-whatsapp-manual-appointment-${data.appointmentId}`,
+      ),
+    );
+    return {
+      ok: Boolean(result),
+      status: result?.status ?? null,
+      messageId: result?.provider_message_id ?? null,
+    };
   });
 
 export const sendPublicAppointmentConfirmationForAppointment = createServerFn({ method: "POST" })
@@ -254,7 +309,10 @@ export const sendPublicAppointmentConfirmationForAppointment = createServerFn({ 
     const result = await sendConfirmationFromContext(
       sb,
       ctx,
-      `senddm-whatsapp-public-appointment-${data.appointmentId}`,
+      appointmentConfirmationIdempotencyKey(
+        data.appointmentId,
+        `senddm-whatsapp-public-appointment-${data.appointmentId}`,
+      ),
     );
     return {
       ok: Boolean(result),
@@ -286,24 +344,35 @@ async function sendConfirmationFromContext(
   ctx: ConfirmationContext,
   idempotencyKey: string,
 ) {
+  const [notificationsEnabled, whatsappEnabled] = await Promise.all([
+    hasStudioEntitlement(sb, ctx.studioId, "notifications"),
+    hasStudioEntitlement(sb, ctx.studioId, "whatsapp"),
+  ]);
   const existing =
     (await findExistingLog(sb, idempotencyKey)) ??
     (ctx.messageKind ? null : await findExistingConfirmationLog(sb, ctx));
   const rendered = renderMessage(ctx.template || DEFAULT_TEMPLATE, ctx);
-  const emailPromise = sendEmailConfirmationFromContext(
-    sb,
-    ctx,
-    rendered,
-    `email-${idempotencyKey}`,
-  ).catch((error) => {
-    console.error("[email] confirmation failed", {
-      idempotency_key: `email-${idempotencyKey}`,
-      studio_id: ctx.studioId,
-      appointment_id: ctx.appointmentId,
-      reason: error instanceof Error ? error.message : String(error),
-    });
+  const emailPromise = notificationsEnabled
+    ? sendEmailConfirmationFromContext(
+        sb,
+        ctx,
+        rendered,
+        `email-${idempotencyKey}`,
+      ).catch((error) => {
+        console.error("[email] confirmation failed", {
+          idempotency_key: `email-${idempotencyKey}`,
+          studio_id: ctx.studioId,
+          appointment_id: ctx.appointmentId,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      })
+    : Promise.resolve(null);
+
+  if (!whatsappEnabled) {
+    await emailPromise;
     return null;
-  });
+  }
   if (
     existing?.status === "sent" ||
     (existing?.status === "pending" && !isStalePendingWhatsAppLog(existing))
@@ -475,6 +544,22 @@ async function sendConfirmationFromContext(
     await emailPromise;
     return log;
   }
+}
+
+async function hasStudioEntitlement(sb: any, studioId: string, feature: string) {
+  const { data, error } = await sb.rpc("studio_has_entitlement", {
+    _studio_id: studioId,
+    _feature: feature,
+  });
+  if (error) {
+    console.error("[plans] notification_entitlement_check_failed", {
+      studio_id: studioId,
+      feature,
+      reason: error.message,
+    });
+    return false;
+  }
+  return data === true;
 }
 
 type WhatsAppUsageReservation = {
@@ -1068,7 +1153,9 @@ export async function reconcilePendingWhatsAppMessages(options?: { studioId?: st
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
   let query = sb
     .from("whatsapp_message_logs")
-    .select("id,studio_id,idempotency_key,status,reason,provider_message_id,payload,created_at,updated_at")
+    .select(
+      "id,studio_id,idempotency_key,status,reason,provider_message_id,payload,created_at,updated_at",
+    )
     .eq("provider", WHATSAPP_PROVIDER)
     .or("status.eq.pending,and(status.eq.failed,reason.like.senddm_button_parameter_unresolved*)")
     .gte("created_at", since)
@@ -1208,7 +1295,10 @@ export async function dispatchMissingAppointmentWhatsAppConfirmations(options?: 
     await sendConfirmationFromContext(
       sb,
       ctx,
-      `senddm-whatsapp-public-appointment-${appointment.id}`,
+      appointmentConfirmationIdempotencyKey(
+        appointment.id,
+        `senddm-whatsapp-public-appointment-${appointment.id}`,
+      ),
     );
     dispatched += 1;
   }
@@ -1598,34 +1688,64 @@ async function loadAppointmentConfirmationContext(
   const { data: appt, error } = await sb
     .from("appointments")
     .select(
-      "id,studio_id,starts_at,total_price,clients(name,phone,email),staff(name),studios(id,name,timezone,whatsapp_auto_send_enabled,whatsapp_default_message)",
+      "id,studio_id,client_id,staff_id,starts_at,total_price",
     )
     .eq("id", appointmentId)
     .maybeSingle();
   if (error || !appt?.id) return null;
 
-  const { data: lines } = await sb
-    .from("appointment_services")
-    .select("services(name)")
-    .eq("appointment_id", appointmentId);
+  const [{ data: client }, { data: staff }, { data: studio }, { data: lines }] =
+    await Promise.all([
+      sb
+        .from("clients")
+        .select("name,phone,email")
+        .eq("id", appt.client_id)
+        .eq("studio_id", appt.studio_id)
+        .maybeSingle(),
+      sb
+        .from("staff")
+        .select("name")
+        .eq("id", appt.staff_id)
+        .eq("studio_id", appt.studio_id)
+        .maybeSingle(),
+      sb
+        .from("studios")
+        .select("id,name,timezone,whatsapp_auto_send_enabled,whatsapp_default_message")
+        .eq("id", appt.studio_id)
+        .maybeSingle(),
+      sb
+        .from("appointment_services")
+        .select("services(name)")
+        .eq("appointment_id", appointmentId),
+    ]);
+
+  const realClientName = String(client?.name ?? "").trim();
+  if (!realClientName) {
+    console.error("[whatsapp] appointment_client_name_missing", {
+      appointment_id: appointmentId,
+      studio_id: appt.studio_id,
+      client_id: appt.client_id ?? null,
+    });
+    return null;
+  }
 
   return {
     studioId: appt.studio_id,
-    studioName: appt.studios?.name ?? "Estudio",
+    studioName: studio?.name ?? "Estudio",
     appointmentId,
     paymentRowId: `appointment-${appointmentId}`,
     paymentIntentId: `appointment-${appointmentId}`,
-    clientName: appt.clients?.name ?? "Cliente",
-    clientPhone: appt.clients?.phone ?? "",
-    clientEmail: appt.clients?.email ?? null,
+    clientName: realClientName,
+    clientPhone: client?.phone ?? "",
+    clientEmail: client?.email ?? null,
     serviceName: joinServiceNames(lines) || "Serviço",
-    staffName: appt.staff?.name ?? "Profissional",
+    staffName: staff?.name ?? "Profissional",
     startsAt: appt.starts_at,
-    studioTimezone: appt.studios?.timezone ?? "Europe/Lisbon",
+    studioTimezone: studio?.timezone ?? "Europe/Lisbon",
     paidAmount: 0,
     currency: "eur",
-    template: appt.studios?.whatsapp_default_message ?? DEFAULT_TEMPLATE,
-    autoEnabled: Boolean(appt.studios?.whatsapp_auto_send_enabled),
+    template: studio?.whatsapp_default_message ?? DEFAULT_TEMPLATE,
+    autoEnabled: Boolean(studio?.whatsapp_auto_send_enabled),
     bookingUrl: await ensureAppointmentPublicUrl(sb, appointmentId),
   };
 }
