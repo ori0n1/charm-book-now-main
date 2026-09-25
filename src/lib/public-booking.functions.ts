@@ -7,6 +7,7 @@ import {
   type BookingQuote,
   type BookingResult,
 } from "@/lib/booking";
+import { PUBLIC_BOOKING_RATE_LIMITS } from "@/lib/public-booking-rate-limits";
 import { getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 
@@ -65,10 +66,10 @@ export const createProtectedPublicBooking = createServerFn({ method: "POST" })
     );
 
     await Promise.all([
-      rateLimitOrThrow({ key: `public-booking:ip:${fingerprintHash}`, limit: 15, windowMs: 15 * 60_000 }),
-      rateLimitOrThrow({ key: `public-booking:phone:${phoneHash}`, limit: 4, windowMs: 30 * 60_000 }),
-      rateLimitOrThrow({ key: `public-booking:slot:${slotHash}`, limit: 4, windowMs: 5 * 60_000 }),
-      rateLimitOrThrow({ key: `public-booking:studio:${data.studioSlug}`, limit: 60, windowMs: 5 * 60_000 }),
+      rateLimitOrThrow({ key: `public-booking:ip:${fingerprintHash}`, ...PUBLIC_BOOKING_RATE_LIMITS.ip }),
+      rateLimitOrThrow({ key: `public-booking:phone:${phoneHash}`, ...PUBLIC_BOOKING_RATE_LIMITS.phone }),
+      rateLimitOrThrow({ key: `public-booking:slot:${slotHash}`, ...PUBLIC_BOOKING_RATE_LIMITS.slot }),
+      rateLimitOrThrow({ key: `public-booking:studio:${data.studioSlug}`, ...PUBLIC_BOOKING_RATE_LIMITS.studio }),
     ]);
 
     let { data: studioMode, error: studioModeError } = await admin
