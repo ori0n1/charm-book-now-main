@@ -2521,7 +2521,7 @@ function NewAppointmentModal({
         staffId
           ? (supabase as any)
               .from("appointments")
-              .select("clients(id,name,phone)")
+              .select("clients:clients!appointments_client_same_studio(id,name,phone)")
               .eq("studio_id", studioId)
               .eq("staff_id", staffId)
               .not("client_id", "is", null)

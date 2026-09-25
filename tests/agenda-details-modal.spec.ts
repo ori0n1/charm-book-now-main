@@ -15,7 +15,9 @@ test("appointment details use the existing client profile avatar with a shared f
     drawerSource,
   ]);
 
-  expect(agendaAccess).toContain("clients(name,phone,avatar_url,date_of_birth)");
+  expect(agendaAccess).toContain(
+    "clients:clients!appointments_client_same_studio(name,phone,avatar_url,date_of_birth)",
+  );
   expect(agenda).toContain("clientAvatarUrl: timelineDetailAppt.clients?.avatar_url");
   expect(drawer).toContain('import { ClientAvatar } from "@/components/client-avatar"');
   expect(drawer).toContain("avatarUrl={details.clientAvatarUrl}");

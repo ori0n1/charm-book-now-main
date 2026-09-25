@@ -45,7 +45,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
     let appointmentsQuery = admin
       .from("appointments")
       .select(
-        "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,studio_commission_percent_snapshot,notes,is_manual_fit,duration_overridden,clients(name,phone,avatar_url,date_of_birth),staff(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,studio_commission_percent_snapshot,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
+        "id,public_token,starts_at,ends_at,status,total_price,total_duration_min,studio_commission_percent_snapshot,notes,is_manual_fit,duration_overridden,clients:clients!appointments_client_same_studio(name,phone,avatar_url,date_of_birth),staff:staff!appointments_staff_same_studio(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(price,studio_commission_percent_snapshot,services(name,commission_percent,deposit_recipient,deposit_professional_percent))",
       )
       .eq("studio_id", data.studioId)
       .order("starts_at", { ascending: true })
@@ -85,7 +85,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
       loadAppointmentRows(
         admin
           .from("payment_intents")
-          .select("id,appointment_id,amount_cents,status,dispute_status,disputed_amount_cents")
+          .select("id,appointment_id,amount_cents,status")
           .eq("studio_id", data.studioId),
         sensitiveAppointmentIds,
       ),
@@ -111,7 +111,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
       loadAppointmentRows(
         admin
           .from("refund_requests")
-          .select("id,appointment_id,payment_intent_id,amount_cents,status,payment_intents(amount_cents)")
+          .select("id,appointment_id,payment_intent_id,status,payment_intents(amount_cents)")
           .eq("studio_id", data.studioId)
           .eq("status", "refunded"),
         sensitiveAppointmentIds,
@@ -126,20 +126,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
       ),
     ]);
 
-    const appointments =
-      access.role === "staff"
-        ? rawAppointments
-            .filter(
-              (row) =>
-                relationOne(row.staff)?.id === ownStaffId ||
-                !["cancelled", "canceled"].includes(String(row.status).toLowerCase()),
-            )
-            .map((row) =>
-              relationOne(row.staff)?.id === ownStaffId
-                ? row
-                : maskTeamAppointment(row, visibility),
-            )
-        : rawAppointments;
+    const appointments = selectVisibleAgendaAppointments(rawAppointments, access, visibility);
 
     return {
       appointments,
@@ -226,7 +213,7 @@ export const searchProtectedStudioClients = createServerFn({ method: "GET" })
       if (!access.staffId) throw new Response("staff_identity_required", { status: 403 });
       const { data: rows, error } = await admin
         .from("appointments")
-        .select("clients(id,name,phone)")
+        .select("clients:clients!appointments_client_same_studio(id,name,phone)")
         .eq("studio_id", data.studioId)
         .eq("staff_id", access.staffId)
         .not("client_id", "is", null)
@@ -315,6 +302,26 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
 
 function normalizeVisibility(value: unknown): AgendaVisibility {
   return value === "team_busy" || value === "team_basic" ? value : "private";
+}
+
+export function selectVisibleAgendaAppointments(
+  rawAppointments: any[],
+  access: { role: StudioRole; staffId: string | null },
+  visibility: AgendaVisibility,
+) {
+  if (access.role !== "staff") return rawAppointments;
+
+  return rawAppointments
+    .filter(
+      (row) =>
+        relationOne<any>(row.staff)?.id === access.staffId ||
+        !["cancelled", "canceled"].includes(String(row.status).toLowerCase()),
+    )
+    .map((row) =>
+      relationOne<any>(row.staff)?.id === access.staffId
+        ? row
+        : maskTeamAppointment(row, visibility),
+    );
 }
 
 function maskTeamAppointment(row: any, visibility: AgendaVisibility) {
