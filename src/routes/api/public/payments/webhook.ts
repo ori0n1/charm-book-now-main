@@ -848,7 +848,7 @@ async function loadDirectChargePayment(input: {
 }) {
   const sb = getAdminClient();
   const select =
-    "id,studio_id,amount_cents,currency,status,stripe_payment_intent_id,stripe_charge_id,stripe_connect_account_id,refunded_amount_cents,refund_status,stripe_dispute_id,dispute_status";
+    "id,studio_id,amount_cents,currency,status,stripe_payment_intent_id,stripe_charge_id,stripe_connect_account_id";
   let row: any = null;
 
   if (input.paymentIntentId) {
@@ -891,19 +891,9 @@ async function syncChargeRefundState(
     throw new Error("refund_amount_mismatch");
   }
 
-  const refundStatus =
-    amountRefunded === 0 ? "none" : amountRefunded === originalAmount ? "full" : "partial";
-  const { error } = await getAdminClient()
-    .from("payment_intents")
-    .update({
-      refunded_amount_cents: amountRefunded,
-      refund_status: refundStatus,
-      stripe_financial_state_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as any)
-    .eq("id", row.id)
-    .eq("studio_id", row.studio_id);
-  if (error) throw error;
+  // The production schema records exact refund amounts in financial_audit_logs
+  // and the final request state in refund_requests; it has no per-payment
+  // refund summary columns. Keep the Stripe amount validation fail-closed.
   return row;
 }
 
@@ -938,9 +928,6 @@ async function handleRefundEvent(
   const refundRequestId = refund.metadata?.refund_request_id ?? null;
   const refundPatch: Record<string, unknown> = {
     stripe_refund_id: refund.id,
-    stripe_refund_status: refundStatus,
-    amount_cents: Number(refund.amount || 0),
-    stripe_last_synced_at: new Date().toISOString(),
     refund_method: "stripe_connect_direct_charge",
     updated_at: new Date().toISOString(),
   };
@@ -961,12 +948,12 @@ async function handleRefundEvent(
 
   await (getAdminClient() as any).from("financial_audit_logs").insert({
     studio_id: row.studio_id,
-    entity_type: "payment_intent",
-    entity_id: row.id,
+    entity_type: refundRequestId ? "refund_request" : "payment_intent",
+    entity_id: refundRequestId ?? row.id,
     action: `stripe_refund_${refundStatus}`,
     amount_cents: Number(refund.amount || 0),
     currency: row.currency || "eur",
-    metadata: { stripe_refund_id: refund.id },
+    metadata: { stripe_refund_id: refund.id, stripe_refund_status: refundStatus },
   });
 }
 
@@ -992,19 +979,8 @@ async function handleDisputeEvent(
     throw new Error("dispute_amount_mismatch");
   }
   const status = String(dispute.status ?? "unknown");
-  const { error } = await getAdminClient()
-    .from("payment_intents")
-    .update({
-      stripe_dispute_id: dispute.id,
-      dispute_status: status,
-      disputed_amount_cents: amount,
-      stripe_financial_state_updated_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    } as any)
-    .eq("id", row.id)
-    .eq("studio_id", row.studio_id);
-  if (error) throw error;
-
+  // The current schema has no dispute columns on payment_intents. Preserve the
+  // exact Stripe state and amount in the existing immutable audit log instead.
   await (getAdminClient() as any).from("financial_audit_logs").insert({
     studio_id: row.studio_id,
     entity_type: "payment_intent",

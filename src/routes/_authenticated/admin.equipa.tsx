@@ -545,7 +545,7 @@ function TeamPage() {
           .gte("starts_at", since),
         supabase
           .from("payment_intents")
-          .select("id,appointment_id,amount_cents,status,dispute_status,disputed_amount_cents")
+          .select("id,appointment_id,amount_cents,status")
           .eq("studio_id", studio.id),
         (supabase as any)
           .from("cash_register_movements")
@@ -554,7 +554,7 @@ function TeamPage() {
           .eq("movement_type", "service_payment"),
         (supabase as any)
           .from("refund_requests")
-          .select("id,appointment_id,payment_intent_id,amount_cents,status,payment_intents(amount_cents)")
+          .select("id,appointment_id,payment_intent_id,status,payment_intents(amount_cents)")
           .eq("studio_id", studio.id)
           .eq("status", "refunded"),
       ]);

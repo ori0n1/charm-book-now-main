@@ -93,14 +93,16 @@ export const getRefundOperations = createServerFn({ method: "POST" })
     const { data, error } = await (sb as any)
       .from("refund_requests")
       .select(
-        "id,studio_id,appointment_id,booking_request_id,payment_intent_id,amount_cents,client_name,client_phone,client_email,reason,status,decision_note,reviewed_at,created_at,updated_at,platform_processed_at,stripe_refund_id,stripe_refund_status,stripe_last_synced_at,refund_method,admin_notes,studios:studio_id(id,name,slug),payment_intents:payment_intent_id(id,amount_cents,currency,method,status,stripe_payment_intent_id,stripe_checkout_session_id,stripe_connect_account_id,refunded_amount_cents,created_at),appointments:appointment_id(id,starts_at,total_price,appointment_services(services(name)))",
+        "id,studio_id,appointment_id,booking_request_id,payment_intent_id,client_name,client_phone,client_email,reason,status,decision_note,reviewed_at,created_at,updated_at,platform_processed_at,stripe_refund_id,refund_method,admin_notes,studios:studio_id(id,name,slug),payment_intents:payment_intent_id(id,amount_cents,currency,method,status,stripe_payment_intent_id,stripe_checkout_session_id,stripe_connect_account_id,created_at),appointments:appointment_id(id,starts_at,total_price,appointment_services(services(name)))",
       )
       .in("status", ["approved", "refunded", "rejected"])
       .order("updated_at", { ascending: false })
       .limit(100);
     if (error) throw error;
 
-    return (data ?? []).map((row: any) => normalizeRefundOperation(row));
+    const rows = data ?? [];
+    const auditedRefunds = await loadAuditedRefunds(sb, rows.map((row: any) => String(row.id)));
+    return rows.map((row: any) => normalizeRefundOperation(row, auditedRefunds.get(String(row.id))));
   });
 
 export const markRefundCompleted = createServerFn({ method: "POST" })
@@ -139,7 +141,7 @@ export const markRefundCompleted = createServerFn({ method: "POST" })
     if (!chargeId) throw new Error("refund_charge_missing");
     const charge = await stripe.charges.retrieve(chargeId, {}, { stripeAccount: connectedAccountId });
     const remainingCents = Number(charge.amount || 0) - Number(charge.amount_refunded || 0);
-    const amountCents = data.amountCents ?? request.requested_amount_cents ?? remainingCents;
+    const amountCents = data.amountCents ?? remainingCents;
     if (!Number.isInteger(amountCents) || amountCents <= 0 || amountCents > remainingCents) {
       throw new Error("refund_amount_invalid");
     }
@@ -168,12 +170,9 @@ export const markRefundCompleted = createServerFn({ method: "POST" })
       .from("refund_requests")
       .update({
         status: completed ? "refunded" : "approved",
-        amount_cents: amountCents,
         platform_processed_at: completed ? new Date().toISOString() : null,
         platform_processed_by: userId,
         stripe_refund_id: refund.id,
-        stripe_refund_status: stripeRefundStatus,
-        stripe_last_synced_at: new Date().toISOString(),
         refund_method: "stripe_connect_direct_charge",
         admin_notes: data.note?.trim() || request.admin_notes || null,
         updated_at: new Date().toISOString(),
@@ -251,7 +250,7 @@ async function loadRefundForAction(sb: SupabaseClient, requestId: string) {
   const { data, error } = await (sb as any)
     .from("refund_requests")
     .select(
-      "id,studio_id,appointment_id,payment_intent_id,amount_cents,client_phone,client_email,status,decision_note,stripe_refund_id,stripe_refund_status,refund_method,admin_notes,payment_intents:payment_intent_id(id,amount_cents,status,stripe_checkout_session_id,stripe_payment_intent_id,stripe_connect_account_id,refunded_amount_cents)",
+      "id,studio_id,appointment_id,payment_intent_id,client_phone,client_email,status,decision_note,stripe_refund_id,refund_method,admin_notes,payment_intents:payment_intent_id(id,amount_cents,status,stripe_checkout_session_id,stripe_payment_intent_id,stripe_connect_account_id)",
     )
     .eq("id", requestId)
     .maybeSingle();
@@ -270,7 +269,6 @@ async function loadRefundForAction(sb: SupabaseClient, requestId: string) {
     refund_method: data.refund_method as string | null,
     admin_notes: data.admin_notes as string | null,
     payment,
-    requested_amount_cents: data.amount_cents == null ? null : Number(data.amount_cents),
     payment_amount_cents: Number(payment?.amount_cents || 0),
     amount_cents: Number(payment?.amount_cents || 0),
   };
@@ -355,7 +353,36 @@ async function insertClientRefundDecisionNotification(
   });
 }
 
-function normalizeRefundOperation(row: any) {
+async function loadAuditedRefunds(sb: SupabaseClient, refundIds: string[]) {
+  const audits = new Map<string, { amountCents: number; stripeStatus: string | null }>();
+  if (refundIds.length === 0) return audits;
+  const { data, error } = await (sb as any)
+    .from("financial_audit_logs")
+    .select("entity_id,action,amount_cents,metadata,created_at")
+    .eq("entity_type", "refund_request")
+    .in("entity_id", refundIds)
+    .like("action", "stripe_refund_%")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  for (const audit of data ?? []) {
+    const refundId = String(audit.entity_id ?? "");
+    const amountCents = Number(audit.amount_cents);
+    if (!refundId || !Number.isInteger(amountCents) || amountCents <= 0 || audits.has(refundId)) {
+      continue;
+    }
+    const metadataStatus = audit.metadata?.stripe_refund_status;
+    audits.set(refundId, {
+      amountCents,
+      stripeStatus: typeof metadataStatus === "string" ? metadataStatus : null,
+    });
+  }
+  return audits;
+}
+
+function normalizeRefundOperation(
+  row: any,
+  auditedRefund?: { amountCents: number; stripeStatus: string | null },
+) {
   const payment = Array.isArray(row.payment_intents) ? row.payment_intents[0] : row.payment_intents;
   const appointment = Array.isArray(row.appointments) ? row.appointments[0] : row.appointments;
   const serviceNames =
@@ -363,7 +390,7 @@ function normalizeRefundOperation(row: any) {
       ?.map((line: any) => line.services?.name)
       .filter(Boolean)
       .join(", ") || "Marcação";
-  const amountCents = Number(row.amount_cents ?? payment?.amount_cents ?? 0);
+  const amountCents = auditedRefund?.amountCents ?? Number(payment?.amount_cents ?? 0);
   return {
     id: row.id as string,
     studioId: row.studio_id as string,
@@ -382,7 +409,7 @@ function normalizeRefundOperation(row: any) {
     stripePaymentIntentId: payment?.stripe_payment_intent_id ?? null,
     stripeCheckoutSessionId: payment?.stripe_checkout_session_id ?? null,
     stripeRefundId: row.stripe_refund_id as string | null,
-    stripeRefundStatus: row.stripe_refund_status as string | null,
+    stripeRefundStatus: auditedRefund?.stripeStatus ?? null,
     refundMethod: row.refund_method as string | null,
     paidAt: payment?.created_at ?? null,
     appointmentAt: appointment?.starts_at ?? null,

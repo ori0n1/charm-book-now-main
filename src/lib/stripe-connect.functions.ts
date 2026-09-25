@@ -167,25 +167,6 @@ function isMbWayPaymentsActive(account: { capabilities?: Record<string, unknown>
   return account.capabilities?.mb_way_payments === "active";
 }
 
-function connectResponsibilityPatch(account: any, balance?: any) {
-  const responsibility = readConnectedAccountResponsibility(account);
-  const negativeBalanceCents = [...(balance?.available ?? []), ...(balance?.pending ?? [])]
-    .reduce((sum: number, item: { amount?: number | null }) => {
-      const amount = Number(item.amount || 0);
-      return amount < 0 ? sum + amount : sum;
-    }, 0);
-  return {
-    responsibility,
-    patch: {
-      stripe_connect_fees_payer: responsibility.feesPayer,
-      stripe_connect_losses_collector: responsibility.lossesCollector,
-      stripe_connect_dashboard_type: responsibility.dashboardType,
-      stripe_connect_negative_balance_cents: negativeBalanceCents,
-      stripe_connect_responsibility_checked_at: new Date().toISOString(),
-    },
-  };
-}
-
 async function ensureMbWayCapabilityRequested(stripe: ReturnType<typeof createStripeClient>, accountId: string) {
   try {
     const capability = await stripe.accounts.retrieveCapability(accountId, "mb_way_payments" as any);
@@ -551,7 +532,6 @@ export const createConnectOnboardingLink = createServerFn({ method: "POST" })
 
       accountId = account.id;
       assertNewStandardAccountConfiguration(account, env, data.studioId);
-      const controller = connectResponsibilityPatch(account);
       await patchStudioConnect(data.studioId, {
         stripe_connect_account_id: accountId,
         stripe_connect_status: "pending",
@@ -559,7 +539,6 @@ export const createConnectOnboardingLink = createServerFn({ method: "POST" })
         stripe_connect_payouts_enabled: false,
         stripe_connect_onboarding_completed: false,
         stripe_connect_mb_way_payments_enabled: false,
-        ...controller.patch,
       });
     } else {
       await ensureMbWayCapabilityRequested(stripe, accountId);
@@ -614,13 +593,10 @@ export const syncConnectAccountStatus = createServerFn({ method: "POST" })
 
     const stripe = createStripeClient(connectStripeEnv());
     await ensureMbWayCapabilityRequested(stripe, studio.stripe_connect_account_id);
-    const [account, balance] = await Promise.all([
-      stripe.accounts.retrieve(studio.stripe_connect_account_id),
-      stripe.balance.retrieve({}, { stripeAccount: studio.stripe_connect_account_id }),
-    ]);
+    const account = await stripe.accounts.retrieve(studio.stripe_connect_account_id);
     const status = deriveStatus(account as any);
     const mbWayPaymentsEnabled = isMbWayPaymentsActive(account as any);
-    const controller = connectResponsibilityPatch(account, balance);
+    const responsibility = readConnectedAccountResponsibility(account);
 
     await patchStudioConnect(data.studioId, {
       stripe_connect_charges_enabled: account.charges_enabled,
@@ -628,7 +604,6 @@ export const syncConnectAccountStatus = createServerFn({ method: "POST" })
       stripe_connect_onboarding_completed: account.details_submitted ?? false,
       stripe_connect_mb_way_payments_enabled: mbWayPaymentsEnabled,
       stripe_connect_status: status,
-      ...controller.patch,
     });
 
     return {
@@ -639,10 +614,10 @@ export const syncConnectAccountStatus = createServerFn({ method: "POST" })
       mbWayPaymentsEnabled,
       status,
       responsibility: {
-        ...controller.responsibility,
+        ...responsibility,
         compatibleWithStudioPaysFees:
-          controller.responsibility.feesPayer === "account" &&
-          controller.responsibility.lossesCollector === "stripe",
+          responsibility.feesPayer === "account" &&
+          responsibility.lossesCollector === "stripe",
       },
       financial: await loadConnectFinancialSummary(data.studioId, studio.stripe_connect_account_id),
     };
@@ -707,9 +682,9 @@ export async function syncConnectAccountFromWebhook(stripeAccountId: string) {
       reason: error instanceof Error ? error.message : String(error),
     });
   }
+  void balance;
   const status = deriveStatus(account as any);
   const mbWayPaymentsEnabled = isMbWayPaymentsActive(account as any);
-  const controller = connectResponsibilityPatch(account, balance);
 
   await patchStudioConnect(studio.id, {
     stripe_connect_charges_enabled: account.charges_enabled,
@@ -717,6 +692,5 @@ export async function syncConnectAccountFromWebhook(stripeAccountId: string) {
     stripe_connect_onboarding_completed: account.details_submitted ?? false,
     stripe_connect_mb_way_payments_enabled: mbWayPaymentsEnabled,
     stripe_connect_status: status,
-    ...controller.patch,
   });
 }

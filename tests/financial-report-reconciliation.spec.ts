@@ -12,6 +12,15 @@ const period = {
   endsAtExclusive: "2026-10-01T00:00:00.000Z",
 };
 
+const financialRuntimeSources = Promise.all([
+  readFile("src/lib/financial-report.functions.ts", "utf8"),
+  readFile("src/routes/_authenticated/admin.index.tsx", "utf8"),
+  readFile("src/routes/_authenticated/admin.equipa.tsx", "utf8"),
+  readFile("src/lib/refund-operations.functions.ts", "utf8"),
+  readFile("src/routes/api/public/payments/webhook.ts", "utf8"),
+  readFile("src/lib/stripe-connect.functions.ts", "utf8"),
+]);
+
 function appointment(
   id: string,
   staffId: string,
@@ -233,4 +242,55 @@ test("API financeira valida tenant e a página não volta a chamar realizado de 
   expect(page).not.toContain("Receita por profissional");
   expect(page).toContain("Como funcionam os pagamentos online");
   expect(page).toContain("side=\"bottom\"");
+});
+
+test("legacy refund without an optional amount uses the real payment amount", () => {
+  const facts = buildAppointmentPaymentFacts(
+    [{ id: "pi", appointment_id: "a", amount_cents: 10_000, status: "succeeded" }],
+    [],
+    [
+      {
+        id: "rr",
+        appointment_id: "a",
+        payment_intent_id: "pi",
+        status: "refunded",
+        payment_intents: { amount_cents: 10_000 },
+      },
+    ],
+  ).get("a");
+
+  expect(facts).toMatchObject({
+    onlineGrossCents: 10_000,
+    refundedCents: 10_000,
+    onlineNetCents: 0,
+    receivedCents: 0,
+  });
+});
+
+test("financial runtime only queries fields present in the production schema", async () => {
+  const [report, dashboard, team, refunds, webhook, connect] = await financialRuntimeSources;
+  const runtime = [report, dashboard, team, refunds, webhook, connect].join("\n");
+
+  expect(report).toContain('"id,appointment_id,amount_cents,status,method"');
+  expect(report).toContain(
+    '"id,appointment_id,payment_intent_id,status,payment_intents(amount_cents)"',
+  );
+  expect(report).toContain('from("financial_audit_logs")');
+  expect(report).toContain('.eq("action", "stripe_refund_succeeded")');
+  expect(dashboard).toContain('.select("id,appointment_id,amount_cents,status")');
+  expect(team).toContain('.select("id,appointment_id,amount_cents,status")');
+
+  expect(runtime).not.toContain(
+    'select("id,appointment_id,amount_cents,status,dispute_status,disputed_amount_cents")',
+  );
+  expect(runtime).not.toContain(
+    'select("id,appointment_id,payment_intent_id,amount_cents,status,payment_intents(amount_cents)")',
+  );
+  expect(refunds).not.toContain("refunded_amount_cents");
+  expect(refunds).not.toContain("stripe_last_synced_at");
+  expect(webhook).not.toContain("refunded_amount_cents: amountRefunded");
+  expect(webhook).not.toMatch(/^\s+refund_status:\s*refundStatus,/m);
+  expect(webhook).not.toContain("stripe_financial_state_updated_at:");
+  expect(connect).not.toContain("stripe_connect_fees_payer:");
+  expect(connect).not.toContain("stripe_connect_negative_balance_cents:");
 });

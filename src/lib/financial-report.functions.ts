@@ -104,7 +104,7 @@ export const getFinancialReport = createServerFn({ method: "POST" })
         "payment_intents",
         data.studioId,
         appointmentIds,
-        "id,appointment_id,amount_cents,status,method,dispute_status,disputed_amount_cents",
+        "id,appointment_id,amount_cents,status,method",
         (query) => query.eq("status", "succeeded"),
       ),
       loadRowsByAppointmentIds(
@@ -120,11 +120,16 @@ export const getFinancialReport = createServerFn({ method: "POST" })
         "refund_requests",
         data.studioId,
         appointmentIds,
-        "id,appointment_id,payment_intent_id,amount_cents,status,payment_intents(amount_cents)",
+        "id,appointment_id,payment_intent_id,status,payment_intents(amount_cents)",
         (query) => query.eq("status", "refunded"),
       ),
     ]);
 
+    const refundsWithAuditedAmounts = await attachAuditedRefundAmounts(
+      admin,
+      data.studioId,
+      refunds,
+    );
     const filters: FinancialReportFilters = {
       staffId: data.staffId ?? null,
       paymentMethod: data.paymentMethod ?? null,
@@ -136,7 +141,7 @@ export const getFinancialReport = createServerFn({ method: "POST" })
       appointments,
       onlinePayments,
       onsitePayments,
-      refunds,
+      refunds: refundsWithAuditedAmounts,
       manualEntries,
       staff,
       studioCommissionPercent: Number(studio.commission_percent ?? 0),
@@ -336,6 +341,42 @@ async function loadRowsByAppointmentIds(
     }),
   );
   return results.flat();
+}
+
+async function attachAuditedRefundAmounts(admin: any, studioId: string, refunds: any[]) {
+  const refundIds = refunds.map((refund) => String(refund.id ?? "")).filter(Boolean);
+  if (refundIds.length === 0) return refunds;
+
+  const chunks: string[][] = [];
+  for (let index = 0; index < refundIds.length; index += 200) {
+    chunks.push(refundIds.slice(index, index + 200));
+  }
+  const results = await Promise.all(
+    chunks.map(async (ids) => {
+      const { data, error } = await admin
+        .from("financial_audit_logs")
+        .select("entity_id,amount_cents,created_at")
+        .eq("studio_id", studioId)
+        .eq("entity_type", "refund_request")
+        .eq("action", "stripe_refund_succeeded")
+        .in("entity_id", ids)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data ?? [];
+    }),
+  );
+  const amountByRefundId = new Map<string, number>();
+  for (const audit of results.flat()) {
+    const refundId = String(audit.entity_id ?? "");
+    const amountCents = Number(audit.amount_cents);
+    if (refundId && Number.isInteger(amountCents) && amountCents > 0 && !amountByRefundId.has(refundId)) {
+      amountByRefundId.set(refundId, amountCents);
+    }
+  }
+  return refunds.map((refund) => {
+    const amountCents = amountByRefundId.get(String(refund.id ?? ""));
+    return amountCents == null ? refund : { ...refund, amount_cents: amountCents };
+  });
 }
 
 async function loadAllPages(buildQuery: (from: number, to: number) => any) {
