@@ -1388,14 +1388,14 @@ function StaffModal({
       photo_url: photo || null,
       is_active: active,
     };
-    const res = staff
-      ? await supabase.from("staff").update(payload).eq("id", staff.id).select("id").single()
-      : await supabase.from("staff").insert(payload).select("id").single();
-    if (res.error) {
+    const id = staff?.id ?? crypto.randomUUID();
+    const { error: staffError } = staff
+      ? await supabase.from("staff").update(payload).eq("id", id)
+      : await supabase.from("staff").insert({ id, ...payload });
+    if (staffError) {
       setSaving(false);
-      return toast.error(res.error.message);
+      return toast.error(staffError.message);
     }
-    const id = res.data!.id;
     await supabase.from("staff_services").delete().eq("staff_id", id);
     if (serviceIds.length) {
       await supabase
