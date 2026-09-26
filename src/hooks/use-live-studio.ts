@@ -75,35 +75,11 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
 
   async function load() {
     const studioSelect =
-      "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,online_payment_ready,mb_way_payment_ready,public_notifications_available,business_segment,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version,booking_flow_mode,booking_request_professional_mode";
-    const previousStudioSelect =
       "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,hero_gallery_urls,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,stripe_connect_charges_enabled,stripe_connect_onboarding_completed,stripe_connect_mb_way_payments_enabled,business_segment,cancellation_min_notice_hours,cancellation_after_deadline_policy,refund_requests_enabled,cancellation_policy_text,legal_policy_version,booking_flow_mode,booking_request_professional_mode,notifications_enabled";
-    const legacyStudioSelect =
-      "id,name,slug,tagline,description,timezone,brand_color,logo_url,hero_image_url,location,phone,whatsapp,email,instagram,rating,reviews_count,updated_at,payment_policy,accepted_payment_methods,business_segment";
-    let studioResult = await loadPublicTable("public_booking_studios", "public_studios", (query) =>
-      query
-        .select(`${studioSelect},public_amenities,min_booking_notice_min`)
-        .eq("id", studioId)
-        .maybeSingle(),
-    );
-    if (studioResult.error) {
-      studioResult = await (supabase as any).from("public_studios")
-        .select(`${previousStudioSelect},public_amenities,min_booking_notice_min`)
-        .eq("id", studioId)
-        .maybeSingle();
-    }
-    if (studioResult.error) {
-      studioResult = await (supabase as any).from("public_studios")
-        .select(`${legacyStudioSelect},public_amenities`)
-        .eq("id", studioId)
-        .maybeSingle();
-    }
-    if (studioResult.error) {
-      studioResult = await (supabase as any).from("public_studios")
-        .select(legacyStudioSelect)
-        .eq("id", studioId)
-        .maybeSingle();
-    }
+    const studioResult = await (supabase as any).from("public_studios")
+      .select(`${studioSelect},public_amenities,min_booking_notice_min`)
+      .eq("id", studioId)
+      .maybeSingle();
     /*
       No base-table fallback: a failure of the public views must not turn a
       published profile query into a query against private studio settings.
@@ -147,32 +123,11 @@ export function useLiveStudio(studioId: string = staticStudio.id): LiveData {
       offers = data as any[] | null;
     }
 
-    // Staff query with graceful fallback for missing optional columns
-    let staffResult: any = await (supabase as any).from("public_booking_staff")
-      .select("id,name,role,bio,photo_url,rating,reviews_count,is_active,booking_availability_status")
+    const staffResult: any = await (supabase as any).from("public_staff")
+      .select("id,name,role,bio,photo_url,rating,reviews_count,is_active,current_status")
       .eq("studio_id", studioId)
       .eq("is_active", true)
       .order("sort_order");
-    if (staffResult.error) {
-      staffResult = await (supabase as any).from("public_staff")
-        .select("id,name,role,bio,photo_url,rating,reviews_count,is_active,current_status")
-        .eq("studio_id", studioId)
-        .eq("is_active", true)
-        .order("sort_order");
-    }
-    if (staffResult.error) {
-      staffResult = await (supabase as any).from("public_staff")
-        .select("id,name,role,bio,photo_url,rating,is_active,current_status")
-        .eq("studio_id", studioId)
-        .eq("is_active", true)
-        .order("sort_order");
-    }
-    if (staffResult.error) {
-      staffResult = await (supabase as any).from("public_staff")
-        .select("id,name,role,bio,photo_url,rating,is_active")
-        .eq("studio_id", studioId)
-        .eq("is_active", true);
-    }
     const staff = staffResult.data;
     const st = studioResult.data as Partial<LiveStudio> | null;
 

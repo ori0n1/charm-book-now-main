@@ -28,21 +28,12 @@ export const getPublicStudioSeo = createServerFn({ method: "GET" })
   )
   .handler(async ({ data }): Promise<PublicStudioSeo | null> => {
     const client = getPublicSupabaseClient();
-    let { data: studio, error } = await (client as any)
-      .from("public_booking_studios")
+    const { data: studio, error } = await (client as any)
+      .from("public_studios")
       .select("id,slug,name,tagline,description,location,logo_url,updated_at,booking_flow_mode")
       .eq("slug", data.slug)
       .eq("is_active", true)
       .maybeSingle();
-
-    if (error) {
-      ({ data: studio, error } = await (client as any)
-        .from("public_studios")
-        .select("id,slug,name,tagline,description,location,logo_url,updated_at")
-        .eq("slug", data.slug)
-        .eq("is_active", true)
-        .maybeSingle());
-    }
 
     if (error) {
       console.error("public_studio_seo_query_failed", error.message);
