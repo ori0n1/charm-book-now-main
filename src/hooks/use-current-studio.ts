@@ -90,13 +90,15 @@ async function withStaffIdentity(
   userId: string | null,
 ): Promise<CurrentStudio[]> {
   if (!userId || studios.length === 0) return studios;
+  const staffStudios = studios.filter((studio) => studio.role === "staff");
+  if (staffStudios.length === 0) return studios;
   const { data } = await supabase
     .from("staff")
     .select("id,name,studio_id,user_id")
     .eq("user_id", userId)
     .in(
       "studio_id",
-      studios.map((studio) => studio.id),
+      staffStudios.map((studio) => studio.id),
     );
   const staffByStudio = new Map(
     (data ?? []).map((staff) => [

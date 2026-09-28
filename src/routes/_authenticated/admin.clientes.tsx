@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
+import { ADMIN_REFERENCE_GC_MS, ADMIN_REFERENCE_STALE_MS } from "@/lib/admin-query-cache";
 import { computeAttendanceRevenue, formatEUR, isFinanciallyRelevantAppointment } from "@/lib/utils";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import {
@@ -153,7 +154,9 @@ function ClientsPage() {
   const clientsQuery = useQuery({
     queryKey: ["admin-clients", studio?.id, studio?.role, studio?.staff_id],
     enabled: !!studio?.id,
-    staleTime: 20 * 1000,
+    staleTime: ADMIN_REFERENCE_STALE_MS,
+    gcTime: ADMIN_REFERENCE_GC_MS,
+    refetchOnMount: false,
     queryFn: async () => {
       const [clientsResult, appointmentsResult, paymentsResult, returnRemindersResult] = await Promise.all([
         (supabase as any)

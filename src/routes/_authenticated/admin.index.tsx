@@ -219,7 +219,9 @@ function OverviewPage() {
       financeEnabled,
     ],
     enabled: Boolean(studio),
-    staleTime: 20 * 1000,
+    staleTime: ADMIN_REFERENCE_STALE_MS,
+    gcTime: ADMIN_REFERENCE_GC_MS,
+    refetchOnMount: false,
     queryFn: async () => {
       const db = supabase as any;
       const since = new Date(Date.now() - 60 * DAY_MS).toISOString();

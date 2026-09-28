@@ -11,12 +11,17 @@ test("mobile admin avoids duplicate reference queries and nonessential analytics
 
   expect(studioHook).toContain("ADMIN_REFERENCE_STALE_MS");
   expect(studioHook).toContain("refetchOnMount: false");
+  expect(studioHook).toContain('studios.filter((studio) => studio.role === "staff")');
+  expect(studioHook).toContain("if (staffStudios.length === 0) return studios");
   expect(shell).not.toContain("sessionReady");
   expect(shell).toContain("platformSubscriptionSummaryQueryKey(studio?.id)");
   expect(shell).toContain('import("@/components/admin-notifications")');
   expect(shell).toContain("notificationsReady ? (");
   expect(overview).toContain("platformSubscriptionSummaryQueryKey(studio?.id)");
   expect(overview).toContain("Date.now() - 60 * DAY_MS");
+  expect(overview).toContain("staleTime: ADMIN_REFERENCE_STALE_MS");
+  expect(overview).toContain("gcTime: ADMIN_REFERENCE_GC_MS");
+  expect(overview).toContain("refetchOnMount: false");
   expect(overview).toContain('.select("id", { count: "exact", head: true })');
   expect(overview).not.toContain("total_spent,total_visits");
   expect(overview).toContain("desktopLayout && (");
