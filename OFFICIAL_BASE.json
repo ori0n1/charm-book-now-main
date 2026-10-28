@@ -2,20 +2,20 @@
   "schema": 1,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "899c9381-6b2f-48b9-a436-7886b8ea176d",
-  "cloudflareVersionId": "34be84fa-567e-4271-8cce-622e14b41c0f",
+  "deploymentId": "09cd6d76-1271-4c62-849b-eba4a39a592d",
+  "cloudflareVersionId": "9e09021d-f203-47ca-b0a4-246cc9689171",
   "workerEtag": "49189570573745ed961a178381f1943d4138ff65da421a68144f72d5fa7199c0",
   "workerModules": { "checked": 230, "identical": 230 },
   "staticAssets": { "status": "verified_with_cloudflare_managed_robots", "checked": 228, "identical": 227, "cloudflareManagedRobots": 1 },
-  "productionBindings": { "total": 51, "secrets": 24, "additionalPlainNames": ["ARARA_CANARY_PROBE_SHA256", "GOOGLE_PLACES_ENABLED", "JOINT_BOOKING_CREATE_ENABLED"], "additionalPlainNamesAbsentFromLocalWranglerConfig": true },
+  "productionBindings": { "total": 51, "secrets": 24, "additionalPlainNames": ["ARARA_CANARY_PROBE_SHA256", "GOOGLE_PLACES_ENABLED", "JOINT_BOOKING_CREATE_ENABLED", "VITE_CONNECT_FINANCIAL_LIVE_APP_ORIGIN", "VITE_CONNECT_FINANCIAL_LIVE_ENABLED", "VITE_CONNECT_FINANCIAL_LIVE_ENDPOINT"], "additionalPlainNamesAbsentFromLocalWranglerConfig": true },
   "sql": {
     "status": "verified",
     "projectRef": "pwmdzpvnatrvfpgcvnzg",
     "checkedOn": "2026-10-28",
-    "latestAppliedVersion": "20261028143000",
+    "latestAppliedVersion": "20261028210000",
     "remoteOnlyVersions": ["20261025160000"],
     "localOnlyVersions": ["20261026190000", "20261027160000", "20261027190000", "20261027234500", "20261028010000"],
-    "note": "Migration history was read only with existing Supabase CLI authentication. Verified means differences are known, not that every local migration is applied. No migration was run."
+    "note": "O histórico remoto inclui a migração aditiva do PIN 20261028210000, aplicada em 2026-10-28; as duas tabelas permanecem preservadas após o rollback do Worker. Outras diferenças de histórico registradas aqui não devem ser aplicadas automaticamente."
   },
   "domains": ["bellza.pt", "www.bellza.pt"],
   "cron": ["*/10 * * * *"]
