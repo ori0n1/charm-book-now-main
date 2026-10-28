@@ -4,5 +4,9 @@ sandbox_mode = "workspace-write"
 [sandbox_workspace_write]
 network_access = false
 
+[shell_environment_policy.filters]
+CLOUDFLARE_API_TOKEN = "exclude"
+CLOUDFLARE_API_KEY = "exclude"
+
 [apps._default]
 default_tools_approval_mode = "writes"
