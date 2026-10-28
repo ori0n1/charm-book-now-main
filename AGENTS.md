@@ -64,6 +64,7 @@ npm.cmd run test:e2e:chromium
 - A versão ativa em produção, confirmada pela Cloudflare via OAuth, define a base oficial. Comprove a correspondência do código-fonte local ou no GitHub antes de registrar o commit de base.
 - Cada novo agente deve criar um worktree isolado e limpo a partir desse commit comprovado. Preserve branches, worktrees e alterações anteriores como referências separadas; não os use como ponto de partida por conveniência.
 - Se a correspondência ainda não estiver comprovada, registre o bloqueio e aguarde a identificação da base oficial antes de iniciar novos trabalhos.
+- Referência local confirmada em 2026-10-28: repositório `bellza-base-34be84fa`, branch `production-34be84fa`, para a versão Cloudflare `34be84fa-567e-4271-8cce-622e14b41c0f`. Leia `BASELINE.md` nessa base e reconfirme a versão ativa antes de iniciar trabalho novo, pois a produção pode mudar.
 
 ## Autonomia de leitura e controle de escrita — Bellza
 
