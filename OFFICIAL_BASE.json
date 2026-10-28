@@ -8,7 +8,15 @@
   "workerModules": { "checked": 230, "identical": 230 },
   "staticAssets": { "status": "verified_with_cloudflare_managed_robots", "checked": 228, "identical": 227, "cloudflareManagedRobots": 1 },
   "productionBindings": { "total": 51, "secrets": 24, "additionalPlainNames": ["ARARA_CANARY_PROBE_SHA256", "GOOGLE_PLACES_ENABLED", "JOINT_BOOKING_CREATE_ENABLED"], "additionalPlainNamesAbsentFromLocalWranglerConfig": true },
-  "sql": { "status": "pending_production_migration_check", "reason": "Supabase CLI authentication unavailable for the Bellza production project" },
+  "sql": {
+    "status": "verified",
+    "projectRef": "pwmdzpvnatrvfpgcvnzg",
+    "checkedOn": "2026-10-28",
+    "latestAppliedVersion": "20261028143000",
+    "remoteOnlyVersions": ["20261025160000"],
+    "localOnlyVersions": ["20261026190000", "20261027160000", "20261027190000", "20261027234500", "20261028010000"],
+    "note": "Migration history was read only with existing Supabase CLI authentication. Verified means differences are known, not that every local migration is applied. No migration was run."
+  },
   "domains": ["bellza.pt", "www.bellza.pt"],
   "cron": ["*/10 * * * *"]
 }
