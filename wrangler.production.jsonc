@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "bellza-deploy-blocked",
+  "workers_dev": false,
+  "keep_vars": true,
+  "compatibility_date": "2025-09-24",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "main": "src/server.ts",
+  "build": {
+    "command": "node scripts/verify-multiprofessional-release.mjs --production"
+  },
+  "env": {
+    "production": {
+      "name": "tanstack-start-app",
+      "workers_dev": false,
+      "preview_urls": false,
+      "triggers": {
+        "crons": ["*/10 * * * *"]
+      },
+      "vars": {
+        "STRIPE_ENV": "live",
+        "STRIPE_CONNECT_NEW_ACCOUNT_MODEL": "standard_full_v1",
+        "SENDDM_API_BASE_URL": "https://api.sent.dm",
+        "SENDDM_MODEL_ID": "aca219e7-63cb-4eea-a8fd-9aee187e8676",
+        "SENDDM_TEMPLATE_INTERNAL_NAME": "Marcação",
+        "SENDDM_WHATSAPP_TEMPLATE_ID": "1772571720773309",
+        "SENDDM_WHATSAPP_TEMPLATE_NAME": "new_template__hkmlmqkyap",
+        "SENDDM_WHATSAPP_TEMPLATE_LANGUAGE": "pt_BR",
+        "ARARA_WHATSAPP_MODE": "off",
+        "ARARA_CANARY_PHONE": "",
+        "EMAIL_NOTIFICATIONS_ENABLED": "true",
+        "EMAIL_FROM": "Bellza <notificacoes@bellza.pt>",
+        "RESEND_API_BASE_URL": "https://api.resend.com",
+        "ENABLE_IN_PERSON_MB_WAY": "true",
+        "APP_URL": "https://bellza.pt",
+        "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP",
+        "VITE_GOOGLE_CLIENT_ID": "522932289328-079ntkgk3gcg6pmnls5ihfa91mnbff8n.apps.googleusercontent.com",
+        "VITE_VAPID_PUBLIC_KEY": "BH4ThNbLHGnXjx6PkX3ew2T1QVOnLanflhiXJdpWGhfR1j_iDsw9TBF25ipM1N5m3LjD7TkYeCNDcNRxTCLNryY",
+        "VITE_SUPABASE_PROJECT_ID": "pwmdzpvnatrvfpgcvnzg",
+        "VITE_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_F76-CiLv1Rvar307TdLRjg_8pphwxQP",
+        "VITE_SUPABASE_URL": "https://pwmdzpvnatrvfpgcvnzg.supabase.co",
+        "VITE_CONNECT_FINANCIAL_LIVE_ENABLED": "true",
+        "VITE_CONNECT_FINANCIAL_LIVE_APP_ORIGIN": "https://bellza.pt",
+        "VITE_CONNECT_FINANCIAL_LIVE_ENDPOINT": "https://bellza-connect-financial-live.silas18-so.workers.dev/notifications/financial"
+      }
+    }
+  }
+}

@@ -1,0 +1,7 @@
+prefix_rule(pattern=["git", "ls-remote", "origin"], decision="allow", justification="Consulta apenas referências do remoto GitHub configurado para a Bellza.")
+prefix_rule(pattern=["npx", "wrangler", "whoami"], decision="allow", justification="Consulta a sessão Cloudflare existente.")
+prefix_rule(pattern=["npx", "wrangler", "versions", "list"], decision="allow", justification="Lista metadados de versões do Worker.")
+prefix_rule(pattern=["npx", "wrangler", "versions", "view"], decision="allow", justification="Lê metadados de uma versão do Worker.")
+prefix_rule(pattern=["npx", "wrangler", "deployments", "list"], decision="allow", justification="Lista implantações do Worker.")
+prefix_rule(pattern=["npx", "wrangler", "secret", "list"], decision="allow", justification="Lista nomes de bindings secretos sem ler valores.")
+prefix_rule(pattern=["supabase", "projects", "list"], decision="allow", justification="Lista projetos Supabase acessíveis.")

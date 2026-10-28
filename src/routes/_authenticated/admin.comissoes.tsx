@@ -1,0 +1,350 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { Scissors, UserRound } from "lucide-react";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { computeFinancialSplit, formatEUR } from "@/lib/utils";
+import { ExpandableList } from "@/components/ui/expandable-list";
+
+export const Route = createFileRoute("/_authenticated/admin/comissoes")({
+  head: () => ({ meta: [{ title: "Comissões - Painel" }] }),
+  component: ComissoesPage,
+});
+
+type StudioRow = {
+  id: string;
+  payment_policy: "pay_in_studio" | "pre_payment";
+  accepted_payment_methods: string[];
+  deposit_percent: number;
+  commission_percent: number;
+};
+
+type RuleOverride = {
+  id: string;
+  name: string;
+  commission_percent: number | null;
+};
+
+function ComissoesPage() {
+  const [studio, setStudio] = useState<StudioRow | null>(null);
+  const [staff, setStaff] = useState<RuleOverride[]>([]);
+  const [services, setServices] = useState<RuleOverride[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data: roles } = await supabase.from("user_roles").select("studio_id").limit(1);
+      const studioId = (roles?.[0] as { studio_id: string } | undefined)?.studio_id;
+      if (!studioId) return;
+      const result = await loadFinancialSettings(studioId);
+      if (result.studio) {
+        setStudio(result.studio);
+      }
+      setStaff(result.staff);
+      setServices(result.services);
+    })();
+  }, []);
+
+  const example = useMemo(() => {
+    if (!studio) return null;
+    return computeFinancialSplit(100, studio.commission_percent, {
+      depositPercent: studio.deposit_percent,
+      requiresDeposit: studio.payment_policy === "pre_payment",
+    });
+  }, [studio]);
+
+  async function saveStudio(next: Partial<StudioRow>) {
+    if (!studio) return;
+    setSaving(true);
+    const merged = { ...studio, ...next };
+    const payload = {
+      payment_policy: merged.payment_policy,
+      accepted_payment_methods: merged.accepted_payment_methods,
+      deposit_percent: merged.deposit_percent,
+      commission_percent: merged.commission_percent,
+    };
+    const { error } = await supabase.from("studios").update(payload).eq("id", studio.id);
+    setSaving(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    setStudio(merged);
+    toast.success("Alterações guardadas");
+  }
+
+  async function saveOverride(
+    kind: "staff" | "services",
+    row: RuleOverride,
+    next: Partial<RuleOverride>,
+  ) {
+    const merged = { ...row, ...next };
+    const { error } = await supabase
+      .from(kind)
+      .update({ commission_percent: merged.commission_percent })
+      .eq("id", row.id);
+
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+
+    if (kind === "staff") {
+      setStaff((current) => current.map((item) => (item.id === row.id ? merged : item)));
+    } else {
+      setServices((current) => current.map((item) => (item.id === row.id ? merged : item)));
+    }
+
+    toast.success("Regra atualizada");
+  }
+
+  if (!studio || !example) {
+    return <p className="text-sm text-muted-foreground">A carregar...</p>;
+  }
+
+  return (
+    <div className="space-y-3 pb-2 xl:mx-auto xl:max-w-[88rem]">
+      <section className="overflow-hidden rounded-[1.35rem] border border-border bg-card shadow-sm">
+        <div className="border-b border-border/70 px-4 py-3 md:px-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <span className="grid size-7 place-items-center rounded-xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-400">
+                  <Scissors className="h-4 w-4" />
+                </span>
+                <span className="text-[10px] uppercase tracking-[0.2em]">Comissões</span>
+              </div>
+              <h1 className="mt-2 text-base font-medium tracking-tight md:text-lg">Divisão e regras de comissão</h1>
+            </div>
+            <span className="rounded-full border border-emerald-700/20 bg-emerald-950/5 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+              Premium
+            </span>
+          </div>
+        </div>
+
+        <div className="grid gap-3 p-3 md:p-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(21rem,30rem)] xl:items-start">
+          <div className="rounded-[1.15rem] border border-border/70 bg-background/45 p-3.5 md:p-4">
+            <div>
+              <h2 className="text-base font-medium">Divisão entre estúdio e equipa</h2>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                O sinal já faz parte do valor total do serviço. A percentagem configurada é a parte da profissional, e o restante pertence ao estúdio.
+              </p>
+            </div>
+
+            <div className="mt-3">
+              <PercentSlider
+                label="Percentagem da profissional"
+                value={studio.commission_percent}
+                onChange={(value) => setStudio({ ...studio, commission_percent: value })}
+                onCommit={(value) => saveStudio({ commission_percent: value })}
+                disabled={saving}
+              />
+            </div>
+
+            <div className="mt-3 rounded-[1rem] border border-dashed border-emerald-700/25 bg-emerald-950/5 p-3 text-xs">
+              <p className="font-medium text-foreground">Exemplo num serviço de {formatEUR(100)}</p>
+              <div className="mt-2.5 grid gap-1.5 sm:grid-cols-2">
+                <Line label="Valor total do serviço" value={formatEUR(example.total)} />
+                <Line label="Sinal pago online" value={formatEUR(example.deposit)} />
+                <Line label="A pagar no estúdio" value={formatEUR(example.remaining)} />
+                <Line label="Parte do estúdio" value={formatEUR(example.studio)} strong />
+                <Line label="Parte da profissional" value={formatEUR(example.professional)} strong />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            <div className="rounded-[1.15rem] border border-border/70 bg-background/45 p-3.5 md:p-4">
+              <OverrideSection
+                title="Percentagem por profissional"
+                icon={<UserRound className="h-4 w-4" />}
+                rows={staff}
+                kind="staff"
+                studio={studio}
+                onSave={saveOverride}
+              />
+            </div>
+            <div className="rounded-[1.15rem] border border-border/70 bg-background/45 p-3.5 md:p-4">
+              <OverrideSection
+                title="Percentagem por serviço"
+                icon={<Scissors className="h-4 w-4" />}
+                rows={services}
+                kind="services"
+                studio={studio}
+                onSave={saveOverride}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+async function loadFinancialSettings(studioId: string) {
+  const [studioFull, staffFull, serviceFull] = await Promise.all([
+    supabase
+      .from("studios")
+      .select("id,payment_policy,accepted_payment_methods,deposit_percent,commission_percent")
+      .eq("id", studioId)
+      .maybeSingle(),
+    supabase
+      .from("staff")
+      .select("id,name,commission_percent")
+      .eq("studio_id", studioId)
+      .eq("is_active", true)
+      .order("sort_order"),
+    supabase
+      .from("services")
+      .select("id,name,commission_percent")
+      .eq("studio_id", studioId)
+      .eq("is_active", true)
+      .order("sort_order"),
+  ]);
+
+  return {
+    studio: normalizeStudio(studioFull.data),
+    staff: (staffFull.data ?? []) as RuleOverride[],
+    services: (serviceFull.data ?? []) as RuleOverride[],
+  };
+}
+
+function normalizeStudio(row: unknown): StudioRow | null {
+  const studio = row as Partial<StudioRow> | null;
+  if (!studio?.id) return null;
+  return {
+    id: studio.id,
+    payment_policy: studio.payment_policy ?? "pay_in_studio",
+    accepted_payment_methods: normalizeAcceptedPaymentMethods(studio.accepted_payment_methods),
+    deposit_percent: studio.deposit_percent ?? 25,
+    commission_percent: studio.commission_percent ?? 50,
+  };
+}
+
+function normalizeAcceptedPaymentMethods(methods?: string[] | null) {
+  const normalized = (methods ?? ["mb_way", "card"]).filter(
+    (method) => method === "mb_way" || method === "card" || method === "cash",
+  );
+  return normalized.length ? normalized : ["mb_way", "card"];
+}
+
+function PercentSlider(props: {
+  label: string;
+  value: number;
+  min?: number;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+  onCommit: (value: number) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="flex items-center justify-between gap-3 text-xs font-medium">
+        <span className="text-muted-foreground">{props.label}</span>
+        <span className="rounded-full border border-border bg-background/70 px-2.5 py-1 font-mono text-xs text-foreground">{props.value}%</span>
+      </span>
+      <input
+        type="range"
+        min={props.min ?? 0}
+        max={100}
+        step={5}
+        value={props.value}
+        onChange={(e) => props.onChange(Number(e.target.value))}
+        onMouseUp={(e) => props.onCommit(Number((e.target as HTMLInputElement).value))}
+        onTouchEnd={(e) => props.onCommit(Number((e.target as HTMLInputElement).value))}
+        disabled={props.disabled}
+        className="mt-2.5 h-2 w-full accent-emerald-600"
+      />
+    </label>
+  );
+}
+
+function OverrideSection(props: {
+  title: string;
+  icon: ReactNode;
+  rows: RuleOverride[];
+  kind: "staff" | "services";
+  studio: StudioRow;
+  onSave: (kind: "staff" | "services", row: RuleOverride, next: Partial<RuleOverride>) => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="grid size-7 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
+            {props.icon}
+          </span>
+          <h2 className="truncate text-sm font-semibold">{props.title}</h2>
+        </div>
+        <span className="shrink-0 rounded-full border border-border bg-background/65 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {props.rows.length}
+        </span>
+      </div>
+      <div className="mt-3">
+        {props.rows.length === 0 && (
+          <p className="py-4 text-center text-sm text-muted-foreground">Sem itens ativos.</p>
+        )}
+        <ExpandableList
+          items={props.rows}
+          initialCount={5}
+          className="divide-y divide-border/70"
+          getKey={(row) => row.id}
+          moreLabel={(hidden) => `Ver mais ${hidden} regra${hidden !== 1 ? "s" : ""}`}
+          renderItem={(row) => {
+          const professionalPercent = row.commission_percent ?? props.studio.commission_percent;
+          return (
+            <div className="grid gap-2 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{row.name}</p>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {row.commission_percent == null
+                    ? "Usa a percentagem profissional padrão"
+                    : `Profissional ${professionalPercent}% · estúdio ${100 - professionalPercent}%`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 sm:justify-end">
+                <div className="relative w-24 shrink-0">
+                  <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={row.commission_percent ?? ""}
+                  placeholder={`${props.studio.commission_percent}`}
+                  onChange={(e) =>
+                    props.onSave(props.kind, row, {
+                      commission_percent: e.target.value === "" ? null : Number(e.target.value),
+                    })
+                  }
+                  className="h-8 w-full rounded-xl border border-border bg-background px-2.5 pr-7 text-sm outline-none transition placeholder:text-muted-foreground/60 focus:border-emerald-700/45 focus:ring-2 focus:ring-emerald-700/10"
+                />
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                    %
+                  </span>
+                </div>
+                <span className="hidden text-[11px] text-muted-foreground sm:inline">parte da profissional</span>
+              </div>
+            </div>
+          );
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Line({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-xl bg-background/45 px-2.5 py-2">
+      <span className="min-w-0 truncate text-muted-foreground">{label}</span>
+      <span
+        className={`shrink-0 font-mono ${
+          strong
+            ? "font-semibold text-emerald-700 dark:text-emerald-400"
+            : "text-emerald-700/90 dark:text-emerald-400/90"
+        }`}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}

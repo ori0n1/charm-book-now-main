@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /reset-password
+Disallow: /convite-equipa
+Disallow: /onboarding
+Disallow: /marcacao
+Disallow: /r/
+
+Sitemap: https://bellza.pt/sitemap.xml

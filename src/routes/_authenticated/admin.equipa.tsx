@@ -1,0 +1,1942 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { useQuery } from "@tanstack/react-query";
+import { QRCodeSVG } from "qrcode.react";
+import { supabase } from "@/integrations/supabase/client";
+import { useCurrentStudio } from "@/hooks/use-current-studio";
+import { getProfessionalDailySummaries } from "@/lib/professional-daily-summary.functions";
+import {
+  createStaffInviteLink,
+  getTeamAccess,
+  inviteStaffAccess,
+  removeStaffAccess,
+  resendStaffInvite,
+  updateStaffAccessRole,
+} from "@/lib/access.functions";
+import {
+  getSegmentConfig,
+  inferSegmentCategory,
+  normalizeSegmentText,
+  type SegmentLabels,
+  type BusinessSegment,
+} from "@/lib/segments";
+import { uploadStudioAsset } from "@/lib/upload";
+import {
+  computeAttendanceRevenue,
+  computeFinancialSplit,
+  formatEUR,
+} from "@/lib/utils";
+import { toast } from "sonner";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Loader2,
+  MessageCircle,
+  Plus,
+  Pencil,
+  Search,
+  Star,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
+import {
+  InternationalPhoneInput,
+  isValidInternationalPhone,
+  normalizeInternationalPhone,
+} from "@/components/ui/international-phone-input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ExpandableList } from "@/components/ui/expandable-list";
+export const Route = createFileRoute("/_authenticated/admin/equipa")({
+  component: TeamPage,
+});
+
+type Staff = {
+  id: string;
+  name: string;
+  role: string | null;
+  whatsapp: string | null;
+  bio: string | null;
+  photo_url: string | null;
+  rating: number | null;
+  reviews_count?: number | null;
+  is_active: boolean;
+  commission_percent?: number | null;
+};
+type Service = {
+  id: string;
+  name: string;
+  category_id: string | null;
+  duration_min?: number | null;
+  price?: number | null;
+};
+type Category = { id: string; label: string; sort_order: number };
+type Suggestion = { id: string; label: string };
+type AccessRole = "manager" | "staff" | "desk_staff";
+type StaffAgendaVisibility = "private" | "team_busy" | "team_basic";
+type StaffAccess = {
+  staffId: string;
+  userId: string;
+  email: string;
+  role: AccessRole;
+  status: "active" | "pending";
+  inviteStatus?: "pending" | "sent" | "viewed" | "password_created" | "active" | "cancelled" | "expired";
+  inviteUrl?: string | null;
+  inviteCode?: string | null;
+  inviteExpiresAt?: string | null;
+  whatsapp?: string | null;
+  staffName?: string;
+  photoUrl?: string | null;
+  invitedAt: string | null;
+  lastSignInAt: string | null;
+};
+type InviteShare = {
+  staffId: string;
+  staffName: string;
+  whatsapp: string | null;
+  role: AccessRole;
+  status: string;
+  inviteUrl: string;
+  inviteCode: string | null;
+  inviteExpiresAt: string | null;
+};
+type ServicePreset = {
+  name: string;
+  category: string;
+  duration: number;
+  price: number;
+};
+
+const SERVICE_PRESETS: ServicePreset[] = [
+  { name: "Corte de cabelo", category: "Cabelo", duration: 45, price: 30 },
+  { name: "Brushing", category: "Cabelo", duration: 45, price: 25 },
+  { name: "Coloração", category: "Cabelo", duration: 120, price: 65 },
+  { name: "Hidratação capilar", category: "Cabelo", duration: 60, price: 35 },
+  { name: "Unha em gel", category: "Unhas", duration: 90, price: 35 },
+  { name: "Banho de gel", category: "Unhas", duration: 75, price: 30 },
+  { name: "Manicure", category: "Unhas", duration: 45, price: 18 },
+  { name: "Pedicure", category: "Unhas", duration: 50, price: 22 },
+  { name: "Design de sobrancelha", category: "Sobrancelhas", duration: 30, price: 18 },
+  { name: "Henna de sobrancelha", category: "Sobrancelhas", duration: 35, price: 22 },
+  { name: "Extensão de pestanas", category: "Pestanas", duration: 120, price: 55 },
+  { name: "Lifting de pestanas", category: "Pestanas", duration: 60, price: 35 },
+  { name: "Limpeza de pele", category: "Estética", duration: 75, price: 45 },
+  { name: "Tratamento facial", category: "Estética", duration: 60, price: 40 },
+  { name: "Depilação a cera", category: "Depilação", duration: 30, price: 20 },
+  { name: "Massagem relaxante", category: "Massagem", duration: 60, price: 50 },
+];
+
+const DEFAULT_CATEGORY_LABELS = [
+  "Cabelo",
+  "Unhas",
+  "Estética",
+  "Sobrancelhas",
+  "Pestanas",
+  "Depilação",
+  "Massagem",
+];
+
+const STAFF_AGENDA_VISIBILITY_OPTIONS: Array<{
+  value: StaffAgendaVisibility;
+  title: string;
+  description: string;
+}> = [
+  {
+    value: "private",
+    title: "Agenda privada",
+    description: "Cada profissional vê apenas a própria agenda.",
+  },
+  {
+    value: "team_busy",
+    title: "Agenda compartilhada",
+    description: "Mostra somente os horários ocupados da equipa.",
+  },
+  {
+    value: "team_basic",
+    title: "Detalhes básicos",
+    description: "Mostra serviço, horário e profissional responsável.",
+  },
+];
+
+const CATEGORY_RULES: { label: string; words: string[] }[] = [
+  {
+    label: "Unhas",
+    words: ["unha", "gel", "verniz", "manicure", "pedicure", "nail", "acrilico", "alongamento"],
+  },
+  {
+    label: "Cabelo",
+    words: [
+      "cabelo",
+      "corte",
+      "brushing",
+      "escova",
+      "coloracao",
+      "coloracao",
+      "madeixa",
+      "luzes",
+      "hidrata",
+      "capilar",
+    ],
+  },
+  {
+    label: "Sobrancelhas",
+    words: ["sobrancelha", "brow", "design"],
+  },
+  {
+    label: "Pestanas",
+    words: ["pestana", "cilio", "cilios", "lash"],
+  },
+  {
+    label: "Depilação",
+    words: ["depilacao", "cera", "laser"],
+  },
+  {
+    label: "Massagem",
+    words: ["massagem", "relaxante", "drenagem"],
+  },
+  {
+    label: "Estética",
+    words: [
+      "facial",
+      "pele",
+      "limpeza",
+      "estetica",
+      "corporal",
+      "tratamento",
+      "maquilhagem",
+      "microagulhamento",
+    ],
+  },
+];
+
+const normalizeText = normalizeSegmentText;
+
+function inferCategoryLabel(serviceName: string) {
+  const normalized = normalizeText(serviceName);
+  return (
+    CATEGORY_RULES.find((rule) =>
+      rule.words.some((word) => normalized.includes(normalizeText(word))),
+    )?.label ?? "Estética"
+  );
+}
+
+function normalizePhone(value?: string | null) {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("351") || digits.length > 9) return digits;
+  return `351${digits}`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Ainda sem entrada";
+  return new Intl.DateTimeFormat("pt-PT", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function accessRoleLabel(role: AccessRole) {
+  if (role === "manager") return "Gestor";
+  if (role === "staff") return "Acesso limitado";
+  return "Apenas balcão";
+}
+
+function inviteStatusLabel(status: string) {
+  if (status === "sent") return "Convite enviado";
+  if (status === "viewed") return "Convite visualizado";
+  if (status === "password_created") return "Senha criada";
+  if (status === "accepted" || status === "active") return "Conta ativa";
+  if (status === "cancelled") return "Convite cancelado";
+  if (status === "expired") return "Convite expirado";
+  return "Convite pendente";
+}
+
+function compactAccessState(memberAccess?: StaffAccess) {
+  if (!memberAccess) {
+    return {
+      label: "Sem acesso",
+      dot: "bg-muted-foreground/45",
+      badge: "bg-muted text-muted-foreground",
+    };
+  }
+  if (memberAccess.role === "desk_staff") {
+    return {
+      label: "Apenas balcão",
+      dot: "bg-amber-400",
+      badge: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+    };
+  }
+  if (memberAccess.status === "active") {
+    return {
+      label: "Conta ativa",
+      dot: "bg-emerald-400",
+      badge: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+    };
+  }
+  return {
+    label: "Acesso limitado",
+    dot: "bg-amber-400",
+    badge: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
+  };
+}
+
+function TeamPage() {
+  const { studio, refetch } = useCurrentStudio();
+  const canSeeStudioFinance = studio?.role === "studio_owner" || studio?.role === "saas_owner";
+  const summaryVisible = studio?.role === "staff" || studio?.role === "manager" || canSeeStudioFinance;
+  const loadDailySummaries = useServerFn(getProfessionalDailySummaries);
+  const dailySummaries = useQuery({
+    queryKey: ["professional-daily-summary", studio?.id],
+    enabled: Boolean(studio?.id && summaryVisible),
+    staleTime: 0,
+    refetchInterval: 10_000,
+    refetchOnWindowFocus: true,
+    queryFn: () => loadDailySummaries({ data: { studioId: studio!.id } }),
+  });
+  useEffect(() => {
+    if (!studio?.id || !summaryVisible) return;
+    const channel = supabase.channel(`team-finance-${studio.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studio.id}` }, () => void dailySummaries.refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, () => void dailySummaries.refetch())
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [studio?.id, summaryVisible, dailySummaries.refetch]);
+  const labels = getSegmentConfig(studio?.business_segment).labels;
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [staffServices, setStaffServices] = useState<Record<string, string[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<Staff | null>(null);
+  const [creating, setCreating] = useState(false);
+  const loadAccess = useServerFn(getTeamAccess);
+  const createInviteLink = useServerFn(createStaffInviteLink);
+  const inviteAccess = useServerFn(inviteStaffAccess);
+  const resendInvite = useServerFn(resendStaffInvite);
+  const updateAccessRole = useServerFn(updateStaffAccessRole);
+  const removeAccess = useServerFn(removeStaffAccess);
+  const inviteDesk = async () => {
+    throw new Error("Escolha uma profissional e configure o acesso no respetivo card.");
+  };
+  const [access, setAccess] = useState<Record<string, StaffAccess>>({});
+  const [accessModal, setAccessModal] = useState<Staff | null>(null);
+  const [accessRole, setAccessRole] = useState<AccessRole>("desk_staff");
+  const [inviteExpiry, setInviteExpiry] = useState("");
+  const [shareInvite, setShareInvite] = useState<InviteShare | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [expandedStaff, setExpandedStaff] = useState<Record<string, boolean>>({});
+  const [deskEmail, setDeskEmail] = useState("");
+  const [deskBusy, setDeskBusy] = useState(false);
+  const [agendaVisibility, setAgendaVisibility] = useState<StaffAgendaVisibility>("private");
+  const [savingAgendaVisibility, setSavingAgendaVisibility] = useState(false);
+
+  useEffect(() => {
+    setAgendaVisibility((studio?.staff_agenda_visibility ?? "private") as StaffAgendaVisibility);
+  }, [studio?.staff_agenda_visibility]);
+
+  async function load() {
+    if (!studio) return;
+    setLoading(true);
+    const [
+      { data: st },
+      { data: sv },
+      { data: cat },
+      { data: sug },
+      { data: ss },
+] =
+      await Promise.all([
+        supabase
+          .from("staff")
+          .select("id,name,role,whatsapp,bio,photo_url,rating,reviews_count,is_active,commission_percent")
+          .eq("studio_id", studio.id)
+          .order("sort_order")
+          .order("name"),
+        supabase
+          .from("services")
+          .select("id,name,category_id,duration_min,price")
+          .eq("studio_id", studio.id)
+          .eq("is_active", true)
+          .order("name"),
+        supabase
+          .from("service_categories")
+          .select("id,label,sort_order")
+          .eq("studio_id", studio.id)
+          .order("sort_order"),
+        supabase.from("service_category_suggestions").select("id,label").order("sort_order"),
+        supabase.from("staff_services").select("staff_id,service_id"),
+      ]);
+    const staffList = (st ?? []) as Staff[];
+    setStaff(staffList);
+    setServices((sv ?? []) as Service[]);
+    setCategories((cat ?? []) as Category[]);
+    setSuggestions((sug ?? []) as Suggestion[]);
+    const staffIds = new Set(staffList.map((s) => s.id));
+    const map: Record<string, string[]> = {};
+    (ss ?? []).forEach((r) => {
+      const k = (r as { staff_id: string }).staff_id;
+      const v = (r as { service_id: string }).service_id;
+      if (!staffIds.has(k)) return;
+      (map[k] ||= []).push(v);
+    });
+    setStaffServices(map);
+    setLoading(false);
+    void loadTeamAccess();
+  }
+
+  async function loadTeamAccess() {
+    if (!studio) return;
+    try {
+      const rows = (await loadAccess({ data: { studioId: studio.id } })) as StaffAccess[];
+      setAccess(Object.fromEntries(rows.map((row) => [row.staffId, row])));
+    } catch {
+      setAccess({});
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, [studio]);
+
+  async function remove(id: string) {
+    if (!confirm(labels.deleteProfessionalConfirm)) return;
+    const { error } = await supabase.from("staff").delete().eq("id", id);
+    if (error) return toast.error(error.message);
+    toast.success(labels.professionalDeleted);
+    load();
+  }
+
+  async function authorizeDeskStaff() {
+    if (!studio || deskBusy) return;
+    const email = deskEmail.trim();
+    if (!email) return toast.error("Introduza o email da funcionária.");
+    setDeskBusy(true);
+    try {
+      await inviteDesk();
+      setDeskEmail("");
+      toast.success("Acesso Balcão autorizado para este estúdio.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível autorizar o acesso.");
+    } finally {
+      setDeskBusy(false);
+    }
+  }
+
+  async function saveAgendaVisibility(nextVisibility: StaffAgendaVisibility) {
+    if (!studio || savingAgendaVisibility || nextVisibility === agendaVisibility) return;
+    const previous = agendaVisibility;
+    setAgendaVisibility(nextVisibility);
+    setSavingAgendaVisibility(true);
+    const { error } = await supabase
+      .from("studios")
+      .update({ staff_agenda_visibility: nextVisibility } as any)
+      .eq("id", studio.id);
+    setSavingAgendaVisibility(false);
+    if (error) {
+      setAgendaVisibility(previous);
+      toast.error(error.message);
+      return;
+    }
+    await refetch();
+    toast.success("Permissão da agenda atualizada.");
+  }
+
+  function openAccessModal(member: Staff) {
+    const current = access[member.id];
+    if (!canSeeStudioFinance && current?.role === "manager") {
+      toast.error("Apenas o proprietário pode alterar o acesso de gestor.");
+      return;
+    }
+    setAccessModal(member);
+    setAccessRole(current?.role ?? "desk_staff");
+    setInviteExpiry(current?.inviteExpiresAt ? current.inviteExpiresAt.slice(0, 10) : "");
+  }
+
+  async function saveAccess() {
+    if (!studio || !accessModal || accessBusy) return;
+    setAccessBusy(true);
+    try {
+      const current = access[accessModal.id];
+      let closeAfterSave = true;
+      if (current) {
+        if (current.userId) {
+          await updateAccessRole({
+            data: { studioId: studio.id, staffId: accessModal.id, role: accessRole },
+          });
+          toast.success("Permissão atualizada.");
+        } else {
+          const invite = (await createInviteLink({
+            data: {
+              studioId: studio.id,
+              staffId: accessModal.id,
+              role: accessRole,
+              expiresAt: inviteExpiry ? new Date(`${inviteExpiry}T23:59:59`).toISOString() : null,
+            },
+          })) as InviteShare;
+          setShareInvite(invite);
+          closeAfterSave = false;
+          toast.success("Convite atualizado.");
+        }
+      } else {
+        const invite = (await createInviteLink({
+          data: {
+            studioId: studio.id,
+            staffId: accessModal.id,
+            role: accessRole,
+            expiresAt: inviteExpiry ? new Date(`${inviteExpiry}T23:59:59`).toISOString() : null,
+          },
+        })) as InviteShare;
+        setShareInvite(invite);
+        closeAfterSave = false;
+        toast.success("Convite criado.");
+      }
+      await load();
+      if (closeAfterSave) setAccessModal(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível guardar o acesso.");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function resendAccess(member: Staff) {
+    if (!studio) return;
+    setAccessBusy(true);
+    try {
+      const invite = (await resendInvite({ data: { studioId: studio.id, staffId: member.id } })) as
+        | InviteShare
+        | { ok: true; email: string };
+      if ("inviteUrl" in invite) setShareInvite(invite);
+      toast.success("Convite reenviado.");
+      await loadTeamAccess();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível reenviar o convite.");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function regenerateAccess(member: Staff) {
+    if (!studio || accessBusy) return;
+    const current = access[member.id];
+    setAccessBusy(true);
+    try {
+      const invite = (await createInviteLink({
+        data: {
+          studioId: studio.id,
+          staffId: member.id,
+          role: current?.role ?? "desk_staff",
+          expiresAt: current?.inviteExpiresAt ?? null,
+        },
+      })) as InviteShare;
+      setShareInvite(invite);
+      toast.success("Novo link criado.");
+      await loadTeamAccess();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível criar um novo link.");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function revokeAccess(member: Staff) {
+    if (!studio) return;
+    if (!confirm("Remover o acesso desta profissional ao painel?")) return;
+    setAccessBusy(true);
+    try {
+      await removeAccess({ data: { studioId: studio.id, staffId: member.id } });
+      toast.success("Acesso removido.");
+      await load();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Não foi possível remover o acesso.");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  function whatsappShareUrl(invite: InviteShare) {
+    const phone = normalizePhone(invite.whatsapp);
+    const message = encodeURIComponent(
+      `Olá ${invite.staffName}, aqui está o teu convite para aceder ao balcão do estúdio: ${invite.inviteUrl}${
+        invite.inviteCode ? `\nCódigo: ${invite.inviteCode}` : ""
+      }`,
+    );
+    return phone ? `https://wa.me/${phone}?text=${message}` : `https://wa.me/?text=${message}`;
+  }
+
+  async function copyInviteLink(invite: InviteShare) {
+    await navigator.clipboard.writeText(invite.inviteUrl);
+    toast.success("Link copiado.");
+  }
+
+  async function openInviteShare(member: Staff) {
+    const current = access[member.id];
+    if (current?.inviteUrl) {
+      setShareInvite({
+        staffId: member.id,
+        staffName: member.name,
+        whatsapp: current.whatsapp ?? member.whatsapp,
+        role: current.role,
+        status: current.inviteStatus ?? current.status,
+        inviteUrl: current.inviteUrl,
+        inviteCode: current.inviteCode ?? null,
+        inviteExpiresAt: current.inviteExpiresAt ?? null,
+      });
+      return;
+    }
+    openAccessModal(member);
+  }
+
+  if (loading) return <p className="text-sm text-muted-foreground">A carregar...</p>;
+
+  return (
+    <div className="space-y-3 pb-[calc(6rem+env(safe-area-inset-bottom))] md:space-y-4 lg:pb-6">
+      <header className="rounded-xl border border-border/75 bg-card/90 px-4 py-3 shadow-sm">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Equipa</p>
+            <h2 className="mt-0.5 truncate text-xl font-semibold tracking-tight sm:text-2xl">
+            {staff.length} {labels.professionalPlural}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="bellza-panel-action bellza-panel-action-primary min-h-11 w-full sm:w-auto"
+          >
+            <Plus className="h-4 w-4" /> Nova profissional
+          </button>
+        </div>
+      </header>
+
+      <section className="rounded-xl border border-border/75 bg-card/80 px-4 py-3 shadow-sm">
+        <h3 className="text-sm font-semibold">Acessos da equipa</h3>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground sm:text-sm">
+          Abra uma profissional para gerir convite, permissões e acesso ao painel.
+        </p>
+      </section>
+
+      <section className="overflow-hidden rounded-xl border border-border/75 bg-card/80 p-3 shadow-sm sm:p-4">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)] lg:items-center">
+          <div className="min-w-0">
+            <p className="break-words text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Agenda da equipa
+            </p>
+            <h3 className="mt-1 break-words text-base font-semibold">Visibilidade entre profissionais</h3>
+            <p className="mt-1 max-w-xl break-words text-xs leading-relaxed text-muted-foreground sm:text-sm">
+              Escolha o nível de informação partilhada na agenda.
+            </p>
+          </div>
+          <div className="grid min-w-0 auto-rows-fr grid-cols-1 gap-2 sm:grid-cols-3">
+            {STAFF_AGENDA_VISIBILITY_OPTIONS.map((option) => {
+              const active = agendaVisibility === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={savingAgendaVisibility}
+                  onClick={() => void saveAgendaVisibility(option.value)}
+                  className={`flex min-h-[4.75rem] w-full min-w-0 flex-col rounded-xl border p-3 text-left transition ${
+                    active
+                      ? "border-foreground/35 bg-muted/70 text-foreground ring-1 ring-foreground/10"
+                      : "border-border bg-background/45 text-foreground hover:border-foreground/20 hover:bg-background/70"
+                  } disabled:cursor-wait disabled:opacity-70`}
+                >
+                  <span className="flex min-w-0 items-start justify-between gap-2">
+                    <span className="block min-w-0 max-w-full whitespace-normal break-words text-xs font-semibold leading-snug [overflow-wrap:anywhere]">
+                      {option.title}
+                    </span>
+                    {active ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" /> : null}
+                  </span>
+                  <span className="mt-1 block min-w-0 max-w-full whitespace-normal break-words text-[11px] leading-snug text-muted-foreground [overflow-wrap:anywhere]">
+                    {option.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="hidden rounded-2xl border border-border bg-card/80 p-4 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div className="max-w-xl">
+            <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+              Acesso limitado
+            </p>
+            <h3 className="mt-1 text-base font-semibold">Funcionária Balcão</h3>
+            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              Autorize uma funcionária a entrar apenas na página Balcão para registar atendimentos
+              presenciais deste estúdio.
+            </p>
+          </div>
+          <div className="flex w-full flex-col gap-2 sm:flex-row md:max-w-lg">
+            <input
+              type="email"
+              value={deskEmail}
+              onChange={(event) => setDeskEmail(event.target.value)}
+              placeholder="email@exemplo.pt"
+              className="h-11 min-w-0 flex-1 rounded-2xl border border-border bg-background px-4 text-sm outline-none transition focus:border-foreground/40"
+            />
+            <button
+              type="button"
+              onClick={authorizeDeskStaff}
+              disabled={deskBusy}
+              className="h-11 rounded-2xl bg-foreground px-5 text-xs font-bold uppercase tracking-[0.14em] text-background transition hover:opacity-90 disabled:opacity-60"
+            >
+              {deskBusy ? "A autorizar" : "Autorizar"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {staff.length === 0 ? (
+        <p className="rounded-xl border border-border/75 px-4 py-8 text-center text-sm text-muted-foreground">
+          {labels.emptyProfessionals}
+        </p>
+      ) : (
+        <ExpandableList
+          items={staff}
+          initialCount={5}
+          className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-3"
+          itemClassName="min-w-0"
+          buttonWrapClassName="sm:col-span-2 lg:col-span-3"
+          getKey={(member) => member.id}
+          moreLabel={(hidden) => `Mostrar mais ${hidden} profissional${hidden !== 1 ? "is" : ""}`}
+          renderItem={(m) => {
+            const memberAccess = access[m.id];
+            const expanded = expandedStaff[m.id] === true;
+            const accessState = compactAccessState(memberAccess);
+            return (
+            <article
+              key={m.id}
+              className={`rounded-xl border bg-card p-2 shadow-sm transition hover:border-foreground/15 hover:shadow-md ${m.is_active ? "border-border/80" : "border-border/50 opacity-70"}`}
+            >
+              <div className="flex min-h-14 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedStaff((current) => ({ ...current, [m.id]: !current[m.id] }))
+                  }
+                  aria-expanded={expanded}
+                  className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg px-1.5 py-1 text-left transition hover:bg-muted/45 focus:outline-none focus:ring-2 focus:ring-foreground/15"
+                >
+                  <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-muted">
+                    {m.photo_url ? (
+                      <img src={m.photo_url} alt={m.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="grid h-full w-full place-items-center text-sm font-semibold text-muted-foreground">
+                        {m.name.slice(0, 1).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <h3 className="min-w-0 truncate text-sm font-semibold leading-tight">{m.name}</h3>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${accessState.dot}`} />
+                    </div>
+                    <div className="mt-1 flex min-w-0 items-center gap-2">
+                      <span
+                        className={`inline-flex max-w-full min-w-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${accessState.badge}`}
+                      >
+                        <span className="min-w-0 truncate leading-tight">{accessState.label}</span>
+                      </span>
+                      {m.rating !== null && (
+                        <span className="hidden min-w-fit shrink-0 items-center gap-1 whitespace-nowrap text-[11px] leading-none text-muted-foreground sm:inline-flex">
+                          <Star className="h-3 w-3 shrink-0 fill-foreground" />
+                          <span>{Number(m.rating).toFixed(1)}</span>
+                          {m.reviews_count ? <span>· {m.reviews_count}</span> : null}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ${
+                      expanded ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                <div className="flex shrink-0 gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(m)}
+                    className="grid h-11 w-11 place-items-center rounded-xl border border-border/75 text-muted-foreground transition hover:border-foreground/20 hover:bg-muted/45 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-foreground/15"
+                    aria-label={`Editar ${m.name}`}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(m.id)}
+                    className="grid h-11 w-11 place-items-center rounded-xl border border-border/75 text-muted-foreground transition hover:border-foreground/20 hover:bg-muted/45 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-foreground/15"
+                    aria-label={`Eliminar ${m.name}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+
+              <div
+                className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+                  expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <p className={`mt-1 px-1.5 text-[11px] leading-4 ${m.bio ? "line-clamp-2 text-muted-foreground" : "text-transparent"}`}>
+                    {m.bio || "Sem descrição"}
+                  </p>
+
+              <div className="mt-3 rounded-2xl border border-emerald-700/20 bg-emerald-950/[0.03] p-2.5 dark:bg-emerald-400/[0.05]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Resumo de hoje</p>
+                {!summaryVisible ? (
+                  <p className="mt-2 text-xs text-muted-foreground">Valores ocultos. Desbloqueie no Início.</p>
+                ) : dailySummaries.isError ? (
+                  <p className="mt-2 text-xs text-red-600">Não foi possível carregar o resumo financeiro.</p>
+                ) : !dailySummaries.data?.[m.id] ? (
+                  <p className="mt-2 text-xs text-muted-foreground">A carregar...</p>
+                ) : (
+                  <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+                    {[
+                      { label: "Atendimentos hoje", value: String(dailySummaries.data[m.id].completed) },
+                      { label: "Ganhos do profissional", value: formatEUR(dailySummaries.data[m.id].commissionCents / 100) },
+                      { label: "Parte do estúdio", value: formatEUR(dailySummaries.data[m.id].studioCents / 100) },
+                    ].map((fact) => (
+                      <div key={fact.label} className="min-w-0 rounded-xl border border-border/70 bg-background/70 p-2.5">
+                        <p className="text-[10px] font-semibold uppercase leading-snug tracking-[0.08em] text-muted-foreground">{fact.label}</p>
+                        <p className="mt-1 break-words font-mono text-sm font-semibold leading-tight text-emerald-700 dark:text-emerald-400">{fact.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-2 rounded-2xl border border-border/80 bg-background/55 p-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
+                        memberAccess
+                          ? memberAccess.status === "pending"
+                            ? "bg-amber-500/10 text-amber-600"
+                            : "bg-emerald-500/10 text-emerald-500"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {memberAccess
+                        ? inviteStatusLabel(memberAccess.inviteStatus ?? memberAccess.status)
+                        : "Sem acesso"}
+                    </span>
+                    <p className="mt-2 min-w-0 break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                      {memberAccess ? memberAccess.email : "Sem login autorizado"}
+                    </p>
+                    {memberAccess && (
+                      <>
+                        <p className="mt-1 text-xs font-medium">{accessRoleLabel(memberAccess.role)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Último acesso: {formatDateTime(memberAccess.lastSignInAt)}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      memberAccess?.userId
+                        ? openAccessModal(m)
+                        : memberAccess
+                          ? openInviteShare(m)
+                          : openAccessModal(m)
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-foreground px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-[0.1em] text-background shadow-sm transition hover:opacity-90"
+                  >
+                    {memberAccess?.userId ? (
+                      <Pencil className="h-3.5 w-3.5" />
+                    ) : (
+                      <MessageCircle className="h-3.5 w-3.5" />
+                    )}
+                    {memberAccess?.userId
+                      ? "Alterar acesso"
+                      : memberAccess?.inviteUrl
+                        ? "Partilhar"
+                        : "Convidar"}
+                  </button>
+                </div>
+                {memberAccess && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {memberAccess.status === "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => resendAccess(m)}
+                        disabled={accessBusy}
+                        className="rounded-xl border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:text-foreground disabled:opacity-60"
+                      >
+                        Reenviar convite
+                      </button>
+                    )}
+                    {memberAccess.status === "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => regenerateAccess(m)}
+                        disabled={accessBusy}
+                        className="rounded-xl border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:text-foreground disabled:opacity-60"
+                      >
+                        Regenerar link
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => revokeAccess(m)}
+                      disabled={accessBusy}
+                      className="rounded-xl border border-border px-2.5 py-1 text-[11px] text-muted-foreground transition hover:text-foreground disabled:opacity-60"
+                    >
+                      Remover acesso
+                    </button>
+                  </div>
+                )}
+              </div>
+                </div>
+              </div>
+            </article>
+            );
+          }}
+        />
+      )}
+
+      {(editing || creating) && studio && (
+        <StaffModal
+          key={editing?.id ?? "new"}
+          studioId={studio.id}
+          services={services}
+          categories={categories}
+          suggestions={suggestions}
+          assigned={editing ? (staffServices[editing.id] ?? []) : []}
+          labels={labels}
+          businessSegment={studio.business_segment}
+          staff={editing}
+          onReloadCatalog={load}
+          onClose={() => {
+            setEditing(null);
+            setCreating(false);
+          }}
+          onSaved={async (savedId, wasCreated) => {
+            setEditing(null);
+            setCreating(false);
+            await load();
+            if (wasCreated && savedId && studio) {
+              try {
+                const invite = (await createInviteLink({
+                  data: { studioId: studio.id, staffId: savedId, role: "desk_staff", expiresAt: null },
+                })) as InviteShare;
+                setShareInvite(invite);
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Não foi possível criar o convite.");
+              }
+            }
+          }}
+        />
+      )}
+
+      {accessModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center md:p-6">
+          <div className="w-full max-w-md rounded-t-3xl bg-background p-5 shadow-2xl md:rounded-3xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+                  Acesso ao painel
+                </p>
+                <h3 className="mt-1 text-xl font-light">{accessModal.name}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Configure como esta profissional pode entrar no painel.
+                </p>
+              </div>
+              <button type="button" onClick={() => setAccessModal(null)} aria-label="Fechar">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+              <div className="mt-5 space-y-4">
+                <div className="rounded-2xl border border-border bg-card p-3">
+                  <p className="text-xs font-semibold">
+                    {access[accessModal.id]?.userId ? "Acesso ativo" : "Convite por WhatsApp"}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {access[accessModal.id]?.userId
+                      ? "A nova permissão entra em vigor imediatamente nas próximas requisições desta profissional."
+                      : "O sistema cria um link único com código opcional para enviar no WhatsApp, copiar ou mostrar em QR Code."}
+                  </p>
+                </div>
+              <label className="block text-xs">
+                <span className="text-muted-foreground">Tipo de acesso</span>
+                <Select
+                  value={accessRole}
+                  onValueChange={(value) => setAccessRole(value as AccessRole)}
+                >
+                  <SelectTrigger className="mt-1 h-11 rounded-2xl border-border bg-background px-4 text-sm shadow-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                    <SelectItem value="desk_staff" className="rounded-xl px-3 py-2.5 text-sm">
+                      Apenas Balcão
+                    </SelectItem>
+                    <SelectItem value="staff" className="rounded-xl px-3 py-2.5 text-sm">
+                      Limitado
+                    </SelectItem>
+                    {canSeeStudioFinance && (
+                      <SelectItem value="manager" className="rounded-xl px-3 py-2.5 text-sm">
+                        Gestor
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </label>
+              {!access[accessModal.id]?.userId && (
+                <label className="block text-xs">
+                  <span className="text-muted-foreground">Expira em</span>
+                  <PremiumDatePicker
+                    value={inviteExpiry}
+                    onChange={setInviteExpiry}
+                    className="mt-1 h-11 bg-background"
+                  />
+                  <span className="mt-1 block text-[11px] text-muted-foreground">
+                    Deixe vazio para manter o convite sem expiração.
+                  </span>
+                </label>
+              )}
+              <div className="rounded-2xl border border-border bg-card p-3 text-xs leading-relaxed text-muted-foreground">
+                <p>
+                  <strong className="text-foreground">Apenas Balcão:</strong> registo de
+                  atendimentos presenciais.
+                </p>
+                <p className="mt-1">
+                  <strong className="text-foreground">Limitado:</strong> agenda, clientes e balcão.
+                </p>
+                <p className="mt-1">
+                  <strong className="text-foreground">Gestor:</strong> preços de marcações e
+                  operações da equipa. Só o proprietário pode atribuir este acesso; os
+                  totais globais e relatórios financeiros continuam reservados ao proprietário.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={saveAccess}
+                disabled={accessBusy}
+                className="h-12 w-full rounded-2xl bg-foreground text-xs font-bold uppercase tracking-[0.16em] text-background transition hover:opacity-90 disabled:opacity-60"
+              >
+                {accessBusy ? "A guardar" : access[accessModal.id]?.userId ? "Guardar permissão" : "Criar convite"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shareInvite && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/55 md:items-center md:p-6">
+          <div className="w-full max-w-md rounded-t-3xl bg-background p-5 shadow-2xl md:rounded-3xl">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-foreground text-lg font-semibold text-background">
+                  {shareInvite.staffName.slice(0, 1).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground">
+                    Convite pronto
+                  </p>
+                  <h3 className="min-w-0 break-words text-xl font-light leading-tight [overflow-wrap:anywhere]">{shareInvite.staffName}</h3>
+                  <p className="min-w-0 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                    {inviteStatusLabel(shareInvite.status)} · {accessRoleLabel(shareInvite.role)}
+                  </p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShareInvite(null)} aria-label="Fechar">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-border bg-card p-3">
+              <p className="break-all text-xs text-muted-foreground">{shareInvite.inviteUrl}</p>
+              {shareInvite.inviteCode && (
+                <p className="mt-2 text-xs">
+                  Código: <span className="font-semibold">{shareInvite.inviteCode}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="mt-4 grid grid-cols-[1fr_auto] gap-3">
+              <a
+                href={whatsappShareUrl(shareInvite)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-sm font-semibold text-background transition hover:opacity-90"
+              >
+                <MessageCircle className="h-4 w-4" />
+                Enviar no WhatsApp
+              </a>
+              <button
+                type="button"
+                onClick={() => copyInviteLink(shareInvite)}
+                className="grid h-12 w-12 place-items-center rounded-2xl border border-border"
+                aria-label="Copiar link"
+                title="Copiar link"
+              >
+                <Copy className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-center rounded-2xl border border-border bg-white p-4">
+              <QRCodeSVG value={shareInvite.inviteUrl} size={132} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StaffModal({
+  studioId,
+  services,
+  categories,
+  suggestions,
+  assigned,
+  labels,
+  businessSegment,
+  staff,
+  onClose,
+  onSaved,
+  onReloadCatalog,
+}: {
+  studioId: string;
+  services: Service[];
+  categories: Category[];
+  suggestions: Suggestion[];
+  assigned: string[];
+  labels: SegmentLabels;
+  businessSegment: BusinessSegment;
+  staff: Staff | null;
+  onClose: () => void;
+  onSaved: (staffId: string, wasCreated: boolean) => void | Promise<void>;
+  onReloadCatalog: () => void | Promise<void>;
+}) {
+  const validAssigned = useMemo(() => {
+    const known = new Set(services.map((s) => s.id));
+    return assigned.filter((id) => known.has(id));
+  }, [assigned, services]);
+  const [name, setName] = useState(staff?.name ?? "");
+  const [role, setRole] = useState(staff?.role ?? "");
+  const [whatsapp, setWhatsapp] = useState(staff?.whatsapp ?? "");
+  const [bio, setBio] = useState(staff?.bio ?? "");
+  const [photo, setPhoto] = useState(staff?.photo_url ?? "");
+  const [active, setActive] = useState(staff?.is_active ?? true);
+  const [serviceIds, setServiceIds] = useState<string[]>(validAssigned);
+  const [saving, setSaving] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function upload(file: File) {
+    const preview = URL.createObjectURL(file);
+    setPhoto(preview);
+    setPhotoUploading(true);
+    try {
+      const { url } = await uploadStudioAsset(studioId, file, "staff");
+      setPhoto(url);
+    } catch (e) {
+      toast.error((e as Error).message);
+      setPhoto(staff?.photo_url ?? "");
+    } finally {
+      URL.revokeObjectURL(preview);
+      setPhotoUploading(false);
+    }
+  }
+
+  async function save() {
+    const normalizedWhatsapp = normalizeInternationalPhone(whatsapp);
+    if (!name.trim()) return toast.error("Nome obrigatório");
+    if (!whatsapp.trim()) return toast.error("WhatsApp obrigatório");
+    if (!isValidInternationalPhone(whatsapp)) return toast.error("Confirme o WhatsApp da profissional.");
+    if (photoUploading) return toast.error("Aguarde o upload da foto terminar.");
+    setSaving(true);
+    if (!staff) {
+      const { data: duplicate } = await supabase
+        .from("staff")
+        .select("id")
+        .eq("studio_id", studioId)
+        .eq("whatsapp", normalizedWhatsapp)
+        .maybeSingle();
+      if (duplicate?.id) {
+        setSaving(false);
+        return toast.error("Já existe uma profissional com este WhatsApp.");
+      }
+    }
+    const payload = {
+      studio_id: studioId,
+      name: name.trim(),
+      role: role.trim() || null,
+      whatsapp: normalizedWhatsapp,
+      bio: bio.trim() || null,
+      photo_url: photo || null,
+      is_active: active,
+    };
+    const id = staff?.id ?? crypto.randomUUID();
+    const { error: staffError } = staff
+      ? await supabase.from("staff").update(payload).eq("id", id)
+      : await supabase.from("staff").insert({ id, ...payload });
+    if (staffError) {
+      setSaving(false);
+      return toast.error(staffError.message);
+    }
+    await supabase.from("staff_services").delete().eq("staff_id", id);
+    if (serviceIds.length) {
+      await supabase
+        .from("staff_services")
+        .insert(serviceIds.map((sid) => ({ staff_id: id, service_id: sid })));
+    }
+    setSaving(false);
+    toast.success(labels.professionalSaved);
+    onSaved(id, !staff);
+  }
+
+  return (
+    /* Outer: safe-area top so modal never starts behind the iOS notch */
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 px-0 pb-0 pt-[max(0px,env(safe-area-inset-top))] md:items-center md:p-6">
+      {/* Inner: flex-col so header + footer are always visible, only middle scrolls */}
+      <div className="flex max-h-[calc(92dvh-env(safe-area-inset-top,0px))] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl bg-background md:max-h-[min(90dvh,48rem)] md:rounded-2xl">
+
+        {/* ── Sticky header ── always visible, never scrolls away */}
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <h3 className="text-lg font-light">
+            {staff ? labels.editProfessional : labels.newProfessional}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar"
+            className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-muted-foreground transition hover:text-foreground"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* ── Scrollable content ── */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={photoUploading}
+                className="relative h-16 w-16 overflow-hidden rounded-full border border-dashed border-border bg-muted/30 disabled:opacity-80"
+              >
+                {photo ? (
+                  <img src={photo} className="h-full w-full object-cover" alt="" />
+                ) : (
+                  <Upload className="m-auto h-4 w-4 text-muted-foreground" />
+                )}
+                {photoUploading && (
+                  <span className="absolute inset-0 grid place-items-center bg-background/70 backdrop-blur-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  </span>
+                )}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/*"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void upload(file);
+                  e.currentTarget.value = "";
+                }}
+              />
+              <p className="text-xs text-muted-foreground">
+                {photoUploading ? "A carregar foto..." : "Toque para alterar a foto"}
+              </p>
+            </div>
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Nome</span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ex.: Ana Silva"
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Função / cargo</span>
+              <input
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                placeholder={labels.professionalRolePlaceholder}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+            <InternationalPhoneInput
+              label="WhatsApp"
+              value={whatsapp}
+              onChange={setWhatsapp}
+              inputClassName="rounded-md"
+            />
+            <label className="block text-xs">
+              <span className="text-muted-foreground">Descrição</span>
+              <textarea
+                value={bio}
+                onChange={(e) => setBio(e.target.value)}
+                placeholder={labels.professionalBioPlaceholder}
+                rows={2}
+                className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </label>
+
+            <section className="space-y-4 rounded-2xl border border-border bg-card/35 px-4 py-4 shadow-sm sm:px-5">
+              <div className="space-y-1.5">
+                <p className="text-sm font-medium text-foreground">Serviços que realiza</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Selecione serviços já registados. As categorias servem apenas para organizar a lista
+                  e nunca substituem o nome do serviço.
+                </p>
+              </div>
+
+              <ServicesPicker
+                studioId={studioId}
+                services={services}
+                categories={categories}
+                suggestions={suggestions}
+                businessSegment={businessSegment}
+                value={serviceIds}
+                onChange={setServiceIds}
+                onReloadCatalog={onReloadCatalog}
+              />
+            </section>
+
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />{" "}
+              Ativa
+            </label>
+          </div>
+        </div>
+
+        {/* ── Sticky footer ── always visible at the bottom */}
+        <div className="flex shrink-0 gap-2 border-t border-border px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 rounded-xl border border-border py-2.5 text-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving || photoUploading}
+            className="flex-1 rounded-xl bg-foreground py-2.5 text-sm font-medium text-background disabled:opacity-50"
+          >
+            {saving ? "A guardar..." : "Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ServicesPicker({
+  studioId,
+  services,
+  categories,
+  suggestions,
+  businessSegment,
+  value,
+  onChange,
+  onReloadCatalog,
+}: {
+  studioId: string;
+  services: Service[];
+  categories: Category[];
+  suggestions: Suggestion[];
+  businessSegment: BusinessSegment;
+  value: string[];
+  onChange: (v: string[]) => void;
+  onReloadCatalog: () => void | Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [openCats, setOpenCats] = useState<Record<string, boolean>>({});
+  const [creating, setCreating] = useState(false);
+  const [newServiceName, setNewServiceName] = useState("");
+  const [newServiceDuration, setNewServiceDuration] = useState(60);
+  const [newServicePrice, setNewServicePrice] = useState(30);
+  const [selectedCategoryLabel, setSelectedCategoryLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [busyPreset, setBusyPreset] = useState("");
+  const segmentConfig = getSegmentConfig(businessSegment);
+
+  const selected = useMemo(() => new Set(value), [value]);
+  const selectedServices = useMemo(
+    () => services.filter((s) => selected.has(s.id)),
+    [services, selected],
+  );
+  const typedService = query.trim();
+  const categoryById = useMemo(() => {
+    const map = new Map<string, string>();
+    categories.forEach((category) => map.set(category.id, category.label));
+    return map;
+  }, [categories]);
+
+  const categoryOptions = useMemo(() => {
+    const labels = [
+      ...segmentConfig.defaultCategoryLabels,
+      ...suggestions.map((s) => s.label),
+      ...categories.map((c) => c.label),
+    ];
+    const seen = new Set<string>();
+    return labels.filter((label) => {
+      const key = normalizeText(label);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [categories, segmentConfig.defaultCategoryLabels, suggestions]);
+
+  const suggestedCategoryLabel = inferSegmentCategory(newServiceName || typedService, businessSegment);
+  const currentCategoryLabel = selectedCategoryLabel || suggestedCategoryLabel;
+  const exactService = services.find(
+    (s) => normalizeText(s.name) === normalizeText(newServiceName || typedService),
+  );
+
+  const serviceSearchSuggestions = useMemo(() => {
+    const q = normalizeText(query);
+    if (!q) return [];
+
+    return services
+      .map((service) => {
+        const categoryLabel = service.category_id ? categoryById.get(service.category_id) ?? "" : "";
+        const duration = service.duration_min ? `${service.duration_min} min` : "";
+        const price = Number.isFinite(Number(service.price)) ? `${Number(service.price).toFixed(2)} eur` : "";
+        const haystack = [
+          service.name,
+          categoryLabel,
+          duration,
+          price,
+          price.replace(".", ","),
+        ]
+          .map(normalizeText)
+          .join(" ");
+
+        let score = 0;
+        const name = normalizeText(service.name);
+        const category = normalizeText(categoryLabel);
+        if (name === q) score += 60;
+        if (name.startsWith(q)) score += 45;
+        if (name.includes(q)) score += 30;
+        if (category.startsWith(q)) score += 18;
+        if (category.includes(q)) score += 12;
+        if (haystack.includes(q)) score += 8;
+        if (selected.has(service.id)) score += 4;
+        return { service, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || a.service.name.localeCompare(b.service.name))
+      .slice(0, 7)
+      .map((entry) => entry.service);
+  }, [categoryById, query, selected, services]);
+  const quickPresets = [] as ServicePreset[];
+
+  const grouped = useMemo(() => {
+    const q = normalizeText(query);
+    const filterFn = (s: Service) => {
+      if (!q) return true;
+      const categoryLabel = s.category_id ? categoryById.get(s.category_id) ?? "" : "";
+      const parts = [
+        s.name,
+        categoryLabel,
+        s.duration_min ? `${s.duration_min} min` : "",
+        Number.isFinite(Number(s.price)) ? `${Number(s.price).toFixed(2)} eur` : "",
+      ];
+      return parts.map(normalizeText).join(" ").includes(q);
+    };
+    const buckets: { cat: Category | null; items: Service[] }[] = [];
+
+    categories.forEach((c) => {
+      const items = services.filter((s) => s.category_id === c.id).filter(filterFn);
+      // Always hide categories with 0 services — prevents the giant list of empty categories
+      if (items.length > 0) buckets.push({ cat: c, items });
+    });
+
+    const uncategorized = services.filter((s) => !s.category_id).filter(filterFn);
+    if (uncategorized.length) buckets.push({ cat: null, items: uncategorized });
+    return buckets;
+  }, [services, categories, query, categoryById]);
+
+  const canCreateFromSearch =
+    typedService.length >= 2 &&
+    !services.some((s) => normalizeText(s.name) === normalizeText(typedService));
+
+  function toggle(id: string) {
+    onChange(selected.has(id) ? value.filter((x) => x !== id) : [...value, id]);
+  }
+
+  function serviceMeta(service: Service) {
+    const categoryLabel = service.category_id ? categoryById.get(service.category_id) : null;
+    const parts = [
+      categoryLabel || "Sem categoria",
+      service.duration_min ? `${service.duration_min} min` : null,
+      Number.isFinite(Number(service.price)) ? formatEUR(Number(service.price)) : null,
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+
+  async function ensureCategory(label: string) {
+    const normalized = normalizeText(label);
+    const existing = categories.find((c) => normalizeText(c.label) === normalized);
+    if (existing) return existing.id;
+
+    const nextOrder = (categories.at(-1)?.sort_order ?? 0) + 10;
+    const { data, error } = await supabase
+      .from("service_categories")
+      .insert({ studio_id: studioId, label: label.trim(), sort_order: nextOrder })
+      .select("id")
+      .single();
+
+    if (error || !data) throw new Error(error?.message ?? "Não foi possível criar a categoria");
+    return data.id as string;
+  }
+
+  async function createService() {
+    const trimmed = newServiceName.trim();
+    if (!trimmed) return toast.error("Digite o nome do serviço");
+    if (!Number.isInteger(newServiceDuration) || newServiceDuration < 0) {
+      return toast.error("A duração deve ser um número inteiro igual ou superior a 0.");
+    }
+
+    const existing = services.find((s) => normalizeText(s.name) === normalizeText(trimmed));
+    if (existing) {
+      if (!selected.has(existing.id)) onChange([...value, existing.id]);
+      toast.info("Este serviço já existia e foi selecionado");
+      setCreating(false);
+      setNewServiceName("");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const categoryId = await ensureCategory(currentCategoryLabel);
+      const { data, error } = await supabase
+        .from("services")
+        .insert({
+          studio_id: studioId,
+          name: trimmed,
+          duration_min: newServiceDuration,
+          price: newServicePrice,
+          category_id: categoryId,
+          is_active: true,
+        })
+        .select("id")
+        .single();
+
+      if (error || !data) throw new Error(error?.message ?? "Não foi possível criar o serviço");
+      toast.success(`Serviço criado em ${currentCategoryLabel}`);
+      onChange([...value, data.id]);
+      setQuery("");
+      setCreating(false);
+      setNewServiceName("");
+      setSelectedCategoryLabel("");
+      setNewServiceDuration(60);
+      setNewServicePrice(30);
+      await onReloadCatalog();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function selectPreset(preset: ServicePreset) {
+    const existing = services.find((s) => normalizeText(s.name) === normalizeText(preset.name));
+    if (existing) {
+      toggle(existing.id);
+      return;
+    }
+
+    setBusyPreset(preset.name);
+    try {
+      const categoryId = await ensureCategory(preset.category);
+      const { data, error } = await supabase
+        .from("services")
+        .insert({
+          studio_id: studioId,
+          name: preset.name,
+          duration_min: preset.duration,
+          price: preset.price,
+          category_id: categoryId,
+          is_active: true,
+        })
+        .select("id")
+        .single();
+
+      if (error || !data) throw new Error(error?.message ?? "Não foi possível criar o serviço");
+      toast.success(`Serviço criado em ${preset.category}`);
+      onChange([...value, data.id]);
+      setQuery("");
+      await onReloadCatalog();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusyPreset("");
+    }
+  }
+
+  function startCreate(name = "") {
+    setNewServiceName(name);
+    setSelectedCategoryLabel(inferSegmentCategory(name, businessSegment));
+    setCreating(true);
+  }
+
+  return (
+    <div className="space-y-4 rounded-xl border border-border bg-card/45 p-4 shadow-sm sm:p-4">
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Selecionados
+          </p>
+          <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
+            {selectedServices.length} {selectedServices.length === 1 ? "serviço" : "serviços"}
+          </span>
+        </div>
+        {selectedServices.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {selectedServices.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => toggle(s.id)}
+                className="inline-flex min-h-8 min-w-0 max-w-full items-center gap-1.5 rounded-full bg-foreground px-3 py-1.5 text-[11px] font-medium text-background shadow-sm transition hover:opacity-90"
+                aria-label={`Remover ${s.name}`}
+              >
+                <span className="min-w-0 max-w-full whitespace-normal break-words leading-tight [overflow-wrap:anywhere]">{s.name}</span>
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-border bg-background/70 px-3 py-3 text-xs text-muted-foreground">
+            Pesquise e selecione os serviços desta profissional. A seleção aparece aqui de imediato.
+          </div>
+        )}
+      </div>
+
+      {quickPresets.length > 0 && (
+        <div className="space-y-2">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Seleção rápida
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                {segmentConfig.labels.quickPickIntro}
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {quickPresets.map((preset) => {
+              const existing = services.find(
+                (service) => normalizeText(service.name) === normalizeText(preset.name),
+              );
+              const isSelected = existing ? selected.has(existing.id) : false;
+              const isBusy = busyPreset === preset.name;
+              return (
+                <button
+                  key={`${preset.category}-${preset.name}`}
+                  type="button"
+                  onClick={() => selectPreset(preset)}
+                  disabled={!!busyPreset}
+                  className={`min-w-0 rounded-md border px-3 py-2 text-left text-xs transition disabled:opacity-60 ${
+                    isSelected
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border bg-background hover:bg-muted"
+                  }`}
+                >
+                  <span className="flex min-w-0 items-center justify-between gap-2">
+                    <span className="min-w-0 break-words font-medium leading-snug">{preset.name}</span>
+                    {isSelected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                  </span>
+                  <span
+                    className={`mt-0.5 block min-w-0 break-words leading-snug ${
+                      isSelected ? "text-background/70" : "text-muted-foreground"
+                    }`}
+                  >
+                    {isBusy
+                      ? "A criar..."
+                      : `${preset.category} · ${preset.duration} min · €${preset.price}`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <label className="block text-xs">
+          <span className="text-muted-foreground">Pesquisar serviço</span>
+          <span className="relative mt-1 block">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={segmentConfig.labels.serviceSearchPlaceholder}
+              className="w-full rounded-md border border-border bg-background py-2 pl-8 pr-3 text-sm"
+            />
+          </span>
+        </label>
+        {typedService ? (
+          <div className="overflow-hidden rounded-xl border border-border bg-background shadow-lg shadow-black/5">
+            {serviceSearchSuggestions.length > 0 ? (
+              <div className="divide-y divide-border">
+                {serviceSearchSuggestions.map((service) => {
+                  const on = selected.has(service.id);
+                  return (
+                    <button
+                      key={service.id}
+                      type="button"
+                      onClick={() => toggle(service.id)}
+                      className={`flex min-h-[64px] w-full items-center justify-between gap-3 px-3 py-2.5 text-left transition ${
+                        on ? "bg-foreground text-background" : "hover:bg-muted/70"
+                      }`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block min-w-0 break-words text-sm font-semibold leading-snug">{service.name}</span>
+                        <span
+                          className={`mt-0.5 block min-w-0 break-words text-xs leading-snug ${
+                            on ? "text-background/70" : "text-muted-foreground"
+                          }`}
+                        >
+                          {serviceMeta(service)}
+                        </span>
+                      </span>
+                      <span
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
+                          on
+                            ? "border-background/40 bg-background text-foreground"
+                            : "border-border text-muted-foreground"
+                        }`}
+                      >
+                        {on ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="px-3 py-3 text-xs text-muted-foreground">
+                Nenhum serviço encontrado com esta pesquisa.
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Comece a escrever para encontrar por nome, categoria, duração ou preço.
+          </p>
+        )}
+        {canCreateFromSearch && (
+          <button
+            type="button"
+            onClick={() => startCreate(typedService)}
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-background px-3 py-3 text-left text-xs transition hover:bg-muted"
+          >
+            <span>
+              Adicionar novo serviço: <strong>{typedService}</strong>
+            </span>
+            <span className="text-muted-foreground">
+              Categoria sugerida: {inferSegmentCategory(typedService, businessSegment)}
+            </span>
+          </button>
+        )}
+      </div>
+
+      {services.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border p-4 text-center">
+          <p className="text-sm font-medium">Ainda não há serviços registados</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {segmentConfig.labels.firstServiceHint}
+          </p>
+          <button
+            type="button"
+            onClick={() => startCreate()}
+            className="mt-3 rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background"
+          >
+            Criar serviço
+          </button>
+        </div>
+      ) : grouped.length > 0 ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Seleção por categoria
+            </p>
+            <span className="text-[11px] text-muted-foreground">Opção secundária</span>
+          </div>
+          <div className="overflow-hidden rounded-xl border border-border bg-background/80">
+          {grouped.map(({ cat, items }) => {
+            const key = cat?.id ?? "uncat";
+            const open = openCats[key] === true;
+            return (
+              <div key={key} className="border-b border-border last:border-b-0">
+                <button
+                  type="button"
+                  onClick={() => setOpenCats((m) => ({ ...m, [key]: !open }))}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left"
+                >
+                  <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {open ? (
+                      <ChevronDown className="h-3 w-3" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3" />
+                    )}
+                    {cat?.label ?? "Sem categoria"}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">{items.length} serviços</span>
+                </button>
+                {open && (
+                  <ul className="pb-1">
+                    {items.map((s) => {
+                      const on = selected.has(s.id);
+                      return (
+                        <li key={s.id}>
+                          <button
+                            type="button"
+                            onClick={() => toggle(s.id)}
+                            className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-sm transition ${on ? "bg-muted" : "hover:bg-muted/60"}`}
+                          >
+                            <span className="min-w-0 break-words text-left leading-snug [overflow-wrap:anywhere]">{s.name}</span>
+                            <span
+                              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${on ? "border-foreground bg-foreground text-background" : "border-border"}`}
+                            >
+                              {on && <Check className="h-3 w-3" />}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+          Nenhum serviço encontrado para esta pesquisa.
+        </div>
+      )}
+
+      {creating && (
+        <div className="space-y-3 rounded-md border border-border bg-muted/30 p-3">
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Novo serviço
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              O nome fica salvo como serviço. A categoria é apenas o grupo onde ele aparece.
+            </p>
+          </div>
+          {exactService && (
+            <button
+              type="button"
+              onClick={() => toggle(exactService.id)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-left text-xs"
+            >
+              Este serviço já existe. Toque para selecionar <strong>{exactService.name}</strong>.
+            </button>
+          )}
+          <label className="block text-xs">
+            <span className="text-muted-foreground">Nome do serviço</span>
+            <input
+              value={newServiceName}
+              onChange={(e) => {
+                setNewServiceName(e.target.value);
+                setSelectedCategoryLabel(inferSegmentCategory(e.target.value, businessSegment));
+              }}
+              placeholder={segmentConfig.labels.serviceSearchPlaceholder}
+              className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block text-xs">
+            <span className="text-muted-foreground">Categoria detectada</span>
+            <Select value={currentCategoryLabel} onValueChange={setSelectedCategoryLabel}>
+              <SelectTrigger className="mt-1 rounded-xl border-border bg-background px-3 text-sm shadow-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="rounded-2xl border-border bg-popover/98 p-1.5 shadow-xl">
+                {categoryOptions.map((label) => (
+                  <SelectItem key={label} value={label} className="rounded-xl px-3 py-2.5 text-sm">
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[11px] text-muted-foreground">
+              Duração (min)
+              <input
+                type="number"
+                min={0}
+                step={5}
+                value={newServiceDuration}
+                onChange={(e) => setNewServiceDuration(Number(e.target.value))}
+                className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+              />
+            </label>
+            <label className="text-[11px] text-muted-foreground">
+              Preço (€)
+              <input
+                type="number"
+                min={0}
+                step="0.5"
+                value={newServicePrice}
+                onChange={(e) => setNewServicePrice(Number(e.target.value))}
+                className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setCreating(false)}
+              className="flex-1 rounded-md border border-border py-2 text-xs"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={busy || !newServiceName.trim()}
+              onClick={createService}
+              className="flex-1 rounded-md bg-foreground py-2 text-xs font-medium text-background disabled:opacity-50"
+            >
+              {busy ? "A criar..." : "Criar e selecionar"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {services.length > 0 && !creating && (
+        <button
+          type="button"
+          onClick={() => startCreate(query.trim())}
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground hover:bg-muted"
+        >
+          <Plus className="h-3.5 w-3.5" /> Adicionar serviço que ainda não existe
+        </button>
+      )}
+    </div>
+  );
+}
