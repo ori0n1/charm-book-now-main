@@ -11,3 +11,4 @@ Esta base é local e independente do `origin/main` antigo. Crie um worktree sepa
 ## Verificação complementar de 2026-10-28
 
 Dos 228 arquivos estáticos servidos, 227 coincidiram byte a byte com o build publicado. O robots.txt difere porque a Cloudflare acrescenta um bloco gerenciado antes do conteúdo do projeto. OFFICIAL_BASE.json registra a versão, os bindings e a pendência de autenticação para conferir as migrações SQL de produção. Esta base não é um artefato aprovado para novo deploy enquanto essa pendência não for resolvida.
+Três variáveis simples ativas não constam do wrangler.jsonc local; seus nomes estão no manifesto. Os valores efetivos e os 24 bindings secretos devem ser preservados antes de qualquer futuro deploy. Não use a configuração local isoladamente para publicação.
