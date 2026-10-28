@@ -65,6 +65,7 @@ npm.cmd run test:e2e:chromium
 - Cada novo agente deve criar um worktree isolado e limpo a partir desse commit comprovado. Preserve branches, worktrees e alterações anteriores como referências separadas; não os use como ponto de partida por conveniência.
 - Se a correspondência ainda não estiver comprovada, registre o bloqueio e aguarde a identificação da base oficial antes de iniciar novos trabalhos.
 - Referência local confirmada em 2026-10-28: repositório `bellza-base-34be84fa`, branch `production-34be84fa`, para a versão Cloudflare `34be84fa-567e-4271-8cce-622e14b41c0f`. Leia `BASELINE.md` nessa base e reconfirme a versão ativa antes de iniciar trabalho novo, pois a produção pode mudar.
+- No repositório principal, a mesma referência está em `official/bellza-production-34be84fa`. O snapshot de código correspondente à produção é o commit ancestral `4c30d32`; commits posteriores nesta branch podem acrescentar somente regras e metadados de organização.
 
 ## Autonomia de leitura e controle de escrita — Bellza
 
@@ -73,3 +74,16 @@ npm.cmd run test:e2e:chromium
 - Use configurações oficiais de sandbox e regras estreitas de aprovação. Mantenha o acesso de rede restrito e as raízes graváveis no mínimo necessário; não use acesso irrestrito nem desative proteções para evitar solicitações.
 - Priorize Cloudflare OAuth interativo e reutilize a sessão válida. Se surgir uma confirmação humana, indique exatamente a janela e a ação necessária e aguarde; não contorne validações de URL, janelas de segurança ou controles de autenticação.
 - Peça aprovação explícita para cada publicação ou reversão em produção, migração no banco de produção, alteração de dados reais, configuração de produção, permissões, políticas RLS, credenciais, operação destrutiva ou concessão de acesso e privilégios. Autorização de leitura nunca autoriza escrita.
+
+## Sincronização permanente da base oficial
+
+1. Confirme por Cloudflare OAuth a versão ativa e parta da referência oficial que corresponde a ela. Use `scripts/new-isolated-worktree.ps1` para criar branch e worktree exclusivos; ele recusa referência local/remota ou versão ativa divergente. Nunca reutilize worktrees antigos como base.
+2. Desenvolva somente no worktree novo, com testes direcionados proporcionais ao risco e rollback preparado. Candidatos permanecem em branches próprias.
+3. Antes de qualquer publicação, compare o artefato completo aprovado com a versão ativa, incluindo módulos do Worker, assets estáticos, rotas, crons, runtime, variáveis e nomes/tipos dos bindings. Preserve secrets sem ler ou alterar seus valores. Confirme o estado das migrações necessárias e a segurança do rollback.
+4. Solicite autorização explícita do proprietário para a publicação específica. Registre no GitHub o candidato aprovado em sua branch, sem antecipar a referência oficial.
+5. Publique exatamente o artefato aprovado. Confirme imediatamente por Cloudflare OAuth a versão e o tráfego efetivamente ativos, execute o smoke test direcionado e registre o resultado.
+6. Somente após comprovar publicação bem-sucedida, atualize a branch oficial no GitHub e a base local de referência. Registre commit, versão Cloudflare, hash/manifesto do artefato e configurações relevantes. Produção ativa, GitHub oficial e base local devem representar a mesma versão validada.
+7. Se a publicação falhar, restaure apenas a última versão segura com rollback comprovado e aprovação explícita, preservando dados e configurações. Registre o estado efetivamente ativo; não promova o candidato rejeitado nem permita que novos agentes partam dele.
+8. Se uma migração de banco não permitir rollback seguro, interrompa antes de modificar produção e solicite decisão. Nunca faça reset, sobrescreva ou apague dados reais.
+
+Áreas futuras de trabalho isolado: bugs, Stripe/financeiro, testes, Cloudflare/deploy, desempenho, UX/mobile e marketing/anúncios. Esta lista não autoriza instalar agentes, skills ou MCPs nem executar trabalhos funcionais.

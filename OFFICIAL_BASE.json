@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "worker": "tanstack-start-app",
+  "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
+  "deploymentId": "899c9381-6b2f-48b9-a436-7886b8ea176d",
+  "cloudflareVersionId": "34be84fa-567e-4271-8cce-622e14b41c0f",
+  "workerEtag": "49189570573745ed961a178381f1943d4138ff65da421a68144f72d5fa7199c0",
+  "workerModules": { "checked": 230, "identical": 230 },
+  "staticAssets": { "status": "verified_with_cloudflare_managed_robots", "checked": 228, "identical": 227, "cloudflareManagedRobots": 1 },
+  "productionBindings": { "total": 51, "secrets": 24, "additionalPlainNames": ["ARARA_CANARY_PROBE_SHA256", "GOOGLE_PLACES_ENABLED", "JOINT_BOOKING_CREATE_ENABLED"] },
+  "sql": { "status": "pending_production_migration_check", "reason": "Supabase CLI authentication unavailable for the Bellza production project" },
+  "domains": ["bellza.pt", "www.bellza.pt"],
+  "cron": ["*/10 * * * *"]
+}
