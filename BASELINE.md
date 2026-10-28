@@ -1,4 +1,14 @@
-# Base local da produção Bellza — 2026-10-28
+# Base oficial da produção Bellza — 2026-10-28
+
+## Produção ativa após privacidade visual
+
+- Worker `tanstack-start-app`: deployment `48bf6d01-fe98-4736-81b5-c52e62e58249`, versão `87f2585e-dc96-4af1-8a61-6c646138b8ce` ativa a 100%, ETag `1a97fd56632cfe8a5d7f4a0198900c428360ee901cb3afaa16d3ca88ac722b0b`.
+- Snapshot de código: commit `cf94eaf`. As únicas alterações de produto são os seis ficheiros de apresentação do modo de privacidade visual; não houve mudança de SQL, backend, Stripe ou configuração.
+- O Worker publicado foi comparado byte a byte com o artefato: 221 de 221 partes idênticas. Dos 376 assets públicos, 375 coincidem byte a byte; o `robots.txt` inclui um bloco gerido pela Cloudflare. O pacote preserva os 228 assets anteriores.
+- Cloudflare OAuth confirmou 51 bindings, incluindo 24 secrets, e os mesmos domínios, cron e runtime. Testes autenticados com proprietário QA passaram em desktop e mobile nas três páginas.
+- Rollback: versão `9e09021d-f203-47ca-b0a4-246cc9689171` e o pacote completo de Worker e assets em `release-control/loyalty-management-20261028-candidate/dist`. Não há migração SQL para este recurso.
+
+## Histórico da base anterior
 
 - Worker `tanstack-start-app`: deployment `09cd6d76-1271-4c62-849b-eba4a39a592d`, versão `9e09021d-f203-47ca-b0a4-246cc9689171` com 100% do tráfego, lida pela Cloudflare com OAuth.
 - Fonte: `release-control/loyalty-management-20261028-candidate` no worktree anterior. Os 230 módulos baixados do Worker ativo coincidiram byte a byte com `dist/server` desse pacote.
