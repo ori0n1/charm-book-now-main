@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
+import { VisualMoney, VisualPrivacyBoundary, VisualPrivacyButton } from "@/components/visual-money-privacy";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import { PremiumTimeSelect } from "@/components/ui/premium-time-select";
@@ -27,8 +28,12 @@ import { getDeskBalcaoCatalog } from "@/lib/desk-access.functions";
 
 export const Route = createFileRoute("/_authenticated/admin/balcao")({
   head: () => ({ meta: [{ title: "Balcão - Painel" }] }),
-  component: BalcaoPage,
+  component: BalcaoRoute,
 });
+
+function BalcaoRoute() {
+  return <VisualPrivacyBoundary><BalcaoPage /></VisualPrivacyBoundary>;
+}
 
 const SHOW_LEGACY_CASH_HISTORY_HEADER = false as boolean;
 const SHOW_LEGACY_CASH_MOVEMENTS_LIST = false as boolean;
@@ -500,7 +505,7 @@ function BalcaoPage() {
           </div>
           <div className="grid grid-cols-3 gap-1.5 sm:min-w-[20rem]">
             <MiniMetric label="Caixa" value={cashRegister ? "Aberto" : "Fechado"} positive={Boolean(cashRegister)} />
-            <MiniMetric label="Saldo válido" value={cashRegister ? (cashAttributionReady ? formatEUR(effectiveCashBalance(cashRegister.opening_amount, cashMovements)) : "—") : formatEUR(0)} positive />
+            <MiniMetric label="Saldo válido" value={cashRegister ? (cashAttributionReady ? formatEUR(effectiveCashBalance(cashRegister.opening_amount, cashMovements)) : "—") : formatEUR(0)} positive mask={activePane === "history"} />
             <MiniMetric label="Movimentos" value={String(cashRegister?.movement_count ?? 0)} />
           </div>
         </div>
@@ -900,30 +905,33 @@ function BalcaoPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-1 rounded-2xl border border-border/70 bg-background/60 p-1 shadow-inner md:w-[22rem]">
-                {[
-                  ["today", "Hoje"],
-                  ["7d", "7 dias"],
-                  ["30d", "30 dias"],
-                  ["all", "Todos"],
-                ].map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => {
-                      setHistoryFilter(value as typeof historyFilter);
-                      setShowFullHistory(false);
-                      setExpandedSessions({});
-                    }}
-                    className={`min-h-9 rounded-xl px-2 text-[11px] font-bold transition ${
-                      historyFilter === value
-                        ? "bg-emerald-600 text-white shadow-sm"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="flex min-w-0 items-center gap-2">
+                <VisualPrivacyButton />
+                <div className="grid min-w-0 flex-1 grid-cols-4 gap-1 rounded-2xl border border-border/70 bg-background/60 p-1 shadow-inner md:w-[22rem]">
+                  {[
+                    ["today", "Hoje"],
+                    ["7d", "7 dias"],
+                    ["30d", "30 dias"],
+                    ["all", "Todos"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => {
+                        setHistoryFilter(value as typeof historyFilter);
+                        setShowFullHistory(false);
+                        setExpandedSessions({});
+                      }}
+                      className={`min-h-9 rounded-xl px-2 text-[11px] font-bold transition ${
+                        historyFilter === value
+                          ? "bg-emerald-600 text-white shadow-sm"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
@@ -961,7 +969,7 @@ function BalcaoPage() {
             ) : (
               <p className="rounded-2xl border border-dashed border-border/80 bg-background/45 px-4 py-8 text-center text-sm leading-relaxed text-muted-foreground">
                 {currentStudio?.role === "studio_owner" || currentStudio?.role === "saas_owner" || currentStudio?.role === "manager"
-                  ? "Nenhum caixa fechado neste período. Se a proteção estiver ativa, desbloqueie no Início."
+                  ? "Nenhum caixa fechado neste período."
                   : "O histórico financeiro de caixas fechados está reservado ao proprietário."}
               </p>
             )}
@@ -1035,12 +1043,12 @@ function PanelHeader({
   );
 }
 
-function MiniMetric({ label, value, positive = false }: { label: string; value: string; positive?: boolean }) {
+function MiniMetric({ label, value, positive = false, mask = false }: { label: string; value: string; positive?: boolean; mask?: boolean }) {
   return (
     <div className="rounded-xl border border-border/60 bg-background/55 px-3 py-2">
       <p className="break-words text-[8.5px] font-semibold uppercase leading-snug tracking-[0.08em] text-muted-foreground sm:text-[9px]">{label}</p>
       <p className={`mt-0.5 break-words text-sm font-bold leading-snug ${positive ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
-        {value}
+        {mask ? <VisualMoney value={value} /> : value}
       </p>
     </div>
   );
@@ -1210,17 +1218,17 @@ function ClosedSessionCard({
         <div className="rounded-2xl border border-border/55 bg-card/60 px-3 py-3 md:px-4 md:py-4">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Saldo válido</p>
           <p className="mt-1 truncate whitespace-nowrap text-xl font-black leading-tight tabular-nums text-emerald-700 dark:text-emerald-400 md:text-2xl">
-            {formatEUR(totals.validBalance)}
+            <VisualMoney value={formatEUR(totals.validBalance)} />
           </p>
         </div>
         <div className="rounded-2xl border border-border/55 bg-card/60 px-3 py-3 md:px-4 md:py-4">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Contado no fecho</p>
-          <p className="mt-1 truncate whitespace-nowrap text-lg font-black leading-tight tabular-nums text-foreground md:text-xl">{formatEUR(totals.counted)}</p>
+          <p className="mt-1 truncate whitespace-nowrap text-lg font-black leading-tight tabular-nums text-foreground md:text-xl"><VisualMoney value={formatEUR(totals.counted)} /></p>
         </div>
         <div className="rounded-2xl border border-border/55 bg-card/60 px-3 py-3 md:px-4 md:py-4">
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Lucro do período</p>
           <p className={`mt-1 truncate whitespace-nowrap text-lg font-black leading-tight tabular-nums md:text-xl ${profit >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600"}`}>
-            {formatSignedEUR(profit)}
+            <VisualMoney value={formatSignedEUR(profit)} />
           </p>
         </div>
         {adjustedAfterClose && <p className="text-[10px] text-muted-foreground">Saldo válido ajustado após o fecho; valor contado preservado.</p>}
@@ -1314,9 +1322,9 @@ function ClosureMetric({
     <div className={`flex min-w-0 flex-col justify-center rounded-xl border border-border/50 bg-card/60 px-3 md:rounded-2xl md:px-4 ${compact ? "min-h-[3.75rem] py-2" : "min-h-[4.85rem] py-2.5 md:min-h-[5.35rem]"}`}>
       <p className="truncate text-[9px] font-semibold uppercase leading-tight tracking-[0.12em] text-muted-foreground md:text-[10px]">{label}</p>
       <p className={`mt-1 max-w-full truncate text-[13px] font-black leading-tight tabular-nums sm:text-sm md:text-base ${toneClass}`}>
-        {signed ? formatSignedEUR(value) : formatEUR(value)}
+        <VisualMoney value={signed ? formatSignedEUR(value) : formatEUR(value)} />
       </p>
-      {hint ? <p className="mt-0.5 truncate text-[10px] font-semibold text-muted-foreground md:text-[11px]">{hint}</p> : null}
+      {hint ? <p className="mt-0.5 truncate text-[10px] font-semibold text-muted-foreground md:text-[11px]"><VisualMoney value={hint} /></p> : null}
     </div>
   );
 }
@@ -1374,8 +1382,8 @@ function ClosedMovementTableRow({ movement }: { movement: CashMovement }) {
         {isCancelledServiceMovement(movement) && <CancellationAudit movement={movement} />}
       </div>
       <span className={`text-right text-sm font-black tabular-nums ${isCancelledServiceMovement(movement) ? "text-muted-foreground" : valueClass}`}>
-        {isCancelledServiceMovement(movement) ? formatEUR(0) : `${out ? "-" : "+"}${formatEUR(movement.amount)}`}
-        {isCancelledServiceMovement(movement) && <span className="block text-[10px] font-medium">Recebido {formatEUR(movement.amount)}</span>}
+        <VisualMoney value={isCancelledServiceMovement(movement) ? formatEUR(0) : `${out ? "-" : "+"}${formatEUR(movement.amount)}`} />
+        {isCancelledServiceMovement(movement) && <span className="block text-[10px] font-medium">Recebido <VisualMoney value={formatEUR(movement.amount)} /></span>}
       </span>
     </div>
   );
@@ -1418,8 +1426,8 @@ function ClosedMovementLine({ movement }: { movement: CashMovement }) {
         {isCancelledServiceMovement(movement) && <CancellationAudit movement={movement} />}
       </div>
       <p className={`min-w-[5.75rem] text-right text-sm font-black leading-tight tabular-nums ${isCancelledServiceMovement(movement) ? "text-muted-foreground" : valueClass}`}>
-        {isCancelledServiceMovement(movement) ? formatEUR(0) : `${out ? "-" : "+"}${formatEUR(movement.amount)}`}
-        {isCancelledServiceMovement(movement) && <span className="block text-[10px] font-medium">Recebido {formatEUR(movement.amount)}</span>}
+        <VisualMoney value={isCancelledServiceMovement(movement) ? formatEUR(0) : `${out ? "-" : "+"}${formatEUR(movement.amount)}`} />
+        {isCancelledServiceMovement(movement) && <span className="block text-[10px] font-medium">Recebido <VisualMoney value={formatEUR(movement.amount)} /></span>}
       </p>
     </div>
   );
@@ -1436,7 +1444,7 @@ function ClosedSessionRow({ session }: { session: ClosedCashSession }) {
         </p>
       </div>
       <p className={`text-sm font-bold text-right ${diff < 0 ? "text-rose-600" : "text-emerald-700 dark:text-emerald-400"}`}>
-          {formatEUR(diff)}
+          <VisualMoney value={formatEUR(diff)} />
       </p>
     </div>
   );

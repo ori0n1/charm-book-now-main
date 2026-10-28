@@ -16,6 +16,7 @@ import {
 import { useMemo, useState, type ReactNode } from "react";
 import { BrandLoadingState } from "@/components/brand-loading-state";
 import { OwnerFinancialRoute } from "@/components/owner-financial-route";
+import { VisualMoney, VisualPrivacyBoundary, VisualPrivacyButton } from "@/components/visual-money-privacy";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import {
   Select,
@@ -83,7 +84,7 @@ const PAYMENT_METHODS = [
 ];
 
 function PaymentsPage() {
-  return <OwnerFinancialRoute><PaymentsContent /></OwnerFinancialRoute>;
+  return <OwnerFinancialRoute><VisualPrivacyBoundary><PaymentsContent /></VisualPrivacyBoundary></OwnerFinancialRoute>;
 }
 
 function PaymentsContent() {
@@ -183,15 +184,18 @@ function PaymentsContent() {
               Valores do período dos atendimentos · {periodLabel}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void reportQuery.refetch()}
-            disabled={reportQuery.isFetching}
-            className="grid size-10 shrink-0 place-items-center rounded-full border border-border/80 bg-background/85 text-muted-foreground shadow-sm transition hover:text-foreground disabled:opacity-50"
-            aria-label="Atualizar financeiro"
-          >
-            <RefreshCw className={cn("size-4", reportQuery.isFetching && "animate-spin")} />
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <VisualPrivacyButton />
+            <button
+              type="button"
+              onClick={() => void reportQuery.refetch()}
+              disabled={reportQuery.isFetching}
+              className="grid size-10 shrink-0 place-items-center rounded-full border border-border/80 bg-background/85 text-muted-foreground shadow-sm transition hover:text-foreground disabled:opacity-50"
+              aria-label="Atualizar financeiro"
+            >
+              <RefreshCw className={cn("size-4", reportQuery.isFetching && "animate-spin")} />
+            </button>
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:flex">
@@ -323,7 +327,7 @@ function PaymentsContent() {
                       </p>
                     </div>
                     <p className="font-semibold tabular-nums">
-                      {formatEUR(deposit.amountCents / 100)} · {paymentMethodLabel(deposit.method)} · Pago
+                      <VisualMoney value={formatEUR(deposit.amountCents / 100)} /> · {paymentMethodLabel(deposit.method)} · Pago
                     </p>
                   </div>
                 ))}
@@ -395,7 +399,7 @@ function Money({ cents, className }: { cents: number; className?: string }) {
       data-finance-cents={cents}
       className={cn("whitespace-nowrap font-semibold tabular-nums tracking-[-0.03em] text-emerald-700 dark:text-emerald-400", className)}
     >
-      {formatEUR(cents / 100)}
+      <VisualMoney value={formatEUR(cents / 100)} />
     </p>
   );
 }
@@ -404,7 +408,7 @@ function BreakdownLine({ label, cents }: { label: string; cents: number }) {
   return (
     <div className="flex items-center justify-between gap-2">
       <dt>{label}</dt>
-      <dd data-finance-cents={cents} className="whitespace-nowrap font-semibold tabular-nums text-foreground">{formatEUR(cents / 100)}</dd>
+      <dd data-finance-cents={cents} className="whitespace-nowrap font-semibold tabular-nums text-foreground"><VisualMoney value={formatEUR(cents / 100)} /></dd>
     </div>
   );
 }
@@ -425,7 +429,7 @@ function OnlinePaymentDetails({ refundedCents }: { refundedCents: number }) {
           “Online” é o valor bruto confirmado pela Stripe para as marcações do período, menos reembolsos concluídos. As taxas, o líquido e os repasses são apresentados separadamente para não misturar conceitos.
         </p>
         {refundedCents > 0 && (
-          <p className="mt-2">Reembolsos abatidos neste universo: {formatEUR(refundedCents / 100)}.</p>
+          <p className="mt-2">Reembolsos abatidos neste universo: <VisualMoney value={formatEUR(refundedCents / 100)} />.</p>
         )}
         <Link
           to="/admin/recebimento"
@@ -458,8 +462,8 @@ function StaffReceivedList({ members }: { members: FinancialReportPayload["bySta
           <div className="min-w-0">
             <p className="break-words text-sm font-semibold leading-snug">{member.name}</p>
             <p className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-[11px] leading-snug text-muted-foreground">
-              <span>Online {formatEUR(member.onlineCents / 100)}</span>
-              <span>Presencial {formatEUR(member.onsiteCents / 100)}</span>
+              <span>Online <VisualMoney value={formatEUR(member.onlineCents / 100)} /></span>
+              <span>Presencial <VisualMoney value={formatEUR(member.onsiteCents / 100)} /></span>
             </p>
           </div>
           <Money

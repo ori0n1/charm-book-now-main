@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Target, TrendingUp } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { cn } from "@/lib/utils";
+import { VisualMoney } from "@/components/visual-money-privacy";
 
 type OfferRow = {
   id: string;
@@ -134,7 +135,7 @@ export function UpsellMetricsCard({ studioId }: { studioId: string }) {
           </div>
           <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-border bg-surface/70 px-4 py-3 text-sm text-muted-foreground">
               <span>Receita adicional total</span>
-              <span className="font-semibold text-foreground">{totals.revenue.toFixed(2)}€</span>
+              <span className="font-semibold text-foreground"><VisualMoney value={`${totals.revenue.toFixed(2)}€`} /></span>
           </div>
         </div>
       )}
@@ -162,7 +163,7 @@ function ServiceCell({ value, strong }: { value: string; strong?: boolean }) {
 function MetricBox({ label, value, highlight }: { label: string; value: string | number; highlight?: boolean }) {
   return (
     <div className="min-w-0 rounded-xl border border-border bg-card/70 px-3 py-2 text-center">
-      <p className={cn("truncate text-sm font-semibold tabular-nums text-foreground", highlight && "text-accent")}>{value}</p>
+      <p className={cn("truncate text-sm font-semibold tabular-nums text-foreground", highlight && "text-accent")}><VisualMoney value={String(value)} /></p>
       <p className="mt-0.5 truncate text-[8px] uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
   );

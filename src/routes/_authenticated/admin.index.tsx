@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { ShareStudioCard } from "@/components/share-studio-card";
 import { UpsellMetricsCard } from "@/components/upsell-metrics-card";
 import { ClientAvatar } from "@/components/client-avatar";
+import { VisualMoney, VisualPrivacyBoundary, VisualPrivacyButton, useVisualMoneyHidden } from "@/components/visual-money-privacy";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { InternationalPhoneInput } from "@/components/ui/international-phone-input";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
@@ -64,8 +65,12 @@ import {
 } from "@/lib/professional-finance-summary";
 
 export const Route = createFileRoute("/_authenticated/admin/")({
-  component: OverviewPage,
+  component: OverviewRoute,
 });
+
+function OverviewRoute() {
+  return <VisualPrivacyBoundary><div className="mb-2 flex justify-end empty:hidden"><VisualPrivacyButton /></div><OverviewPage /></VisualPrivacyBoundary>;
+}
 
 type ServiceLine = {
   price: number;
@@ -967,7 +972,7 @@ function MobileOverview({
                 </span>
               </div>
               <p className="break-words text-xs leading-snug text-muted-foreground">
-                {next.staff?.name ?? "Profissional"} · {formatEUR(nextSplit?.total ?? 0)}
+                {next.staff?.name ?? "Profissional"} · <VisualMoney value={formatEUR(nextSplit?.total ?? 0)} />
               </p>
             </div>
           </div>
@@ -1322,7 +1327,7 @@ function WithdrawalStatusCard({
           <h2 className="mt-1 text-sm font-semibold">Sinais recebidos online</h2>
         </div>
         <span className="shrink-0 rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
-          {formatEUR((withdrawal?.availableCents ?? 0) / 100)}
+          <VisualMoney value={formatEUR((withdrawal?.availableCents ?? 0) / 100)} />
         </span>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
@@ -1394,7 +1399,7 @@ function WithdrawalStatusCard({
                   </div>
                   <div className="shrink-0 sm:text-right">
                     <p className="font-mono text-base font-semibold text-emerald-700 dark:text-emerald-400">
-                      {formatCents(request.amountCents, request.currency)}
+                      <VisualMoney value={formatCents(request.amountCents, request.currency)} />
                     </p>
                     <p className="mt-1 text-[11px] text-muted-foreground">
                       Atualizado em {formatDate(request.updatedAt ?? request.requestedAt)}
@@ -1795,7 +1800,7 @@ function MobileMiniMetric({
       <p
         className={`mt-1.5 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.15rem,5vw,1.25rem)] font-semibold leading-tight ${money ? "text-emerald-700 dark:text-emerald-400" : ""}`}
       >
-        {value}
+        <VisualMoney value={value} />
       </p>
       {detail && (
         <p className="mt-auto pt-1 text-[11px] leading-snug text-muted-foreground">{detail}</p>
@@ -2342,17 +2347,18 @@ function round(value: number) {
 }
 
 function ProgressLine({ label, value, total }: { label: string; value: number; total: number }) {
+  const hidden = useVisualMoneyHidden();
   const width = total > 0 ? Math.min(100, Math.max(2, (value / total) * 100)) : 0;
   return (
     <div>
       <div className="flex items-center justify-between gap-3 text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
-          {formatEUR(value)}
+          <VisualMoney value={formatEUR(value)} />
         </span>
       </div>
       <div className="mt-1 h-2 rounded-full bg-muted">
-        <div className="h-2 rounded-full bg-emerald-600" style={{ width: `${width}%` }} />
+        <div className="h-2 rounded-full bg-emerald-600" style={{ width: hidden ? "0%" : `${width}%` }} />
       </div>
     </div>
   );
@@ -2365,7 +2371,7 @@ function Stat({ label, value, icon }: { label: string; value: string; icon: Reac
         {icon}
         <span className="text-[10px] uppercase tracking-[0.2em]">{label}</span>
       </div>
-      <p className="mt-2 text-2xl font-light">{value}</p>
+      <p className="mt-2 text-2xl font-light"><VisualMoney value={value} /></p>
     </div>
   );
 }
@@ -2393,7 +2399,7 @@ function DashboardFocusCard({
         {label}
       </p>
       <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.45rem,2.1vw,1.5rem)] font-light leading-tight tracking-tight text-foreground">
-        {value}
+        <VisualMoney value={value} />
       </p>
       <p className="mt-auto pt-3 text-xs leading-snug text-muted-foreground">{detail}</p>
     </article>
@@ -2434,7 +2440,7 @@ function FinanceSummaryCard({
         </div>
       </div>
       <p className="mt-3 max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[clamp(1.05rem,1.7vw,1.5rem)] font-semibold leading-tight tracking-tight text-emerald-700 dark:text-emerald-400">
-        {value}
+        <VisualMoney value={value} />
       </p>
       <p className="mt-2 text-[11px] leading-4 text-muted-foreground">{caption}</p>
       <div className="mt-auto grid grid-cols-2 gap-2 pt-3">
@@ -2448,7 +2454,7 @@ function FinanceSummaryCard({
                 item.danger ? "text-red-500" : "text-foreground"
               }`}
             >
-              {item.value}
+              <VisualMoney value={item.value} />
             </p>
           </div>
         ))}
@@ -2506,7 +2512,7 @@ function InsightCard({
       <p
         className={`mt-3 text-2xl font-semibold leading-none tabular-nums ${danger ? "text-red-500" : ""}`}
       >
-        {value}
+        <VisualMoney value={value} />
       </p>
       <p className="mt-auto min-h-5 pt-3 text-[11px] leading-4 text-muted-foreground">{note}</p>
     </div>
@@ -2523,7 +2529,7 @@ function SignalLine({ label, value }: { label: string; value: string }) {
           negative ? "text-red-500" : "text-emerald-700 dark:text-emerald-400"
         }`}
       >
-        {value}
+        <VisualMoney value={value} force={label === "Receita vs período anterior"} />
       </span>
     </div>
   );
@@ -2534,7 +2540,7 @@ function Line({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/30 px-2.5 py-2">
       <span className="text-muted-foreground">{label}</span>
       <span className="font-mono font-semibold text-emerald-700 dark:text-emerald-400">
-        {value}
+        <VisualMoney value={value} />
       </span>
     </div>
   );
@@ -2545,7 +2551,7 @@ function MoneyValue({ value, className = "" }: { value: string; className?: stri
     <p
       className={`font-semibold tracking-tight text-emerald-700 dark:text-emerald-400 ${className}`}
     >
-      {value}
+      <VisualMoney value={value} />
     </p>
   );
 }

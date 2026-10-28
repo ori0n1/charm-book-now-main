@@ -10,6 +10,7 @@ import {
   YAxis,
 } from "recharts";
 import { summarizeDailyMovement, type DailyMovementChartDay } from "@/lib/daily-movement";
+import { VisualMoney, useVisualMoneyHidden } from "@/components/visual-money-privacy";
 
 export function DailyMovementChart({
   data,
@@ -19,6 +20,7 @@ export function DailyMovementChart({
   periodControls?: ReactNode;
 }) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const hidden = useVisualMoneyHidden();
   const viewportWidth = useElementWidth(viewportRef);
   const summary = useMemo(() => summarizeDailyMovement(data), [data]);
   const hasMovement = data.some(
@@ -72,6 +74,7 @@ export function DailyMovementChart({
             Passe ou toque num dia para ver os detalhes.
           </p>
           <div ref={viewportRef} className="h-64 w-full min-w-0 px-1 pb-2 pt-2 sm:h-72 sm:px-2">
+            {hidden ? <div className="flex h-full items-center justify-center rounded-xl bg-muted/20 text-sm text-muted-foreground">Valores ocultos · •••• €</div> :
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={data} margin={{ top: 10, right: 6, bottom: 2, left: 0 }}>
                 <CartesianGrid
@@ -138,6 +141,7 @@ export function DailyMovementChart({
                 />
               </ComposedChart>
             </ResponsiveContainer>
+            }
           </div>
         </div>
       )}
@@ -189,7 +193,7 @@ function SummaryValue({
           emphasis ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
         }`}
       >
-        {value}
+        <VisualMoney value={value} />
       </p>
     </div>
   );
