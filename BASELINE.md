@@ -1,5 +1,13 @@
 # Base oficial da produção Bellza — 2026-10-29
 
+## Produção ativa — confirmação de exclusão sem distinção de maiúsculas
+
+- Worker `tanstack-start-app`: deployment `efc4920a-832a-495b-9f67-9711d36d768a`, versão `df81cabe-6416-463d-8551-2ea633f44593` confirmada por Cloudflare OAuth com 100% do tráfego. Código publicado: commit `7e4c2cee62f14b81aa23c605a10c452e6b88b191`.
+- Única alteração de produto: a ficha aceita `Excluir`, `excluir`, ` EXCLUIR ` e `EXCLUIR` para habilitar a confirmação. O servidor continua a receber somente o literal `EXCLUIR` e a exigir proprietário. ZIP publicado `bellza-client-delete-confirmation-candidate-20261029.zip`, SHA-256 `00E6BD0D34A1070C7E89908AB5027811D02EA571B7AEE6D4AEB18E6B69E244EB`.
+- Cloudflare OAuth confirmou 51 bindings (24 secrets), runtime `2025-09-24`, cron `*/10 * * * *` e ambos os domínios preservados. Configuração SHA-256 `23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B`. Nenhuma migração ou alteração de dados.
+- Smoke publicado sem interceptação, no cliente sintético QA, em 390 e 1280 px: valores válidos habilitaram o botão e entrada inválida manteve-o desativado; visão geral, histórico, preferências e formulário de edição abertos sem guardar; gestor sem ações de edição ou exclusão. O botão Confirmar exclusão não foi clicado.
+- Rollback desta alteração de interface: versão Cloudflare anterior `da12dca2-66c8-4c2a-a4f7-378d10688c8c`, pacote `bellza-client-delete-text-fix-candidate-20261029.zip` (SHA-256 `8C661ADD60589E3BC9D963F0B1747C9781E3AF357D41E7BDC01328527A875B24`). Reversão só com autorização específica.
+
 ## Produção ativa — texto de exclusão corrigido
 
 - Worker `tanstack-start-app`: deployment `cbe43feb-280c-4861-969c-acb384e29292`, versão `da12dca2-66c8-4c2a-a4f7-378d10688c8c` confirmada por Cloudflare OAuth com 100% do tráfego. Código publicado: commit `d4ab79c87a34e72de2db922fb6025602cadcdc0b`.

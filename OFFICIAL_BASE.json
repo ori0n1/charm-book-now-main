@@ -2,13 +2,13 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "cbe43feb-280c-4861-969c-acb384e29292",
-  "cloudflareVersionId": "da12dca2-66c8-4c2a-a4f7-378d10688c8c",
-  "sourceCommit": "d4ab79c87a34e72de2db922fb6025602cadcdc0b",
+  "deploymentId": "efc4920a-832a-495b-9f67-9711d36d768a",
+  "cloudflareVersionId": "df81cabe-6416-463d-8551-2ea633f44593",
+  "sourceCommit": "7e4c2cee62f14b81aa23c605a10c452e6b88b191",
   "releaseArtifacts": {
-    "candidateZipSha256": "8C661ADD60589E3BC9D963F0B1747C9781E3AF357D41E7BDC01328527A875B24",
-    "rollbackZipSha256": "F39D60DF4F2DE6ADC5127BD62752BA3D978D6B3AD4AD368B5EBF69E96A25D976",
-    "rollbackCloudflareVersionId": "12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35",
+    "candidateZipSha256": "00E6BD0D34A1070C7E89908AB5027811D02EA571B7AEE6D4AEB18E6B69E244EB",
+    "rollbackZipSha256": "8C661ADD60589E3BC9D963F0B1747C9781E3AF357D41E7BDC01328527A875B24",
+    "rollbackCloudflareVersionId": "da12dca2-66c8-4c2a-a4f7-378d10688c8c",
     "preArchiveRollbackCloudflareVersionId": "5496e81c-f0a5-4bfc-8ad6-c6fd2479b124",
     "configSha256": "23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B",
     "clientAssetsVerifiedByGet": 0
@@ -56,11 +56,11 @@
     "oauthBindingsMatched": true,
     "qaSmokeSyntheticOnly": true,
     "qaSmoke": [
-      "published deletion description wraps inside card at 390 and 1280 px without interception",
-      "existing synthetic QA client opened overview, history, preferences and edit form without saving",
-      "delete confirmation opened without submitting",
+      "published synthetic QA client opened at 390 and 1280 px without interception",
+      "Excluir, excluir, surrounding spaces and EXCLUIR enabled the confirmation button; invalid input did not",
+      "overview, history, preferences and edit form opened without saving",
       "manager profile without edit or delete actions",
-      "no horizontal overflow in mobile or desktop"
+      "confirmation button was never clicked and no client was archived"
     ],
     "databaseMigrations": 0,
     "stripeOrPaymentWrites": 0,
