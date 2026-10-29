@@ -1,6 +1,14 @@
-# Base oficial da produção Bellza — 2026-10-28
+# Base oficial da produção Bellza — 2026-10-29
 
-## Produção ativa após privacidade visual
+## Produção ativa após ajuste do olho de privacidade
+
+- Worker `tanstack-start-app`: deployment `f4dbe213-72f4-4311-93c6-5c2ee717fc08`, versão `dcf02180-34eb-4b6b-919a-5efc038292a3` ativa a 100%, ETag `23e9d9df615cfdcff4d496e7e9f4c57c990ef297ba184a7c200e56ed6773e39c`.
+- Snapshot de código: commit `0c04530`. O diff de produto altera somente quatro arquivos TSX de apresentação do olho de privacidade no Início, Financeiro e Histórico do Caixa. Sem SQL, backend, Stripe, cálculos ou permissões.
+- Artefato: 221 módulos do Worker e 526 assets públicos. Preserva byte a byte os 378 assets da versão anterior. Os 18 assets críticos verificados após a publicação coincidem com o pacote. A Cloudflare confirmou o mesmo runtime, 51 bindings, domínios e cron da versão anterior.
+- Testes autenticados: proprietário sintético em desktop (1280 px) e mobile (390 px) ocultou e revelou valores nas três páginas com o mesmo PIN; navegação e recarga passaram. O olho cabe no cabeçalho do Início. Gestor e profissional sintéticos continuam sem o controlo. Smoke HTTP passou. Nenhum dado financeiro real foi alterado.
+- Rollback imediato: versão anterior `87f2585e-dc96-4af1-8a61-6c646138b8ce` e pacote completo de Worker e assets em `tmp/visual-privacy-implementation/dist` no worktree de controle `agents-full-audit-correction-deploy-bellza`. Não há migração SQL deste ajuste.
+
+## Histórico: produção após privacidade visual
 
 - Worker `tanstack-start-app`: deployment `48bf6d01-fe98-4736-81b5-c52e62e58249`, versão `87f2585e-dc96-4af1-8a61-6c646138b8ce` ativa a 100%, ETag `1a97fd56632cfe8a5d7f4a0198900c428360ee901cb3afaa16d3ca88ac722b0b`.
 - Snapshot de código: commit `cf94eaf`. As únicas alterações de produto são os seis ficheiros de apresentação do modo de privacidade visual; não houve mudança de SQL, backend, Stripe ou configuração.
