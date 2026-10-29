@@ -887,7 +887,7 @@ function BalcaoPage() {
           />}
 
           <div className="border-b border-border/60 bg-muted/10 px-3.5 py-3.5 md:px-5 md:py-4">
-            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
               <div className="flex min-w-0 items-start gap-3">
                 <span className="grid size-9 shrink-0 place-items-center rounded-2xl bg-emerald-600/10 text-emerald-700 ring-1 ring-emerald-500/15 dark:text-emerald-400">
                   <ReceiptText className="h-4 w-4" />
@@ -903,11 +903,11 @@ function BalcaoPage() {
                       : "Movimentações da sessão aberta"}
                   </p>
                 </div>
+                <div className="ml-auto shrink-0"><VisualPrivacyButton /></div>
               </div>
 
               <div className="flex min-w-0 items-center gap-2">
-                <VisualPrivacyButton />
-                <div className="grid min-w-0 flex-1 grid-cols-4 gap-1 rounded-2xl border border-border/70 bg-background/60 p-1 shadow-inner md:w-[22rem]">
+                <div className="grid min-w-0 flex-1 grid-cols-4 gap-1 rounded-2xl border border-border/70 bg-background/60 p-1 shadow-inner lg:w-[22rem]">
                   {[
                     ["today", "Hoje"],
                     ["7d", "7 dias"],

@@ -154,7 +154,7 @@ export function VisualPrivacyButton() {
   if (!owner) return null;
   return <button type="button" onClick={open} aria-label={hidden ? "Revelar valores" : "Ocultar valores"}
     title={hidden ? "Revelar valores" : "Ocultar valores"} aria-pressed={hidden}
-    className="grid size-10 shrink-0 place-items-center rounded-full border border-border/80 bg-background/85 text-muted-foreground shadow-sm transition hover:text-foreground">
+    className="grid size-10 shrink-0 place-items-center rounded-full border border-border/60 bg-background/70 text-muted-foreground transition hover:border-emerald-600/35 hover:bg-background hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600/50 dark:hover:text-emerald-400">
     {hidden ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
   </button>;
 }
