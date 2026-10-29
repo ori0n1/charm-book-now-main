@@ -1,23 +1,25 @@
 {
-  "schema": 1,
+  "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "f4dbe213-72f4-4311-93c6-5c2ee717fc08",
-  "cloudflareVersionId": "dcf02180-34eb-4b6b-919a-5efc038292a3",
-  "workerEtag": "23e9d9df615cfdcff4d496e7e9f4c57c990ef297ba184a7c200e56ed6773e39c",
-  "sourceCommit": "0c04530",
-  "clientTreeSha256": "078e5983f98198bc87baaa3369982bb64e1442cc75d24f6f2fdaa01f348c1be5",
-  "workerModules": { "built": 221, "etagVerified": true },
-  "staticAssets": { "status": "critical_assets_verified", "packageFiles": 526, "criticalChecked": 18, "criticalIdentical": 18, "priorFilesPreserved": 378 },
+  "deploymentId": "a8019422-ee5f-4b95-9ea1-0195f67d1d11",
+  "cloudflareVersionId": "e11859e4-08a4-48da-9c21-ffcbe847e59a",
+  "sourceCommit": "5266185ff549b61ce55968c96cb4116e2245fdca",
+  "releaseArtifacts": {
+    "candidateZipSha256": "E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98",
+    "rollbackZipSha256": "24271D202CC2B05B6DD289107431A5ABB067DBB6F46D1742BEBC71C2E8E4095B",
+    "configSha256": "23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B",
+    "clientAssetsVerifiedByGet": 7
+  },
   "productionBindings": { "total": 51, "secrets": 24, "additionalPlainNames": ["ARARA_CANARY_PROBE_SHA256", "GOOGLE_PLACES_ENABLED", "JOINT_BOOKING_CREATE_ENABLED", "VITE_CONNECT_FINANCIAL_LIVE_APP_ORIGIN", "VITE_CONNECT_FINANCIAL_LIVE_ENABLED", "VITE_CONNECT_FINANCIAL_LIVE_ENDPOINT"], "additionalPlainNamesAbsentFromLocalWranglerConfig": true },
   "sql": {
     "status": "verified",
     "projectRef": "pwmdzpvnatrvfpgcvnzg",
-    "checkedOn": "2026-10-28",
-    "latestAppliedVersion": "20261028210000",
+    "checkedOn": "2026-10-29",
+    "latestAppliedVersion": "20261029110031",
     "remoteOnlyVersions": ["20261025160000"],
     "localOnlyVersions": ["20261026190000", "20261027160000", "20261027190000", "20261027234500", "20261028010000"],
-    "note": "O histórico remoto inclui a migração aditiva do PIN 20261028210000, aplicada em 2026-10-28; as duas tabelas permanecem preservadas após o rollback do Worker. Outras diferenças de histórico registradas aqui não devem ser aplicadas automaticamente."
+    "note": "A migração aditiva do Indique e Ganhe Premium foi aplicada com a versão atribuída pela API 20261029110031. O SQL registado é idêntico ao ficheiro local renomeado para essa versão. Não reaplicar. A migração do PIN 20261028210000 e as demais diferenças históricas permanecem preservadas; não executar db push automaticamente."
   },
   "domains": ["bellza.pt", "www.bellza.pt"],
   "cron": ["*/10 * * * *"]

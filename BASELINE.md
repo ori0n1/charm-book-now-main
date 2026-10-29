@@ -1,6 +1,15 @@
 # Base oficial da produção Bellza — 2026-10-29
 
-## Produção ativa após ajuste do olho de privacidade
+## Produção ativa — Indique e Ganhe Premium v3
+
+- Worker `tanstack-start-app`: deployment `a8019422-ee5f-4b95-9ea1-0195f67d1d11`, versão `e11859e4-08a4-48da-9c21-ffcbe847e59a` ativa a 100% após o smoke test. Código-fonte do candidato: commit `5266185ff549b61ce55968c96cb4116e2245fdca`.
+- Candidato `referral-premium-active-v3.zip`: SHA-256 `E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98`. Rollback compatível `referral-premium-rollback-v3.zip`: SHA-256 `24271D202CC2B05B6DD289107431A5ABB067DBB6F46D1742BEBC71C2E8E4095B`. Configuração comum: SHA-256 `23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B`.
+- Cloudflare OAuth confirmou 51 bindings, incluindo 24 secrets, runtime `2025-09-24` com `nodejs_compat`, cron `*/10 * * * *` e domínios `bellza.pt` e `www.bellza.pt`. A configuração dos ZIPs coincide com a ativa.
+- Supabase, somente leitura: migração Premium `20261029110031` aplicada; SQL guardado idêntico ao ficheiro aprovado, funções e objetos efetivos confirmados. Não executar `db push` a partir desta pasta devido às diferenças históricas já registadas.
+- Smoke após publicação: inscrição por indicação e confirmação simulada passaram em 1280 e 390 px sem criar conta; FAQ pública renderizada com a regra nova; sete assets críticos servidos byte a byte como no ZIP; rotas administrativas protegidas por autenticação. Duas indicações históricas `legacy_credit` mantêm-se classificadas; não foram executadas cobranças nem atribuições reais de teste.
+- O rollback v3 conserva créditos históricos e grants Premium, deixando recompensas Premium novas pendentes. Nunca restaurar o Worker anterior à migração.
+
+## Histórico: produção após ajuste do olho de privacidade
 
 - Worker `tanstack-start-app`: deployment `f4dbe213-72f4-4311-93c6-5c2ee717fc08`, versão `dcf02180-34eb-4b6b-919a-5efc038292a3` ativa a 100%, ETag `23e9d9df615cfdcff4d496e7e9f4c57c990ef297ba184a7c200e56ed6773e39c`.
 - Snapshot de código: commit `0c04530`. O diff de produto altera somente quatro arquivos TSX de apresentação do olho de privacidade no Início, Financeiro e Histórico do Caixa. Sem SQL, backend, Stripe, cálculos ou permissões.
