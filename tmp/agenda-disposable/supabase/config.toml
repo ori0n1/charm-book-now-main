@@ -1,0 +1,14 @@
+project_id = "bellza-agenda-disposable-20261029"
+
+[api]
+port = 57921
+
+[db]
+port = 57922
+shadow_port = 57920
+
+[studio]
+port = 57923
+
+[inbucket]
+port = 57924

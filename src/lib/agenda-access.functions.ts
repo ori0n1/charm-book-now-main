@@ -92,6 +92,14 @@ async function assertJointServiceMember(admin: any, userId: string, studioId: st
   await resolveStudioRole(admin, userId, studioId);
 }
 
+async function assertJointServiceOwner(admin: any, userId: string, studioId: string) {
+  await assertGeneralStudioAccess(admin, userId, studioId);
+  const access = await resolveStudioRole(admin, userId, studioId);
+  if (access.role !== "studio_owner" && access.role !== "saas_owner") {
+    throw new Response("forbidden", { status: 403 });
+  }
+}
+
 export const getProtectedAgendaCatalog = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => AgendaCatalogInput.parse(input))
@@ -129,7 +137,7 @@ export const getProtectedJointPaymentStatus = createServerFn({ method: "POST" })
   .inputValidator((input) => JointPaymentStatusInput.parse(input))
   .handler(async ({ data, context }) => {
     const admin = getAdminClient() as any;
-    await assertJointServiceMember(admin, String((context as any).userId ?? ""), data.studioId);
+    await assertJointServiceOwner(admin, String((context as any).userId ?? ""), data.studioId);
     const { data: result, error } = await admin.rpc("joint_service_payment_status", {
       p_studio_id: data.studioId,
       p_appointment_id: data.appointmentId,
@@ -148,7 +156,7 @@ export const recordProtectedJointPayment = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
-    await assertJointServiceMember(admin, userId, data.studioId);
+    await assertJointServiceOwner(admin, userId, data.studioId);
     await rateLimitOrThrow({ key: `joint-payment:${userId}`, limit: 20, windowMs: 60_000 });
     const { data: result, error } = await admin.rpc("record_joint_onsite_payment", {
       p_studio_id: data.studioId,

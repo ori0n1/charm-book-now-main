@@ -1790,6 +1790,7 @@ function AgendaPage() {
             line.service_state === "confirmed" || line.service_state === "completed");
           const owner = Boolean(studio);
           const canCorrectFinancialReceipt = studio?.role === "studio_owner" || studio?.role === "saas_owner";
+          const canOperateJointPayments = canCorrectFinancialReceipt;
           const hasManualReceipt = cashPaymentRows.some(
             (row) => row.appointment_id === timelineDetailAppt.id && Number(row.amount) > 0,
           );
@@ -1918,7 +1919,7 @@ function AgendaPage() {
               }}
               actions={actions}
               payment={((!isJointBooking && financialSummary.needsStudioPaymentConfirmation) ||
-                (isJointBooking && owner && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
+                (isJointBooking && canOperateJointPayments && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
                   !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id) && split.pending > 0)) ? {
                 busy: receivingPaymentId === timelineDetailAppt.id,
                 enableInPersonMbWay,
@@ -1956,7 +1957,7 @@ function AgendaPage() {
                     setTimelineDetailId(null);
                   }
                 : undefined}
-              onServicePayment={isJointBooking && owner && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
+              onServicePayment={isJointBooking && canOperateJointPayments && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
                 !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id) && split.pending > 0
                 ? (serviceLineId) => {
                     const line = serviceSegments.find((candidate) => candidate.id === serviceLineId);
