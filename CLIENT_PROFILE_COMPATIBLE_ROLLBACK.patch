@@ -1,0 +1,12 @@
+diff --git a/src/routes/_authenticated/admin.clientes.tsx b/src/routes/_authenticated/admin.clientes.tsx
+--- a/src/routes/_authenticated/admin.clientes.tsx
++++ b/src/routes/_authenticated/admin.clientes.tsx
+@@ -202,7 +202,8 @@
+             .select(
+               "id,name,phone,email,notes,auth_user_id,avatar_url,booking_status,suspended_until,block_reason,date_of_birth",
+             )
+             .eq("studio_id", studio!.id)
++            .is("archived_at", null)
+             .order("id")
+             .range(from, to),
+         ),

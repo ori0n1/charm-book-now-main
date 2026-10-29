@@ -12,22 +12,50 @@ export const clientProfileInput = z.object({
 
 export type ClientProfileInput = z.infer<typeof clientProfileInput>;
 
+export const archiveClientInput = z.object({
+  studioId: z.string().uuid(),
+  clientId: z.string().uuid(),
+  confirmation: z.literal("EXCLUIR"),
+}).strict();
+
+export type ArchiveClientInput = z.infer<typeof archiveClientInput>;
+
 type ProfileDatabase = { from: (table: string) => any };
+
+async function requireStudioOwner(db: ProfileDatabase, userId: string, studioId: string) {
+  const { data: owner, error } = await db
+    .from("user_roles")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("studio_id", studioId)
+    .eq("role", "studio_owner")
+    .limit(1)
+    .maybeSingle();
+  if (error || !owner) throw new Response("studio_owner_required", { status: 403 });
+}
+
+export async function archiveClientForOwner(
+  db: ProfileDatabase,
+  userId: string,
+  data: ArchiveClientInput,
+) {
+  await requireStudioOwner(db, userId, data.studioId);
+  if (typeof (db as any).rpc !== "function") throw new Error("client_archive_unavailable");
+  const { error } = await (db as any).rpc("archive_client_for_owner", {
+    p_studio_id: data.studioId,
+    p_client_id: data.clientId,
+    p_confirmation: data.confirmation,
+  });
+  if (error) throw new Error(error.message || "client_archive_unavailable");
+  return { archived: true };
+}
 
 export async function updateClientProfileForOwner(
   db: ProfileDatabase,
   userId: string,
   data: ClientProfileInput,
 ) {
-  const { data: owner, error: ownerError } = await db
-    .from("user_roles")
-    .select("user_id")
-    .eq("user_id", userId)
-    .eq("studio_id", data.studioId)
-    .eq("role", "studio_owner")
-    .limit(1)
-    .maybeSingle();
-  if (ownerError || !owner) throw new Response("studio_owner_required", { status: 403 });
+  await requireStudioOwner(db, userId, data.studioId);
 
   const { data: client, error } = await db
     .from("clients")
@@ -40,6 +68,7 @@ export async function updateClientProfileForOwner(
     })
     .eq("id", data.clientId)
     .eq("studio_id", data.studioId)
+    .is("archived_at", null)
     .select("id,name,phone,email,notes,date_of_birth")
     .maybeSingle();
   if (error) throw new Error(error.code === "23505" ? "phone_already_used" : error.message);

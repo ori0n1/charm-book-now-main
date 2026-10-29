@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { clientProfileInput, updateClientProfileForOwner } from "@/lib/client-profile-core";
+import { archiveClientForOwner, archiveClientInput, clientProfileInput, updateClientProfileForOwner } from "@/lib/client-profile-core";
 
 export const getClientProfileEditPermission = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -23,3 +23,8 @@ export const updateClientProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => clientProfileInput.parse(input))
   .handler(({ data, context }) => updateClientProfileForOwner(context.supabase, context.userId, data));
+
+export const archiveClientProfile = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => archiveClientInput.parse(input))
+  .handler(({ data, context }) => archiveClientForOwner(context.supabase, context.userId, data));

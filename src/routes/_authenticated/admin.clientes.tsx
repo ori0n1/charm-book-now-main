@@ -4,13 +4,25 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
   AlertTriangle,
+  ArrowLeft,
+  BarChart3,
   CalendarDays,
+  Cake,
+  CalendarCheck2,
+  CalendarX2,
   ChevronDown,
+  Clock3,
   Eye,
+  Heart,
+  Mail,
   MessageCircle,
   MoreHorizontal,
+  Pencil,
+  Phone,
   Search,
   ShieldAlert,
+  Star,
+  Trash2,
   TrendingUp,
   UserRound,
   X,
@@ -36,7 +48,7 @@ import {
 import { ClientAvatar } from "@/components/client-avatar";
 import { AgendaExportButton } from "@/components/agenda/agenda-export-button";
 import { ExpandableList } from "@/components/ui/expandable-list";
-import { getClientProfileEditPermission, updateClientProfile } from "@/lib/client-profile.functions";
+import { archiveClientProfile, getClientProfileEditPermission, updateClientProfile } from "@/lib/client-profile.functions";
 import {
   assessClientRisk,
   isActiveFutureAppointment,
@@ -203,6 +215,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
               "id,name,phone,email,notes,auth_user_id,avatar_url,booking_status,suspended_until,block_reason,date_of_birth",
             )
             .eq("studio_id", studio!.id)
+            .is("archived_at", null)
             .order("id")
             .range(from, to),
         ),
@@ -283,7 +296,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
 
   return (
     <div className="space-y-3 md:space-y-4">
-      <header className="border-b border-border/70 pb-3 md:pb-4">
+      <header className={selectedClient ? "hidden" : "border-b border-border/70 pb-3 md:pb-4"}>
         <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.25em] text-emerald-700 dark:text-emerald-400">
@@ -307,7 +320,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         </div>
       </header>
 
-      <section className="rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3">
+      <section className={selectedClient ? "hidden" : "rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3"}>
         <div className="grid gap-2 md:grid-cols-[1fr_13.5rem]">
           <label className="flex h-10 items-center gap-2 rounded-xl border border-border bg-background/80 px-3 text-sm shadow-sm transition focus-within:ring-2 focus-within:ring-ring/15 md:h-11">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -353,7 +366,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         />
       )}
 
-      <section className="hidden lg:block">
+      <section className={selectedClient ? "hidden" : "hidden lg:block"}>
         {filteredClients.length === 0 ? (
           <div className="rounded-2xl border border-border bg-card">
             <EmptyState />
@@ -366,7 +379,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         )}
       </section>
 
-      <section className="space-y-2 lg:hidden">
+      <section className={selectedClient ? "hidden" : "space-y-2 lg:hidden"}>
         {filteredClients.length === 0 ? (
           <div className="rounded-2xl border border-border bg-card">
             <EmptyState />
@@ -1104,6 +1117,7 @@ function ClientDetails({
   onSaved: () => void;
 }) {
   const saveProfile = useServerFn(updateClientProfile);
+  const archiveProfile = useServerFn(archiveClientProfile);
   const checkEditPermission = useServerFn(getClientProfileEditPermission);
   const editPermission = useQuery({
     queryKey: ["client-profile-edit-permission", studioId, userId],
@@ -1129,6 +1143,11 @@ function ClientDetails({
   const [saving, setSaving] = useState(false);
   const [showAppointmentDetails, setShowAppointmentDetails] = useState(false);
   const [statusPanelOpen, setStatusPanelOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "history" | "preferences">("overview");
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveConfirmation, setArchiveConfirmation] = useState("");
+  const [archiveSaving, setArchiveSaving] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
   const financialVisible = useContext(ClientFinancialVisible);
 
   async function saveClientProfile(event: React.FormEvent<HTMLFormElement>) {
@@ -1169,6 +1188,26 @@ function ClientDetails({
     if (!error) {
       setStatusPanelOpen(false);
       onSaved();
+    }
+  }
+
+  async function archiveClient() {
+    if (!canEdit || archiveConfirmation !== "EXCLUIR" || archiveSaving) return;
+    setArchiveSaving(true);
+    setArchiveError("");
+    try {
+      await archiveProfile({ data: { studioId, clientId: client.id, confirmation: "EXCLUIR" } });
+      await onSaved();
+      onClose();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      setArchiveError(message.includes("client_archive_linked_account")
+        ? "Este cliente tem uma conta ligada. Não é possível excluí-lo com segurança."
+        : message.includes("client_archive_future_appointment")
+          ? "Este cliente tem uma marcação futura. Resolva-a antes de excluir."
+          : "Não foi possível excluir este cliente com segurança. Nenhum dado foi alterado.");
+    } finally {
+      setArchiveSaving(false);
     }
   }
 
@@ -1228,324 +1267,54 @@ function ClientDetails({
   const display = getClientDisplayInfo(client);
 
   return (
-    <section className="max-w-5xl overflow-hidden rounded-2xl border border-border bg-card p-3 shadow-sm md:p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <ClientAvatar name={display.name} avatarUrl={client.avatarUrl} size="lg" />
-          <div className="min-w-0">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Ficha do cliente
-            </p>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
-              <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight">{display.name}</h2>
-              {primaryBadge && <ClientBadge badge={primaryBadge} compact />}
-            </div>
-            <p className="mt-1 truncate text-sm text-muted-foreground">
-              {display.subtitle ?? client.phone}
-            </p>
-            {display.subtitle && (
-              <p className="mt-0.5 truncate text-sm text-muted-foreground">{client.phone}</p>
-            )}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Fechar ficha do cliente"
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border/70 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-        >
-          <X className="h-4 w-4" />
-        </button>
+    <section className="mx-auto max-w-5xl space-y-3 rounded-[2rem] bg-[#f8f7f5] p-2.5 text-slate-950 dark:bg-slate-950 dark:text-white sm:p-5">
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 px-1 py-1">
+        <button type="button" onClick={onClose} aria-label="Fechar ficha do cliente" className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900"><ArrowLeft className="h-4 w-4" /></button>
+        <h2 className="text-center text-base font-semibold sm:text-lg">Ficha do cliente</h2>
+        {canEdit ? <button type="button" onClick={() => { setActiveTab("overview"); setProfileOpen((open) => !open); }} className="flex h-10 items-center gap-1 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold shadow-sm dark:border-slate-700 dark:bg-slate-900"><Pencil className="h-3.5 w-3.5" />Editar</button> : <span className="w-10" />}
       </div>
-
-      <div className="mt-4 rounded-2xl border border-border/70 bg-background/55 p-3 md:p-4">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-semibold">Dados da cliente</p>
-          {editPermission.isPending && (
-            <span role="status" className="text-[11px] text-muted-foreground">A verificar acesso...</span>
-          )}
-          {editPermission.isError && !canEdit && (
-            <button type="button" onClick={() => void editPermission.refetch()}
-              className="inline-flex h-8 items-center rounded-full border border-border/70 px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground">
-              Verificar acesso
-            </button>
-          )}
-          {canEdit && (
-            <button type="button" onClick={() => { setProfileOpen((open) => !open); setProfileError(""); }}
-              className="inline-flex h-8 items-center rounded-full border border-border/70 px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground">
-              {profileOpen ? "Fechar edição" : "Editar ficha"}
-            </button>
-          )}
-        </div>
-        {profileSaved && <p role="status" className="mt-2 text-sm text-emerald-700">Ficha guardada.</p>}
-        {profileOpen && canEdit ? (
-          <form onSubmit={saveClientProfile} className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="text-xs font-semibold">Nome
-              <input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)}
-                className="mt-1 block h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-normal" />
-            </label>
-            <label className="text-xs font-semibold">Telefone
-              <input required minLength={6} maxLength={32} type="tel" value={phone} onChange={(event) => setPhone(event.target.value)}
-                className="mt-1 block h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-normal" />
-            </label>
-            <label className="text-xs font-semibold">Email
-              <input maxLength={254} type="email" value={email} onChange={(event) => setEmail(event.target.value)}
-                className="mt-1 block h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-normal" />
-            </label>
-            <label className="min-w-0 pb-1 text-xs font-semibold">Data de nascimento
-              <span className="mt-1 block h-10 w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-card focus-within:ring-2 focus-within:ring-ring/15">
-                <input type="date" value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)}
-                  className="block h-full w-full min-w-0 max-w-full appearance-none border-0 bg-transparent px-3 text-sm font-normal outline-none" />
-              </span>
-            </label>
-            <label className="text-xs font-semibold sm:col-span-2">Notas internas
-              <textarea maxLength={2000} rows={3} value={notes} onChange={(event) => setNotes(event.target.value)}
-                className="mt-1 block w-full rounded-xl border border-border bg-card px-3 py-2 text-sm font-normal" />
-            </label>
-            {profileError && <p role="alert" className="text-sm text-red-700 sm:col-span-2">{profileError}</p>}
-            <button type="submit" disabled={profileSaving}
-              className="h-10 rounded-xl bg-foreground px-4 text-sm font-semibold text-background disabled:opacity-50 sm:justify-self-start">
-              {profileSaving ? "A guardar..." : "Guardar ficha"}
-            </button>
-          </form>
-        ) : (
-          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-            <div><dt className="text-xs text-muted-foreground">Nome</dt><dd>{client.name}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Telefone</dt><dd>{client.phone}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Email</dt><dd>{client.email || "Não informado"}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Data de nascimento</dt><dd>{client.dateOfBirth || "Não informada"}</dd></div>
-            <div className="sm:col-span-2"><dt className="text-xs text-muted-foreground">Notas internas</dt><dd className="whitespace-pre-wrap">{client.notes || "Sem notas"}</dd></div>
-          </dl>
-        )}
+      <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+        <div className="shrink-0 rounded-full bg-violet-50 p-1 dark:bg-violet-950"><ClientAvatar name={display.name} avatarUrl={client.avatarUrl} size="lg" /></div>
+        <div className="min-w-0 flex-1"><h3 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{display.name}</h3><div className="mt-1 flex flex-wrap gap-1">{primaryBadge && <ClientBadge badge={primaryBadge} compact />}{secondaryBadges.map((badge) => <ClientBadge key={badge.label} badge={badge} compact />)}</div>{display.subtitle && <p className="mt-1 text-xs text-slate-500">{display.subtitle}</p>}<p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{client.phone}</p></div>
+        <a href={whatsAppUrl(client, studioName)} target="_blank" rel="noreferrer" aria-label="Abrir WhatsApp do cliente" className="flex h-10 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"><MessageCircle className="h-4 w-4" /><span className="hidden sm:inline">WhatsApp</span></a>
       </div>
-
-      <div className="mt-4 rounded-2xl border border-border/70 bg-background/55 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm font-semibold">Resumo das marcações</p>
-          <button
-            type="button"
-            onClick={() => setShowAppointmentDetails((open) => !open)}
-            className="inline-flex h-8 items-center gap-1 rounded-full border border-border/70 px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          >
-            {showAppointmentDetails ? "Ocultar" : "Ver detalhes"}
-            <ChevronDown
-              className={`h-3.5 w-3.5 transition ${showAppointmentDetails ? "rotate-180" : ""}`}
-            />
-          </button>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 min-[430px]:grid-cols-5">
-          {mainAppointmentMetrics.map((metric) => (
-            <CompactStat key={metric.label} label={metric.label} value={metric.value} />
-          ))}
-        </div>
-        {showAppointmentDetails && (
-          <div className="mt-3 border-t border-border/60 pt-3">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-[430px]:grid-cols-3">
-              {visibleSecondaryMetrics.map((metric) => (
-                <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />
-              ))}
-            </div>
-          </div>
-        )}
+      <div className="grid grid-cols-4 divide-x divide-slate-100 rounded-3xl border border-slate-100 bg-white py-3 shadow-sm dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
+        {[
+          { label: "Visitas", value: String(client.completedAppointments), icon: CalendarDays, tone: "text-blue-600 bg-blue-50" },
+          { label: "Concluídas", value: String(client.completedAppointments), icon: CalendarCheck2, tone: "text-emerald-600 bg-emerald-50" },
+          { label: "Faltas", value: String(client.noShowAppointments), icon: CalendarX2, tone: "text-rose-600 bg-rose-50" },
+          { label: "Frequência", value: client.avgIntervalDays ? `${client.avgIntervalDays} dias` : "—", icon: BarChart3, tone: "text-violet-600 bg-violet-50" },
+        ].map(({ label, value, icon: Icon, tone }) => <div key={label} className="flex min-w-0 flex-col items-center px-1 text-center sm:px-3"><span className={`flex h-8 w-8 items-center justify-center rounded-full ${tone}`}><Icon className="h-4 w-4" /></span><strong className="mt-1 truncate text-sm sm:text-base">{value}</strong><span className="truncate text-[10px] text-slate-500 sm:text-xs">{label}</span></div>)}
       </div>
-
-      {explainedTotal !== client.totalAppointments && (
-        <p className="mt-2 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:text-amber-200">
-          Existem estados antigos sem categoria clara. O total apresentado mantém todas as marcações
-          reais deste cliente.
-        </p>
-      )}
-
-      {faltasWarning && (
-        <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <p>
-            {client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.
-          </p>
-        </div>
-      )}
-
-      {birthdayToday && (
-        <div className="mt-4 rounded-3xl border border-amber-500/25 bg-amber-500/10 p-4 text-amber-900 dark:text-amber-100">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-sm font-semibold">Hoje é aniversário deste cliente.</p>
-              <p className="mt-1 text-xs leading-relaxed opacity-80">
-                Mensagem de aniversário pendente.
-              </p>
-            </div>
-            <a
-              href={birthdayWhatsAppUrl(client)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-2xl bg-foreground px-4 text-xs font-bold uppercase tracking-wide text-background"
-            >
-              <MessageCircle className="h-4 w-4" />
-              Enviar agora
-            </a>
-          </div>
-        </div>
-      )}
-
-      <div className="mt-4 rounded-2xl border border-border/70 bg-background/55 p-3 md:p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-              Contexto do cliente
-            </p>
-          </div>
-          {primaryBadge && <ClientBadge badge={primaryBadge} compact />}
-        </div>
-        {secondaryBadges.length > 0 && (
-          <p className="mt-1 text-xs leading-snug text-muted-foreground">
-            Também: {secondaryBadges.map((badge) => badge.label).join(", ")}
-          </p>
-        )}
-
-        {relationshipInsight && (
-          <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 px-3 py-2.5 text-amber-900 dark:text-amber-100">
-            <div className="flex flex-col gap-2 min-[430px]:flex-row min-[430px]:items-center min-[430px]:justify-between">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold leading-snug">
-                  {hasDelayedReturn ? "Cliente com retorno atrasado" : relationshipInsight}
-                </p>
-                {hasDelayedReturn &&
-                  client.daysSinceLastVisit !== null &&
-                  client.suggestedReturnAt && (
-                    <p className="mt-0.5 text-xs leading-snug text-amber-800/75 dark:text-amber-200/75">
-                      Não retorna há {client.daysSinceLastVisit} dia
-                      {client.daysSinceLastVisit === 1 ? "" : "s"}. Pelo histórico de visitas, o
-                      retorno era esperado em {formatDate(client.suggestedReturnAt)}.
-                    </p>
-                  )}
-              </div>
-              <a
-                href={whatsAppUrl(client, studioName)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-amber-600/20 bg-background/70 px-3 text-[11px] font-semibold text-foreground transition hover:bg-background"
-              >
-                <MessageCircle className="h-3.5 w-3.5" />
-                Enviar mensagem
-              </a>
-            </div>
-          </div>
-        )}
-
-        <div className="mt-3 grid grid-cols-1 gap-2 min-[430px]:grid-cols-3">
-          {keyContextMetrics.map((metric) => (
-            <ContextMetric
-              key={metric.label}
-              label={metric.label}
-              value={metric.value}
-              money={metric.money}
-            />
-          ))}
-        </div>
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          <ContextGroup title="Relacionamento" items={relationshipDetails} />
-          <ContextGroup title="Preferências" items={preferenceDetails} />
-        </div>
-        {automationEvents.length > 0 && (
-          <div className="mt-3 rounded-2xl border border-border/60 bg-card/50 px-3 py-2">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-              Automações do cliente
-            </p>
-            <div className="mt-2 space-y-1.5">
-              {automationEvents.map((event) => (
-                <p key={event} className="text-sm leading-snug text-muted-foreground">
-                  {event}
-                </p>
-              ))}
-            </div>
-          </div>
-        )}
+      <div role="tablist" aria-label="Secções da ficha" className="grid grid-cols-3 gap-1 rounded-full border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        {[{ id: "overview" as const, label: "Visão geral", icon: UserRound }, { id: "history" as const, label: "Histórico", icon: CalendarDays }, { id: "preferences" as const, label: "Preferências", icon: Heart }].map(({ id, label, icon: Icon }) => <button key={id} type="button" role="tab" aria-selected={activeTab === id} onClick={() => setActiveTab(id)} className={`flex min-w-0 items-center justify-center gap-1 rounded-full px-1 py-2 text-[11px] font-semibold transition sm:gap-2 sm:text-sm ${activeTab === id ? "bg-slate-950 text-white dark:bg-white dark:text-slate-950" : "text-slate-600 dark:text-slate-300"}`}><Icon className="h-4 w-4 shrink-0" /><span className="truncate">{label}</span></button>)}
       </div>
-
-      <div className="mt-4 min-w-0 max-w-full overflow-x-hidden rounded-2xl border border-border/70 bg-background/55 p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <ShieldAlert className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="truncate text-sm font-semibold">Status: {statusLabel}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setStatusPanelOpen((open) => !open)}
-            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full border border-border/70 px-3 text-[11px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          >
-            {statusPanelOpen ? "Fechar" : "Alterar"}
-            <ChevronDown className={`h-3.5 w-3.5 transition ${statusPanelOpen ? "rotate-180" : ""}`} />
-          </button>
+      {activeTab === "overview" && <div role="tabpanel" className="space-y-3">
+        <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
+          <div className="flex items-center justify-between gap-2"><h3 className="flex items-center gap-2 text-sm font-bold sm:text-base"><UserRound className="h-5 w-5 text-slate-500" />Informações principais</h3>{editPermission.isPending && <span role="status" className="text-xs text-slate-500">A verificar acesso...</span>}{editPermission.isError && !canEdit && <button type="button" onClick={() => void editPermission.refetch()} className="rounded-full border px-3 py-1.5 text-xs">Verificar acesso</button>}{canEdit && <button type="button" onClick={() => { setProfileOpen((open) => !open); setProfileError(""); }} className="flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold dark:border-slate-700"><Pencil className="h-3.5 w-3.5" />Editar</button>}</div>
+          {profileSaved && <p role="status" className="mt-2 text-sm text-emerald-700">Ficha guardada.</p>}
+          {profileOpen && canEdit ? <form onSubmit={saveClientProfile} className="mt-4 grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-semibold">Nome<input required minLength={2} maxLength={120} value={name} onChange={(event) => setName(event.target.value)} className="mt-1 block h-10 w-full rounded-xl border bg-white px-3 text-sm font-normal text-slate-950" /></label>
+            <label className="text-xs font-semibold">Telefone<input required minLength={6} maxLength={32} type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} className="mt-1 block h-10 w-full rounded-xl border bg-white px-3 text-sm font-normal text-slate-950" /></label>
+            <label className="text-xs font-semibold">Email<input maxLength={254} type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 block h-10 w-full rounded-xl border bg-white px-3 text-sm font-normal text-slate-950" /></label>
+            <label className="text-xs font-semibold">Data de nascimento<input type="date" value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)} className="mt-1 block h-10 w-full rounded-xl border bg-white px-3 text-sm font-normal text-slate-950" /></label>
+            <label className="text-xs font-semibold sm:col-span-2">Notas internas<textarea maxLength={2000} rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} className="mt-1 block w-full rounded-xl border bg-white px-3 py-2 text-sm font-normal text-slate-950" /></label>
+            {profileError && <p role="alert" className="text-sm text-rose-700 sm:col-span-2">{profileError}</p>}
+            <button type="submit" disabled={profileSaving} className="h-10 rounded-xl bg-slate-950 px-4 text-sm font-semibold text-white disabled:opacity-50 sm:justify-self-start">{profileSaving ? "A guardar..." : "Guardar ficha"}</button>
+          </form> : <dl className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
+            <div className="grid grid-cols-[1rem_6rem_1fr] items-start gap-2 py-3 text-sm sm:grid-cols-[1rem_10rem_1fr]"><Phone className="h-4 w-4 text-slate-500" /><dt className="text-slate-500">Telefone</dt><dd className="break-words font-medium">{client.phone}</dd></div>
+            <div className="grid grid-cols-[1rem_6rem_1fr] items-start gap-2 py-3 text-sm sm:grid-cols-[1rem_10rem_1fr]"><Mail className="h-4 w-4 text-slate-500" /><dt className="text-slate-500">Email</dt><dd className="break-words font-medium">{client.email || "Não informado"}</dd></div>
+            <div className="grid grid-cols-[1rem_6rem_1fr] items-start gap-2 py-3 text-sm sm:grid-cols-[1rem_10rem_1fr]"><Cake className="h-4 w-4 text-slate-500" /><dt className="text-slate-500">Nascimento</dt><dd className="font-medium">{client.dateOfBirth ? formatBirthdayLabel(client.dateOfBirth) : "Não informado"}</dd></div>
+            <div className="grid grid-cols-[1rem_6rem_1fr] items-start gap-2 py-3 text-sm sm:grid-cols-[1rem_10rem_1fr]"><Pencil className="h-4 w-4 text-slate-500" /><dt className="text-slate-500">Notas internas</dt><dd className="whitespace-pre-wrap break-words font-medium">{client.notes || "Sem notas"}</dd></div>
+          </dl>}
         </div>
-        {statusPanelOpen && (
-          <>
-        <div className="mt-3 grid min-w-0 grid-cols-1 gap-2 min-[430px]:grid-cols-2 md:grid-cols-3 auto-rows-fr">
-          <StatusOption
-            active={status === "active"}
-            title="Ativo"
-            description="Marcações normais."
-            onClick={() => {
-              setStatus("active");
-              setUntil("");
-            }}
-          />
-          <StatusOption
-            active={status === "suspended"}
-            title="Suspenso temporariamente"
-            description="Até uma data definida."
-            onClick={() => setStatus("suspended")}
-          />
-          <StatusOption
-            active={status === "blocked"}
-            title="Bloqueado definitivamente"
-            description="Sem novas marcações."
-            onClick={() => {
-              setStatus("blocked");
-              setUntil("");
-            }}
-          />
-        </div>
-
-        {status === "suspended" && (
-          <label className="mt-3 block w-full min-w-0 max-w-full overflow-hidden">
-            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-              Suspenso até
-            </span>
-            <PremiumDatePicker
-              value={until}
-              onChange={setUntil}
-              placeholder="dd/mm/aaaa"
-              className="mt-1.5"
-            />
-          </label>
-        )}
-
-        {status !== "active" && (
-          <label className="mt-3 block min-w-0">
-            <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">
-              Motivo interno opcional
-            </span>
-            <textarea
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-              rows={3}
-              placeholder="Nota visivel apenas no painel."
-              className="mt-1.5 w-full min-w-0 max-w-full resize-none rounded-2xl border border-border bg-card px-4 py-3 text-sm outline-none placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-ring/20 box-border"
-            />
-          </label>
-        )}
-
-        <button
-          type="button"
-          onClick={saveStatus}
-          disabled={saving || (status === "suspended" && !until)}
-          className="mt-4 h-12 w-full rounded-2xl bg-foreground text-sm font-bold text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 md:w-auto md:px-6"
-        >
-          {saving ? "A guardar..." : "Guardar status"}
-        </button>
-          </>
-        )}
-      </div>
+        <div className="grid gap-3 md:grid-cols-2"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><Star className="h-5 w-5 text-amber-500" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><BarChart3 className="h-5 w-5 text-blue-600" />Estatísticas</h3><div className="mt-3 space-y-2">{keyContextMetrics.map((metric) => <div key={metric.label} className="flex justify-between gap-3 text-xs sm:text-sm"><span className="text-slate-500">{metric.label}</span><strong className={metric.money ? "text-emerald-700" : ""}>{metric.value}</strong></div>)}</div></div></div>
+        {relationshipInsight && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><div className="flex items-start gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-sm font-bold">{hasDelayedReturn ? "Cliente com retorno atrasado" : relationshipInsight}</p>{hasDelayedReturn && client.daysSinceLastVisit !== null && client.suggestedReturnAt && <p className="mt-1 text-xs">Não retorna há {client.daysSinceLastVisit} dias. O retorno era esperado em {formatDate(client.suggestedReturnAt)}.</p>}</div></div><a href={whatsAppUrl(client, studioName)} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar mensagem</a></div>}
+        <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="flex items-center gap-2 text-sm font-bold"><ShieldAlert className="h-4 w-4" />Status: {statusLabel}</h3><button type="button" onClick={() => setStatusPanelOpen((open) => !open)} className="rounded-full border px-3 py-1.5 text-xs">{statusPanelOpen ? "Fechar" : "Alterar"}</button></div>{statusPanelOpen && <div className="mt-3 space-y-3"><div className="grid gap-2 sm:grid-cols-3"><StatusOption active={status === "active"} title="Ativo" description="Marcações normais." onClick={() => { setStatus("active"); setUntil(""); }} /><StatusOption active={status === "suspended"} title="Suspenso temporariamente" description="Até uma data definida." onClick={() => setStatus("suspended")} /><StatusOption active={status === "blocked"} title="Bloqueado definitivamente" description="Sem novas marcações." onClick={() => { setStatus("blocked"); setUntil(""); }} /></div>{status === "suspended" && <label className="block text-xs">Suspenso até<PremiumDatePicker value={until} onChange={setUntil} placeholder="dd/mm/aaaa" className="mt-1" /></label>}{status !== "active" && <label className="block text-xs">Motivo interno opcional<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} className="mt-1 w-full rounded-xl border bg-white p-2 text-sm text-slate-950" /></label>}<button type="button" onClick={saveStatus} disabled={saving || (status === "suspended" && !until)} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? "A guardar..." : "Guardar status"}</button></div>}</div>
+      </div>}
+      {activeTab === "history" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold">Resumo das marcações</h3><button type="button" onClick={() => setShowAppointmentDetails((open) => !open)} className="flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs">{showAppointmentDetails ? "Ocultar" : "Ver detalhes"}<ChevronDown className={`h-3.5 w-3.5 ${showAppointmentDetails ? "rotate-180" : ""}`} /></button></div><div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">{mainAppointmentMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} />)}</div>{showAppointmentDetails && <div className="mt-4 grid grid-cols-3 gap-3 border-t pt-3">{visibleSecondaryMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />)}</div>}</div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><ContextGroup title="Relacionamento" items={relationshipDetails} /><p className="mt-3 text-xs text-slate-500">Último serviço: {client.lastService}</p></div>{explainedTotal !== client.totalAppointments && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Existem estados antigos sem categoria clara. O total mantém todas as marcações reais deste cliente.</p>}{faltasWarning && <p className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.</p>}</div>}
+      {activeTab === "preferences" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><Heart className="h-5 w-5 text-violet-600" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div>{birthdayToday && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><p className="text-sm font-semibold">Hoje é aniversário deste cliente. Mensagem de aniversário pendente.</p><a href={birthdayWhatsAppUrl(client)} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar agora</a></div>}{automationEvents.length > 0 && <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold">Automações do cliente</h3>{automationEvents.map((event) => <p key={event} className="mt-2 text-sm text-slate-600">{event}</p>)}</div>}</div>}
+      {canEdit && <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-4"><button type="button" onClick={() => { setArchiveOpen((open) => !open); setArchiveError(""); setArchiveConfirmation(""); }} className="flex w-full items-center gap-3 text-left"><Trash2 className="h-5 w-5 shrink-0 text-rose-600" /><span className="min-w-0 flex-1"><strong className="block text-sm text-rose-700">Excluir cliente</strong><span className="block text-xs text-slate-600">Anonimiza o perfil e preserva marcações e histórico financeiro.</span></span><ChevronDown className={`h-4 w-4 text-rose-600 ${archiveOpen ? "rotate-180" : ""}`} /></button>{archiveOpen && <div className="mt-4 border-t border-rose-200 pt-4"><p className="text-xs text-rose-800">Para confirmar, escreva EXCLUIR. Contas ligadas e marcações futuras ficam protegidas.</p><label className="mt-3 block text-xs font-semibold">Confirmação<input value={archiveConfirmation} onChange={(event) => setArchiveConfirmation(event.target.value)} autoComplete="off" className="mt-1 block h-10 w-full rounded-xl border border-rose-300 bg-white px-3 text-sm text-slate-950" /></label>{archiveError && <p role="alert" className="mt-2 text-xs text-rose-700">{archiveError}</p>}<button type="button" onClick={archiveClient} disabled={archiveConfirmation !== "EXCLUIR" || archiveSaving} className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{archiveSaving ? "A excluir..." : "Confirmar exclusão"}</button></div>}</div>}
     </section>
   );
 }
@@ -1694,8 +1463,8 @@ function ContextGroup({
   items: Array<{ label: string; value: string }>;
 }) {
   return (
-    <div className="rounded-xl border border-border/50 bg-card/40 px-3 py-2">
-      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{title}</p>
+    <div className={title ? "rounded-xl border border-border/50 bg-card/40 px-3 py-2" : "mt-3"}>
+      {title && <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">{title}</p>}
       <dl className="mt-2 grid gap-1.5">
         {items.map((item) => (
           <div key={item.label} className="flex min-w-0 items-center justify-between gap-3 text-xs">
