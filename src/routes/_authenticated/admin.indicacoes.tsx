@@ -82,7 +82,7 @@ function IndicacoesPage() {
 
 // ── Hero section ──────────────────────────────────────────────────────────────
 
-function HeroSection({ data }: { data: ReferralInfo }) {
+export function HeroSection({ data }: { data: ReferralInfo }) {
   const [copied, setCopied] = useState(false);
 
   async function copy() {
@@ -125,12 +125,11 @@ function HeroSection({ data }: { data: ReferralInfo }) {
         </div>
         <h1 className="mt-3 text-2xl font-light tracking-tight md:text-3xl">
           Convide outros estúdios.<br />
-          <span className="font-medium text-emerald-700 dark:text-emerald-400">Ganhe meses Bellza grátis.</span>
+          <span className="font-medium text-emerald-700 dark:text-emerald-400">Ganhe 14 dias de Premium.</span>
         </h1>
         <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-          Partilhe o seu link único. Cada estúdio que criar conta e mantiver a assinatura ativa
-          durante 30 dias gera <strong className="text-foreground">+8,99 € de crédito Bellza</strong> para si —
-          aplicado automaticamente na próxima renovação.
+          Partilhe o seu link. Por cada novo estúdio que subscreva Pro ou Premium e mantenha
+          a assinatura ativa durante 30 dias, receba <strong className="text-foreground">14 dias de Premium</strong> se não pagar Premium.
         </p>
 
         <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -173,9 +172,14 @@ function HeroSection({ data }: { data: ReferralInfo }) {
 
 // ── Stats grid ────────────────────────────────────────────────────────────────
 
-function StatsGrid({ data }: { data: ReferralInfo }) {
-  const creditEuros = (data.creditsAvailableCents / 100).toFixed(2).replace(".", ",");
-  const creditsLeft = data.creditsLimit - data.creditsApplied - data.creditsAvailable;
+export function StatsGrid({ data }: { data: ReferralInfo }) {
+  const now = Date.now();
+  const premiumDays = data.premiumGrants.reduce((total, grant) => {
+    const start = Math.max(Date.parse(grant.startsAt), now);
+    return total + Math.max(0, Math.ceil((Date.parse(grant.endsAt) - start) / 86_400_000));
+  }, 0);
+  const rewardsUsed = data.creditsApplied + data.creditsAvailable + data.premiumGrants.length;
+  const rewardsLeft = Math.max(0, data.creditsLimit - rewardsUsed);
 
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -184,10 +188,10 @@ function StatsGrid({ data }: { data: ReferralInfo }) {
       <StatCard icon={Award} label="Aprovadas" value={String(data.totalApproved)} color="emerald" />
       <StatCard
         icon={Gift}
-        label="Crédito disponível"
-        value={data.creditsAvailable > 0 ? `${creditEuros} €` : "0,00 €"}
-        color={data.creditsAvailable > 0 ? "emerald" : "muted"}
-        note={`Máx. ${data.creditsLimit} créditos${creditsLeft > 0 ? ` · restam ${creditsLeft}` : " (limite atingido)"}`}
+        label="Premium ganho"
+        value={`${premiumDays} dias`}
+        color={premiumDays > 0 ? "emerald" : "muted"}
+        note={`Até ${data.creditsLimit} recompensas · restam ${rewardsLeft}${data.creditsAvailable > 0 ? ` · ${data.creditsAvailable} ${data.creditsAvailable === 1 ? "crédito anterior" : "créditos anteriores"}` : ""}`}
       />
     </div>
   );
@@ -230,7 +234,7 @@ function StatCard({
 
 // ── How it works ──────────────────────────────────────────────────────────────
 
-function HowItWorks() {
+export function HowItWorks() {
   const steps = [
     {
       n: 1,
@@ -244,8 +248,8 @@ function HowItWorks() {
     },
     {
       n: 3,
-      title: "Ganhe crédito automático",
-      body: "Após 30 dias de assinatura ativa, ganha 8,99 € de crédito aplicado automaticamente na sua próxima renovação.",
+      title: "Receba 14 dias de Premium",
+      body: "Após 30 dias de assinatura paga ativa, recebe 14 dias de Premium se não pagar Premium.",
     },
   ];
 
@@ -269,8 +273,8 @@ function HowItWorks() {
       </div>
       <div className="border-t border-border/60 bg-muted/20 px-5 py-3 md:px-6">
         <p className="text-[11px] text-muted-foreground/80">
-          O crédito é interno Bellza e aplica-se automaticamente na renovação. Não é dinheiro, não é transferível e não pode ser levantado.
-          Máximo de 6 créditos acumulados (fase inicial). Indicações com cancelamento nos primeiros 30 dias são canceladas.
+          Até 6 recompensas por estúdio. Os dias acumulam-se e começam após o teste ou os dias Premium já ganhos.
+          Quem já paga Premium não recebe dias adicionais. Indicações canceladas nos primeiros 30 dias não contam.
         </p>
       </div>
     </section>
@@ -279,7 +283,7 @@ function HowItWorks() {
 
 // ── History section ───────────────────────────────────────────────────────────
 
-function HistorySection({ data }: { data: ReferralInfo }) {
+export function HistorySection({ data }: { data: ReferralInfo }) {
   if (!data.history.length) {
     return (
       <section className="overflow-hidden rounded-3xl border border-border bg-card shadow-sm">
@@ -310,13 +314,18 @@ function HistorySection({ data }: { data: ReferralInfo }) {
         className="divide-y divide-border/50"
         getKey={(referral) => referral.id}
         moreLabel={(hidden) => `Ver mais ${hidden} indicação${hidden !== 1 ? "ões" : ""}`}
-        renderItem={(referral) => <ReferralRow referral={referral} />}
+        renderItem={(referral) => (
+          <ReferralRow
+            referral={referral}
+            grant={data.premiumGrants.find((item) => item.referralId === referral.id)}
+          />
+        )}
       />
     </section>
   );
 }
 
-function ReferralRow({ referral }: { referral: ReferralInfo["history"][number] }) {
+function ReferralRow({ referral, grant }: { referral: ReferralInfo["history"][number]; grant?: ReferralInfo["premiumGrants"][number] }) {
   const statusMap: Record<ReferralStatus, { label: string; icon: typeof Check; cls: string }> = {
     pending_validation: {
       label: "Em validação",
@@ -355,10 +364,13 @@ function ReferralRow({ referral }: { referral: ReferralInfo["history"][number] }
           <p className="text-[11px] text-muted-foreground">{dateStr}</p>
         </div>
       </div>
-      {referral.status === "approved" && (
+      {referral.status === "approved" && grant && (
         <span className="rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-          +8,99 € crédito
+          +14 dias Premium
         </span>
+      )}
+      {referral.status === "approved" && referral.rewardKind === "legacy_credit" && (
+        <span className="text-[11px] text-muted-foreground">Crédito anterior</span>
       )}
       {referral.status === "pending_validation" && (
         <span className="text-[11px] text-muted-foreground/70">aguarda 30 dias</span>

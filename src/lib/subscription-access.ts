@@ -10,6 +10,7 @@ export type StudioAccessSnapshot = {
   subscription_status?: string | null;
   subscription_current_period_end?: string | null;
   premium_access_until?: string | null;
+  referral_premium_until?: string | null;
   trial_ends_at?: string | null;
   is_active?: boolean | null;
 };
@@ -69,6 +70,19 @@ export function getStudioSubscriptionAccess(
     isFutureDate(studio.subscription_current_period_end, now);
   const activeSubscription = periodActive && PERIOD_ACCESS_STATUSES.has(status);
   const effectivePlan = resolveEffectivePlanTier(studio as PlanAccessSnapshot, now);
+
+  if (isFutureDate(studio.referral_premium_until, now) && !activeSubscription) {
+    return {
+      effectivePlan: "premium",
+      subscriptionActive: false,
+      trialActive: false,
+      premiumActive: true,
+      locked: false,
+      status: "active",
+      message: "Premium por indicação ativo.",
+      redirectTo,
+    };
+  }
 
   if (activeSubscription && status !== "trialing") {
     return {

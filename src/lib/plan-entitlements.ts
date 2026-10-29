@@ -101,6 +101,7 @@ export type PlanAccessSnapshot = {
   subscription_status?: string | null;
   subscription_current_period_end?: string | null;
   premium_access_until?: string | null;
+  referral_premium_until?: string | null;
   trial_ends_at?: string | null;
   is_active?: boolean | null;
 };
@@ -124,6 +125,8 @@ export function resolveEffectivePlanTier(
   now: Date = new Date(),
 ): PlanTier {
   if (!snapshot || snapshot.is_active === false) return "free";
+
+  if (dateIsFuture(snapshot.referral_premium_until, now)) return "premium";
 
   const status = String(snapshot.subscription_status ?? "").toLowerCase();
   const periodIsActive =
@@ -162,7 +165,6 @@ const ROUTE_FEATURES: ReadonlyArray<[prefix: string, feature: PlanFeature]> = [
   ["/admin/balcao", "attendance"],
   ["/admin/whatsapp", "whatsapp"],
   ["/admin/fidelidade", "loyalty"],
-  ["/admin/indicacoes", "loyalty"],
   ["/admin/comissoes", "finance_basic"],
   ["/admin/recebimento", "finance_advanced"],
   ["/admin/levantamentos", "finance_advanced"],

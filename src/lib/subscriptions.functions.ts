@@ -688,6 +688,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
         cancelAtPeriodEnd: false,
         subscriptionActive: false,
         premiumActive: false,
+        referralPremiumUntil: null,
         effectivePlan: "free" as const,
         trialActive: false,
         invoices: [],
@@ -787,6 +788,17 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       hasPeriodAccess(rawStatus, premiumUntil) ||
       hasPeriodAccess(studio.subscription_status as string, premiumUntil);
     const detectedTrialActive = Boolean(studioTrialActive || subscriptionTrialActive);
+    const grantNow = new Date().toISOString();
+    const { data: activeReferralGrant, error: referralGrantError } = await sb
+      .from("referral_premium_grants")
+      .select("ends_at")
+      .eq("studio_id", studio.id)
+      .lte("starts_at", grantNow)
+      .gt("ends_at", grantNow)
+      .order("ends_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (referralGrantError) throw referralGrantError;
     const access = getStudioSubscriptionAccess({
       plan_tier: studio.plan_tier as string | null,
       subscription_plan_tier: subscription?.plan_tier ?? null,
@@ -794,6 +806,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       subscription_current_period_end:
         subscription?.current_period_end ?? studio.subscription_current_period_end ?? null,
       premium_access_until: studio.premium_access_until ?? null,
+      referral_premium_until: activeReferralGrant?.ends_at ?? null,
       trial_ends_at: trialEndsAt,
       is_active: true,
     });
@@ -986,6 +999,7 @@ export const getPlatformSubscriptionSummary = createServerFn({ method: "POST" })
       billingInterval,
       planTier: subscription?.plan_tier ?? studio.plan_tier ?? "free",
       effectivePlan: access.effectivePlan,
+      referralPremiumUntil: activeReferralGrant?.ends_at ?? null,
       trialActive,
       hasStripeSubscription: Boolean(
         stripeSubscription &&

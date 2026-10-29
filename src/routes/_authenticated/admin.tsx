@@ -284,6 +284,7 @@ type BillingSummary = {
   daysRemaining?: number | null;
   cancelAtPeriodEnd?: boolean;
   premiumActive: boolean;
+  referralPremiumUntil?: string | null;
   subscriptionActive?: boolean;
   effectivePlan?: PlanTier;
   trialActive?: boolean;
@@ -1415,6 +1416,9 @@ function getFirstName(value?: string | null) {
 }
 
 function getPremiumHeaderTooltip(billing?: BillingSummary) {
+  if (billing?.referralPremiumUntil) {
+    return `Premium por indicação ativo até ${new Date(billing.referralPremiumUntil).toLocaleDateString("pt-PT")}.`;
+  }
   if (billing?.cancelAtPeriodEnd) {
     const date = billing.nextBillingAt
       ? new Date(billing.nextBillingAt).toLocaleDateString("pt-PT", {

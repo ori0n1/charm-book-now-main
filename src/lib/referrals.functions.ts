@@ -4,15 +4,19 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { assertStudioAccess } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { createStripeClient, getConfiguredStripeEnv, resolveStripeAppBaseUrl } from "@/lib/stripe.server";
+import { referralRewardAction } from "@/lib/referral-reward-policy";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/** Credit value per approved referral in cents (8.99 €) */
+/** Legacy credit value per approved referral in cents (8.99 €) */
 const REFERRAL_CREDIT_CENTS = 899;
 /** Max credits a studio can accumulate in the initial phase */
 const MAX_CREDITS = 6;
 /** Days the referred studio must maintain an active subscription */
 const HOLD_DAYS = 30;
+// Built as true for the candidate and false for the compatible rollback Worker.
+// A rollback keeps all pending Premium referrals and existing grants intact.
+declare const __REFERRAL_PREMIUM_AWARDS_ENABLED__: boolean;
 /** Base URL for referral links */
 function appBaseUrl(): string {
   return resolveStripeAppBaseUrl();
@@ -64,12 +68,18 @@ export type ReferralInfo = {
   creditsAvailableCents: number; // total value in cents
   creditsApplied: number;
   creditsLimit: number;
+  premiumGrants: {
+    referralId: string;
+    startsAt: string;
+    endsAt: string;
+  }[];
   history: {
     id: string;
     status: ReferralStatus;
     createdAt: string;
     validatedAt: string | null;
     creditedAt: string | null;
+    rewardKind: "legacy_credit" | "premium_days";
   }[];
 };
 
@@ -110,9 +120,7 @@ export const getMyReferralInfo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({ studioId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }): Promise<ReferralInfo> => {
-    await assertStudioAccess(sb(), (context as any).userId, data.studioId, {
-      entitlement: "loyalty",
-    });
+    await assertStudioAccess(sb(), (context as any).userId, data.studioId);
 
     const code = await getOrCreateReferralCode(data.studioId);
     const referralUrl = `${appBaseUrl()}/signup?ref=${code}`;
@@ -120,7 +128,7 @@ export const getMyReferralInfo = createServerFn({ method: "POST" })
     // Load referral stats
     const { data: referrals } = await sb()
       .from("referrals")
-      .select("id, status, created_at, validated_at, credited_at")
+      .select("id, status, created_at, validated_at, credited_at, reward_kind")
       .eq("referrer_studio_id", data.studioId)
       .order("created_at", { ascending: false });
 
@@ -138,6 +146,12 @@ export const getMyReferralInfo = createServerFn({ method: "POST" })
     const creditList = credits ?? [];
     const availableCredits = creditList.filter((c) => c.status === "available");
     const appliedCredits = creditList.filter((c) => c.status === "applied");
+    const { data: grants, error: grantsError } = await sb()
+      .from("referral_premium_grants")
+      .select("referral_id, starts_at, ends_at")
+      .eq("studio_id", data.studioId)
+      .order("starts_at", { ascending: true });
+    if (grantsError) throw grantsError;
 
     return {
       referralCode: code,
@@ -149,12 +163,18 @@ export const getMyReferralInfo = createServerFn({ method: "POST" })
       creditsAvailableCents: availableCredits.reduce((s, c) => s + c.amount_cents, 0),
       creditsApplied: appliedCredits.length,
       creditsLimit: MAX_CREDITS,
+      premiumGrants: (grants ?? []).map((grant) => ({
+        referralId: grant.referral_id,
+        startsAt: grant.starts_at,
+        endsAt: grant.ends_at,
+      })),
       history: list.map((r) => ({
         id: r.id,
         status: r.status as ReferralStatus,
         createdAt: r.created_at,
         validatedAt: r.validated_at ?? null,
         creditedAt: r.credited_at ?? null,
+        rewardKind: r.reward_kind as "legacy_credit" | "premium_days",
       })),
     };
   });
@@ -200,6 +220,7 @@ export async function claimReferralInternal(referredStudioId: string, refCode: s
     referrer_studio_id: referrer.id,
     referred_studio_id: referredStudioId,
     ref_code: code,
+    reward_kind: "premium_days",
     status: "pending_validation",
     created_at: new Date().toISOString(),
   });
@@ -224,7 +245,8 @@ export async function claimReferralInternal(referredStudioId: string, refCode: s
 /**
  * Called from the Stripe invoice.paid webhook.
  * For each pending referral where the referred studio has had an active subscription
- * for >= HOLD_DAYS, marks it as approved and issues a Stripe balance credit to the referrer.
+ * for >= HOLD_DAYS, grants Premium for new referrals. Referrals created
+ * before the migration retain their original Stripe credit promise.
  *
  * Safe to call multiple times (idempotent via status check).
  */
@@ -232,13 +254,23 @@ export async function processReferralsOnPayment(referredStudioId: string) {
   // Find pending referrals for this referred studio
   const { data: pendingReferrals } = await sb()
     .from("referrals")
-    .select("id, referrer_studio_id, subscription_started_at")
+    .select("id, referrer_studio_id, subscription_started_at, reward_kind")
     .eq("referred_studio_id", referredStudioId)
     .eq("status", "pending_validation");
 
   if (!pendingReferrals?.length) return;
 
   for (const referral of pendingReferrals) {
+    const action = referralRewardAction(
+      referral.reward_kind,
+      __REFERRAL_PREMIUM_AWARDS_ENABLED__,
+    );
+    if (action === "premium_pending") {
+      console.info("[referrals] Premium reward pending during compatible rollback", {
+        referralId: referral.id,
+      });
+      continue;
+    }
     const startedAt = referral.subscription_started_at
       ? new Date(referral.subscription_started_at)
       : null;
@@ -262,6 +294,14 @@ export async function processReferralsOnPayment(referredStudioId: string) {
       continue;
     }
 
+    if (action === "premium_award") {
+      const { error } = await sb().rpc("award_referral_premium", {
+        _referral_id: referral.id,
+      });
+      if (error) throw error;
+      continue;
+    }
+
     // Check max credit cap for referrer
     const { count } = await sb()
       .from("referral_credits")
@@ -269,7 +309,13 @@ export async function processReferralsOnPayment(referredStudioId: string) {
       .eq("studio_id", referral.referrer_studio_id)
       .in("status", ["available", "applied"]);
 
-    if ((count ?? 0) >= MAX_CREDITS) {
+    const { count: premiumGrantCount, error: premiumGrantCountError } = await sb()
+      .from("referral_premium_grants")
+      .select("referral_id", { count: "exact", head: true })
+      .eq("studio_id", referral.referrer_studio_id);
+    if (premiumGrantCountError) throw premiumGrantCountError;
+
+    if ((count ?? 0) + (premiumGrantCount ?? 0) >= MAX_CREDITS) {
       console.info("[referrals] processReferrals: max credits reached for referrer", {
         referrerStudioId: referral.referrer_studio_id,
       });

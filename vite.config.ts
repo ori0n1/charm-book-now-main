@@ -87,6 +87,9 @@ export default defineConfig({
   vite: {
     define: {
       "import.meta.env.VITE_VAPID_PUBLIC_KEY": JSON.stringify(publicVapidKey),
+      "__REFERRAL_PREMIUM_AWARDS_ENABLED__": JSON.stringify(
+        process.env.REFERRAL_PREMIUM_AWARDS_ENABLED !== "false",
+      ),
     },
     // Exact production hosts are accepted only so local edge tests can exercise
     // canonical redirects through the Worker. Wildcard hosts remain forbidden.

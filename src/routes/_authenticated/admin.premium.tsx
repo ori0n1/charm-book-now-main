@@ -39,6 +39,7 @@ type PaidPlanId = "pro_monthly" | "pro_yearly" | "premium_monthly" | "premium_ye
 
 type BillingSummary = {
   premiumActive: boolean;
+  referralPremiumUntil?: string | null;
   subscriptionActive?: boolean;
   effectivePlan?: PlanTier;
   trialActive?: boolean;
@@ -305,7 +306,9 @@ function PlansPage() {
           <div className="min-w-0">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <p className="break-words text-sm font-semibold">
-                {summary?.trialActive
+                {summary?.referralPremiumUntil
+                  ? "Premium por indicação"
+                  : summary?.trialActive
                   ? "Premium · Teste"
                   : `${PLAN_DEFINITIONS[effectivePlan].name} · ${summary?.cancelAtPeriodEnd ? "Até ao fim do ciclo" : "Plano atual"}`}
               </p>
@@ -316,7 +319,9 @@ function PlansPage() {
               )}
             </div>
             <p className="mt-1.5 max-w-2xl break-words text-xs leading-relaxed text-muted-foreground">
-              {summary?.trialActive
+              {summary?.referralPremiumUntil
+                ? `Acesso Premium por indicação até ${formatDate(summary.referralPremiumUntil)}. A sua cobrança habitual mantém-se.`
+                : summary?.trialActive
                 ? `${summary.daysRemaining ?? 0} dias restantes · depois pode escolher um plano ou continuar no Free.`
                 : effectivePlan === "free"
                   ? "Agenda, clientes e marcações disponíveis sem custo."
