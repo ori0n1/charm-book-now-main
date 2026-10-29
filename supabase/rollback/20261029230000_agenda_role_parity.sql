@@ -23,8 +23,11 @@ DECLARE
   v_definition text;
   v_hash text;
   v_current text;
+  v_expected_current text;
   v_pattern text := $pattern$role[[:space:]]+IN[[:space:]]*\([[:space:]]*'studio_owner'[[:space:]]*,[[:space:]]*'saas_owner'[[:space:]]*,[[:space:]]*'manager'[[:space:]]*,[[:space:]]*'staff'[[:space:]]*,[[:space:]]*'desk_staff'[[:space:]]*\)$pattern$;
   v_desk_pattern text := $pattern$\(public\.can_use_studio\([[:space:]]*(auth\.uid\(\)|p_actor_id)[[:space:]]*,[[:space:]]*p_studio_id[[:space:]]*\)[[:space:]]+OR[[:space:]]+public\.can_use_agenda_desk\([[:space:]]*\1[[:space:]]*,[[:space:]]*p_studio_id[[:space:]]*\)\)$pattern$;
+  v_source_role_pattern text := $pattern$role[[:space:]]+IN[[:space:]]*\([[:space:]]*'studio_owner'[[:space:]]*,[[:space:]]*'saas_owner'[[:space:]]*\)$pattern$;
+  v_source_desk_pattern text := $pattern$public\.can_use_studio\([[:space:]]*(auth\.uid\(\)|p_actor_id)[[:space:]]*,[[:space:]]*p_studio_id[[:space:]]*\)$pattern$;
   v_matches integer;
   v_ordinal integer := 0;
 BEGIN
@@ -44,6 +47,15 @@ BEGIN
       CASE WHEN v_ordinal <= 5 THEN v_pattern ELSE v_desk_pattern END, 'gi');
     IF v_matches <> 1 THEN
       RAISE EXCEPTION 'agenda_role_parity_current_function_changed: %', v_signature;
+    END IF;
+    v_expected_current := CASE WHEN v_ordinal <= 5 THEN
+      regexp_replace(v_definition, v_source_role_pattern,
+        $replacement$role IN ('studio_owner', 'saas_owner', 'manager', 'staff', 'desk_staff')$replacement$, 'i')
+      ELSE regexp_replace(v_definition, v_source_desk_pattern,
+        $replacement$(public.can_use_studio(\1, p_studio_id) OR public.can_use_agenda_desk(\1, p_studio_id))$replacement$, 'i')
+    END;
+    IF v_current IS DISTINCT FROM v_expected_current THEN
+      RAISE EXCEPTION 'agenda_role_parity_current_definition_drift: %', v_signature;
     END IF;
   END LOOP;
 

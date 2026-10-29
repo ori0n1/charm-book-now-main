@@ -1,0 +1,44 @@
+{
+  "checkedAtUtc": "2026-10-29T23:28:50Z",
+  "supabaseProductionProjectRef": "pwmdzpvnatrvfpgcvnzg",
+  "queryMode": "BEGIN READ ONLY; SET LOCAL ROLE authenticated; SET LOCAL row_security = on; SELECT pg_get_functiondef metadata; ROLLBACK",
+  "effectiveRole": "authenticated",
+  "rowSecurity": "on",
+  "securityDefinerCount": 11,
+  "expectedPredicateMatches": 11,
+  "functions": {
+    "correct_owner_appointment_action(uuid,uuid,text,uuid,text)": "d6be6280833a3dd59dc798aaad414b96",
+    "guard_completed_appointment_cancellation()": "3d27484c6ac62783f6a6fbf062e4c8be",
+    "cancel_completed_appointment(uuid,uuid,text)": "cb24182599700e93b680925c3c6e8777",
+    "edit_resolved_appointment_schedule(uuid,uuid,text,timestamptz,integer,text,uuid)": "c9da278d23ee1d6783e118184c6d2b29",
+    "edit_owner_resolved_appointment(uuid,uuid,text,timestamptz,jsonb,numeric,text,uuid)": "1f75ca2cc752f55884704aed7acd2ed3",
+    "create_studio_walkin_appointment(uuid,jsonb,timestamptz,uuid,text,text,text)": "18cda414b102998a0a88e063820e0651",
+    "create_manual_multi_professional_appointment(uuid,jsonb,timestamptz,uuid,text,text,text)": "69757354e24af901b768dc77ec73495b",
+    "edit_studio_appointment(uuid,uuid,timestamptz,jsonb,numeric,text)": "39f44c05a53afd9d2c3467889ba46272",
+    "create_studio_manual_multi_professional_fit(uuid,jsonb,timestamptz,uuid,text,text,text,boolean,uuid,uuid[])": "af10b0ea9a4c356c4b7b3790a648d9ab",
+    "move_studio_appointment(uuid,uuid,timestamptz,integer,boolean,uuid,uuid[],text)": "93b8f250f2f8a8fa482f9bc7d099d160",
+    "swap_studio_appointments(uuid,uuid,uuid,boolean,uuid,uuid[])": "a3668e219cdd3c0b6e18cb4beb7fc6d7"
+  },
+  "dependencies": {
+    "functionOwner": "postgres",
+    "deskRolePresent": true,
+    "staffColumnsPresent": 3,
+    "studioColumnsPresent": 2,
+    "helperNameFree": true,
+    "backupTableNameFree": true
+  },
+  "stagingProjectRef": "qflwsdrgdkkcxjnbxmis",
+  "stagingMissingFunctions": [
+    "correct_owner_appointment_action",
+    "guard_completed_appointment_cancellation",
+    "cancel_completed_appointment",
+    "edit_resolved_appointment_schedule",
+    "edit_owner_resolved_appointment"
+  ],
+  "cloudflareActiveVersion": "df81cabe-6416-463d-8551-2ea633f44593",
+  "cloudflareRollbackVersionAvailable": true,
+  "cloudflareRollbackBindingCount": 51,
+  "cloudflareRollbackSecretCount": 24,
+  "cloudflareRollbackAssetsPresent": true,
+  "productionWrites": 0
+}

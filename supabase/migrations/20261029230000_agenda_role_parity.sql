@@ -51,6 +51,20 @@ DECLARE
     'public.move_studio_appointment(uuid,uuid,timestamptz,integer,boolean,uuid,uuid[],text)',
     'public.swap_studio_appointments(uuid,uuid,uuid,boolean,uuid,uuid[])'
   ];
+  -- Read-only production preflight on 2026-10-29. Any later SQL drift aborts.
+  v_expected_hashes text[] := ARRAY[
+    'd6be6280833a3dd59dc798aaad414b96',
+    '3d27484c6ac62783f6a6fbf062e4c8be',
+    'cb24182599700e93b680925c3c6e8777',
+    'c9da278d23ee1d6783e118184c6d2b29',
+    '1f75ca2cc752f55884704aed7acd2ed3',
+    '18cda414b102998a0a88e063820e0651',
+    '69757354e24af901b768dc77ec73495b',
+    '39f44c05a53afd9d2c3467889ba46272',
+    'af10b0ea9a4c356c4b7b3790a648d9ab',
+    '93b8f250f2f8a8fa482f9bc7d099d160',
+    'a3668e219cdd3c0b6e18cb4beb7fc6d7'
+  ];
   v_signature text;
   v_oid oid;
   v_definition text;
@@ -72,6 +86,9 @@ BEGIN
       FROM pg_proc WHERE oid = v_oid;
     IF v_security_definer IS NOT TRUE THEN
       RAISE EXCEPTION 'agenda_role_parity_security_definer_required: %', v_signature;
+    END IF;
+    IF md5(v_definition) <> v_expected_hashes[v_ordinal] THEN
+      RAISE EXCEPTION 'agenda_role_parity_production_definition_changed: %', v_signature;
     END IF;
     SELECT count(*) INTO v_matches FROM regexp_matches(v_definition,
       CASE WHEN v_ordinal <= 5 THEN v_pattern ELSE v_desk_pattern END, 'gi');

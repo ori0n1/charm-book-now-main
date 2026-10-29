@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { PGlite } from "../../../.tmp-bellza-sql-isolated/node_modules/@electric-sql/pglite/dist/index.js";
 
@@ -124,7 +125,20 @@ try {
     /studio_owner_required/,
   );
 
-  await db.exec(file("supabase/migrations/20261029230000_agenda_role_parity.sql"));
+  const migration = file("supabase/migrations/20261029230000_agenda_role_parity.sql");
+  const pinnedHashes = migration.match(/v_expected_hashes text\[\] := ARRAY\[([\s\S]*?)\];/)?.[1]
+    ?.match(/[a-f0-9]{32}/g);
+  const productionEvidence = JSON.parse(file("tests/evidence/agenda-role-parity-readonly-20261029.json"));
+  assert.deepEqual(pinnedHashes, Object.values(productionEvidence.functions));
+  const localHashes = before.map((definition) => createHash("md5").update(definition).digest("hex"));
+  const withLocalHashes = (hashes) => migration.replace(/v_expected_hashes text\[\] := ARRAY\[[\s\S]*?\];/,
+    `v_expected_hashes text[] := ARRAY[${hashes.map((hash) => `'${hash}'`).join(",")}];`);
+  await assert.rejects(db.exec(withLocalHashes(["00000000000000000000000000000000", ...localHashes.slice(1)])),
+    /agenda_role_parity_production_definition_changed/);
+  await db.exec("ROLLBACK");
+  assert.equal((await query("SELECT to_regclass('public.agenda_role_parity_function_backup_20261029') AS backup"))[0].backup, null);
+  assert.equal((await query("SELECT to_regprocedure('public.can_use_agenda_desk(uuid,uuid)') AS helper"))[0].helper, null);
+  await db.exec(withLocalHashes(localHashes));
   assert.equal((await query("SELECT count(*)::int AS n FROM public.agenda_role_parity_function_backup_20261029"))[0].n, 11);
   const after = await definitions();
   for (let index = 0; index < signatures.length; index++) {
