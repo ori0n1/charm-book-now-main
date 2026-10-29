@@ -259,6 +259,8 @@ try {
   const countsBeforeRollback = await query("SELECT count(*)::int AS n FROM public.appointments");
   await db.exec(file("supabase/rollback/20261029230000_agenda_role_parity.sql"));
   assert.deepEqual(await definitions(), before);
+  assert.equal((await query("SELECT to_regprocedure('public.can_use_agenda_desk(uuid,uuid)') AS helper"))[0].helper, null);
+  assert.equal((await query("SELECT to_regclass('public.agenda_role_parity_function_backup_20261029') AS backup"))[0].backup, null);
   assert.deepEqual(await query("SELECT count(*)::int AS n FROM public.appointments"), countsBeforeRollback);
   await assert.rejects(query("SELECT public.correct_owner_appointment_action($1,$2,'confirmed',$3,NULL)",
     [studio, id("5", 0), actor(1)]), /studio_owner_required/);
