@@ -145,7 +145,7 @@ export const MODULES = [
 export const REFERRAL_STEPS = [
   "O estúdio recebe um link exclusivo de indicação.",
   "Outro estúdio cria conta pelo link e subscreve Pro ou Premium.",
-  "Após 30 dias de assinatura ativa, quem indicou pode receber 14 dias de Premium.",
+  "Após 30 dias de assinatura Pro ou Premium ativa, o estúdio que indicou pode receber 14 dias de Premium.",
 ] as const;
 
 export const SECURITY_POINTS = [
@@ -189,7 +189,7 @@ export const LANDING_FAQS = [
   {
     question: "Como funciona o programa de indicação?",
     answer:
-      "Partilhe o seu link. Se um novo estúdio subscrever Pro ou Premium e mantiver a assinatura ativa durante 30 dias, recebe 14 dias de Premium se não pagar Premium. Até 6 recompensas por estúdio.",
+      "Partilhe o seu link. Se o estúdio indicado mantiver uma assinatura Pro ou Premium ativa durante 30 dias, o seu estúdio pode receber 14 dias de Premium. Até 6 recompensas; quem já paga Premium não recebe dias adicionais.",
   },
   {
     question: "Posso experimentar antes de pagar?",

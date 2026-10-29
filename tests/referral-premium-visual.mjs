@@ -17,7 +17,7 @@ try {
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto("http://127.0.0.1:4180/tests/referral-premium-fixture.html", { waitUntil: "domcontentloaded", timeout: 60_000 });
-    await page.getByText("Ganhe 14 dias de Premium.").waitFor();
+    await page.getByText("Receba 14 dias de Premium quando elegível.").waitFor();
     const text = await page.locator("body").innerText();
     if (text.includes("8,99")) throw new Error(`${name}: old amount visible`);
     if (!text.includes("TESTE123") || !text.includes("+14 dias Premium")) {

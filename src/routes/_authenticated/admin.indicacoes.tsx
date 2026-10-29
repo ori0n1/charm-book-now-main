@@ -125,7 +125,7 @@ export function HeroSection({ data }: { data: ReferralInfo }) {
         </div>
         <h1 className="mt-3 text-2xl font-light tracking-tight md:text-3xl">
           Convide outros estúdios.<br />
-          <span className="font-medium text-emerald-700 dark:text-emerald-400">Ganhe 14 dias de Premium.</span>
+          <span className="font-medium text-emerald-700 dark:text-emerald-400">Receba 14 dias de Premium quando elegível.</span>
         </h1>
         <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
           Partilhe o seu link. Por cada novo estúdio que subscreva Pro ou Premium e mantenha
@@ -244,12 +244,12 @@ export function HowItWorks() {
     {
       n: 2,
       title: "O estúdio cria conta e assina",
-      body: "O novo estúdio regista-se gratuitamente e escolhe um plano pago. A indicação fica em validação.",
+      body: "O novo estúdio regista-se gratuitamente e subscreve Pro ou Premium. A indicação fica em validação.",
     },
     {
       n: 3,
       title: "Receba 14 dias de Premium",
-      body: "Após 30 dias de assinatura paga ativa, recebe 14 dias de Premium se não pagar Premium.",
+      body: "Após 30 dias de assinatura Pro ou Premium ativa, recebe 14 dias de Premium se não pagar Premium.",
     },
   ];
 

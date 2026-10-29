@@ -90,7 +90,7 @@ function SignupPage() {
       {refCode && (
         <div className="mb-4 rounded-xl border border-success/25 bg-success-soft px-4 py-3 text-xs text-success">
           <span className="font-semibold">Indicação ativa.</span>{" "}
-          Quem te indicou ganha crédito Bellza quando a tua conta ficar ativa.
+          O estúdio que te indicou pode receber 14 dias de Premium se mantiveres uma assinatura Pro ou Premium ativa durante 30 dias. Até seis recompensas; quem já paga Premium não recebe dias adicionais.
         </div>
       )}
       {submitted ? (
@@ -99,6 +99,11 @@ function SignupPage() {
           <p className="mt-2 text-muted-foreground">
             Enviámos um link para <strong className="text-foreground">{email}</strong>. Clique para ativar a conta.
           </p>
+          {refCode && (
+            <p className="mt-2 text-muted-foreground">
+              Código de indicação {refCode} guardado. O benefício, quando elegível, pertence ao estúdio que te indicou.
+            </p>
+          )}
           <Link to="/login" className="mt-4 inline-block min-h-11 text-sm font-medium underline-offset-2 hover:underline">
             Ir para entrar
           </Link>
