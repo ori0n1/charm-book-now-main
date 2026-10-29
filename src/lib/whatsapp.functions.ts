@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAppointmentProfessionalDisplayName } from "@/lib/appointment-professionals";
 import {
-  assertAppointmentAccess,
+  assertAgendaAppointmentAccess,
   assertStudioAccessWithOptions,
   rateLimitOrThrow,
 } from "@/lib/server-security";
@@ -259,7 +259,7 @@ export const sendAppointmentConfirmationForAppointment = createServerFn({ method
   .inputValidator((input) => z.object({ appointmentId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const sb = admin();
-    await assertAppointmentAccess(sb, (context as any).userId, data.appointmentId, {
+    await assertAgendaAppointmentAccess(sb, (context as any).userId, data.appointmentId, {
       entitlement: "whatsapp",
     });
     const ctx = await loadAppointmentConfirmationContext(sb, data.appointmentId);
@@ -280,7 +280,7 @@ export const sendManualAppointmentConfirmationForAppointment = createServerFn({ 
   .inputValidator((input) => z.object({ appointmentId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const sb = admin();
-    await assertAppointmentAccess(sb, (context as any).userId, data.appointmentId, {
+    await assertAgendaAppointmentAccess(sb, (context as any).userId, data.appointmentId, {
       entitlement: "whatsapp",
     });
 

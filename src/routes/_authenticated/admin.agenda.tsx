@@ -102,6 +102,7 @@ import {
 } from "@/lib/in-person-mbway.functions";
 import {
   getProtectedAgendaData,
+  getProtectedAgendaCatalog,
   resolveProtectedJointServiceState,
   rescheduleProtectedJointService,
   getProtectedJointPaymentStatus,
@@ -289,7 +290,6 @@ type StaffTimeOffRow = {
   reason: string | null;
 };
 type StudioPaymentMethod = "cash" | "card" | "mb_way" | "bank_transfer" | "other";
-type StaffAgendaVisibility = "private" | "team_busy" | "team_basic";
 
 const EMPTY_FILTERS: AgendaFilters = {
   dateMode: "all",
@@ -363,7 +363,7 @@ function AgendaPage() {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [agendaScope, setAgendaScope] = useState<"mine" | "team">("mine");
+  const [agendaScope, setAgendaScope] = useState<"mine" | "team">("team");
   const [newApptOpen, setNewApptOpen] = useState(false);
   const [newApptDefaults, setNewApptDefaults] = useState<{
     staffId?: string;
@@ -558,11 +558,6 @@ function AgendaPage() {
     };
   }, [getMbWaySettings]);
 
-  useEffect(() => {
-    const visibility = (studio?.staff_agenda_visibility ?? "private") as StaffAgendaVisibility;
-    if (studio?.role !== "staff" || visibility === "private") setAgendaScope("mine");
-  }, [studio?.role, studio?.staff_agenda_visibility]);
-
   async function loadData(options?: { silent?: boolean }) {
     if (!studio) return;
     const sequence = ++agendaLoadSequenceRef.current;
@@ -656,18 +651,17 @@ function AgendaPage() {
   }, [studio?.id, studio?.role, studio?.staff_id]);
 
   useEffect(() => {
-    const visibility = (studio?.staff_agenda_visibility ?? "private") as StaffAgendaVisibility;
-    if (studio?.role !== "staff" || visibility === "private") return;
+    if (studio?.role !== "staff") return;
 
     // RLS intentionally hides colleagues' raw appointment rows from Realtime.
-    // Refresh the protected, masked projection so team availability remains current.
+    // Refresh the studio-scoped agenda so colleagues' appointments remain current.
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void loadData({ silent: true });
     }, 30_000);
     return () => window.clearInterval(timer);
     // loadData intentionally reads the latest studio state from this render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studio?.id, studio?.role, studio?.staff_agenda_visibility]);
+  }, [studio?.id, studio?.role]);
 
   // Derived maps
   const confirmedPaidRows = confirmedStripePaymentRows(paidRows);
@@ -689,10 +683,8 @@ function AgendaPage() {
 
   // Filtering
   const isProfessionalPanel = studio?.role === "staff";
-  const staffAgendaVisibility = (studio?.staff_agenda_visibility ??
-    "private") as StaffAgendaVisibility;
-  const canStaffViewTeamAgenda = isProfessionalPanel && staffAgendaVisibility !== "private";
-  const canStaffViewBasicDetails = staffAgendaVisibility === "team_basic";
+  const canStaffViewTeamAgenda = isProfessionalPanel;
+  const canStaffViewBasicDetails = true;
   const filterOptions = buildFilterOptions(appts.filter((a) => a.status !== "cancelled"));
   const activeFilterCount = countActiveFilters(filters);
   const filteredAppts = sortAppointmentsChronologically(
@@ -1295,7 +1287,7 @@ function AgendaPage() {
     return true;
   }
 
-  async function updateJointServiceLine(serviceLineId: string, nextState: "completed" | "cancelled") {
+  async function updateJointServiceLine(serviceLineId: string, nextState: "completed" | "cancelled" | "no_show") {
     if (!studio || updatingServiceLineId) return;
     setUpdatingServiceLineId(serviceLineId);
     try {
@@ -1305,7 +1297,7 @@ function AgendaPage() {
       await loadData({ silent: true });
       toast.success(nextState === "cancelled"
         ? "Serviço cancelado. O eventual reembolso depende da decisão da proprietária."
-        : "Serviço concluído.");
+        : nextState === "no_show" ? "Falta registada para o serviço." : "Serviço concluído.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível atualizar o serviço.");
     } finally {
@@ -1791,7 +1783,13 @@ function AgendaPage() {
           const serviceSegments = getAppointmentServiceSegments(timelineDetailAppt);
           const isMultiProfessional =
             new Set(serviceSegments.map((line) => line.staff?.id).filter(Boolean)).size > 1;
-          const owner = studio?.role === "studio_owner" || studio?.role === "saas_owner";
+          const isJointBooking = isMultiProfessional || serviceSegments.some((line) => line.service_state != null);
+          const jointServicesConfirmed = serviceSegments.length > 0 &&
+            serviceSegments.every((line) => line.service_state === "confirmed");
+          const jointHasReceivableService = serviceSegments.some((line) =>
+            line.service_state === "confirmed" || line.service_state === "completed");
+          const owner = Boolean(studio);
+          const canCorrectFinancialReceipt = studio?.role === "studio_owner" || studio?.role === "saas_owner";
           const hasManualReceipt = cashPaymentRows.some(
             (row) => row.appointment_id === timelineDetailAppt.id && Number(row.amount) > 0,
           );
@@ -1802,7 +1800,9 @@ function AgendaPage() {
           const canCorrectState = ["completed", "no_show", "cancelled"].includes(timelineDetailAppt.status) ||
             (timelineDetailAppt.status === "confirmed" && hasAttendanceReceipt);
           const actions: TimelineDrawerAction[] = [];
-          if ((!isMultiProfessional || (owner && ["completed", "no_show"].includes(timelineDetailAppt.status))) &&
+          if ((!isJointBooking || (owner &&
+            ((jointServicesConfirmed && !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id)) ||
+              ["completed", "no_show"].includes(timelineDetailAppt.status)))) &&
             (timelineDetailAppt.status !== "cancelled" || owner)) {
             actions.push({
               id: "edit",
@@ -1826,7 +1826,7 @@ function AgendaPage() {
               },
             });
           }
-          if (isMultiProfessional && timelineDetailAppt.status === "confirmed" &&
+          if (isJointBooking && timelineDetailAppt.status === "confirmed" &&
             timelineDetailAppt.staff?.id) {
             actions.push({
               id: "fit",
@@ -1855,7 +1855,7 @@ function AgendaPage() {
               disabled: resendingMessageId === timelineDetailAppt.id,
             });
           }
-          if (!isMultiProfessional && timelineDetailAppt.status !== "cancelled" &&
+          if (!isJointBooking && timelineDetailAppt.status !== "cancelled" &&
             (timelineDetailAppt.status !== "completed" || owner)) {
             actions.push({
               id: "cancel",
@@ -1876,7 +1876,7 @@ function AgendaPage() {
                 clientPhone: timelineDetailAppt.clients?.phone,
                 serviceName: appointmentServiceLabel(timelineDetailAppt),
                 professionalName: appointmentProfessionalLabel(timelineDetailAppt),
-                 jointBooking: isMultiProfessional,
+                jointBooking: isJointBooking,
                 serviceAssignments: serviceSegments.map((line) => ({
                    serviceId: line.id,
                   serviceName: line.services?.name ?? "Serviço",
@@ -1917,45 +1917,47 @@ function AgendaPage() {
                 ),
               }}
               actions={actions}
-              payment={((!isMultiProfessional && financialSummary.needsStudioPaymentConfirmation) ||
-                (isMultiProfessional && owner && split.serviceTotal > paid)) ? {
+              payment={((!isJointBooking && financialSummary.needsStudioPaymentConfirmation) ||
+                (isJointBooking && owner && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
+                  !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id) && split.pending > 0)) ? {
                 busy: receivingPaymentId === timelineDetailAppt.id,
                 enableInPersonMbWay,
                 phone: timelineDetailAppt.clients?.phone,
-                prepare: async () => isMultiProfessional
+                prepare: async () => isJointBooking
                   ? openJointPayment(timelineDetailAppt, null, "Saldo da reserva")
                   : (setJointPaymentContext(null), { amount: Math.max(0, timelineDetailAppt.total_price - paid) }),
                 confirm: (method: DrawerPaymentMethod, options) => confirmStudioPayment(timelineDetailAppt, method, options),
                 close: () => setJointPaymentContext(null),
               } : undefined}
-              canUndoManualReceipt={owner && hasAttendanceReceipt &&
+              canUndoManualReceipt={canCorrectFinancialReceipt && hasAttendanceReceipt &&
                 !confirmedPaidRows.some((row) => row.appointment_id === timelineDetailAppt.id)}
-              onUndoManualReceipt={owner && hasAttendanceReceipt &&
+              onUndoManualReceipt={canCorrectFinancialReceipt && hasAttendanceReceipt &&
                 !confirmedPaidRows.some((row) => row.appointment_id === timelineDetailAppt.id)
                 ? (reason) => undoMistakenReceipt(reason, timelineDetailAppt) : undefined}
-              paymentMovements={owner ? cashPaymentRows.filter((row) => row.appointment_id === timelineDetailAppt.id && row.id && Number(row.amount) > 0)
-                .map((row) => ({ id: row.id!, amount: Number(row.amount), method: row.payment_method ?? "other" })) : []}
-              onCorrectPaymentMethod={owner && hasManualReceipt
+              paymentMovements={cashPaymentRows.filter((row) => row.appointment_id === timelineDetailAppt.id && row.id && Number(row.amount) > 0)
+                .map((row) => ({ id: row.id!, amount: Number(row.amount), method: row.payment_method ?? "other" }))}
+              onCorrectPaymentMethod={canCorrectFinancialReceipt && hasManualReceipt
                 ? (movementId, method) => correctPaymentMethod(movementId, method, timelineDetailAppt) : undefined}
               correctingPaymentMethod={correctingPaymentMethod}
-              onChangeAttendance={!isMultiProfessional && (
+              onChangeAttendance={!isJointBooking && (
                 timelineDetailAppt.status === "confirmed" ? canConfirm :
                   (owner || (studio?.role === "manager" && timelineDetailAppt.status !== "cancelled")) && canCorrectState
               ) ? (nextStatus) => timelineDetailAppt.status === "confirmed"
                 ? markPresence(timelineDetailAppt, nextStatus as "completed" | "no_show")
                 : correctPresence(nextStatus, "", timelineDetailAppt)
                 : undefined}
-              onServiceState={isMultiProfessional && (studio?.role === "studio_owner" || studio?.role === "saas_owner")
+              onServiceState={isJointBooking && owner && timelineDetailAppt.status !== "cancelled"
                 ? (serviceLineId, nextState) => void updateJointServiceLine(serviceLineId, nextState)
                 : undefined}
-              onServiceReschedule={isMultiProfessional && (studio?.role === "studio_owner" || studio?.role === "saas_owner")
+              onServiceReschedule={isJointBooking && owner && timelineDetailAppt.status !== "cancelled"
                 ? (serviceLineId) => {
                     setRescheduleServiceLineId(serviceLineId);
                     setRescheduleApptId(timelineDetailAppt.id);
                     setTimelineDetailId(null);
                   }
                 : undefined}
-              onServicePayment={isMultiProfessional && owner && split.serviceTotal > paid
+              onServicePayment={isJointBooking && owner && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
+                !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id) && split.pending > 0
                 ? (serviceLineId) => {
                     const line = serviceSegments.find((candidate) => candidate.id === serviceLineId);
                     return openJointPayment(timelineDetailAppt, serviceLineId, line?.services?.name ?? "Serviço");
@@ -2070,7 +2072,7 @@ function AgendaPage() {
           ownerCanOverridePaymentHold={
             studio.role === "studio_owner" || studio.role === "saas_owner"
           }
-          staffId={studio.role === "staff" ? studio.staff_id : null}
+          staffId={null}
           initialStaffId={newApptDefaults?.staffId}
           initialDate={newApptDefaults?.date}
           initialTime={newApptDefaults?.time}
@@ -2124,8 +2126,8 @@ function AgendaPage() {
       {editAppt && studio && (
         <EditAppointmentModal
           studioId={studio.id}
-          ownerCanEditResolved={studio.role === "studio_owner" || studio.role === "saas_owner"}
-          staffId={studio.role === "staff" ? studio.staff_id : null}
+          ownerCanEditResolved={true}
+          staffId={null}
           appt={editAppt}
           receivedAmount={paidByAppointment.get(editAppt.id) ?? 0}
           studioTimezone={studio.timezone}
@@ -2160,7 +2162,7 @@ function AgendaPage() {
         <RescheduleModal
           studioId={studio.id}
           studioTimezone={studio.timezone}
-          staffId={studio.role === "staff" ? studio.staff_id : null}
+          staffId={null}
           appt={rescheduleAppt}
           serviceLineId={rescheduleServiceLineId}
           onClose={() => { setRescheduleApptId(null); setRescheduleServiceLineId(null); }}
@@ -2220,7 +2222,6 @@ function AgendaPage() {
         <PresenceCorrectionDialog
           appt={presenceCorrectionAppt}
           busy={savingPresenceId === presenceCorrectionAppt.id}
-          owner={studio?.role === "studio_owner" || studio?.role === "saas_owner"}
           canUndoManualReceipt={Boolean((studio?.role === "studio_owner" || studio?.role === "saas_owner") &&
             cashPaymentRows.some((row) => row.appointment_id === presenceCorrectionAppt.id && Number(row.amount) > 0 && row.source_key?.startsWith("attendance-settlement:")) &&
             !confirmedPaidRows.some((row) => row.appointment_id === presenceCorrectionAppt.id))}
@@ -2666,6 +2667,7 @@ function NewAppointmentModal({
   const previewSchedule = useServerFn(previewStudioScheduleChange);
   const createManualFit = useServerFn(createStudioManualFit);
   const resolveScheduleDateTime = useServerFn(resolveStudioLocalDateTime);
+  const loadCatalog = useServerFn(getProtectedAgendaCatalog);
   const [services, setServices] = useState<StudioService[]>([]);
   const [staffList, setStaffList] = useState<StudioStaff[]>([]);
   const [staffServiceLinks, setStaffServiceLinks] = useState<ManualAppointmentStaffServiceLink[]>(
@@ -2696,49 +2698,18 @@ function NewAppointmentModal({
 
   useEffect(() => {
     (async () => {
-      const [
-        { data: svcs, error: servicesError },
-        { data: stf, error: staffError },
-        { data: cls, error: clientsError },
-        { data: links, error: linksError },
-      ] = await Promise.all([
-        supabase
-          .from("services" as any)
-          .select("id,name,price,duration_min")
-          .eq("studio_id", studioId)
-          .eq("is_active", true)
-          .order("sort_order"),
-        supabase
-          .from("staff" as any)
-          .select("id,name")
-          .eq("studio_id", studioId)
-          .eq("is_active", true)
-          .match(staffId ? { id: staffId } : {})
-          .order("sort_order"),
-        staffId
-          ? (supabase as any)
-              .from("appointments")
-              .select("clients:clients!appointments_client_same_studio(id,name,phone)")
-              .eq("studio_id", studioId)
-              .eq("staff_id", staffId)
-              .not("client_id", "is", null)
-              .order("starts_at", { ascending: true })
-          : supabase
-              .from("clients" as any)
-              .select("id,name,phone")
-              .eq("studio_id", studioId)
-              .order("name"),
-        supabase.from("staff_services").select("staff_id,service_id"),
-      ]);
-      if (servicesError || staffError || clientsError || linksError) {
+      let catalog;
+      try {
+        catalog = await loadCatalog({ data: { studioId, staffId: staffId ?? null } });
+      } catch {
         toast.error("Não foi possível carregar os dados para esta marcação.");
         setLoadingData(false);
         return;
       }
-      const serviceRows = (svcs ?? []) as unknown as StudioService[];
-      const staffRows = (stf ?? []) as unknown as StudioStaff[];
+      const serviceRows = catalog.services as StudioService[];
+      const staffRows = catalog.staff as StudioStaff[];
       const scopedLinks = tenantScopedStaffServiceLinks(
-        (links ?? []) as ManualAppointmentStaffServiceLink[],
+        catalog.links as ManualAppointmentStaffServiceLink[],
         staffRows.map((staff) => staff.id),
         serviceRows.map((service) => service.id),
       );
@@ -2746,10 +2717,10 @@ function NewAppointmentModal({
       setStaffList(staffRows);
       setStaffServiceLinks(scopedLinks);
       if (!initialStaffId && staffRows[0]) setSelectedStaff(staffRows[0].id);
-      setClients(normalizeAppointmentClients(cls ?? [], Boolean(staffId)));
+      setClients(normalizeAppointmentClients(catalog.clients, false));
       setLoadingData(false);
     })();
-  }, [initialStaffId, staffId, studioId]);
+  }, [initialStaffId, staffId, studioId, loadCatalog]);
 
   const filteredClients = clients.filter((c) => {
     if (!clientSearch.trim()) return true;
@@ -3432,13 +3403,19 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   const previewSchedule = useServerFn(previewStudioScheduleChange);
   const updateResolvedNotes = useServerFn(updateProtectedResolvedAppointmentNotes);
   const updateResolvedFull = useServerFn(updateProtectedResolvedAppointmentFull);
+  const loadCatalog = useServerFn(getProtectedAgendaCatalog);
   const resolvedState = appt.status === "completed" || appt.status === "no_show";
   const hasActiveReceipt = receivedAmount > 0;
-  const resolvedFullEdit = ownerCanEditResolved && resolvedState &&
+  const isJointBooking = (appt.appointment_services ?? []).some((line) => line.service_state != null) ||
+    new Set((appt.appointment_services ?? []).map((line) => line.staff?.id).filter(Boolean)).size > 1;
+  const jointServicesConfirmed = Boolean(appt.appointment_services?.length) &&
+    appt.appointment_services!.every((line) => line.service_state === "confirmed");
+  const resolvedFullEdit = !isJointBooking && ownerCanEditResolved && resolvedState &&
     Boolean(appt.appointment_services?.length);
-  const paidConfirmedEdit = ownerCanEditResolved && appt.status === "confirmed" && hasActiveReceipt &&
+  const paidConfirmedEdit = !isJointBooking && ownerCanEditResolved && appt.status === "confirmed" && hasActiveReceipt &&
     Boolean(appt.appointment_services?.length);
-  const protectedFullEdit = resolvedFullEdit || paidConfirmedEdit;
+  const jointConfirmedEdit = isJointBooking && ownerCanEditResolved && appt.status === "confirmed" && jointServicesConfirmed;
+  const protectedFullEdit = resolvedFullEdit || paidConfirmedEdit || jointConfirmedEdit;
   const resolvedNotesOnly = ownerCanEditResolved && resolvedState && !resolvedFullEdit;
   const editRestriction = (appt.status === "cancelled" ||
     (resolvedState && !ownerCanEditResolved))
@@ -3450,21 +3427,22 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
     if (editRestriction || resolvedNotesOnly) { setLoadingData(false); return; }
     let mounted = true;
     void (async () => {
-      const [{ data: svcs, error: svcError }, { data: stf, error: staffError }, { data: rows, error: linkError }] = await Promise.all([
-        supabase.from("services" as any).select("id,name,price,duration_min,commission_percent").eq("studio_id", studioId).eq("is_active", true).order("sort_order"),
-        supabase.from("staff" as any).select("id,name,commission_percent").eq("studio_id", studioId).eq("is_active", true).match(staffId ? { id: staffId } : {}).order("sort_order"),
-        supabase.from("staff_services").select("staff_id,service_id"),
-      ]);
+      let catalog;
+      try {
+        catalog = await loadCatalog({ data: { studioId, staffId: staffId ?? null } });
+      } catch {
+        if (mounted) toast.error("Não foi possível carregar os dados da marcação.");
+        return;
+      }
       if (!mounted) return;
-      if (svcError || staffError || linkError) { toast.error("Não foi possível carregar os dados da marcação."); return; }
-      const svcRows = (svcs ?? []) as unknown as StudioService[];
-      const staffRows = (stf ?? []) as unknown as StudioStaff[];
+      const svcRows = catalog.services as StudioService[];
+      const staffRows = catalog.staff as StudioStaff[];
       setServices(svcRows); setStaffList(staffRows);
-      setLinks(tenantScopedStaffServiceLinks((rows ?? []) as ManualAppointmentStaffServiceLink[], staffRows.map((s) => s.id), svcRows.map((s) => s.id)));
+      setLinks(tenantScopedStaffServiceLinks(catalog.links as ManualAppointmentStaffServiceLink[], staffRows.map((s) => s.id), svcRows.map((s) => s.id)));
       setLoadingData(false);
     })();
     return () => { mounted = false; };
-  }, [studioId, staffId, editRestriction, resolvedNotesOnly]);
+  }, [studioId, staffId, editRestriction, resolvedNotesOnly, loadCatalog]);
 
   const editDurationContext = JSON.stringify({ date, time, assignments });
   useEffect(() => {
@@ -5565,12 +5543,11 @@ function PortalActionMenu({
 }
 
 function PresenceCorrectionDialog({
-  appt, busy, owner, canUndoManualReceipt, showStateCorrections, onCorrectPaymentMethod,
+  appt, busy, canUndoManualReceipt, showStateCorrections, onCorrectPaymentMethod,
   onClose, onConfirm, onUndoReceipt,
 }: {
   appt: Appt;
   busy: boolean;
-  owner: boolean;
   canUndoManualReceipt: boolean;
   showStateCorrections: boolean;
   onCorrectPaymentMethod?: () => void;
@@ -6618,11 +6595,10 @@ function isSameLocalDay(a: Date, b: Date) {
   );
 }
 function canViewSensitiveAppointment(
-  a: Appt,
+  _a: Appt,
   studio: { role: string; staff_id: string | null } | null,
 ) {
-  if (!studio || studio.role !== "staff") return true;
-  return appointmentIncludesStaff(a, studio.staff_id);
+  return Boolean(studio);
 }
 function appointmentServiceLabel(a: Appt) {
   return (

@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertStudioAccess, getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
+import { assertAgendaAppointmentAccess, getRequestFingerprint, rateLimitOrThrow } from "@/lib/server-security";
 import { createStripeClient, getConfiguredStripeEnv, type StripeEnv } from "@/lib/stripe.server";
 import { assertConnectedAccountReadyForCharge } from "@/lib/stripe-connect-integrity.server";
 import {
@@ -191,7 +191,7 @@ export const createInPersonMbWayPayment = createServerFn({ method: "POST" })
     });
 
     const source = await loadAppointmentSource(data.appointmentId);
-    await assertStudioAccess(sb(), (context as any).userId, source.appt.studio_id as string, {
+    await assertAgendaAppointmentAccess(sb(), (context as any).userId, data.appointmentId, {
       entitlement: "online_payments",
     });
 

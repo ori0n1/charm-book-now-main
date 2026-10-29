@@ -3,7 +3,10 @@ import { z } from "zod";
 import { normalizeAppointmentStart } from "@/lib/appointment-datetime";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { dispatchPendingStudioPushNotifications } from "@/lib/notification-dispatcher.server";
-import { assertAppointmentAccess, assertStudioAccess } from "@/lib/server-security";
+import {
+  assertAgendaAppointmentAccess,
+  assertAgendaStudioAccess as assertStudioAccess,
+} from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendAppointmentLifecycleMessage } from "@/lib/whatsapp.functions";
 import { notifyClientAppointmentChange } from "@/lib/public-client.functions";
@@ -124,7 +127,7 @@ export const rescheduleStudioAppointment = createServerFn({ method: "POST" })
     const sb = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(sb, userId, data.studioId);
-    await assertAppointmentAccess(sb, userId, data.appointmentId);
+    await assertAgendaAppointmentAccess(sb, userId, data.appointmentId);
 
     const { data: result, error } = await sb
       .rpc("reschedule_studio_appointment", {
@@ -226,7 +229,7 @@ export const cancelStudioAppointment = createServerFn({ method: "POST" })
     const sb = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(sb, userId, data.studioId);
-    await assertAppointmentAccess(sb, userId, data.appointmentId);
+    await assertAgendaAppointmentAccess(sb, userId, data.appointmentId);
     const { data: jointLines, error: jointError } = await sb
       .from("appointment_services")
       .select("id")
@@ -281,7 +284,7 @@ export const moveStudioAppointment = createServerFn({ method: "POST" })
     const sb = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(sb, userId, data.studioId);
-    await assertAppointmentAccess(sb, userId, data.appointmentId);
+    await assertAgendaAppointmentAccess(sb, userId, data.appointmentId);
     const { data: result, error } = await sb.rpc("move_studio_appointment", {
       p_studio_id: data.studioId,
       p_appointment_id: data.appointmentId,
@@ -315,8 +318,8 @@ export const swapStudioAppointments = createServerFn({ method: "POST" })
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(sb, userId, data.studioId);
     await Promise.all([
-      assertAppointmentAccess(sb, userId, data.firstAppointmentId),
-      assertAppointmentAccess(sb, userId, data.secondAppointmentId),
+      assertAgendaAppointmentAccess(sb, userId, data.firstAppointmentId),
+      assertAgendaAppointmentAccess(sb, userId, data.secondAppointmentId),
     ]);
     const { data: result, error } = await sb.rpc("swap_studio_appointments", {
       p_studio_id: data.studioId,
@@ -455,21 +458,15 @@ async function assertScheduleStaffAccess(
     .eq("user_id", userId)
     .eq("studio_id", studioId);
   if (error || !roles?.length) throw new Response("forbidden", { status: 403 });
-  if (
-    roles.some((row: { role?: string }) =>
-      ["saas_owner", "studio_owner", "manager"].includes(String(row.role)),
-    )
-  ) {
-    return;
-  }
-  if (!roles.some((row: { role?: string }) => row.role === "staff")) {
+  if (!roles.some((row: { role?: string }) =>
+    ["saas_owner", "studio_owner", "manager", "staff", "desk_staff"].includes(String(row.role)),
+  )) {
     throw new Response("forbidden", { status: 403 });
   }
   const { data: staff, error: staffError } = await sb
     .from("staff")
     .select("id")
     .eq("studio_id", studioId)
-    .eq("user_id", userId)
     .eq("id", staffId)
     .eq("is_active", true)
     .maybeSingle();

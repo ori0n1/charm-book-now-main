@@ -381,7 +381,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     if (loading || accessMode === "full" || premiumLocked) return;
     const allowedPaths =
       accessMode === "desk"
-        ? ["/admin/balcao"]
+        ? ["/admin/balcao", "/admin/agenda"]
         : ["/admin", "/admin/agenda", "/admin/clientes", "/admin/balcao", "/admin/horarios"];
     const canAccess = allowedPaths.some((to) =>
       to === "/admin" ? pathname === to : pathname.startsWith(to),
@@ -539,7 +539,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const segment = getSegmentConfig(studio.business_segment);
   const allowedNavByRole =
     accessMode === "desk"
-      ? NAV.filter((item) => item.to === "/admin/balcao")
+      ? NAV.filter((item) => item.to === "/admin/balcao" || item.to === "/admin/agenda")
       : accessMode === "limited"
         ? NAV.filter((item) =>
             [

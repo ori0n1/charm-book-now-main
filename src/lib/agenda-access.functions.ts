@@ -1,10 +1,15 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { assertStudioAccess, rateLimitOrThrow } from "@/lib/server-security";
+import {
+  assertAgendaStudioAccess as assertStudioAccess,
+  assertStudioAccess as assertGeneralStudioAccess,
+  rateLimitOrThrow,
+} from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 
 const StudioInput = z.object({ studioId: z.string().uuid() });
+const AgendaCatalogInput = StudioInput.extend({ staffId: z.string().uuid().nullable() });
 const ResolveAttendanceInput = StudioInput.extend({
   appointmentIds: z.array(z.string().uuid()).min(1).max(100),
   outcome: z.enum(["completed", "no_show"]),
@@ -81,24 +86,50 @@ const JointPaymentRecordInput = JointPaymentStatusInput.extend({
 });
 
 type StudioRole = "saas_owner" | "studio_owner" | "manager" | "staff" | "desk_staff";
-type AgendaVisibility = "private" | "team_busy" | "team_basic";
 
-const FULL_ROLES = new Set<StudioRole>(["saas_owner", "studio_owner", "manager"]);
-
-async function assertJointServiceOwner(admin: any, userId: string, studioId: string) {
+async function assertJointServiceMember(admin: any, userId: string, studioId: string) {
   await assertStudioAccess(admin, userId, studioId);
-  const access = await resolveStudioRole(admin, userId, studioId);
-  if (access.role !== "saas_owner" && access.role !== "studio_owner") {
-    throw new Response("forbidden", { status: 403 });
-  }
+  await resolveStudioRole(admin, userId, studioId);
 }
+
+export const getProtectedAgendaCatalog = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => AgendaCatalogInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const admin = getAdminClient() as any;
+    await assertStudioAccess(admin, String((context as any).userId ?? ""), data.studioId);
+    const [{ data: services, error: serviceError },
+      { data: staff, error: staffError },
+      { data: clients, error: clientError }] = await Promise.all([
+      admin.from("services").select("id,name,price,duration_min")
+        .eq("studio_id", data.studioId).eq("is_active", true).order("sort_order"),
+      admin.from("staff").select("id,name")
+        .eq("studio_id", data.studioId).eq("is_active", true)
+        .match(data.staffId ? { id: data.staffId } : {}).order("sort_order"),
+      admin.from("clients").select("id,name,phone")
+        .eq("studio_id", data.studioId).order("name"),
+    ]);
+    if (serviceError || staffError || clientError) {
+      throw new Error("agenda_catalog_unavailable");
+    }
+    const staffIds = (staff ?? []).map((row: { id: string }) => row.id);
+    const { data: links, error: linkError } = staffIds.length
+      ? await admin.from("staff_services").select("staff_id,service_id").in("staff_id", staffIds)
+      : { data: [], error: null };
+    if (linkError) throw new Error("agenda_catalog_unavailable");
+    const serviceIds = new Set((services ?? []).map((row: { id: string }) => row.id));
+    return {
+      services: services ?? [], staff: staff ?? [], clients: clients ?? [],
+      links: (links ?? []).filter((row: { service_id: string }) => serviceIds.has(row.service_id)),
+    };
+  });
 
 export const getProtectedJointPaymentStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => JointPaymentStatusInput.parse(input))
   .handler(async ({ data, context }) => {
     const admin = getAdminClient() as any;
-    await assertJointServiceOwner(admin, String((context as any).userId ?? ""), data.studioId);
+    await assertJointServiceMember(admin, String((context as any).userId ?? ""), data.studioId);
     const { data: result, error } = await admin.rpc("joint_service_payment_status", {
       p_studio_id: data.studioId,
       p_appointment_id: data.appointmentId,
@@ -117,7 +148,7 @@ export const recordProtectedJointPayment = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
-    await assertJointServiceOwner(admin, userId, data.studioId);
+    await assertJointServiceMember(admin, userId, data.studioId);
     await rateLimitOrThrow({ key: `joint-payment:${userId}`, limit: 20, windowMs: 60_000 });
     const { data: result, error } = await admin.rpc("record_joint_onsite_payment", {
       p_studio_id: data.studioId,
@@ -138,7 +169,7 @@ export const resolveProtectedJointServiceState = createServerFn({ method: "POST"
   .handler(async ({ data, context }) => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
-    await assertJointServiceOwner(admin, userId, data.studioId);
+    await assertJointServiceMember(admin, userId, data.studioId);
     await rateLimitOrThrow({ key: `joint-service-state:${userId}`, limit: 20, windowMs: 60_000 });
     const { data: result, error } = await admin.rpc("resolve_joint_service_state", {
       p_studio_id: data.studioId,
@@ -156,7 +187,7 @@ export const rescheduleProtectedJointService = createServerFn({ method: "POST" }
   .handler(async ({ data, context }) => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
-    await assertJointServiceOwner(admin, userId, data.studioId);
+    await assertJointServiceMember(admin, userId, data.studioId);
     await rateLimitOrThrow({ key: `joint-service-move:${userId}`, limit: 20, windowMs: 60_000 });
     const { data: result, error } = await admin.rpc("reschedule_joint_service", {
       p_studio_id: data.studioId,
@@ -177,23 +208,16 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(admin, userId, data.studioId);
 
-    const access = await resolveStudioRole(admin, userId, data.studioId);
-    if (access.role === "desk_staff") throw new Response("forbidden", { status: 403 });
+    await resolveStudioRole(admin, userId, data.studioId);
 
     const { data: studio, error: studioError } = await admin
       .from("studios")
       .select(
-        "staff_agenda_visibility,appointment_reminder_minutes,attendance_grace_minutes,whatsapp_auto_send_enabled",
+        "appointment_reminder_minutes,attendance_grace_minutes,whatsapp_auto_send_enabled",
       )
       .eq("id", data.studioId)
       .maybeSingle();
     if (studioError || !studio) throw new Error("agenda_studio_not_found");
-
-    const visibility = normalizeVisibility(studio.staff_agenda_visibility);
-    const ownStaffId = access.role === "staff" ? access.staffId : null;
-    if (access.role === "staff" && !ownStaffId) {
-      throw new Response("staff_identity_required", { status: 403 });
-    }
 
     const [rawAppointments, staffResult, availabilityResult, whatsappEntitlementResult] =
       await Promise.all([
@@ -218,11 +242,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
     if (staffResult.error) throw staffResult.error;
     if (availabilityResult.error) throw availabilityResult.error;
 
-    const ownAppointments =
-      access.role === "staff"
-        ? rawAppointments.filter((row) => appointmentIncludesStaff(row, ownStaffId))
-        : rawAppointments;
-    const sensitiveAppointmentIds = ownAppointments.map((row) => String(row.id));
+    const sensitiveAppointmentIds = rawAppointments.map((row) => String(row.id));
 
     const [payments, scheduleEvents, cashPayments, refunds, messageLogs] = await Promise.all([
       loadAppointmentRows(
@@ -318,7 +338,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
       ? await admin.from("profiles").select("id,full_name").in("id", cashActorIds)
       : { data: [], error: null };
     const cashActorNames = new Map((cashActorsError ? [] : cashActors ?? []).map((row: any) => [row.id, row.full_name]));
-    const appointments = selectVisibleAgendaAppointments(rawAppointments, access, visibility);
+    const appointments = rawAppointments;
 
     return {
       appointments,
@@ -366,7 +386,7 @@ export const resolveProtectedAppointmentAttendance = createServerFn({ method: "P
     });
 
     const appointmentIds = [...new Set(data.appointmentIds)];
-    const [access, appointmentResult] = await Promise.all([
+    const [, appointmentResult] = await Promise.all([
       resolveStudioRole(admin, userId, data.studioId),
       admin
         .from("appointments")
@@ -381,14 +401,6 @@ export const resolveProtectedAppointmentAttendance = createServerFn({ method: "P
     ) {
       throw new Response("appointment_not_found", { status: 404 });
     }
-    if (access.role === "desk_staff") throw new Response("forbidden", { status: 403 });
-    if (
-      access.role === "staff" &&
-      appointmentResult.data.some((appointment: any) => appointment.staff_id !== access.staffId)
-    ) {
-      throw new Response("forbidden", { status: 403 });
-    }
-
     const { data: resolved, error } = await admin.rpc("resolve_appointment_attendance_batch", {
       p_appointment_ids: appointmentIds,
       p_studio_id: data.studioId,
@@ -413,7 +425,9 @@ export const undoProtectedAppointmentAttendance = createServerFn({ method: "POST
       windowMs: 60_000,
     });
     const access = await resolveStudioRole(admin, userId, data.studioId);
-    if (!FULL_ROLES.has(access.role)) throw new Response("forbidden", { status: 403 });
+    if (!["saas_owner", "studio_owner", "manager"].includes(access.role)) {
+      throw new Response("forbidden", { status: 403 });
+    }
 
     let update = admin
       .from("appointments")
@@ -447,16 +461,13 @@ export const correctProtectedAppointmentAttendance = createServerFn({ method: "P
       limit: 60,
       windowMs: 60_000,
     });
-    const [access, appointmentResult] = await Promise.all([
+    const [, appointmentResult] = await Promise.all([
       resolveStudioRole(admin, userId, data.studioId),
       admin.from("appointments").select("id,staff_id,status")
         .eq("id", data.appointmentId).eq("studio_id", data.studioId).maybeSingle(),
     ]);
     if (appointmentResult.error || !appointmentResult.data) {
       throw new Response("appointment_not_found", { status: 404 });
-    }
-    if (!FULL_ROLES.has(access.role)) {
-      throw new Response("forbidden", { status: 403 });
     }
     const { error } = await admin.rpc("correct_appointment_attendance", {
       p_appointment_id: data.appointmentId,
@@ -480,10 +491,7 @@ export const updateProtectedResolvedAppointmentNotes = createServerFn({ method: 
       limit: 30,
       windowMs: 60_000,
     });
-    const access = await resolveStudioRole(admin, userId, data.studioId);
-    if (access.role !== "studio_owner" && access.role !== "saas_owner") {
-      throw new Response("studio_owner_required", { status: 403 });
-    }
+    await resolveStudioRole(admin, userId, data.studioId);
     const { data: updated, error } = await admin.from("appointments")
       .update({ notes: data.notes.trim() || null })
       .eq("id", data.appointmentId)
@@ -507,10 +515,7 @@ export const updateProtectedResolvedAppointmentReservation = createServerFn({ me
       key: `appointment-resolved-edit:${data.studioId}:${userId}`,
       limit: 20, windowMs: 60_000,
     });
-    const access = await resolveStudioRole(admin, userId, data.studioId);
-    if (access.role !== "studio_owner" && access.role !== "saas_owner") {
-      throw new Response("studio_owner_required", { status: 403 });
-    }
+    await resolveStudioRole(admin, userId, data.studioId);
     const { data: result, error } = await admin.rpc("edit_resolved_appointment_schedule", {
       p_studio_id: data.studioId,
       p_appointment_id: data.appointmentId,
@@ -538,10 +543,7 @@ export const updateProtectedResolvedAppointmentFull = createServerFn({ method: "
       key: `appointment-resolved-full-edit:${data.studioId}:${userId}`,
       limit: 20, windowMs: 60_000,
     });
-    const access = await resolveStudioRole(admin, userId, data.studioId);
-    if (access.role !== "studio_owner" && access.role !== "saas_owner") {
-      throw new Response("studio_owner_required", { status: 403 });
-    }
+    await resolveStudioRole(admin, userId, data.studioId);
     const { data: result, error } = await admin.rpc("edit_owner_resolved_appointment", {
       p_studio_id: data.studioId,
       p_appointment_id: data.appointmentId,
@@ -567,10 +569,7 @@ export const correctProtectedOwnerAppointmentAction = createServerFn({ method: "
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(admin, userId, data.studioId);
     await rateLimitOrThrow({ key: `appointment-correction:${data.studioId}:${userId}`, limit: 30, windowMs: 60_000 });
-    const access = await resolveStudioRole(admin, userId, data.studioId);
-    if (access.role !== "studio_owner" && access.role !== "saas_owner") {
-      throw new Response("studio_owner_required", { status: 403 });
-    }
+    await resolveStudioRole(admin, userId, data.studioId);
     const { error } = await admin.rpc("correct_owner_appointment_action", {
       p_studio_id: data.studioId,
       p_appointment_id: data.appointmentId,
@@ -633,7 +632,7 @@ export const getProtectedCashAttribution = createServerFn({ method: "GET" })
   .handler(async ({ data, context }) => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
-    await assertStudioAccess(admin, userId, data.studioId);
+    await assertGeneralStudioAccess(admin, userId, data.studioId);
     if (!data.sessionIds.length) return { sessions: [], movements: [] };
     const { data: sessions, error: sessionsError } = await admin.from("cash_register_sessions")
       .select("id,closed_by").eq("studio_id", data.studioId).in("id", data.sessionIds);
@@ -736,31 +735,8 @@ export const searchProtectedStudioClients = createServerFn({ method: "GET" })
       windowMs: 60_000,
     });
 
-    const access = await resolveStudioRole(admin, userId, data.studioId);
-    const term = normalizeSearch(data.query);
+    await resolveStudioRole(admin, userId, data.studioId);
     const digits = data.query.replace(/\D/g, "");
-
-    if (access.role === "staff") {
-      if (!access.staffId) throw new Response("staff_identity_required", { status: 403 });
-      const { data: rows, error } = await admin
-        .from("appointments")
-        .select("clients:clients!appointments_client_same_studio(id,name,phone)")
-        .eq("studio_id", data.studioId)
-        .eq("staff_id", access.staffId)
-        .not("client_id", "is", null)
-        .order("starts_at", { ascending: false })
-        .limit(1000);
-      if (error) throw error;
-      return filterClientRows(
-        (rows ?? []).map((row: any) => relationOne(row.clients)).filter(Boolean),
-        term,
-        digits,
-      );
-    }
-
-    if (!FULL_ROLES.has(access.role) && access.role !== "desk_staff") {
-      throw new Response("forbidden", { status: 403 });
-    }
 
     const escaped = escapeLike(data.query.trim());
     const requests = [
@@ -873,93 +849,8 @@ function relationOne<T>(value: T | T[] | null | undefined): T | null {
   return value ?? null;
 }
 
-function normalizeVisibility(value: unknown): AgendaVisibility {
-  return value === "team_busy" || value === "team_basic" ? value : "private";
-}
-
-export function selectVisibleAgendaAppointments(
-  rawAppointments: any[],
-  access: { role: StudioRole; staffId: string | null },
-  visibility: AgendaVisibility,
-) {
-  if (access.role !== "staff") return rawAppointments;
-
-  if (visibility === "private") {
-    return rawAppointments.filter((row) => appointmentIncludesStaff(row, access.staffId));
-  }
-
-  return rawAppointments
-    .filter(
-      (row) =>
-        appointmentIncludesStaff(row, access.staffId) ||
-        !["cancelled", "canceled"].includes(String(row.status).toLowerCase()),
-    )
-    .map((row) =>
-      appointmentIncludesStaff(row, access.staffId)
-        ? row
-        : maskTeamAppointment(row, visibility),
-    );
-}
-
-function maskTeamAppointment(row: any, visibility: AgendaVisibility) {
-  const staff = relationOne<any>(row.staff);
-  const services = Array.isArray(row.appointment_services) ? row.appointment_services : [];
-  return {
-    id: row.id,
-    public_token: null,
-    starts_at: row.starts_at,
-    ends_at: row.ends_at,
-    status: "confirmed",
-    total_price: 0,
-    total_duration_min: row.total_duration_min,
-    notes: null,
-    clients: null,
-    staff: staff ? { id: staff.id, name: staff.name } : null,
-    appointment_services:
-      visibility === "team_basic"
-        ? services.map((item: any) => ({
-            id: item.id,
-            price: 0,
-            duration_min: item.duration_min,
-            position: item.position,
-            starts_at: item.starts_at,
-            ends_at: item.ends_at,
-            staff: relationOne<any>(item.staff),
-            services: relationOne<any>(item.services)?.name
-              ? { name: relationOne<any>(item.services)?.name }
-              : null,
-          }))
-        : [],
-  };
-}
-
-function appointmentIncludesStaff(row: any, staffId: string | null) {
-  if (!staffId) return false;
-  if (relationOne<any>(row.staff)?.id === staffId) return true;
-  const services = Array.isArray(row.appointment_services) ? row.appointment_services : [];
-  return services.some((item: any) => relationOne<any>(item.staff)?.id === staffId);
-}
-
-function normalizeSearch(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLowerCase();
-}
-
 function escapeLike(value: string) {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
-}
-
-function filterClientRows(rows: any[], term: string, digits: string) {
-  return uniqueClients(rows)
-    .filter((client) => {
-      const text = normalizeSearch(`${client.name ?? ""} ${client.phone ?? ""}`);
-      const phone = String(client.phone ?? "").replace(/\D/g, "");
-      return text.includes(term) || (digits.length >= 2 && phone.includes(digits));
-    })
-    .slice(0, 10);
 }
 
 function uniqueClients(rows: any[]) {

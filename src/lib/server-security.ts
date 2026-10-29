@@ -125,6 +125,37 @@ export async function assertStudioAccessWithOptions(
   if (options.entitlement) await assertStudioEntitlement(sb, studioId, options.entitlement);
 }
 
+/** Agenda-only access for an active desk professional, without widening can_use_studio. */
+export async function assertAgendaStudioAccess(
+  sb: SupabaseLike,
+  userId: string,
+  studioId: string,
+  options: StudioAccessOptions = {},
+) {
+  if (!userId || !studioId) forbidden();
+  const { data: canUseStudio, error: accessError } = await sb.rpc("can_use_studio", {
+    _user_id: userId,
+    _studio_id: studioId,
+  });
+  if (accessError) forbidden();
+  if (canUseStudio !== true) {
+    const [membership, staff, studio] = await Promise.all([
+      sb.from("user_roles").select("user_id")
+        .eq("user_id", userId).eq("studio_id", studioId).eq("role", "desk_staff")
+        .limit(1).maybeSingle(),
+      sb.from("staff").select("id")
+        .eq("user_id", userId).eq("studio_id", studioId).eq("is_active", true)
+        .limit(1).maybeSingle(),
+      sb.from("studios").select("id")
+        .eq("id", studioId).eq("is_active", true).maybeSingle(),
+    ]);
+    if (membership.error || staff.error || studio.error ||
+      !membership.data?.user_id || !staff.data?.id || !studio.data?.id) forbidden();
+  }
+  if (options.requirePremium) await assertStudioPremiumAccess(sb, studioId);
+  if (options.entitlement) await assertStudioEntitlement(sb, studioId, options.entitlement);
+}
+
 export async function assertAppointmentAccess(
   sb: SupabaseLike,
   userId: string,
@@ -161,6 +192,19 @@ export async function assertAppointmentAccess(
     .limit(1)
     .maybeSingle();
   if (staffError || !staff?.id) forbidden();
+}
+
+/** Agenda actions are shared by every authenticated member of the appointment's studio. */
+export async function assertAgendaAppointmentAccess(
+  sb: SupabaseLike,
+  userId: string,
+  appointmentId: string,
+  options: StudioAccessOptions = {},
+) {
+  const { data, error } = await sb.from("appointments")
+    .select("studio_id").eq("id", appointmentId).maybeSingle();
+  if (error || !data?.studio_id) forbidden();
+  await assertAgendaStudioAccess(sb, userId, data.studio_id as string, options);
 }
 
 export function getRequestFingerprint() {

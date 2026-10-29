@@ -101,7 +101,7 @@ export function TimelineAppointmentDrawer({
   cancellationReasonRequired?: boolean;
   cancellationFinancialNotice?: string;
   cancelling?: boolean;
-  onServiceState?: (serviceId: string, state: "completed" | "cancelled") => void;
+  onServiceState?: (serviceId: string, state: "completed" | "no_show" | "cancelled") => void;
   onServiceReschedule?: (serviceId: string) => void;
   onServicePayment?: (serviceId: string) => Promise<PaymentSummary | null>;
   payment?: {
@@ -126,6 +126,7 @@ export function TimelineAppointmentDrawer({
   const [changingAttendance, setChangingAttendance] = useState(false);
   const [notice, setNotice] = useState<{ status: string; text: string } | null>(null);
   const [confirmingServiceCancelId, setConfirmingServiceCancelId] = useState<string | null>(null);
+  const [jointAction, setJointAction] = useState<"completed" | "no_show" | "cancelled" | null>(null);
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
   const [preparingPayment, setPreparingPayment] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<DrawerPaymentMethod>("cash");
@@ -194,6 +195,8 @@ export function TimelineAppointmentDrawer({
   const normalizedMbWayPhone = normalizeInternationalPhone(mbWayPhone);
   const sendingMbWayCharge = payment?.enableInPersonMbWay && paymentMethod === "mb_way" && mbWayAction === "charge";
   const groupedAssignments = new Map<string, NonNullable<TimelineDrawerDetails["serviceAssignments"]>>();
+  const actionableJointServices = (details.serviceAssignments ?? []).filter((assignment) =>
+    assignment.serviceId && assignment.serviceState === "confirmed");
   if (details.jointBooking) {
     for (const assignment of details.serviceAssignments ?? []) {
       const key = assignment.professionalId ?? assignment.professionalName;
@@ -252,13 +255,20 @@ export function TimelineAppointmentDrawer({
             {primaryActions.map(({ id, status, label, icon, tone }) => {
               const applied = details.status === status;
               const cancelAction = currentActions.get("cancel");
-              const disabled = changingAttendance || (id === "cancel"
-                ? applied ? !onChangeAttendance : !cancelAction || Boolean(cancelAction.disabled)
-                : !onChangeAttendance || details.status === "cancelled");
+              const disabled = changingAttendance || (details.jointBooking
+                ? !onServiceState || details.status === "cancelled" || actionableJointServices.length === 0 || Boolean(updatingServiceId)
+                : id === "cancel"
+                  ? applied ? !onChangeAttendance : !cancelAction || Boolean(cancelAction.disabled)
+                  : !onChangeAttendance || details.status === "cancelled");
               return <button key={id} type="button"
-                aria-pressed={applied}
+                aria-pressed={details.jointBooking ? jointAction === status : applied}
                 disabled={disabled}
                 onClick={() => {
+                  if (details.jointBooking) {
+                    setJointAction((current) => current === status ? null : status as "completed" | "no_show" | "cancelled");
+                    setConfirmingServiceCancelId(null);
+                    return;
+                  }
                   if (id === "cancel") {
                     if (applied) void changeAttendance("confirmed");
                     else setConfirmingCancel(true);
@@ -271,9 +281,51 @@ export function TimelineAppointmentDrawer({
               </button>;
             })}
           </div>
+          {details.jointBooking && jointAction && onServiceState && (
+            <div className="rounded-xl border border-border/70 bg-muted/25 p-2.5" data-testid="joint-service-action-picker">
+              <p className="mb-2 text-[11px] font-bold">
+                {jointAction === "completed" ? "Escolha o serviço que compareceu" :
+                  jointAction === "no_show" ? "Escolha o serviço cuja cliente faltou" :
+                    "Escolha o serviço a cancelar"}
+              </p>
+              <div className="max-h-36 space-y-1.5 overflow-y-auto">
+                {actionableJointServices.map((assignment) => (
+                  <button key={assignment.serviceId} type="button"
+                    disabled={Boolean(updatingServiceId)}
+                    onClick={() => {
+                      if (jointAction === "cancelled") {
+                        setConfirmingServiceCancelId(assignment.serviceId!);
+                      } else {
+                        onServiceState(assignment.serviceId!, jointAction);
+                        setJointAction(null);
+                      }
+                    }}
+                    className="flex min-h-10 w-full items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 text-left text-xs font-semibold disabled:opacity-45">
+                    <span>{assignment.serviceName} · {assignment.professionalName}</span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">{formatTime(assignment.startsAt, timeZone)}</span>
+                  </button>
+                ))}
+              </div>
+              {jointAction === "cancelled" && confirmingServiceCancelId && (
+                <div className="mt-2 rounded-lg border border-rose-300 bg-rose-50 p-2.5 text-xs dark:bg-rose-500/10">
+                  <p>Cancelar apenas este serviço? O pagamento original permanece; a proprietária decide o reembolso depois.</p>
+                  <div className="mt-2 flex gap-2">
+                    <button type="button" onClick={() => setConfirmingServiceCancelId(null)} className="min-h-9 rounded-lg border px-3 font-semibold">Manter</button>
+                    <button type="button" disabled={updatingServiceId === confirmingServiceCancelId}
+                      onClick={() => {
+                        onServiceState(confirmingServiceCancelId, "cancelled");
+                        setConfirmingServiceCancelId(null);
+                        setJointAction(null);
+                      }}
+                      className="min-h-9 rounded-lg bg-rose-600 px-3 font-bold text-white disabled:opacity-45">Confirmar cancelamento</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {payment && <button type="button" onClick={() => void openPayment()}
             disabled={preparingPayment || payment.busy}
-            className="flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/10 text-xs font-bold text-emerald-800 hover:bg-emerald-500/20 disabled:opacity-45 dark:text-emerald-200">
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/10 text-sm font-bold text-emerald-800 hover:bg-emerald-500/20 disabled:opacity-45 dark:text-emerald-200">
             {preparingPayment ? <Loader2 className="size-4 animate-spin" /> : <Euro className="size-4" />}
             Receber pagamento
           </button>}
@@ -318,7 +370,7 @@ export function TimelineAppointmentDrawer({
           {editAction && <div className="border-t border-border/70 pt-2">
             <button type="button" disabled={!currentActions.has("edit") || Boolean(currentActions.get("edit")?.disabled)}
               onClick={() => runAction("edit")}
-              className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-primary/45 bg-primary/10 px-3 text-sm font-bold text-primary transition hover:bg-primary/20 disabled:opacity-45">
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-border bg-muted/70 px-3 text-sm font-bold text-foreground transition hover:bg-muted disabled:opacity-45">
               <span className="shrink-0">{editAction.icon}</span><span>{editAction.label}</span>
             </button>
           </div>}
