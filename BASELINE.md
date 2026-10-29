@@ -1,6 +1,14 @@
 # Base oficial da produção Bellza — 2026-10-29
 
-## Produção ativa — Indique e Ganhe Premium v3
+## Produção ativa — avisos de repasse Stripe no sino da proprietária
+
+- Worker `tanstack-start-app`: deployment `2cf0d03b-00e8-4e90-9037-0275eeca3baf`, versão `5496e81c-f0a5-4bfc-8ad6-c6fd2479b124` ativa a 100% após o smoke. Fonte publicada: commit `4767bdfa8c833433968558e053a7ddc324f460b1`.
+- Artefato aprovado `financial-bell-candidate-v2.zip`: SHA-256 `631957606DCEE7F12316969C928D67A27167B8A5B4C2E5CEE1B4200556C5F0A5`. Rollback exato da versão anterior `e11859e4-08a4-48da-9c21-ffcbe847e59a`: `financial-bell-rollback-active.zip`, SHA-256 `E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98`. Configuração: SHA-256 `23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B`.
+- Cloudflare OAuth confirmou 51 bindings, incluindo 24 secrets, runtime `2025-09-24` com `nodejs_compat`, cron `*/10 * * * *` e domínios `bellza.pt` e `www.bellza.pt`; três assets críticos foram servidos byte a byte como no ZIP.
+- Smoke autenticado em produção com contas de QA e dados financeiros sintéticos no navegador: aviso no sino da proprietária, abertura de Recebimentos > Repasses Stripe pelo ID, 10 repasses apresentados, destaque do ID correto, mensagem para ID fora da lista e seis notificações existentes visíveis. Gestor manteve acesso a Recebimentos e Agenda; profissional manteve Agenda e não abriu Recebimentos.
+- Nenhuma migração SQL, cobrança, alteração de pagamentos, saldos ou repasses reais. Nenhum incidente ou rollback. O smoke financeiro usou dados sintéticos; os repasses reais da conta proprietária não foram consultados nem modificados.
+
+## Histórico: produção após Indique e Ganhe Premium v3
 
 - Worker `tanstack-start-app`: deployment `a8019422-ee5f-4b95-9ea1-0195f67d1d11`, versão `e11859e4-08a4-48da-9c21-ffcbe847e59a` ativa a 100% após o smoke test. Código-fonte do candidato: commit `5266185ff549b61ce55968c96cb4116e2245fdca`.
 - Candidato `referral-premium-active-v3.zip`: SHA-256 `E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98`. Rollback compatível `referral-premium-rollback-v3.zip`: SHA-256 `24271D202CC2B05B6DD289107431A5ABB067DBB6F46D1742BEBC71C2E8E4095B`. Configuração comum: SHA-256 `23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B`.

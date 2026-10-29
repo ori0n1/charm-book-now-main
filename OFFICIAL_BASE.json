@@ -2,25 +2,68 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "a8019422-ee5f-4b95-9ea1-0195f67d1d11",
-  "cloudflareVersionId": "e11859e4-08a4-48da-9c21-ffcbe847e59a",
-  "sourceCommit": "5266185ff549b61ce55968c96cb4116e2245fdca",
+  "deploymentId": "2cf0d03b-00e8-4e90-9037-0275eeca3baf",
+  "cloudflareVersionId": "5496e81c-f0a5-4bfc-8ad6-c6fd2479b124",
+  "sourceCommit": "4767bdfa8c833433968558e053a7ddc324f460b1",
   "releaseArtifacts": {
-    "candidateZipSha256": "E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98",
-    "rollbackZipSha256": "24271D202CC2B05B6DD289107431A5ABB067DBB6F46D1742BEBC71C2E8E4095B",
+    "candidateZipSha256": "631957606DCEE7F12316969C928D67A27167B8A5B4C2E5CEE1B4200556C5F0A5",
+    "rollbackZipSha256": "E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98",
+    "rollbackCloudflareVersionId": "e11859e4-08a4-48da-9c21-ffcbe847e59a",
     "configSha256": "23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B",
-    "clientAssetsVerifiedByGet": 7
+    "clientAssetsVerifiedByGet": 3
   },
-  "productionBindings": { "total": 51, "secrets": 24, "additionalPlainNames": ["ARARA_CANARY_PROBE_SHA256", "GOOGLE_PLACES_ENABLED", "JOINT_BOOKING_CREATE_ENABLED", "VITE_CONNECT_FINANCIAL_LIVE_APP_ORIGIN", "VITE_CONNECT_FINANCIAL_LIVE_ENABLED", "VITE_CONNECT_FINANCIAL_LIVE_ENDPOINT"], "additionalPlainNamesAbsentFromLocalWranglerConfig": true },
+  "productionBindings": {
+    "total": 51,
+    "secrets": 24,
+    "additionalPlainNames": [
+      "ARARA_CANARY_PROBE_SHA256",
+      "GOOGLE_PLACES_ENABLED",
+      "JOINT_BOOKING_CREATE_ENABLED",
+      "VITE_CONNECT_FINANCIAL_LIVE_APP_ORIGIN",
+      "VITE_CONNECT_FINANCIAL_LIVE_ENABLED",
+      "VITE_CONNECT_FINANCIAL_LIVE_ENDPOINT"
+    ],
+    "additionalPlainNamesAbsentFromLocalWranglerConfig": true
+  },
   "sql": {
     "status": "verified",
     "projectRef": "pwmdzpvnatrvfpgcvnzg",
     "checkedOn": "2026-10-29",
     "latestAppliedVersion": "20261029110031",
-    "remoteOnlyVersions": ["20261025160000"],
-    "localOnlyVersions": ["20261026190000", "20261027160000", "20261027190000", "20261027234500", "20261028010000"],
+    "remoteOnlyVersions": [
+      "20261025160000"
+    ],
+    "localOnlyVersions": [
+      "20261026190000",
+      "20261027160000",
+      "20261027190000",
+      "20261027234500",
+      "20261028010000"
+    ],
     "note": "A migração aditiva do Indique e Ganhe Premium foi aplicada com a versão atribuída pela API 20261029110031. O SQL registado é idêntico ao ficheiro local renomeado para essa versão. Não reaplicar. A migração do PIN 20261028210000 e as demais diferenças históricas permanecem preservadas; não executar db push automaticamente."
   },
-  "domains": ["bellza.pt", "www.bellza.pt"],
-  "cron": ["*/10 * * * *"]
+  "domains": [
+    "bellza.pt",
+    "www.bellza.pt"
+  ],
+  "cron": [
+    "*/10 * * * *"
+  ],
+  "releaseValidation": {
+    "checkedOn": "2026-10-29",
+    "trafficPercent": 100,
+    "oauthBindingsMatched": true,
+    "qaSmokeSyntheticOnly": true,
+    "qaSmoke": [
+      "owner bell notice and exact payout URL",
+      "10 synthetic payout rows and matching ID highlight",
+      "missing payout message",
+      "six existing notifications visible",
+      "manager receipts and agenda",
+      "professional agenda and receipts denied"
+    ],
+    "databaseMigrations": 0,
+    "stripeOrPaymentWrites": 0,
+    "incidents": 0
+  }
 }
