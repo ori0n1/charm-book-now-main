@@ -1,6 +1,14 @@
 # Base oficial da produção Bellza — 2026-10-29
 
-## Produção ativa — avisos de repasse Stripe no sino da proprietária
+## Produção ativa — ficha do cliente redesenhada
+
+- Worker `tanstack-start-app`: deployment `edeb7385-9fd8-42c2-8e75-d16c28fff009`, versão `12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35` confirmada por Cloudflare OAuth com 100% do tráfego. Código publicado: commit `08f796376dba14c4145e62c9ae93433bb3bc71b1`.
+- Candidato `bellza-client-profile-candidate-20261029.zip`: SHA-256 `F39D60DF4F2DE6ADC5127BD62752BA3D978D6B3AD4AD368B5EBF69E96A25D976`. Rollback compatível após qualquer cliente arquivado: `bellza-client-profile-compatible-rollback-20261029.zip`, SHA-256 `384CB419C4FC4DF3B902C4DCB71516D131A133237F1D4A3682F3ABFC8EC3A7CF`. Configuração de ambos: SHA-256 `23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B`.
+- Cloudflare OAuth confirmou 51 bindings (24 secrets), runtime `2025-09-24` com `nodejs_compat`, cron `*/10 * * * *` e domínios `bellza.pt` e `www.bellza.pt` preservados. A migração Supabase foi aplicada antes do Worker como versão `20261029151943`: coluna `archived_at`, função com permissão de proprietário e dois gatilhos ativos. Zero clientes arquivados na verificação posterior.
+- Smoke no estúdio sintético de QA: a lista vazia abriu normalmente; um cliente sintético foi interceptado somente no navegador para conferir a ficha publicada em 390 e 1280 px. Visão geral, histórico, preferências e formulário de edição abriram sem guardar dados; gestor não viu edição nem exclusão. Sem overflow horizontal. Nenhuma exclusão ou anonimização real foi executada.
+- Se ninguém tiver sido arquivado, a versão anterior `5496e81c-f0a5-4bfc-8ad6-c6fd2479b124` pode ser reativada com a reversão SQL aprovada. Depois de qualquer arquivo, manter a migração e publicar apenas o ZIP de rollback compatível. As diferenças históricas do Supabase continuam preservadas; não executar `db push` automático.
+
+## Histórico: avisos de repasse Stripe no sino da proprietária
 
 - Worker `tanstack-start-app`: deployment `2cf0d03b-00e8-4e90-9037-0275eeca3baf`, versão `5496e81c-f0a5-4bfc-8ad6-c6fd2479b124` ativa a 100% após o smoke. Fonte publicada: commit `4767bdfa8c833433968558e053a7ddc324f460b1`.
 - Artefato aprovado `financial-bell-candidate-v2.zip`: SHA-256 `631957606DCEE7F12316969C928D67A27167B8A5B4C2E5CEE1B4200556C5F0A5`. Rollback exato da versão anterior `e11859e4-08a4-48da-9c21-ffcbe847e59a`: `financial-bell-rollback-active.zip`, SHA-256 `E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98`. Configuração: SHA-256 `23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B`.

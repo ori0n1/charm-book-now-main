@@ -1,6 +1,12 @@
 # Ficha do cliente — candidato e rollback
 
-Base confirmada por Cloudflare OAuth em 2026-10-29: Worker `tanstack-start-app`, versão `5496e81c-f0a5-4bfc-8ad6-c6fd2479b124` com 100% do tráfego. Fonte oficial `e942d5fcf80edbdc60cf458ab42a0d18798d26e2` (`OFFICIAL_BASE.json`). Este candidato não foi publicado e a migração não foi aplicada em produção.
+Base anterior confirmada por Cloudflare OAuth em 2026-10-29: Worker `tanstack-start-app`, versão `5496e81c-f0a5-4bfc-8ad6-c6fd2479b124` com 100% do tráfego. Fonte anterior `e942d5fcf80edbdc60cf458ab42a0d18798d26e2`. O candidato do commit `08f796376dba14c4145e62c9ae93433bb3bc71b1` foi publicado após autorização do proprietário.
+
+## Publicação confirmada
+
+- Migração Supabase aplicada primeiro, como versão `20261029151943`; coluna, função e dois gatilhos confirmados por consulta somente de leitura. Zero clientes arquivados após a validação.
+- Cloudflare OAuth confirmou deployment `edeb7385-9fd8-42c2-8e75-d16c28fff009`, versão `12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35` com 100% do tráfego, 51 bindings e configuração efetiva preservados.
+- Smoke no estúdio sintético de QA: a lista vazia abriu; uma resposta de cliente sintético foi interceptada apenas no navegador para validar a ficha publicada a 390 e 1280 px. Separadores, histórico e formulário de edição abriram sem guardar; o gestor não viu ações de edição nem exclusão. Nenhum cliente real foi alterado.
 
 ## Escopo
 
@@ -18,7 +24,7 @@ Base confirmada por Cloudflare OAuth em 2026-10-29: Worker `tanstack-start-app`,
 - Build do candidato e do rollback compatível concluídos com as variáveis públicas efetivas da produção. A configuração de upload local, preparada por OAuth somente de leitura em ambos, tem SHA-256 `23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b` e preserva os 51 bindings (27 públicos, 24 secrets), cron, domínios e runtime.
 - Comparação com o ZIP da versão ativa (`631957606dcee7f12316969c928d67a27167b8a5b4c2e5cee1b4200556c5f0a5`): os 52 arquivos estáticos fora de `assets/` são idênticos; no `wrangler.json`, apenas os caminhos locais `configPath` e `userConfigPath` diferem. Os chunks gerados têm nomes hash diferentes e o escopo de fonte foi conferido separadamente.
 
-## Artefatos locais prontos, não publicados
+## Artefatos locais
 
 - Candidato: `bellza-client-profile-candidate-20261029.zip`, SHA-256 `f39d60df4f2de6adc5127bd62752ba3d978d6b3ad4ad368b5ebf69e96a25d976`, 466 arquivos.
 - Rollback compatível: `bellza-client-profile-compatible-rollback-20261029.zip`, SHA-256 `384cb419c4fc4df3b902c4dcb71516d131a133237f1d4a3682f3abfc8ec3a7cf`, 457 arquivos.

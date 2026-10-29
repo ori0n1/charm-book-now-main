@@ -2,15 +2,16 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "2cf0d03b-00e8-4e90-9037-0275eeca3baf",
-  "cloudflareVersionId": "5496e81c-f0a5-4bfc-8ad6-c6fd2479b124",
-  "sourceCommit": "4767bdfa8c833433968558e053a7ddc324f460b1",
+  "deploymentId": "edeb7385-9fd8-42c2-8e75-d16c28fff009",
+  "cloudflareVersionId": "12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35",
+  "sourceCommit": "08f796376dba14c4145e62c9ae93433bb3bc71b1",
   "releaseArtifacts": {
-    "candidateZipSha256": "631957606DCEE7F12316969C928D67A27167B8A5B4C2E5CEE1B4200556C5F0A5",
-    "rollbackZipSha256": "E2CFBBAFB44CB8693A5376A9DEC3616DED10A8759B025B3DEA7CDDA4EACE7D98",
-    "rollbackCloudflareVersionId": "e11859e4-08a4-48da-9c21-ffcbe847e59a",
+    "candidateZipSha256": "F39D60DF4F2DE6ADC5127BD62752BA3D978D6B3AD4AD368B5EBF69E96A25D976",
+    "rollbackZipSha256": "384CB419C4FC4DF3B902C4DCB71516D131A133237F1D4A3682F3ABFC8EC3A7CF",
+    "rollbackCloudflareVersionId": null,
+    "preArchiveRollbackCloudflareVersionId": "5496e81c-f0a5-4bfc-8ad6-c6fd2479b124",
     "configSha256": "23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B",
-    "clientAssetsVerifiedByGet": 3
+    "clientAssetsVerifiedByGet": 0
   },
   "productionBindings": {
     "total": 51,
@@ -29,7 +30,7 @@
     "status": "verified",
     "projectRef": "pwmdzpvnatrvfpgcvnzg",
     "checkedOn": "2026-10-29",
-    "latestAppliedVersion": "20261029110031",
+    "latestAppliedVersion": "20261029151943",
     "remoteOnlyVersions": [
       "20261025160000"
     ],
@@ -40,7 +41,7 @@
       "20261027234500",
       "20261028010000"
     ],
-    "note": "A migração aditiva do Indique e Ganhe Premium foi aplicada com a versão atribuída pela API 20261029110031. O SQL registado é idêntico ao ficheiro local renomeado para essa versão. Não reaplicar. A migração do PIN 20261028210000 e as demais diferenças históricas permanecem preservadas; não executar db push automaticamente."
+    "note": "A migração da ficha do cliente foi aplicada pela API com a versão atribuída 20261029151943; archived_at, função e dois gatilhos foram confirmados, com zero clientes arquivados no smoke. Não reaplicar. A migração Premium 20261029110031, a do PIN 20261028210000 e as demais diferenças históricas permanecem preservadas; não executar db push automaticamente."
   },
   "domains": [
     "bellza.pt",
@@ -55,14 +56,13 @@
     "oauthBindingsMatched": true,
     "qaSmokeSyntheticOnly": true,
     "qaSmoke": [
-      "owner bell notice and exact payout URL",
-      "10 synthetic payout rows and matching ID highlight",
-      "missing payout message",
-      "six existing notifications visible",
-      "manager receipts and agenda",
-      "professional agenda and receipts denied"
+      "client list empty state on synthetic QA studio",
+      "published profile with browser-intercepted synthetic client at 390 and 1280 px",
+      "overview, history, preferences and edit form opened without saving",
+      "manager profile without edit or delete actions",
+      "zero archived clients confirmed after smoke"
     ],
-    "databaseMigrations": 0,
+    "databaseMigrations": 1,
     "stripeOrPaymentWrites": 0,
     "incidents": 0
   }
