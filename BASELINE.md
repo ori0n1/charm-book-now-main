@@ -1,5 +1,13 @@
 # Base oficial da produção Bellza — 2026-10-29
 
+## Produção ativa — texto de exclusão corrigido
+
+- Worker `tanstack-start-app`: deployment `cbe43feb-280c-4861-969c-acb384e29292`, versão `da12dca2-66c8-4c2a-a4f7-378d10688c8c` confirmada por Cloudflare OAuth com 100% do tráfego. Código publicado: commit `d4ab79c87a34e72de2db922fb6025602cadcdc0b`.
+- Única alteração de produto: uma linha em `src/routes/_authenticated/admin.clientes.tsx`, encurtando a descrição do card Excluir cliente e permitindo a quebra do texto. ZIP publicado `bellza-client-delete-text-fix-candidate-20261029.zip`, SHA-256 `8C661ADD60589E3BC9D963F0B1747C9781E3AF357D41E7BDC01328527A875B24`.
+- Cloudflare OAuth confirmou 51 bindings (24 secrets), runtime `2025-09-24`, cron `*/10 * * * *` e os dois domínios preservados. Configuração SHA-256 `23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B`. Nenhuma migração ou alteração de dados.
+- Smoke publicado sem interceptação, no cliente sintético QA: card expandido e texto dentro da largura em 390 e 1280 px; visão geral, histórico, preferências e formulário de edição abertos sem guardar; gestor sem ações de edição ou exclusão. Não houve exclusão nem anonimização.
+- Rollback seguro desta mudança de apresentação: versão Cloudflare anterior `12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35`, pacote `bellza-client-profile-candidate-20261029.zip` (SHA-256 `F39D60DF4F2DE6ADC5127BD62752BA3D978D6B3AD4AD368B5EBF69E96A25D976`). Reversão só com autorização específica.
+
 ## Produção ativa — ficha do cliente redesenhada
 
 - Worker `tanstack-start-app`: deployment `edeb7385-9fd8-42c2-8e75-d16c28fff009`, versão `12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35` confirmada por Cloudflare OAuth com 100% do tráfego. Código publicado: commit `08f796376dba14c4145e62c9ae93433bb3bc71b1`.

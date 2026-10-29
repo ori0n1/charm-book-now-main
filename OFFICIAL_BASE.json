@@ -2,13 +2,13 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "edeb7385-9fd8-42c2-8e75-d16c28fff009",
-  "cloudflareVersionId": "12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35",
-  "sourceCommit": "08f796376dba14c4145e62c9ae93433bb3bc71b1",
+  "deploymentId": "cbe43feb-280c-4861-969c-acb384e29292",
+  "cloudflareVersionId": "da12dca2-66c8-4c2a-a4f7-378d10688c8c",
+  "sourceCommit": "d4ab79c87a34e72de2db922fb6025602cadcdc0b",
   "releaseArtifacts": {
-    "candidateZipSha256": "F39D60DF4F2DE6ADC5127BD62752BA3D978D6B3AD4AD368B5EBF69E96A25D976",
-    "rollbackZipSha256": "384CB419C4FC4DF3B902C4DCB71516D131A133237F1D4A3682F3ABFC8EC3A7CF",
-    "rollbackCloudflareVersionId": null,
+    "candidateZipSha256": "8C661ADD60589E3BC9D963F0B1747C9781E3AF357D41E7BDC01328527A875B24",
+    "rollbackZipSha256": "F39D60DF4F2DE6ADC5127BD62752BA3D978D6B3AD4AD368B5EBF69E96A25D976",
+    "rollbackCloudflareVersionId": "12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35",
     "preArchiveRollbackCloudflareVersionId": "5496e81c-f0a5-4bfc-8ad6-c6fd2479b124",
     "configSha256": "23C6AC958B7A05C814B08C4BBCEABF710D45E1069B7EAE7F001E00950670C36B",
     "clientAssetsVerifiedByGet": 0
@@ -56,13 +56,13 @@
     "oauthBindingsMatched": true,
     "qaSmokeSyntheticOnly": true,
     "qaSmoke": [
-      "authenticated owner and manager client-list query passed after column grant",
-      "existing synthetic QA client opened in published profile at 390 and 1280 px without interception",
-      "overview, history, preferences and edit form opened without saving",
+      "published deletion description wraps inside card at 390 and 1280 px without interception",
+      "existing synthetic QA client opened overview, history, preferences and edit form without saving",
+      "delete confirmation opened without submitting",
       "manager profile without edit or delete actions",
-      "1549 clients intact and zero archived clients confirmed"
+      "no horizontal overflow in mobile or desktop"
     ],
-    "databaseMigrations": 2,
+    "databaseMigrations": 0,
     "stripeOrPaymentWrites": 0,
     "incidents": 0
   }
