@@ -30,7 +30,7 @@
     "status": "verified",
     "projectRef": "pwmdzpvnatrvfpgcvnzg",
     "checkedOn": "2026-10-29",
-    "latestAppliedVersion": "20261029151943",
+    "latestAppliedVersion": "20261029154202",
     "remoteOnlyVersions": [
       "20261025160000"
     ],
@@ -41,7 +41,7 @@
       "20261027234500",
       "20261028010000"
     ],
-    "note": "A migração da ficha do cliente foi aplicada pela API com a versão atribuída 20261029151943; archived_at, função e dois gatilhos foram confirmados, com zero clientes arquivados no smoke. Não reaplicar. A migração Premium 20261029110031, a do PIN 20261028210000 e as demais diferenças históricas permanecem preservadas; não executar db push automaticamente."
+    "note": "A migração da ficha do cliente foi aplicada como 20261029151943. A lista ficou vazia porque o novo filtro archived_at não tinha SELECT para authenticated; a migração corretiva 20261029154202 concedeu apenas SELECT nessa coluna. Os 1549 clientes permaneceram no banco, zero arquivados. Não reaplicar. A migração Premium 20261029110031, a do PIN 20261028210000 e as demais diferenças históricas permanecem preservadas; não executar db push automaticamente."
   },
   "domains": [
     "bellza.pt",
@@ -56,13 +56,13 @@
     "oauthBindingsMatched": true,
     "qaSmokeSyntheticOnly": true,
     "qaSmoke": [
-      "client list empty state on synthetic QA studio",
-      "published profile with browser-intercepted synthetic client at 390 and 1280 px",
+      "authenticated owner and manager client-list query passed after column grant",
+      "existing synthetic QA client opened in published profile at 390 and 1280 px without interception",
       "overview, history, preferences and edit form opened without saving",
       "manager profile without edit or delete actions",
-      "zero archived clients confirmed after smoke"
+      "1549 clients intact and zero archived clients confirmed"
     ],
-    "databaseMigrations": 1,
+    "databaseMigrations": 2,
     "stripeOrPaymentWrites": 0,
     "incidents": 0
   }

@@ -8,6 +8,13 @@ Base anterior confirmada por Cloudflare OAuth em 2026-10-29: Worker `tanstack-st
 - Cloudflare OAuth confirmou deployment `edeb7385-9fd8-42c2-8e75-d16c28fff009`, versão `12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35` com 100% do tráfego, 51 bindings e configuração efetiva preservados.
 - Smoke no estúdio sintético de QA: a lista vazia abriu; uma resposta de cliente sintético foi interceptada apenas no navegador para validar a ficha publicada a 390 e 1280 px. Separadores, histórico e formulário de edição abriram sem guardar; o gestor não viu ações de edição nem exclusão. Nenhum cliente real foi alterado.
 
+## Incidente da lista e correção
+
+- Após a publicação, a lista real apareceu vazia. A consulta somente de leitura confirmou 1.549 clientes, todos com `archived_at` nulo: não houve perda ou anonimização de dados.
+- Causa: `clients` usa privilégios de leitura por coluna. O papel `authenticated` lia as colunas antigas, mas não a nova `archived_at` usada pelo filtro.
+- Migração corretiva aplicada pela API como `20261029154202_client_profile_archived_at_authenticated_read.sql`: somente `GRANT SELECT (archived_at) ON TABLE public.clients TO authenticated;`. Nenhuma linha foi alterada.
+- A consulta exata da lista passou com contas autenticadas de proprietário e gestor. O cliente sintético já existente no estúdio de QA abriu sem interceptação em 390 e 1280 px; histórico, separadores e formulário de edição funcionaram sem guardar. O gestor não viu edição nem exclusão. Cloudflare continua na versão `12ba6fcc-acc1-4ef1-9e5b-c2b297e21f35` a 100%.
+
 ## Escopo
 
 - `src/routes/_authenticated/admin.clientes.tsx`: aparência da ficha, separadores e ocultação de perfis arquivados na lista.
