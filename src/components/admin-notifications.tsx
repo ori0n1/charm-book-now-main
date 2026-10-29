@@ -39,6 +39,8 @@ import { ClientAvatar } from "@/components/client-avatar";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
 import { buildStudioNotificationDeepLink } from "@/lib/notification-deep-link";
+import { useConnectFinancialNotifications } from "@/components/connect-financial-test-notifications";
+import { financialNoticeActionUrl } from "@/lib/financial-notice-navigation";
 
 type StudioNotification = {
   id: string;
@@ -74,6 +76,8 @@ type AdminNotificationsProps = {
   studioId: string;
   studioName: string;
   timeZone: string;
+  financialNoticesEnabled: boolean;
+  standardNotificationsEnabled: boolean;
 };
 
 const permissionStorageKey = "studio-notification-permission-asked";
@@ -100,9 +104,13 @@ function scheduleNonCriticalNotificationTask(task: () => void) {
   };
 }
 
-export function AdminNotifications({ studioId, studioName, timeZone }: AdminNotificationsProps) {
+export function AdminNotifications({ studioId, studioName, timeZone, financialNoticesEnabled, standardNotificationsEnabled }: AdminNotificationsProps) {
   const [items, setItems] = useState<StudioNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const financialNotices = useConnectFinancialNotifications(studioId, financialNoticesEnabled);
+  const [financialReadIds, setFinancialReadIds] = useState<string[]>([]);
+  const financialUnreadCount = financialNotices.filter((item) => !financialReadIds.includes(item.id)).length;
+  const totalUnreadCount = unreadCount + financialUnreadCount;
   const [open, setOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const reconcilePayments = useServerFn(reconcileStudioBookingPayments);
@@ -117,6 +125,26 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
   const [pushNeedsAttention, setPushNeedsAttention] = useState(false);
   const [pushActivating, setPushActivating] = useState(false);
   const [pushActivationCode, setPushActivationCode] = useState<PushActivationCode | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(`bellza:financial-notices-read:${studioId}`) ?? "[]");
+      setFinancialReadIds(Array.isArray(saved) ? saved.filter((id): id is string => typeof id === "string") : []);
+    } catch {
+      setFinancialReadIds([]);
+    }
+  }, [studioId]);
+
+  function markFinancialNoticesRead(ids: string[]) {
+    if (!ids.length) return;
+    const next = [...new Set([...financialReadIds, ...ids])].slice(-100);
+    setFinancialReadIds(next);
+    try {
+      window.localStorage.setItem(`bellza:financial-notices-read:${studioId}`, JSON.stringify(next));
+    } catch {
+      // The notice remains accessible when browser storage is unavailable.
+    }
+  }
 
   useEffect(() => {
     if (!open || !isMobile) return;
@@ -187,7 +215,7 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
   );
 
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window) || !studioId) return;
+    if (!standardNotificationsEnabled || typeof window === "undefined" || !("Notification" in window) || !studioId) return;
     setPermission(Notification.permission);
     setPushNeedsAttention(Notification.permission !== "granted");
     if (Notification.permission === "granted") {
@@ -204,14 +232,15 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
           });
       });
     }
-  }, [loadPushHealth, registerStudioPush, studioId]);
+  }, [loadPushHealth, registerStudioPush, standardNotificationsEnabled, studioId]);
 
   useEffect(() => {
     if (
       typeof window === "undefined" ||
       !("serviceWorker" in navigator) ||
       !("Notification" in window) ||
-      !studioId
+      !studioId ||
+      !standardNotificationsEnabled
     ) {
       return;
     }
@@ -255,7 +284,7 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
       window.removeEventListener("focus", reconcileWhenUsable);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [registerStudioPush, studioId]);
+  }, [registerStudioPush, standardNotificationsEnabled, studioId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -270,10 +299,11 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
 
   useEffect(() => {
     if (!studioId) return;
-    let cancelled = false;
     setItems([]);
     setUnreadCount(0);
     setOpen(false);
+    if (!standardNotificationsEnabled) return;
+    let cancelled = false;
 
     async function loadNotifications() {
       const [historyResult, unreadResult] = await Promise.all([
@@ -403,7 +433,7 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
       document.removeEventListener("visibilitychange", recoverNotifications);
       void supabase.removeChannel(channel);
     };
-  }, [reconcilePayments, studioId, studioName, syncPushNotifications, timeZone]);
+  }, [reconcilePayments, standardNotificationsEnabled, studioId, studioName, syncPushNotifications, timeZone]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -503,6 +533,8 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
   }
 
   async function markAllRead() {
+    markFinancialNoticesRead(financialNotices.map((item) => item.id));
+    if (!standardNotificationsEnabled) return;
     const readAt = new Date().toISOString();
     setItems((current) => current.map((item) => ({ ...item, read_at: item.read_at ?? readAt })));
     setUnreadCount(0);
@@ -551,7 +583,7 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
               Notificações
             </h2>
           </div>
-          {unreadCount > 0 && (
+          {totalUnreadCount > 0 && (
             <button
               type="button"
               onClick={markAllRead}
@@ -569,7 +601,7 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
-        {(permission !== "granted" || pushNeedsAttention || pushActivating) && (
+        {standardNotificationsEnabled && (permission !== "granted" || pushNeedsAttention || pushActivating) && (
           <button
             type="button"
             onClick={requestPermission}
@@ -586,7 +618,7 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
                   : "Ativar notificações"}
           </button>
         )}
-        {permission === "granted" && !pushNeedsAttention && !pushActivating && (
+        {standardNotificationsEnabled && permission === "granted" && !pushNeedsAttention && !pushActivating && (
           <div className="mt-3 flex w-full items-center gap-2 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
             <BellRing className="h-3.5 w-3.5 shrink-0" />
             Notificações ativadas neste dispositivo
@@ -595,7 +627,7 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
-        {items.length === 0 ? (
+        {items.length === 0 && financialNotices.length === 0 ? (
           <div className="px-5 py-8 text-center">
             <div className="mx-auto grid size-12 place-items-center rounded-3xl bg-muted text-muted-foreground">
               <Bell className="h-5 w-5" />
@@ -606,6 +638,41 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
             </p>
           </div>
         ) : (
+          <div className="space-y-1.5">
+            {financialNotices.map((item) => {
+              const isRead = financialReadIds.includes(item.id);
+              return (
+                <button
+                  type="button"
+                  key={`financial:${item.id}`}
+                  onClick={() => {
+                    markFinancialNoticesRead([item.id]);
+                    setOpen(false);
+                    window.location.assign(financialNoticeActionUrl(item));
+                  }}
+                  className={`flex w-full gap-3 rounded-3xl px-3 py-3 text-left transition ${
+                    isRead ? "hover:bg-muted/65" : "bg-emerald-500/10 ring-1 ring-emerald-500/15 hover:bg-emerald-500/15"
+                  }`}
+                >
+                  <span className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-300">
+                    <CreditCard className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-sm font-semibold">
+                        {item.id.startsWith("payout:") ? "Repasse Stripe" : "Atualização Stripe"}
+                      </span>
+                      {!isRead && <span className="size-2 shrink-0 rounded-full bg-emerald-500" />}
+                    </span>
+                    <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{item.body}</span>
+                    <span className="mt-2 block text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      {formatNotificationTime(item.createdAt, timeZone)}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+            {items.length > 0 && (
           <ExpandableList
             items={items}
             initialCount={5}
@@ -688,6 +755,8 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
               );
             }}
           />
+            )}
+          </div>
         )}
       </div>
     </>
@@ -697,8 +766,8 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
     return (
       <>
         <NotificationBell
-          unreadCount={unreadCount}
-          pushNeedsAttention={pushNeedsAttention}
+          unreadCount={totalUnreadCount}
+          pushNeedsAttention={standardNotificationsEnabled && pushNeedsAttention}
           onClick={() => setOpen((current) => !current)}
         />
         {open && createPortal(
@@ -728,9 +797,9 @@ export function AdminNotifications({ studioId, studioName, timeZone }: AdminNoti
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <NotificationBell
-          unreadCount={unreadCount}
+          unreadCount={totalUnreadCount}
           open={open}
-          pushNeedsAttention={pushNeedsAttention}
+          pushNeedsAttention={standardNotificationsEnabled && pushNeedsAttention}
         />
       </PopoverTrigger>
       <PopoverContent

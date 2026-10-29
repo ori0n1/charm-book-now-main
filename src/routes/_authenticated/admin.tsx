@@ -33,7 +33,6 @@ import { BellzaLogo } from "@/components/bellza-logo";
 import { BrandLoadingState } from "@/components/brand-loading-state";
 import { PwaInstallGuide } from "@/components/pwa-install-guide";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { ConnectFinancialTestNotifications } from "@/components/connect-financial-test-notifications";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio, type AppRole } from "@/hooks/use-current-studio";
 import { APP_BRAND } from "@/lib/app-brand";
@@ -788,8 +787,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           </div>
         </div>
         <div className={`flex items-center ${showOverviewPrivacy ? "gap-1 md:gap-2" : "gap-2"}`}>
-          <ConnectFinancialTestNotifications key={`financial-${studio.id}`} studioId={studio.id} />
-          {accessMode === "full" && planHasFeature(effectivePlan, "notifications") && (
+          {accessMode === "full" && (planHasFeature(effectivePlan, "notifications") || studio.role === "studio_owner" || studio.role === "saas_owner") && (
             notificationsReady ? (
               <Suspense fallback={<span className="block size-10" aria-hidden="true" />}>
                 <LazyAdminNotifications
@@ -797,6 +795,8 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
                   studioId={studio.id}
                   studioName={studio.name}
                   timeZone={studio.timezone}
+                  financialNoticesEnabled={studio.role === "studio_owner" || studio.role === "saas_owner"}
+                  standardNotificationsEnabled={planHasFeature(effectivePlan, "notifications")}
                 />
               </Suspense>
             ) : (

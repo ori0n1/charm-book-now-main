@@ -37,6 +37,7 @@ export const Route = createFileRoute("/_authenticated/admin/recebimento")({
   head: () => ({ meta: [{ title: "Recebimento de Sinal - Painel" }] }),
   validateSearch: (s: Record<string, unknown>) => ({
     connect: typeof s.connect === "string" ? s.connect : undefined,
+    ...(typeof s.payout === "string" && /^po_[A-Za-z0-9]+$/.test(s.payout) ? { payout: s.payout } : {}),
   }),
   component: RecebimentoPage,
 });
@@ -120,6 +121,7 @@ function RecebimentoContent() {
   const canManageStripe = studio?.role === "studio_owner" || studio?.role === "saas_owner";
   const search = useSearch({ from: "/_authenticated/admin/recebimento" });
   const connectParam = (search as any).connect as string | undefined;
+  const selectedPayoutId = search.payout;
 
   const getStatusFn = useServerFn(getConnectAccountStatus);
   const syncStatusFn = useServerFn(syncConnectAccountStatus);
@@ -299,6 +301,15 @@ function RecebimentoContent() {
   const recentPayments = financial?.recentPayments ?? [];
   const hasMoreRecentPayments = recentPayments.length > 3;
   const visibleRecentPayments = showAllRecentPayments ? recentPayments : recentPayments.slice(0, 3);
+
+  useEffect(() => {
+    if (loading || !selectedPayoutId) return;
+    const target = document.getElementById(`stripe-payout-${selectedPayoutId}`)
+      ?? document.getElementById("stripe-payouts");
+    if (!target) return;
+    const frame = window.requestAnimationFrame(() => target.scrollIntoView({ behavior: "smooth", block: "center" }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, selectedPayoutId, financial?.payouts]);
   return (
     <div className="space-y-2.5 pb-5 xl:mx-auto xl:max-w-[88rem]">
       <section className="rounded-[1.15rem] border border-border bg-card p-3.5 shadow-sm md:p-4">
@@ -537,7 +548,7 @@ function RecebimentoContent() {
               )}
             </div>
 
-            <StripePayouts financial={financial} />
+            <StripePayouts financial={financial} selectedPayoutId={selectedPayoutId} />
 
             <div className="grid gap-3 xl:grid-cols-2">
               <CompactDetails
@@ -695,10 +706,11 @@ function StripeTransferCard({ financial }: { financial?: ConnectFinancialSummary
   );
 }
 
-function StripePayouts({ financial }: { financial?: ConnectFinancialSummary }) {
+function StripePayouts({ financial, selectedPayoutId }: { financial?: ConnectFinancialSummary; selectedPayoutId?: string }) {
   const payouts = financial?.payouts ?? [];
+  const selectedPayoutMissing = selectedPayoutId && !payouts.some((payout) => payout.id === selectedPayoutId);
   return (
-    <details className="group overflow-hidden rounded-[1.25rem] border border-border bg-card shadow-sm">
+    <details id="stripe-payouts" open={Boolean(selectedPayoutId)} className="group overflow-hidden rounded-[1.25rem] border border-border bg-card shadow-sm">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3.5 md:p-4 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0">
         <h2 className="text-base font-black tracking-tight text-foreground md:text-lg">Repasses Stripe</h2>
@@ -708,10 +720,19 @@ function StripePayouts({ financial }: { financial?: ConnectFinancialSummary }) {
         </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition group-open:rotate-180" />
       </summary>
+      {selectedPayoutMissing && (
+        <p className="border-t border-border/60 px-3 py-2 text-xs text-muted-foreground md:px-4">
+          Este repasse já não consta dos 10 mais recentes apresentados aqui. Consulte o histórico completo no painel Stripe.
+        </p>
+      )}
       {payouts.length ? (
         <div className="grid gap-2 border-t border-border/60 p-3 md:grid-cols-2 xl:grid-cols-3 md:p-4">
           {payouts.map((payout) => (
-            <article key={payout.id} className="min-w-0 rounded-xl border border-border/70 bg-background/60 p-2.5">
+            <article
+              key={payout.id}
+              id={`stripe-payout-${payout.id}`}
+              className={cn("min-w-0 rounded-xl border border-border/70 bg-background/60 p-2.5", payout.id === selectedPayoutId && "border-emerald-500 ring-2 ring-emerald-500/30")}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-extrabold text-foreground">
