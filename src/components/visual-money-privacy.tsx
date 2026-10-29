@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useCurrentStudio, type CurrentStudio } from "@/hooks/use-current-studio";
 
 const MASK = "•••• €";
@@ -149,14 +150,20 @@ export function VisualPrivacyBoundary({ children }: { children: ReactNode }) {
   return <VisualPrivacyProvider key={studio ? `${studio.user_id}:${studio.id}` : "loading"} studio={studio}>{children}</VisualPrivacyProvider>;
 }
 
-export function VisualPrivacyButton() {
+export function VisualPrivacyButton({ compact = false }: { compact?: boolean }) {
   const { hidden, owner, open } = useContext(PrivacyContext);
   if (!owner) return null;
   return <button type="button" onClick={open} aria-label={hidden ? "Revelar valores" : "Ocultar valores"}
     title={hidden ? "Revelar valores" : "Ocultar valores"} aria-pressed={hidden}
-    className="grid size-10 shrink-0 place-items-center rounded-full border border-border/60 bg-background/70 text-muted-foreground transition hover:border-emerald-600/35 hover:bg-background hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600/50 dark:hover:text-emerald-400">
+    className={`grid ${compact ? "size-8 md:size-10" : "size-10"} shrink-0 place-items-center rounded-full border border-border/60 bg-background/70 text-muted-foreground transition hover:border-emerald-600/35 hover:bg-background hover:text-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600/50 dark:hover:text-emerald-400`}>
     {hidden ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
   </button>;
+}
+
+export function VisualPrivacyHeaderButton() {
+  const [header, setHeader] = useState<HTMLElement | null>(null);
+  useEffect(() => setHeader(document.getElementById("admin-visual-privacy-action")), []);
+  return header ? createPortal(<VisualPrivacyButton compact />, header) : null;
 }
 
 export function VisualMoney({ value, force = false }: { value: string; force?: boolean }) {

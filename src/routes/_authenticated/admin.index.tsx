@@ -18,7 +18,7 @@ import { toast } from "sonner";
 import { ShareStudioCard } from "@/components/share-studio-card";
 import { UpsellMetricsCard } from "@/components/upsell-metrics-card";
 import { ClientAvatar } from "@/components/client-avatar";
-import { VisualMoney, VisualPrivacyBoundary, VisualPrivacyButton, useVisualMoneyHidden } from "@/components/visual-money-privacy";
+import { VisualMoney, VisualPrivacyBoundary, VisualPrivacyHeaderButton, useVisualMoneyHidden } from "@/components/visual-money-privacy";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { InternationalPhoneInput } from "@/components/ui/international-phone-input";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
@@ -69,7 +69,7 @@ export const Route = createFileRoute("/_authenticated/admin/")({
 });
 
 function OverviewRoute() {
-  return <VisualPrivacyBoundary><OverviewPage /></VisualPrivacyBoundary>;
+  return <VisualPrivacyBoundary><VisualPrivacyHeaderButton /><OverviewPage /></VisualPrivacyBoundary>;
 }
 
 type ServiceLine = {
@@ -553,15 +553,12 @@ function OverviewPage() {
                   </p>
                   <h1 className="mt-2 text-2xl font-light tracking-tight">Resumo do estúdio</h1>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <VisualPrivacyButton />
-                  <Link
-                    to="/admin/agenda"
-                    className="rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  >
-                    Ver agenda
-                  </Link>
-                </div>
+                <Link
+                  to="/admin/agenda"
+                  className="rounded-full border border-border px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                >
+                  Ver agenda
+                </Link>
               </div>
 
               <div className="mt-5 grid flex-1 auto-rows-fr gap-3 sm:grid-cols-3">
@@ -938,7 +935,6 @@ function MobileOverview({
           value={formatEUR(totals.total)}
           detail={`${scheduledCount} ${scheduledCount === 1 ? "marcação confirmada" : "marcações confirmadas"}`}
           money
-          action={<VisualPrivacyButton />}
         />
       </section>
 
@@ -1790,22 +1786,17 @@ function MobileMiniMetric({
   value,
   detail,
   money,
-  action,
 }: {
   label: string;
   value: string;
   detail?: string;
   money?: boolean;
-  action?: ReactNode;
 }) {
   return (
     <div className="flex min-h-[6.6rem] min-w-0 flex-col rounded-[1.15rem] border border-border bg-card p-3 shadow-sm">
-      <div className="flex min-w-0 items-start justify-between gap-1">
-        <p className="min-w-0 text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground min-[380px]:text-[10px]">
-          {label}
-        </p>
-        {action}
-      </div>
+      <p className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.1em] text-muted-foreground min-[380px]:text-[10px]">
+        {label}
+      </p>
       <p
         className={`mt-1.5 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.15rem,5vw,1.25rem)] font-semibold leading-tight ${money ? "text-emerald-700 dark:text-emerald-400" : ""}`}
       >

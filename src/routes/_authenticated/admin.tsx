@@ -344,6 +344,8 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     : { title: APP_BRAND.shortName, subtitle: "Bem-vinda ao painel Bellza" };
   const premiumTooltip = getPremiumHeaderTooltip(billingQuery.data);
   const isPremiumPage = pathname.startsWith("/admin/premium");
+  const isOverviewPage = pathname === "/admin" || pathname === "/admin/";
+  const showOverviewPrivacy = isOverviewPage && isAccountOwner;
   const isAgendaPage = pathname.startsWith("/admin/agenda");
   const showCancellationBanner = Boolean(
     accessMode === "full" &&
@@ -760,17 +762,17 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           isAgendaPage ? "h-[var(--admin-mobile-header-height)] py-1" : "py-3"
         } ${desktopSidebarCollapsed ? "md:ml-20" : "md:ml-60"}`}
       >
-        <div className="flex min-w-0 items-center gap-2.5">
+        <div className={`flex min-w-0 items-center ${showOverviewPrivacy ? "gap-1.5 md:gap-2.5" : "gap-2.5"}`}>
           <BellzaLogo
             variant="icon"
             showWordmark={false}
-            className="size-8 md:hidden"
+            className={`size-8 md:hidden ${showOverviewPrivacy ? "max-[350px]:hidden" : ""}`}
             href={null}
           />
           <AdminUserAvatar name={getUserDisplayName(studio)} avatarUrl={studio.user_avatar_url} />
           <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-[17px] font-light tracking-tight md:text-xl">
+            <div className={`flex min-w-0 items-center ${showOverviewPrivacy ? "gap-1 md:gap-2" : "gap-2"}`}>
+              <h1 className={`truncate font-light tracking-tight md:text-xl ${showOverviewPrivacy ? "text-[16px] max-[350px]:text-sm" : "text-[17px]"}`}>
                 {userGreeting.title}
               </h1>
               {premiumIndicatorVisible && (
@@ -784,7 +786,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className={`flex items-center ${showOverviewPrivacy ? "gap-1 md:gap-2" : "gap-2"}`}>
           <ConnectFinancialTestNotifications key={`financial-${studio.id}`} studioId={studio.id} />
           {accessMode === "full" && planHasFeature(effectivePlan, "notifications") && (
             notificationsReady ? (
@@ -801,6 +803,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
             )
           )}
           <ThemeToggle className="h-9 w-9" />
+          <span id="admin-visual-privacy-action" className="contents" />
           <button
             onClick={logout}
             className={`rounded-2xl border border-border p-2 ${isAgendaPage ? "hidden md:block" : ""}`}
