@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { AgendaViewSetting } from "@/components/agenda/agenda-view-setting";
+import { AgendaColorSetting } from "@/components/agenda/agenda-color-setting";
 import { getSegmentConfig } from "@/lib/segments";
 import { supabase } from "@/integrations/supabase/client";
 import { normalizeStaffStatus } from "@/data/studio";
@@ -555,6 +556,7 @@ function HoursPage() {
       {activeTab === "regras" && (
         <div className="space-y-4">
         <AgendaViewSetting key={studio!.id} studioId={studio!.id} />
+        <AgendaColorSetting key={`color-${studio!.id}`} studioId={studio!.id} />
         <div className="overflow-hidden rounded-xl border border-border/35 bg-card/50 shadow-[0_1px_0_rgba(15,23,42,0.025)]">
           <div className="flex items-center gap-2.5 border-b border-border/30 bg-muted/[0.06] px-3.5 py-2.5">
             <div className="grid size-7 place-items-center rounded-lg bg-muted/60">

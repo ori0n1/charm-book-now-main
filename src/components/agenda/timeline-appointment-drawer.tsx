@@ -102,7 +102,7 @@ export function TimelineAppointmentDrawer({
   cancellationReasonRequired?: boolean;
   cancellationFinancialNotice?: string;
   cancelling?: boolean;
-  onServiceState?: (serviceId: string, state: "completed" | "no_show" | "cancelled") => void;
+  onServiceState?: (serviceId: string, state: "completed" | "no_show" | "cancelled") => Promise<boolean>;
   onServiceReschedule?: (serviceId: string) => void;
   onServicePayment?: (serviceId: string) => Promise<PaymentSummary | null>;
   payment?: {
@@ -125,7 +125,6 @@ export function TimelineAppointmentDrawer({
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancellationReason, setCancellationReason] = useState("");
   const [changingAttendance, setChangingAttendance] = useState(false);
-  const [notice, setNotice] = useState<{ status: string; text: string } | null>(null);
   const [confirmingServiceCancelId, setConfirmingServiceCancelId] = useState<string | null>(null);
   const [jointAction, setJointAction] = useState<"completed" | "no_show" | "cancelled" | null>(null);
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
@@ -172,7 +171,7 @@ export function TimelineAppointmentDrawer({
     setChangingAttendance(true);
     try {
       if (await onChangeAttendance(status)) {
-        setNotice({ status, text: status === "confirmed" ? "Estado reposto." : "Estado atualizado." });
+        onClose();
       }
     } finally {
       setChangingAttendance(false);
@@ -279,7 +278,7 @@ export function TimelineAppointmentDrawer({
                   }
                 }}
                 className={`flex h-14 min-w-0 flex-col items-center justify-center rounded-xl border px-1 text-center text-[10px] font-bold leading-tight transition disabled:cursor-not-allowed disabled:opacity-45 ${tone} ${applied ? "ring-2 ring-current ring-offset-2 ring-offset-card" : ""}`}>
-                <span className="flex items-center justify-center gap-1">{icon}<span>{label}</span></span>
+                <span className="flex items-center justify-center gap-1">{icon}<span>{applied ? "Desfazer" : label}</span></span>
               </button>;
             })}
           </div>
@@ -298,8 +297,7 @@ export function TimelineAppointmentDrawer({
                       if (jointAction === "cancelled") {
                         setConfirmingServiceCancelId(assignment.serviceId!);
                       } else {
-                        onServiceState(assignment.serviceId!, jointAction);
-                        setJointAction(null);
+                        void onServiceState(assignment.serviceId!, jointAction).then((saved) => { if (saved) onClose(); });
                       }
                     }}
                     className="flex min-h-10 w-full items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 text-left text-xs font-semibold disabled:opacity-45">
@@ -315,9 +313,7 @@ export function TimelineAppointmentDrawer({
                     <button type="button" onClick={() => setConfirmingServiceCancelId(null)} className="min-h-9 rounded-lg border px-3 font-semibold">Manter</button>
                     <button type="button" disabled={updatingServiceId === confirmingServiceCancelId}
                       onClick={() => {
-                        onServiceState(confirmingServiceCancelId, "cancelled");
-                        setConfirmingServiceCancelId(null);
-                        setJointAction(null);
+                        void onServiceState(confirmingServiceCancelId, "cancelled").then((saved) => { if (saved) onClose(); });
                       }}
                       className="min-h-9 rounded-lg bg-rose-600 px-3 font-bold text-white disabled:opacity-45">Confirmar cancelamento</button>
                   </div>
@@ -331,15 +327,6 @@ export function TimelineAppointmentDrawer({
             {preparingPayment ? <Loader2 className="size-4 animate-spin" /> : <Euro className="size-4" />}
             Receber pagamento
           </button>}
-          {notice?.status === details.status && (
-            <div role="status" className="flex items-center justify-between gap-2 text-[11px] font-semibold text-muted-foreground">
-              <span>{notice.text}</span>
-              {details.status !== "confirmed" && onChangeAttendance && (
-                <button type="button" disabled={changingAttendance} onClick={() => void changeAttendance("confirmed")}
-                  className="text-primary underline disabled:opacity-45">Desfazer</button>
-              )}
-            </div>
-          )}
           {confirmingCancel && (
             <div data-testid="cancel-confirmation" className="rounded-xl border border-rose-500/40 bg-rose-500/5 p-3">
               <p className="text-sm font-black">Cancelar esta marcação?</p>
@@ -359,7 +346,7 @@ export function TimelineAppointmentDrawer({
                     void onConfirmCancel(cancellationReason.trim()).then((saved) => {
                       if (saved) {
                         setConfirmingCancel(false);
-                        setNotice({ status: "cancelled", text: "Marcação cancelada." });
+                        onClose();
                       }
                     });
                   }}
@@ -552,7 +539,7 @@ export function TimelineAppointmentDrawer({
                               <div className="col-span-2 mt-1 flex flex-wrap gap-1.5">
                                 {onServicePayment && <button type="button" className="rounded-lg border px-2 py-1 text-[10px] font-bold" onClick={() => void openPayment(assignment.serviceId!)}>Receber serviço</button>}
                                 {onServiceReschedule && <button type="button" className="rounded-lg border px-2 py-1 text-[10px] font-bold" onClick={() => onServiceReschedule(assignment.serviceId!)}>Reagendar</button>}
-                                {onServiceState && <button type="button" disabled={updatingServiceId === assignment.serviceId} className="rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-50" onClick={() => onServiceState(assignment.serviceId!, "completed")}>Concluir</button>}
+                                {onServiceState && <button type="button" disabled={updatingServiceId === assignment.serviceId} className="rounded-lg border px-2 py-1 text-[10px] font-bold disabled:opacity-50" onClick={() => void onServiceState(assignment.serviceId!, "completed").then((saved) => { if (saved) onClose(); })}>Concluir</button>}
                                 {onServiceState && <button type="button" disabled={updatingServiceId === assignment.serviceId} className="rounded-lg border border-rose-300 px-2 py-1 text-[10px] font-bold text-rose-700 disabled:opacity-50" onClick={() => setConfirmingServiceCancelId(assignment.serviceId!)}>Cancelar</button>}
                               </div>
                             )}
@@ -564,7 +551,7 @@ export function TimelineAppointmentDrawer({
                                 <p>Cancelar apenas {assignment.serviceName}? O pagamento original permanece; a proprietária decide o reembolso depois.</p>
                                 <div className="mt-2 flex gap-2">
                                   <button type="button" className="rounded border px-2 py-1" onClick={() => setConfirmingServiceCancelId(null)}>Manter</button>
-                                  <button type="button" disabled={updatingServiceId === assignment.serviceId} className="rounded bg-rose-600 px-2 py-1 font-bold text-white disabled:opacity-50" onClick={() => { setConfirmingServiceCancelId(null); onServiceState(assignment.serviceId!, "cancelled"); }}>Confirmar cancelamento</button>
+                                  <button type="button" disabled={updatingServiceId === assignment.serviceId} className="rounded bg-rose-600 px-2 py-1 font-bold text-white disabled:opacity-50" onClick={() => void onServiceState(assignment.serviceId!, "cancelled").then((saved) => { if (saved) onClose(); })}>Confirmar cancelamento</button>
                                 </div>
                               </div>
                             )}

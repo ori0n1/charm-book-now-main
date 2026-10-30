@@ -26,7 +26,9 @@ import {
   Filter,
   Loader2,
   LockKeyhole,
+  Maximize2,
   MessageCircle,
+  Minimize2,
   MoreHorizontal,
   Pencil,
   Phone,
@@ -58,6 +60,7 @@ import { ExpandableList } from "@/components/ui/expandable-list";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { useAgendaView } from "@/hooks/use-agenda-view";
+import { useAgendaColor } from "@/hooks/use-agenda-color";
 import { useModalScrollLock } from "@/lib/modal-scroll-lock";
 import { sortAppointmentsChronologically as sortAppointmentsChronologicallyShared } from "@/lib/appointment-ordering";
 import { getPublicReservationCode } from "@/lib/reservation-code";
@@ -310,6 +313,7 @@ function AgendaPage() {
   const notificationTarget = Route.useSearch();
   const { studio } = useCurrentStudio();
   const { view: agendaView } = useAgendaView(studio?.id);
+  const { color: agendaColor } = useAgendaColor(studio?.id);
   const resendWhatsApp = useServerFn(sendAppointmentConfirmationForAppointment);
   const loadProtectedAgenda = useServerFn(getProtectedAgendaData);
   const resolveAttendance = useServerFn(resolveProtectedAppointmentAttendance);
@@ -358,6 +362,7 @@ function AgendaPage() {
   const [mobileDraftFilters, setMobileDraftFilters] = useState<AgendaFilters>(EMPTY_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [agendaToolsOpen, setAgendaToolsOpen] = useState(false);
+  const [agendaFullscreen, setAgendaFullscreen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [showDepositSplit, setShowDepositSplit] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
@@ -378,8 +383,10 @@ function AgendaPage() {
   } | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [editApptId, setEditApptId] = useState<string | null>(null);
+  const [dropEditDraft, setDropEditDraft] = useState<{ date: string; time: string; staffId: string; lineId: string } | null>(null);
   const [rescheduleApptId, setRescheduleApptId] = useState<string | null>(null);
   const [rescheduleServiceLineId, setRescheduleServiceLineId] = useState<string | null>(null);
+  const [dropRescheduleDraft, setDropRescheduleDraft] = useState<{ time: string; staffId: string; staffName: string } | null>(null);
   const [updatingServiceLineId, setUpdatingServiceLineId] = useState<string | null>(null);
   const [swapApptId, setSwapApptId] = useState<string | null>(null);
   const [durationApptId, setDurationApptId] = useState<string | null>(null);
@@ -389,6 +396,10 @@ function AgendaPage() {
   const [timelineFocusRequest, setTimelineFocusRequest] = useState(0);
   const [timelineDetailId, setTimelineDetailId] = useState<string | null>(null);
   const resolveJointServiceState = useServerFn(resolveProtectedJointServiceState);
+  const previewDropSchedule = useServerFn(previewStudioScheduleChange);
+  const resolveDropDateTime = useServerFn(resolveStudioLocalDateTime);
+  const loadDropCatalog = useServerFn(getProtectedAgendaCatalog);
+  const moveDroppedAppointment = useServerFn(moveStudioAppointment);
   const [agendaStaff, setAgendaStaff] = useState<StudioStaff[]>([]);
   const [staffAvailability, setStaffAvailability] = useState<StaffAvailabilityRow[]>([]);
   const [staffTimeOff, setStaffTimeOff] = useState<StaffTimeOffRow[]>([]);
@@ -432,6 +443,19 @@ function AgendaPage() {
   useEffect(() => {
     localStorage.setItem("agenda-show-deposit-split", String(showDepositSplit));
   }, [showDepositSplit]);
+  useEffect(() => {
+    if (!agendaFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAgendaFullscreen(false);
+    };
+    document.addEventListener("keydown", onEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onEscape);
+    };
+  }, [agendaFullscreen]);
   useEffect(() => {
     const timer = window.setInterval(() => setAgendaNow(new Date()), 30_000);
     return () => window.clearInterval(timer);
@@ -1288,7 +1312,7 @@ function AgendaPage() {
   }
 
   async function updateJointServiceLine(serviceLineId: string, nextState: "completed" | "cancelled" | "no_show") {
-    if (!studio || updatingServiceLineId) return;
+    if (!studio || updatingServiceLineId) return false;
     setUpdatingServiceLineId(serviceLineId);
     try {
       await resolveJointServiceState({
@@ -1298,8 +1322,10 @@ function AgendaPage() {
       toast.success(nextState === "cancelled"
         ? "Serviço cancelado. O eventual reembolso depende da decisão da proprietária."
         : nextState === "no_show" ? "Falta registada para o serviço." : "Serviço concluído.");
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível atualizar o serviço.");
+      return false;
     } finally {
       setUpdatingServiceLineId(null);
     }
@@ -1385,9 +1411,78 @@ function AgendaPage() {
     selectedAvailability,
   );
 
+  async function prepareDraggedAppointment(entry: ProfessionalTimelineAppointment, staffId: string, minutes: number) {
+    if (!studio || (studio.role !== "studio_owner" && studio.role !== "saas_owner")) return;
+    const source = appts.find((item) => item.id === (entry.sourceId ?? entry.id));
+    if (!source || source.status !== "confirmed") return;
+    const serviceLineId = entry.sourceId ? entry.id.slice(entry.sourceId.length + 1) : "";
+    const line = source.appointment_services?.find((item) => item.id === serviceLineId)
+      ?? (source.appointment_services?.length === 1 ? source.appointment_services[0] : null);
+    if (!line?.id || !line.services?.id) {
+      toast.error("Use Editar marcação para esta reserva.");
+      return;
+    }
+    const hasServiceStates = source.appointment_services?.some((item) => item.service_state != null);
+    if ((source.appointment_services?.length ?? 0) > 1 && !hasServiceStates) {
+      toast.info("Esta reserva tem vários serviços. Use Editar marcação para rever a sequência completa.");
+      return;
+    }
+    const currentStaffId = line.staff?.id ?? source.staff?.id;
+    if (currentStaffId !== staffId && (paidByAppointment.get(source.id) ?? 0) > 0) {
+      toast.error("O profissional não pode mudar após um recebimento. O pagamento e a comissão ficam preservados.");
+      return;
+    }
+    const date = toDateInputValue(selectedDate);
+    const time = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    try {
+      const catalog = await loadDropCatalog({ data: { studioId: studio.id, staffId: null } });
+      if (!isManualAppointmentServiceAllowed(catalog.links as ManualAppointmentStaffServiceLink[], staffId, line.services.id)) {
+        toast.error("Este profissional não realiza o serviço da marcação.");
+        return;
+      }
+      const { startsAt } = await resolveDropDateTime({ data: { studioId: studio.id, date, time } });
+      const durationMin = Math.round((new Date(entry.endsAt).getTime() - new Date(entry.startsAt).getTime()) / 60000);
+      const preview = await previewDropSchedule({ data: {
+        studioId: studio.id, staffId, startsAt, durationMin, ignoreAppointmentIds: [source.id],
+      } });
+      if (preview.hardBlocked || !preview.withinAvailability || preview.hasConflict) {
+        toast.error("Horário indisponível, bloqueado ou em conflito. A marcação mantém a posição original.");
+        return;
+      }
+      if (!hasServiceStates && source.appointment_services?.length === 1 &&
+        currentStaffId === staffId && (paidByAppointment.get(source.id) ?? 0) <= 0) {
+        const result = await moveDroppedAppointment({ data: {
+          studioId: studio.id, appointmentId: source.id, startsAt, durationMin,
+          confirmOverlap: false, expectedConflictIds: [], operation: "move",
+        } });
+        if (result.changed) {
+          setAppts((current) => current.map((item) => item.id !== source.id ? item : {
+            ...item, starts_at: result.startsAt, ends_at: result.endsAt,
+            appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
+              { ...service, starts_at: result.startsAt, ends_at: result.endsAt }),
+          }));
+          void loadData({ silent: true });
+          toast.success("Marcação reagendada.");
+        }
+        return;
+      }
+      if (hasServiceStates) {
+        setDropRescheduleDraft({ time, staffId,
+          staffName: (catalog.staff as StudioStaff[]).find((person) => person.id === staffId)?.name ?? "Profissional" });
+        setRescheduleServiceLineId(line.id);
+        setRescheduleApptId(source.id);
+      } else {
+        setDropEditDraft({ date, time, staffId, lineId: line.id });
+        setEditApptId(source.id);
+      }
+    } catch (error) {
+      toast.error(scheduleChangeMessage(error));
+    }
+  }
+
   return (
     <div
-      className="agenda-timeline-page -mx-3 flex w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 pb-0 sm:-mx-4 sm:w-[calc(100%+2rem)] md:mx-auto md:w-full md:max-w-[1320px] md:gap-1 md:pb-3"
+      className={`agenda-timeline-page -mx-3 flex w-[calc(100%+1.5rem)] max-w-none flex-col gap-0 pb-0 sm:-mx-4 sm:w-[calc(100%+2rem)] md:mx-auto md:w-full md:gap-1 md:pb-3 ${agendaFullscreen ? "fixed inset-0 z-[80] !m-0 !h-[100dvh] !w-screen overflow-y-auto bg-background md:!max-w-none" : "md:max-w-[1320px]"}`}
       onClick={() => {
         if (menuOpenId) closeMenu();
       }}
@@ -1397,6 +1492,12 @@ function AgendaPage() {
           <h1 className="truncate text-lg font-black tracking-[-0.035em]">Agenda</h1>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <button type="button" onClick={() => setAgendaFullscreen((value) => !value)}
+            aria-label={agendaFullscreen ? "Sair da tela cheia" : "Tela cheia"}
+            className="inline-flex h-8 items-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-bold hover:bg-muted">
+            {agendaFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+            {agendaFullscreen ? "Sair da tela cheia" : "Tela cheia"}
+          </button>
           <button
             type="button"
             onClick={() => setAgendaToolsOpen((value) => !value)}
@@ -1440,6 +1541,11 @@ function AgendaPage() {
             {mobileCalendarMonth.toLocaleDateString("pt-PT", { month: "long", year: "numeric" })}
           </p>
           <div className="flex items-center gap-1.5">
+            <button type="button" onClick={() => setAgendaFullscreen((value) => !value)}
+              aria-label={agendaFullscreen ? "Sair da tela cheia" : "Tela cheia"}
+              className="agenda-compact-control grid size-7 min-h-0 place-items-center rounded-lg border border-border bg-background/70">
+              {agendaFullscreen ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
+            </button>
             <button
               type="button"
               onClick={() => resetAgendaToToday()}
@@ -1702,6 +1808,7 @@ function AgendaPage() {
       ) : (
         <ProfessionalTimeline
           unified={agendaView === "unificada"}
+          appointmentColor={agendaColor}
           date={selectedDate}
           now={agendaNow}
           timeZone={studio?.timezone ?? "Europe/Lisbon"}
@@ -1738,6 +1845,9 @@ function AgendaPage() {
               time: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
             });
           }}
+          onDropAppointment={studio?.role === "studio_owner" || studio?.role === "saas_owner"
+            ? (appointment, staffId, minutes) => { void prepareDraggedAppointment(appointment, staffId, minutes); }
+            : undefined}
         />
       )}
 
@@ -1950,7 +2060,7 @@ function AgendaPage() {
                 : correctPresence(nextStatus, "", timelineDetailAppt)
                 : undefined}
               onServiceState={hasJointServiceState && owner && timelineDetailAppt.status !== "cancelled"
-                ? (serviceLineId, nextState) => void updateJointServiceLine(serviceLineId, nextState)
+                ? (serviceLineId, nextState) => updateJointServiceLine(serviceLineId, nextState)
                 : undefined}
               onServiceReschedule={hasJointServiceState && owner && timelineDetailAppt.status !== "cancelled"
                 ? (serviceLineId) => {
@@ -2132,6 +2242,7 @@ function AgendaPage() {
           ownerCanEditResolved={true}
           staffId={null}
           appt={editAppt}
+          initialMove={dropEditDraft ?? undefined}
           receivedAmount={paidByAppointment.get(editAppt.id) ?? 0}
           studioTimezone={studio.timezone}
           onSwap={editAppt.status === "confirmed" && editAppt.staff?.id &&
@@ -2152,10 +2263,11 @@ function AgendaPage() {
             setEditApptId(null);
             setNewApptOpen(true);
           } : undefined}
-          onClose={() => setEditApptId(null)}
+          onClose={() => { setEditApptId(null); setDropEditDraft(null); }}
           onSaved={() => {
             setEditApptId(null);
-            loadData();
+            setDropEditDraft(null);
+            void loadData({ silent: true });
           }}
         />
       )}
@@ -2168,11 +2280,13 @@ function AgendaPage() {
           staffId={null}
           appt={rescheduleAppt}
           serviceLineId={rescheduleServiceLineId}
-          onClose={() => { setRescheduleApptId(null); setRescheduleServiceLineId(null); }}
+          initialDrop={dropRescheduleDraft ?? undefined}
+          onClose={() => { setRescheduleApptId(null); setRescheduleServiceLineId(null); setDropRescheduleDraft(null); }}
           onSaved={() => {
             setRescheduleApptId(null);
             setRescheduleServiceLineId(null);
-            loadData();
+            setDropRescheduleDraft(null);
+            void loadData({ silent: true });
           }}
         />
       )}
@@ -3377,11 +3491,12 @@ function NewAppointmentModal({
 
 // ─── Edit Appointment Modal ───────────────────────────────────────────────────
 
-function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receivedAmount, onClose, onSaved,
+function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receivedAmount, onClose, onSaved, initialMove,
   ownerCanEditResolved,
   onSwap, onFit }: {
   studioId: string; studioTimezone?: string | null; staffId?: string | null;
   appt: Appt; receivedAmount: number; onClose: () => void; onSaved: () => void;
+  initialMove?: { date: string; time: string; staffId: string; lineId: string };
   ownerCanEditResolved: boolean;
   onSwap?: () => void; onFit?: () => void;
 }) {
@@ -3390,13 +3505,14 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   const [links, setLinks] = useState<ManualAppointmentStaffServiceLink[]>([]);
   const [loadingData, setLoadingData] = useState(true);
   const [assignments, setAssignments] = useState(() => (appt.appointment_services ?? []).map((line) => ({
-    lineId: line.id ?? "", serviceId: line.services?.id ?? "", staffId: line.staff?.id ?? appt.staff?.id ?? "",
+    lineId: line.id ?? "", serviceId: line.services?.id ?? "", staffId: initialMove && line.id === initialMove.lineId
+      ? initialMove.staffId : line.staff?.id ?? appt.staff?.id ?? "",
     durationMin: undefined as number | undefined, isNew: false,
   })));
   const [durationDrafts, setDurationDrafts] = useState<Record<string, string>>({});
   const [durationHints, setDurationHints] = useState<Record<string, { available: number; original: number }>>({});
-  const [date, setDate] = useState(getStudioDateKey(appt.starts_at, studioTimezone));
-  const [time, setTime] = useState(formatStudioTime(appt.starts_at, studioTimezone));
+  const [date, setDate] = useState(initialMove?.date ?? getStudioDateKey(appt.starts_at, studioTimezone));
+  const [time, setTime] = useState(initialMove?.time ?? formatStudioTime(appt.starts_at, studioTimezone));
   const [price, setPrice] = useState(String(appt.total_price));
   const [notes, setNotes] = useState(appt.notes ?? "");
   const [saving, setSaving] = useState(false);
@@ -3629,6 +3745,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
     {loadingData ? <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div> :
       <div className="appointment-modal-scrollbar premium-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3 pb-6 [scrollbar-gutter:stable]">
         <p className="text-sm font-semibold">{appt.clients?.name ?? "Agendamento avulso — sem cliente"}</p>
+        {initialMove && <p role="status" className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-3 text-xs font-semibold">Nova posição selecionada na agenda. Confirme os dados antes de guardar.</p>}
         {protectedFullEdit && !hasActiveReceipt && <div role="status" className="space-y-1 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
           <p className="font-bold">Compare antes de guardar</p>
           <p>Antes: {appt.appointment_services?.map((line) => line.services?.name ?? "Serviço").join(" + ")} · {appt.staff?.name ?? "Profissional"} · {getStudioDateKey(appt.starts_at, studioTimezone)} às {formatStudioTime(appt.starts_at, studioTimezone)} · {appointmentDurationMinutes(appt)} min · {formatEUR(appt.total_price)}</p>
@@ -3734,6 +3851,7 @@ function RescheduleModal({
   studioTimezone,
   appt,
   serviceLineId,
+  initialDrop,
   onClose,
   onSaved,
 }: {
@@ -3742,6 +3860,7 @@ function RescheduleModal({
   staffId?: string | null;
   appt: Appt;
   serviceLineId?: string | null;
+  initialDrop?: { time: string; staffId: string; staffName: string };
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -3759,7 +3878,7 @@ function RescheduleModal({
   const currentDate = getStudioDateKey(serviceLine?.starts_at ?? appt.starts_at, studioTimezone);
   const currentTime = formatStudioTime(serviceLine?.starts_at ?? appt.starts_at, studioTimezone);
   const [date, setDate] = useState(currentDate);
-  const [time, setTime] = useState(currentTime);
+  const [time, setTime] = useState(initialDrop?.time ?? currentTime);
   const [saving, setSaving] = useState(false);
   const [conflictPreview, setConflictPreview] = useState<StudioSchedulePreview | null>(null);
 
@@ -3781,7 +3900,7 @@ function RescheduleModal({
       if (serviceLineId) {
         if (!serviceLine?.staff?.id) throw new Error("service_without_staff");
         await moveJointService({
-          data: { studioId, serviceLineId, staffId: serviceLine.staff.id, startsAt },
+          data: { studioId, serviceLineId, staffId: initialDrop?.staffId ?? serviceLine.staff.id, startsAt },
         });
         toast.success("Serviço reagendado.");
         onSaved();
@@ -3833,6 +3952,7 @@ function RescheduleModal({
   return (
     <ModalShell title={serviceLineId ? "Reagendar serviço" : "Reagendar marcação"} onClose={onClose}>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        {initialDrop && <p role="status" className="rounded-xl border border-sky-500/40 bg-sky-500/10 p-3 text-xs font-semibold">Nova posição selecionada na agenda: {initialDrop.staffName} às {initialDrop.time}. Confirme antes de guardar.</p>}
         {appt.clients && (
           <div className="flex items-center gap-3 rounded-xl border border-border bg-muted/30 px-3 py-2">
             <ClientAvatar name={appt.clients.name} avatarUrl={appt.clients.avatar_url} size="sm" />

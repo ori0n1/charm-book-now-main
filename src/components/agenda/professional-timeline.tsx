@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { createPortal } from "react-dom";
 import { CalendarPlus, Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
 import {
@@ -15,6 +15,8 @@ import {
 } from "./professional-timeline-utils";
 import { formatStudioTime, getStudioDateKey, getZonedDateParts, getZonedMinutes } from "@/lib/studio-time";
 import { layoutUnifiedTimeline } from "./unified-timeline-layout";
+import type { AgendaColor } from "@/hooks/use-agenda-color";
+import { toast } from "sonner";
 
 const MOBILE_HOUR_HEIGHT = 72;
 const DESKTOP_HOUR_HEIGHT = 100;
@@ -31,11 +33,13 @@ export function ProfessionalTimeline({
   operatingHours,
   timeZone,
   unified = false,
+  appointmentColor = "sky",
   focusRequestKey = 0,
   onOpenAppointment,
   onOpenBlock,
   onCreateAtSlot,
   onBlockAtSlot,
+  onDropAppointment,
 }: {
   date: Date;
   now: Date;
@@ -46,17 +50,22 @@ export function ProfessionalTimeline({
   operatingHours?: ProfessionalAvailabilityPeriod[];
   timeZone: string;
   unified?: boolean;
+  appointmentColor?: AgendaColor;
   focusRequestKey?: number;
   onOpenAppointment: (appointment: ProfessionalTimelineAppointment) => void;
   onOpenBlock: (block: ProfessionalTimelineAppointment) => void;
   onCreateAtSlot: (staffId: string, minutes: number, mode: "standard" | "fit") => void;
   onBlockAtSlot: (staffId: string, minutes: number) => void;
+  onDropAppointment?: (appointment: ProfessionalTimelineAppointment, staffId: string, minutes: number) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastAutoScrollKeyRef = useRef("");
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const suppressClickRef = useRef(false);
+  const dragSourceRef = useRef<ProfessionalTimelineAppointment | null>(null);
+  const dragTargetRef = useRef<{ staffId: string; minutes: number; valid: boolean } | null>(null);
+  const [dragPreview, setDragPreview] = useState<{ staffId: string; minutes: number; valid: boolean; duration: number } | null>(null);
   const [mobile, setMobile] = useState(false);
   const [mobileProfessionalId, setMobileProfessionalId] = useState(
     professionals[0]?.id ?? "unassigned",
@@ -199,11 +208,75 @@ export function ProfessionalTimeline({
     longPressStartRef.current = null;
   }
 
+  function updateDragTarget(x: number, y: number) {
+    const source = dragSourceRef.current;
+    if (!source || unified) return;
+    const element = document.elementFromPoint(x, y) as HTMLElement | null;
+    const tab = element?.closest<HTMLElement>("[data-agenda-professional-tab]");
+    const column = element?.closest<HTMLElement>("[data-agenda-staff-column]");
+    const staffId = tab?.dataset.agendaProfessionalTab ?? column?.dataset.agendaStaffColumn;
+    if (!staffId) { dragTargetRef.current = null; setDragPreview(null); return; }
+    if (tab && mobile) setMobileProfessionalId(staffId);
+    const minutes = column ? getTimelineSlotMinutes(y, column.getBoundingClientRect().top,
+      bounds.startHour, bounds.endHour, hourHeight) : getZonedMinutes(source.startsAt, timeZone);
+    const duration = Math.max(15, Math.ceil((new Date(source.endsAt).getTime() - new Date(source.startsAt).getTime()) / 60000));
+    const valid = staffId !== "unassigned" && (availability ?? []).some((period) =>
+      period.staffId === staffId && minutes >= period.startMinutes && minutes + duration <= period.endMinutes);
+    dragTargetRef.current = { staffId, minutes, valid };
+    setDragPreview({ staffId, minutes, valid, duration });
+  }
+
+  function finishDrag() {
+    const source = dragSourceRef.current;
+    const target = dragTargetRef.current;
+    dragSourceRef.current = null;
+    dragTargetRef.current = null;
+    setDragPreview(null);
+    if (!source || !target) return;
+    if (!target.valid) { toast.error("Este horário está fora da disponibilidade do profissional."); return; }
+    if (source.staffId === target.staffId && getZonedMinutes(source.startsAt, timeZone) === target.minutes) return;
+    onDropAppointment?.(source, target.staffId, target.minutes);
+  }
+
+  function startTouchDrag(appointment: ProfessionalTimelineAppointment, event: ReactTouchEvent<HTMLButtonElement>) {
+    if (!onDropAppointment || unified || event.touches.length !== 1) return;
+    const start = event.touches[0];
+    const startX = start.clientX;
+    const startY = start.clientY;
+    let active = false;
+    const timer = window.setTimeout(() => {
+      active = true;
+      dragSourceRef.current = appointment;
+      suppressClickRef.current = true;
+      if ("vibrate" in navigator) navigator.vibrate(18);
+    }, 480);
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("touchmove", move);
+      window.removeEventListener("touchend", end);
+      window.removeEventListener("touchcancel", cancel);
+    };
+    const move = (moveEvent: TouchEvent) => {
+      const touch = moveEvent.touches[0];
+      if (!touch) return;
+      if (!active) {
+        if (Math.hypot(touch.clientX - startX, touch.clientY - startY) > 8) cleanup();
+        return;
+      }
+      moveEvent.preventDefault();
+      updateDragTarget(touch.clientX, touch.clientY);
+    };
+    const end = () => { cleanup(); if (active) finishDrag(); window.setTimeout(() => { suppressClickRef.current = false; }, 350); };
+    const cancel = () => { cleanup(); dragSourceRef.current = null; dragTargetRef.current = null; setDragPreview(null); };
+    window.addEventListener("touchmove", move, { passive: false });
+    window.addEventListener("touchend", end, { once: true });
+    window.addEventListener("touchcancel", cancel, { once: true });
+  }
+
   return (
     <section
       className="agenda-timeline agenda-touch-surface relative z-0 isolate select-none overflow-visible bg-background touch-auto md:overflow-hidden md:rounded-2xl md:border md:border-border/80 md:bg-card md:shadow-sm"
       onContextMenu={(event) => event.preventDefault()}
-      onDragStart={(event) => event.preventDefault()}
       data-agenda-view={unified ? "unificada" : "separada_por_profissional"}
     >
       {unified && <div className="border-b border-border/60 px-3 py-2 text-sm font-semibold md:hidden">Agenda unificada</div>}
@@ -218,6 +291,7 @@ export function ProfessionalTimeline({
         {displayProfessionals.map((person) => (
           <button
             key={person.id}
+            data-agenda-professional-tab={person.id}
             type="button"
             onClick={() => {
               setMobileProfessionalId(person.id);
@@ -349,7 +423,10 @@ export function ProfessionalTimeline({
               return (
                 <div
                   key={person.id}
+                  data-agenda-staff-column={person.id}
                   className="relative min-w-0 cursor-crosshair select-none border-r border-border/60 bg-background/20 touch-pan-y"
+                  onDragOver={(event) => { if (dragSourceRef.current) { event.preventDefault(); updateDragTarget(event.clientX, event.clientY); } }}
+                  onDrop={(event) => { event.preventDefault(); updateDragTarget(event.clientX, event.clientY); finishDrag(); }}
                   onClick={(event) => {
                     if (unified) return;
                     if ((event.target as HTMLElement).closest("[data-timeline-entry]")) return;
@@ -468,6 +545,14 @@ export function ProfessionalTimeline({
                     </div>
                   )}
 
+                  {dragPreview?.staffId === person.id && <div
+                    className={`pointer-events-none absolute inset-x-1 z-20 rounded-lg border-2 border-dashed px-2 py-1 text-[10px] font-bold ${dragPreview.valid ? "border-sky-600 bg-sky-200/80 text-sky-950 dark:bg-sky-900/70 dark:text-sky-100" : "border-rose-600 bg-rose-200/80 text-rose-950 dark:bg-rose-900/70 dark:text-rose-100"}`}
+                    style={{ top: ((dragPreview.minutes - bounds.startHour * 60) / 60) * hourHeight,
+                      height: (dragPreview.duration / 60) * hourHeight }}
+                    data-testid="agenda-drop-preview">
+                    {formatMinutes(dragPreview.minutes)} · {dragPreview.valid ? "Soltar aqui" : "Indisponível"}
+                  </div>}
+
                   {positioned.map((appointment) => {
                     const left = (appointment.lane / appointment.laneCount) * 100;
                     const width = 100 / appointment.laneCount;
@@ -511,8 +596,17 @@ export function ProfessionalTimeline({
                       <button
                         key={appointment.id}
                         type="button"
-                        onClick={() => onOpenAppointment(appointment)}
-                        className={`absolute z-10 box-border overflow-hidden rounded-lg border border-l-[3px] px-1.5 text-left shadow-[0_1px_2px_hsl(0_0%_0%/0.06)] transition hover:z-20 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:rounded-xl md:px-2.5 ${appointment.height < 32 ? "py-px" : "py-0.5"} ${appointmentTone(appointment.status, appointment.manualFit)}`}
+                        draggable={Boolean(onDropAppointment && !unified && appointment.privateDetails && appointment.status === "confirmed")}
+                        onDragStart={(event) => {
+                          if (!onDropAppointment || unified) { event.preventDefault(); return; }
+                          dragSourceRef.current = appointment;
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData("text/plain", appointment.id);
+                        }}
+                        onDragEnd={() => { dragSourceRef.current = null; dragTargetRef.current = null; setDragPreview(null); }}
+                        onTouchStart={(event) => { if (appointment.privateDetails && appointment.status === "confirmed") startTouchDrag(appointment, event); }}
+                        onClick={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } onOpenAppointment(appointment); }}
+                        className={`absolute z-10 box-border overflow-hidden rounded-lg border border-l-[3px] px-1.5 text-left shadow-[0_1px_2px_hsl(0_0%_0%/0.06)] transition hover:z-20 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:rounded-xl md:px-2.5 ${appointment.height < 32 ? "py-px" : "py-0.5"} ${appointmentTone(appointment.status, appointment.manualFit, appointmentColor)}`}
                         style={{
                           top: appointment.top,
                           height: appointment.height,
@@ -772,7 +866,7 @@ function Legend({ tone, label }: { tone: string; label: string }) {
   );
 }
 
-function appointmentTone(status: string, manualFit?: boolean) {
+function appointmentTone(status: string, manualFit?: boolean, color: AgendaColor = "sky") {
   if (status === "cancelled" || status === "no_show") {
     return "border-rose-300/80 bg-rose-100 text-rose-950 opacity-75 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-100";
   }
@@ -788,7 +882,13 @@ function appointmentTone(status: string, manualFit?: boolean) {
   if (manualFit) {
     return "border-violet-300/80 bg-violet-100 text-violet-950 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-100";
   }
-  return "border-sky-300/80 bg-sky-100 text-sky-950 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-100";
+  const confirmedTones: Record<AgendaColor, string> = {
+    sky: "border-sky-300/80 bg-sky-100 text-sky-950 dark:border-sky-500/30 dark:bg-sky-500/15 dark:text-sky-100",
+    teal: "border-teal-300/80 bg-teal-100 text-teal-950 dark:border-teal-500/30 dark:bg-teal-500/15 dark:text-teal-100",
+    lavender: "border-violet-300/80 bg-violet-100 text-violet-950 dark:border-violet-500/30 dark:bg-violet-500/15 dark:text-violet-100",
+    peach: "border-orange-300/80 bg-orange-100 text-orange-950 dark:border-orange-500/30 dark:bg-orange-500/15 dark:text-orange-100",
+  };
+  return confirmedTones[color];
 }
 
 function statusLabel(status: string) {
