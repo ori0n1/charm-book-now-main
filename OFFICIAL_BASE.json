@@ -2,10 +2,28 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "efc4920a-832a-495b-9f67-9711d36d768a",
-  "cloudflareVersionId": "df81cabe-6416-463d-8551-2ea633f44593",
-  "sourceCommit": "7e4c2cee62f14b81aa23c605a10c452e6b88b191",
-  "releaseArtifacts": {
+  "deploymentId": "3554804a-89cd-4283-8516-085955e46f6a",
+  "cloudflareVersionId": "3554b436-d866-43d3-9a7c-bbb25315814a",
+  "sourceCommit": "875bc4b1d0597fa5bf6bb6bf04f02b9ff9b596ed",
+  "agendaRelease": {
+    "publishedOn": "2026-10-30",
+    "artifactFileCount": 464,
+    "artifactTreeSha256": "d727a64eeebfd2000ab9cefb65b3237d3ab12fb5975ac54b005d23ed09d05a77",
+    "configSha256": "23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b",
+    "sqlFiles": [
+      "20261029230000_agenda_role_parity.sql",
+      "20261030010000_agenda_structural_edit.sql"
+    ],
+    "sqlAppliedVia": "Supabase SQL Editor",
+    "sqlRollbackFiles": [
+      "20261030010000_agenda_structural_edit.sql",
+      "20261029230000_agenda_role_parity.sql"
+    ],
+    "workerRollbackVersionId": "df81cabe-6416-463d-8551-2ea633f44593",
+    "trafficPercent": 100,
+    "postReleaseSmoke": "authenticated agenda loaded; synthetic appointment modal and edit form opened without saving"
+  },
+  "previousReleaseArtifacts": {
     "candidateZipSha256": "00E6BD0D34A1070C7E89908AB5027811D02EA571B7AEE6D4AEB18E6B69E244EB",
     "rollbackZipSha256": "8C661ADD60589E3BC9D963F0B1747C9781E3AF357D41E7BDC01328527A875B24",
     "rollbackCloudflareVersionId": "da12dca2-66c8-4c2a-a4f7-378d10688c8c",
@@ -27,9 +45,9 @@
     "additionalPlainNamesAbsentFromLocalWranglerConfig": true
   },
   "sql": {
-    "status": "verified",
+    "status": "agenda-sql-applied-via-editor",
     "projectRef": "pwmdzpvnatrvfpgcvnzg",
-    "checkedOn": "2026-10-29",
+    "checkedOn": "2026-10-30",
     "latestAppliedVersion": "20261029154202",
     "remoteOnlyVersions": [
       "20261025160000"
@@ -41,7 +59,7 @@
       "20261027234500",
       "20261028010000"
     ],
-    "note": "A migração da ficha do cliente foi aplicada como 20261029151943. A lista ficou vazia porque o novo filtro archived_at não tinha SELECT para authenticated; a migração corretiva 20261029154202 concedeu apenas SELECT nessa coluna. Os 1549 clientes permaneceram no banco, zero arquivados. Não reaplicar. A migração Premium 20261029110031, a do PIN 20261028210000 e as demais diferenças históricas permanecem preservadas; não executar db push automaticamente."
+    "note": "As duas definições SQL da agenda foram aplicadas diretamente pelo SQL Editor em 2026-10-30, sem atualizar o histórico da CLI. As 11 funções anteriores foram preservadas na tabela de backup; a função estrutural e o wrapper foram confirmados por leitura sob authenticated com RLS ativo. A migração da ficha do cliente foi aplicada como 20261029151943 e corrigida por 20261029154202. Os 1549 clientes permaneceram no banco, zero arquivados. As diferenças históricas permanecem preservadas; não executar db push automaticamente."
   },
   "domains": [
     "bellza.pt",
@@ -50,7 +68,7 @@
   "cron": [
     "*/10 * * * *"
   ],
-  "releaseValidation": {
+  "previousReleaseValidation": {
     "checkedOn": "2026-10-29",
     "trafficPercent": 100,
     "oauthBindingsMatched": true,

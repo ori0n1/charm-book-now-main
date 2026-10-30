@@ -1,6 +1,14 @@
-# Base oficial da produção Bellza — 2026-10-29
+# Base oficial da produção Bellza — 2026-10-30
 
-## Produção ativa — confirmação de exclusão sem distinção de maiúsculas
+## Produção ativa — permissões e edição da agenda
+
+- Worker `tanstack-start-app`: deployment `3554804a-89cd-4283-8516-085955e46f6a`, versão `3554b436-d866-43d3-9a7c-bbb25315814a` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `875bc4b1d0597fa5bf6bb6bf04f02b9ff9b596ed`.
+- Artefacto local: 464 ficheiros, SHA-256 da árvore `d727a64eeebfd2000ab9cefb65b3237d3ab12fb5975ac54b005d23ed09d05a77`. Configuração de upload SHA-256 `23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b`. Foram preservados 51 bindings, incluindo 24 secrets, o cron `*/10 * * * *`, o runtime `2025-09-24` com `nodejs_compat` e ambos os domínios.
+- SQL aplicado diretamente no Supabase SQL Editor, por ordem: `20261029230000_agenda_role_parity.sql` e `20261030010000_agenda_structural_edit.sql`. A consulta posterior com `authenticated` e RLS ativo confirmou as duas tabelas de backup, os auxiliares, o wrapper de edição atualizado e a ausência de `EXECUTE` direto do auxiliar estrutural para a aplicação. O histórico de migrações da CLI não foi alterado; não executar `db push` automático.
+- Smoke autenticado e sem escrita: agenda carregada, modal de marcação sintética com Compareceu, Faltou, Cancelar marcação, Receber pagamento e Editar reserva; formulário de edição aberto e fechado sem guardar. Nenhuma marcação ou pagamento foi alterado nos testes pós-publicação.
+- Rollback preparado: reativar a versão Cloudflare `df81cabe-6416-463d-8551-2ea633f44593`, depois aplicar `supabase/rollback/20261030010000_agenda_structural_edit.sql` e `supabase/rollback/20261029230000_agenda_role_parity.sql` nessa ordem. Os scripts verificam deriva e restauram definições, sem apagar marcações.
+
+## Histórico — confirmação de exclusão sem distinção de maiúsculas
 
 - Worker `tanstack-start-app`: deployment `efc4920a-832a-495b-9f67-9711d36d768a`, versão `df81cabe-6416-463d-8551-2ea633f44593` confirmada por Cloudflare OAuth com 100% do tráfego. Código publicado: commit `7e4c2cee62f14b81aa23c605a10c452e6b88b191`.
 - Única alteração de produto: a ficha aceita `Excluir`, `excluir`, ` EXCLUIR ` e `EXCLUIR` para habilitar a confirmação. O servidor continua a receber somente o literal `EXCLUIR` e a exigir proprietário. ZIP publicado `bellza-client-delete-confirmation-candidate-20261029.zip`, SHA-256 `00E6BD0D34A1070C7E89908AB5027811D02EA571B7AEE6D4AEB18E6B69E244EB`.
