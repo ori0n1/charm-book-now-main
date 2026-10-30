@@ -3391,7 +3391,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   const [loadingData, setLoadingData] = useState(true);
   const [assignments, setAssignments] = useState(() => (appt.appointment_services ?? []).map((line) => ({
     lineId: line.id ?? "", serviceId: line.services?.id ?? "", staffId: line.staff?.id ?? appt.staff?.id ?? "",
-    durationMin: undefined as number | undefined,
+    durationMin: undefined as number | undefined, isNew: false,
   })));
   const [durationDrafts, setDurationDrafts] = useState<Record<string, string>>({});
   const [durationHints, setDurationHints] = useState<Record<string, { available: number; original: number }>>({});
@@ -3413,18 +3413,56 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
     new Set((appt.appointment_services ?? []).map((line) => line.staff?.id).filter(Boolean)).size > 1;
   const jointServicesConfirmed = Boolean(appt.appointment_services?.length) &&
     appt.appointment_services!.every((line) => line.service_state === "confirmed");
+  const structuralChange = assignments.length !== (appt.appointment_services?.length ?? 0) ||
+    assignments.some((item) => item.isNew);
+  const canChangeStructure = appt.status === "confirmed" && !hasActiveReceipt &&
+    (appt.appointment_services ?? []).every((line) => line.service_state == null || line.service_state === "confirmed");
   const resolvedFullEdit = !isJointBooking && ownerCanEditResolved && resolvedState &&
     Boolean(appt.appointment_services?.length);
   const paidConfirmedEdit = !isJointBooking && ownerCanEditResolved && appt.status === "confirmed" && hasActiveReceipt &&
     Boolean(appt.appointment_services?.length);
   const jointConfirmedEdit = isJointBooking && ownerCanEditResolved && appt.status === "confirmed" && jointServicesConfirmed;
-  const protectedFullEdit = resolvedFullEdit || paidConfirmedEdit || jointConfirmedEdit;
+  const protectedFullEdit = resolvedFullEdit || paidConfirmedEdit || (jointConfirmedEdit && !structuralChange);
   const resolvedNotesOnly = ownerCanEditResolved && resolvedState && !resolvedFullEdit;
   const editRestriction = (appt.status === "cancelled" ||
     (resolvedState && !ownerCanEditResolved))
     ? "Desfaça o estado atual para editar esta marcação." : null;
   const draftKey = JSON.stringify({ date, time, price, notes, assignments, durationDrafts });
   useEffect(() => setConfirmFinancialChange(false), [draftKey]);
+
+  function updateDraftPrice(nextAssignments: typeof assignments) {
+    const total = nextAssignments.reduce((sum, item) => sum + Number(
+      services.find((service) => service.id === item.serviceId)?.price ??
+      appt.appointment_services?.find((line) => line.id === item.lineId)?.price ?? 0,
+    ), 0);
+    setPrice(total.toFixed(2));
+  }
+
+  function addServiceLine() {
+    const selected = new Set(assignments.map((item) => item.serviceId));
+    const service = services.find((candidate) => !selected.has(candidate.id) &&
+      manualAppointmentStaffForService(staffList, links, candidate.id).length > 0);
+    if (!service) { toast.error("Não há outro serviço disponível para adicionar."); return; }
+    const professional = manualAppointmentStaffForService(staffList, links, service.id)[0];
+    const next = [...assignments, {
+      lineId: crypto.randomUUID(), serviceId: service.id, staffId: professional.id,
+      durationMin: undefined, isNew: true,
+    }];
+    setAssignments(next);
+    updateDraftPrice(next);
+  }
+
+  function removeServiceLine(lineId: string) {
+    if (assignments.length <= 1) return;
+    const next = assignments.filter((item) => item.lineId !== lineId);
+    setAssignments(next);
+    setDurationDrafts((current) => {
+      const copy = { ...current };
+      delete copy[lineId];
+      return copy;
+    });
+    updateDraftPrice(next);
+  }
 
   useEffect(() => {
     if (editRestriction || resolvedNotesOnly) { setLoadingData(false); return; }
@@ -3612,6 +3650,12 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
           const selectableServices = services.filter((s) => manualAppointmentStaffForService(staffList, links, s.id).length > 0);
           const allowedStaff = manualAppointmentStaffForService(staffList, links, assignment.serviceId);
           return <div key={assignment.lineId} className="space-y-2 rounded-xl border border-border p-3">
+            {canChangeStructure && assignments.length > 1 && <button type="button"
+              aria-label={`Remover serviço ${index + 1}`}
+              onClick={() => removeServiceLine(assignment.lineId)}
+              className="ml-auto block min-h-8 rounded-lg border border-rose-300 px-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
+              Remover serviço
+            </button>}
             <ModalField label={assignments.length > 1 ? `Serviço ${index + 1} *` : "Serviço *"}>
               <Select value={assignment.serviceId} disabled={hasActiveReceipt} onValueChange={(serviceId) => {
                 setDurationDrafts((current) => {
@@ -3619,9 +3663,11 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
                   delete next[assignment.lineId];
                   return next;
                 });
-                setAssignments((current) => current.map((a, i) => i !== index ? a : {
+                const next = assignments.map((a, i) => i !== index ? a : {
                   ...a, serviceId, durationMin: undefined, staffId: isManualAppointmentServiceAllowed(links, a.staffId, serviceId) ? a.staffId : manualAppointmentStaffForService(staffList, links, serviceId)[0]?.id ?? "",
-                }));
+                });
+                setAssignments(next);
+                updateDraftPrice(next);
               }}>
                 <SelectTrigger className={`${selectTriggerCls} pr-4`}><SelectValue placeholder="Escolher serviço" /></SelectTrigger>
                 <SelectContent className={modalSelectContentCls}>
@@ -3659,6 +3705,11 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
             </ModalField>
           </div>;
         })}
+        {canChangeStructure && assignments.length < 20 && <button type="button"
+          onClick={addServiceLine}
+          className="min-h-10 w-full rounded-xl border border-dashed border-primary/50 px-3 text-sm font-bold text-primary hover:bg-primary/5">
+          Adicionar serviço
+        </button>}
         <ModalField label="Preço / valor (€) *"><input aria-label="Preço / valor (€)" type="number" min="0" step="0.01" value={price} disabled={hasActiveReceipt} onChange={(e) => setPrice(e.target.value)} className={inputCls} /></ModalField>
         <ModalField label="Notas"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={textareaCls} /></ModalField>
       </div>}
