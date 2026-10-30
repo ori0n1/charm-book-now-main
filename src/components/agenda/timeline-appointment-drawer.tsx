@@ -42,6 +42,7 @@ export type TimelineDrawerDetails = {
   serviceName: string;
   professionalName: string;
   jointBooking?: boolean;
+  serviceLevelActions?: boolean;
   serviceAssignments?: Array<{
     serviceId?: string;
     serviceName: string;
@@ -197,6 +198,7 @@ export function TimelineAppointmentDrawer({
   const groupedAssignments = new Map<string, NonNullable<TimelineDrawerDetails["serviceAssignments"]>>();
   const actionableJointServices = (details.serviceAssignments ?? []).filter((assignment) =>
     assignment.serviceId && assignment.serviceState === "confirmed");
+  const serviceLevelActions = details.serviceLevelActions ?? details.jointBooking;
   if (details.jointBooking) {
     for (const assignment of details.serviceAssignments ?? []) {
       const key = assignment.professionalId ?? assignment.professionalName;
@@ -255,16 +257,16 @@ export function TimelineAppointmentDrawer({
             {primaryActions.map(({ id, status, label, icon, tone }) => {
               const applied = details.status === status;
               const cancelAction = currentActions.get("cancel");
-              const disabled = changingAttendance || (details.jointBooking
+              const disabled = changingAttendance || (serviceLevelActions
                 ? !onServiceState || details.status === "cancelled" || actionableJointServices.length === 0 || Boolean(updatingServiceId)
                 : id === "cancel"
                   ? applied ? !onChangeAttendance : !cancelAction || Boolean(cancelAction.disabled)
                   : !onChangeAttendance || details.status === "cancelled");
               return <button key={id} type="button"
-                aria-pressed={details.jointBooking ? jointAction === status : applied}
+                aria-pressed={serviceLevelActions ? jointAction === status : applied}
                 disabled={disabled}
                 onClick={() => {
-                  if (details.jointBooking) {
+                  if (serviceLevelActions) {
                     setJointAction((current) => current === status ? null : status as "completed" | "no_show" | "cancelled");
                     setConfirmingServiceCancelId(null);
                     return;
@@ -281,7 +283,7 @@ export function TimelineAppointmentDrawer({
               </button>;
             })}
           </div>
-          {details.jointBooking && jointAction && onServiceState && (
+          {serviceLevelActions && jointAction && onServiceState && (
             <div className="rounded-xl border border-border/70 bg-muted/25 p-2.5" data-testid="joint-service-action-picker">
               <p className="mb-2 text-[11px] font-bold">
                 {jointAction === "completed" ? "Escolha o serviço que compareceu" :

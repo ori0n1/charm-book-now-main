@@ -1783,7 +1783,8 @@ function AgendaPage() {
           const serviceSegments = getAppointmentServiceSegments(timelineDetailAppt);
           const isMultiProfessional =
             new Set(serviceSegments.map((line) => line.staff?.id).filter(Boolean)).size > 1;
-          const isJointBooking = isMultiProfessional || serviceSegments.some((line) => line.service_state != null);
+          const hasJointServiceState = serviceSegments.some((line) => line.service_state != null);
+          const isJointBooking = isMultiProfessional || hasJointServiceState;
           const jointServicesConfirmed = serviceSegments.length > 0 &&
             serviceSegments.every((line) => line.service_state === "confirmed");
           const jointHasReceivableService = serviceSegments.some((line) =>
@@ -1801,7 +1802,7 @@ function AgendaPage() {
           const canCorrectState = ["completed", "no_show", "cancelled"].includes(timelineDetailAppt.status) ||
             (timelineDetailAppt.status === "confirmed" && hasAttendanceReceipt);
           const actions: TimelineDrawerAction[] = [];
-          if ((!isJointBooking || (owner &&
+          if ((!hasJointServiceState || (owner &&
             ((jointServicesConfirmed && !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id)) ||
               ["completed", "no_show"].includes(timelineDetailAppt.status)))) &&
             (timelineDetailAppt.status !== "cancelled" || owner)) {
@@ -1856,7 +1857,7 @@ function AgendaPage() {
               disabled: resendingMessageId === timelineDetailAppt.id,
             });
           }
-          if (!isJointBooking && timelineDetailAppt.status !== "cancelled" &&
+          if (!hasJointServiceState && timelineDetailAppt.status !== "cancelled" &&
             (timelineDetailAppt.status !== "completed" || owner)) {
             actions.push({
               id: "cancel",
@@ -1878,6 +1879,7 @@ function AgendaPage() {
                 serviceName: appointmentServiceLabel(timelineDetailAppt),
                 professionalName: appointmentProfessionalLabel(timelineDetailAppt),
                 jointBooking: isJointBooking,
+                serviceLevelActions: hasJointServiceState,
                 serviceAssignments: serviceSegments.map((line) => ({
                    serviceId: line.id,
                   serviceName: line.services?.name ?? "Serviço",
@@ -1919,7 +1921,7 @@ function AgendaPage() {
               }}
               actions={actions}
               payment={((!isJointBooking && financialSummary.needsStudioPaymentConfirmation) ||
-                (isJointBooking && canOperateJointPayments && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
+                (hasJointServiceState && canOperateJointPayments && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
                   !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id) && split.pending > 0)) ? {
                 busy: receivingPaymentId === timelineDetailAppt.id,
                 enableInPersonMbWay,
@@ -1940,24 +1942,24 @@ function AgendaPage() {
               onCorrectPaymentMethod={canCorrectFinancialReceipt && hasManualReceipt
                 ? (movementId, method) => correctPaymentMethod(movementId, method, timelineDetailAppt) : undefined}
               correctingPaymentMethod={correctingPaymentMethod}
-              onChangeAttendance={!isJointBooking && (
+              onChangeAttendance={!hasJointServiceState && (
                 timelineDetailAppt.status === "confirmed" ? canConfirm :
                   (owner || (studio?.role === "manager" && timelineDetailAppt.status !== "cancelled")) && canCorrectState
               ) ? (nextStatus) => timelineDetailAppt.status === "confirmed"
                 ? markPresence(timelineDetailAppt, nextStatus as "completed" | "no_show")
                 : correctPresence(nextStatus, "", timelineDetailAppt)
                 : undefined}
-              onServiceState={isJointBooking && owner && timelineDetailAppt.status !== "cancelled"
+              onServiceState={hasJointServiceState && owner && timelineDetailAppt.status !== "cancelled"
                 ? (serviceLineId, nextState) => void updateJointServiceLine(serviceLineId, nextState)
                 : undefined}
-              onServiceReschedule={isJointBooking && owner && timelineDetailAppt.status !== "cancelled"
+              onServiceReschedule={hasJointServiceState && owner && timelineDetailAppt.status !== "cancelled"
                 ? (serviceLineId) => {
                     setRescheduleServiceLineId(serviceLineId);
                     setRescheduleApptId(timelineDetailAppt.id);
                     setTimelineDetailId(null);
                   }
                 : undefined}
-              onServicePayment={isJointBooking && canOperateJointPayments && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
+              onServicePayment={hasJointServiceState && canOperateJointPayments && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
                 !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id) && split.pending > 0
                 ? (serviceLineId) => {
                     const line = serviceSegments.find((candidate) => candidate.id === serviceLineId);
