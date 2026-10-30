@@ -1,6 +1,15 @@
 # Base oficial da produção Bellza — 2026-10-30
 
-## Produção ativa — seleção de estúdio no painel
+## Produção ativa — melhorias cirúrgicas da agenda
+
+- Worker `tanstack-start-app`: deployment `4f5d92b8-6950-4b91-8009-d9e7f227cfe3`, versão `6ff3c3d4-dc45-4d56-bce6-540ff4a4d0d9` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `84e753ee909374590acffad1bb0ec35d8e90d12c` da branch isolada `agent/ux-mobile/agenda-improvements-20261030`.
+- Alterações de produto: fechar os detalhes após ações concluídas, tela cheia, quatro cores para marcações confirmadas guardadas por estúdio no dispositivo e arrastar marcações entre horários/profissionais com as validações e confirmações existentes. Oito ficheiros de fonte e testes no commit; sem SQL, alteração de dados reais, Stripe, permissões ou novos fluxos de pagamento.
+- Artefacto publicado: 465 ficheiros. SHA-256 da árvore `e9ae8c383cf5a563c1b78abb5007e48aa0739e8c964e8daac184d299a3187133` (linhas ordenadas `caminho:SHA-256`, excluindo configuração temporária de upload e `.wrangler`); `dist/server/index.js`: `1f08361ffcb098a8341369d5e430879aead0335604cfbffb638739862fea30d0`. Configuração de upload SHA-256 `23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b`.
+- Antes e depois da publicação, Cloudflare OAuth confirmou os 51 bindings, incluindo 24 secrets sem ler os valores, runtime `2025-09-24` com `nodejs_compat` e cron `*/10 * * * *`. Os dois domínios e as três variáveis adicionais foram preservados. O artefacto foi comparado com o anterior: 465 ficheiros em ambos, 340 de 349 módulos comparáveis iguais após normalizar referências a hashes de assets; as diferenças de código concentram-se nas rotas e componentes afetados e nas referências geradas pelo build.
+- Verificações: `npm run typecheck`, build com variáveis públicas efetivas, `git diff --check`, `wrangler versions upload --dry-run`, rollback `wrangler versions deploy --dry-run`, cinco testes sintéticos da agenda e quatro testes de resumo de pagamentos passaram. Smoke público imediato em desktop e mobile: `/`, `/login` e `/admin/agenda` responderam HTTP 200, sem 5xx; a rota da agenda redirecionou para login sem sessão. Credencial QA autenticada indisponível neste ambiente; nenhum teste alterou marcações reais.
+- Rollback do Worker, se houver regressão confirmada: reativar a versão anterior `2b06292f-6001-445b-ad51-d558400edd78` com 100% do tráfego após reconfirmar o estado ativo. Não há SQL a reverter.
+
+## Histórico — seleção de estúdio no painel
 
 - Worker `tanstack-start-app`: deployment `6209abb3-f29f-4682-a4e6-e09c176de527`, versão `2b06292f-6001-445b-ad51-d558400edd78` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `694c1c29fbd3de10a792a97b64c15db2d1b51d38`.
 - O painel permite escolher entre estúdios a que o utilizador já tem acesso, no cabeçalho desktop ou em Menu > Estúdio no telemóvel. A escolha fica guardada por utilizador neste dispositivo. Alteração de produto limitada a `src/hooks/use-current-studio.ts` e `src/routes/_authenticated/admin.tsx`; sem migração, alteração de dados, cobrança ou concessão de acesso.

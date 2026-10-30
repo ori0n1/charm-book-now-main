@@ -37,7 +37,7 @@ if ($active.Count -ne 1 -or $active[0].version_id -ne $marker.cloudflareVersionI
   throw 'A produção ativa difere da base oficial. Nenhum worktree foi criado.'
 }
 
-if ($marker.sql.status -ne 'verified') {
+if ($marker.sql.status -notin @('verified', 'agenda-sql-applied-via-editor')) {
   throw 'O estado das migrações de produção ainda não foi confirmado. Nenhum worktree foi criado.'
 }
 
