@@ -1,6 +1,15 @@
 # Base oficial da produção Bellza — 2026-10-30
 
-## Produção ativa — melhorias cirúrgicas da agenda
+## Produção ativa — arrastar marcações no mobile
+
+- Worker `tanstack-start-app`: deployment `0c75454f-477f-4106-8471-da4689004ff6`, versão `93152aca-83b2-4c5b-aac3-08627dcb5882` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `7bd6fb4114a8d9b9e693323b2d99078691ba9b4a` da branch isolada `agent/ux-mobile/mobile-drag-touch-fix-20261030-211250`.
+- Correção limitada a `src/components/agenda/professional-timeline.tsx`: pega visível para arrastar de imediato no mobile, toque prolongado alternativo mais curto, pré-visualização de profissional e hora, rolagem da agenda durante o gesto e preservação do cartão de origem. A lógica de reagendamento, validações, pagamentos e backend não mudou. `tests/agenda-drag.spec.ts` recebeu os testes direcionados. Sem SQL ou alterações de dados reais.
+- Artefacto publicado: 465 ficheiros. SHA-256 da árvore `5ed390af169a57115d4bfc83d123b5a9ff880f1aad5bcca04aa006f316de774b` (linhas ordenadas `caminho:SHA-256`, excluindo configuração temporária de upload e `.wrangler`); `dist/server/index.js`: `bfcc9044dea51b567e65f06a5a862a71c58e534056ef77b426025495a409f4ed`. Asset da agenda servido em produção: SHA-256 `9b8a66bba17a1100c78457eb6c9eb2152e9154a912c0016c4e678a348e7ae779`, idêntico ao aprovado. Configuração de upload SHA-256 `23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b`.
+- Cloudflare OAuth confirmou antes e depois da publicação os 51 bindings, incluindo 24 secrets sem ler valores, o runtime e o cron `*/10 * * * *`. O artefacto foi comparado com o ativo anterior: 465 ficheiros em ambos; 346 de 351 módulos comparáveis iguais após normalizar referências a hashes de assets. As diferenças funcionais estão na agenda e no CSS; os manifestos refletem os novos hashes.
+- Verificações: 10 testes sintéticos da agenda, incluindo toque real no Chromium para outra hora, outro profissional e rolagem em tela cheia; `npm run typecheck`, lint sem erros, build com variáveis públicas efetivas, ensaio de upload e rollback passaram. Smoke público imediato em desktop e mobile: `/`, `/login` e `/admin/agenda` responderam HTTP 200, sem 5xx; sem sessão, a agenda redirecionou para login. Credencial QA autenticada indisponível; nenhum teste alterou marcações reais.
+- Rollback do Worker, se houver regressão confirmada: reativar a versão anterior `6ff3c3d4-dc45-4d56-bce6-540ff4a4d0d9` com 100% do tráfego após reconfirmar o estado ativo. Não há SQL a reverter.
+
+## Histórico — melhorias cirúrgicas da agenda
 
 - Worker `tanstack-start-app`: deployment `4f5d92b8-6950-4b91-8009-d9e7f227cfe3`, versão `6ff3c3d4-dc45-4d56-bce6-540ff4a4d0d9` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `84e753ee909374590acffad1bb0ec35d8e90d12c` da branch isolada `agent/ux-mobile/agenda-improvements-20261030`.
 - Alterações de produto: fechar os detalhes após ações concluídas, tela cheia, quatro cores para marcações confirmadas guardadas por estúdio no dispositivo e arrastar marcações entre horários/profissionais com as validações e confirmações existentes. Oito ficheiros de fonte e testes no commit; sem SQL, alteração de dados reais, Stripe, permissões ou novos fluxos de pagamento.
