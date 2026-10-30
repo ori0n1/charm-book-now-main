@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { createPortal } from "react-dom";
-import { CalendarPlus, Clock3, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
+import { CalendarPlus, Clock3, GripVertical, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
 import {
   getTimelineSlotMinutes,
   getTimelineVisualPeriods,
@@ -65,7 +65,10 @@ export function ProfessionalTimeline({
   const suppressClickRef = useRef(false);
   const dragSourceRef = useRef<ProfessionalTimelineAppointment | null>(null);
   const dragTargetRef = useRef<{ staffId: string; minutes: number; valid: boolean } | null>(null);
+  const dragMinuteRef = useRef<number | null>(null);
+  const dragPreviewKeyRef = useRef("");
   const [dragPreview, setDragPreview] = useState<{ staffId: string; minutes: number; valid: boolean; duration: number } | null>(null);
+  const [draggingTouchId, setDraggingTouchId] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
   const [mobileProfessionalId, setMobileProfessionalId] = useState(
     professionals[0]?.id ?? "unassigned",
@@ -172,6 +175,7 @@ export function ProfessionalTimeline({
     const autoScrollKey = `${dateKey}:${unified}:${mobile ? "mobile" : "desktop"}:${mobileProfessionalId}:${focusRequestKey}`;
     if (lastAutoScrollKeyRef.current === autoScrollKey) return;
     lastAutoScrollKeyRef.current = autoScrollKey;
+    if (dragSourceRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       if (!scrollRef.current) return;
       const target = showCurrentTime ? currentTop - scrollRef.current.clientHeight * 0.32 : 0;
@@ -215,15 +219,23 @@ export function ProfessionalTimeline({
     const tab = element?.closest<HTMLElement>("[data-agenda-professional-tab]");
     const column = element?.closest<HTMLElement>("[data-agenda-staff-column]");
     const staffId = tab?.dataset.agendaProfessionalTab ?? column?.dataset.agendaStaffColumn;
-    if (!staffId) { dragTargetRef.current = null; setDragPreview(null); return; }
-    if (tab && mobile) setMobileProfessionalId(staffId);
+    if (!staffId) {
+      dragTargetRef.current = null;
+      if (dragPreviewKeyRef.current) { dragPreviewKeyRef.current = ""; setDragPreview(null); }
+      return;
+    }
     const minutes = column ? getTimelineSlotMinutes(y, column.getBoundingClientRect().top,
-      bounds.startHour, bounds.endHour, hourHeight) : getZonedMinutes(source.startsAt, timeZone);
+      bounds.startHour, bounds.endHour, hourHeight) : (dragMinuteRef.current ?? getZonedMinutes(source.startsAt, timeZone));
+    if (column) dragMinuteRef.current = minutes;
     const duration = Math.max(15, Math.ceil((new Date(source.endsAt).getTime() - new Date(source.startsAt).getTime()) / 60000));
     const valid = staffId !== "unassigned" && (availability ?? []).some((period) =>
       period.staffId === staffId && minutes >= period.startMinutes && minutes + duration <= period.endMinutes);
     dragTargetRef.current = { staffId, minutes, valid };
-    setDragPreview({ staffId, minutes, valid, duration });
+    const previewKey = `${staffId}:${minutes}:${valid}:${duration}`;
+    if (dragPreviewKeyRef.current !== previewKey) {
+      dragPreviewKeyRef.current = previewKey;
+      setDragPreview({ staffId, minutes, valid, duration });
+    }
   }
 
   function finishDrag() {
@@ -231,6 +243,8 @@ export function ProfessionalTimeline({
     const target = dragTargetRef.current;
     dragSourceRef.current = null;
     dragTargetRef.current = null;
+    dragMinuteRef.current = null;
+    dragPreviewKeyRef.current = "";
     setDragPreview(null);
     if (!source || !target) return;
     if (!target.valid) { toast.error("Este horário está fora da disponibilidade do profissional."); return; }
@@ -240,18 +254,44 @@ export function ProfessionalTimeline({
 
   function startTouchDrag(appointment: ProfessionalTimelineAppointment, event: ReactTouchEvent<HTMLButtonElement>) {
     if (!onDropAppointment || unified || event.touches.length !== 1) return;
+    const fromHandle = Boolean((event.target as HTMLElement).closest("[data-agenda-drag-handle]"));
     const start = event.touches[0];
     const startX = start.clientX;
     const startY = start.clientY;
-    let active = false;
-    const timer = window.setTimeout(() => {
+    let active = fromHandle;
+    let autoScrollFrame = 0;
+    let touchX = startX;
+    let touchY = startY;
+    const activate = () => {
       active = true;
       dragSourceRef.current = appointment;
+      dragMinuteRef.current = getZonedMinutes(appointment.startsAt, timeZone);
       suppressClickRef.current = true;
-      if ("vibrate" in navigator) navigator.vibrate(18);
-    }, 480);
+      setDraggingTouchId(appointment.id);
+      if ("vibrate" in navigator) navigator.vibrate(12);
+    };
+    if (fromHandle) activate();
+    const timer = fromHandle ? 0 : window.setTimeout(activate, 320);
+    const scrollNearEdge = () => {
+      autoScrollFrame = 0;
+      if (!active || document.elementFromPoint(touchX, touchY)?.closest("[data-agenda-professional-tab]")) return;
+      const pageScroller = scrollRef.current?.closest<HTMLElement>(".agenda-timeline-page");
+      const scrollContainer = pageScroller && getComputedStyle(pageScroller).overflowY === "auto" &&
+        pageScroller.scrollHeight > pageScroller.clientHeight ? pageScroller : document.scrollingElement;
+      if (!scrollContainer) return;
+      const scrollBounds = scrollContainer === document.scrollingElement
+        ? { top: 0, bottom: window.innerHeight } : scrollContainer.getBoundingClientRect();
+      const delta = touchY < scrollBounds.top + 72 ? -12 : touchY > scrollBounds.bottom - 72 ? 12 : 0;
+      if (!delta) return;
+      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      if ((delta < 0 && scrollContainer.scrollTop <= 0) || (delta > 0 && scrollContainer.scrollTop >= maxScroll - 1)) return;
+      scrollContainer.scrollTop += delta;
+      updateDragTarget(touchX, touchY);
+      autoScrollFrame = window.requestAnimationFrame(scrollNearEdge);
+    };
     const cleanup = () => {
       window.clearTimeout(timer);
+      if (autoScrollFrame) window.cancelAnimationFrame(autoScrollFrame);
       window.removeEventListener("touchmove", move);
       window.removeEventListener("touchend", end);
       window.removeEventListener("touchcancel", cancel);
@@ -264,10 +304,15 @@ export function ProfessionalTimeline({
         return;
       }
       moveEvent.preventDefault();
+      touchX = touch.clientX;
+      touchY = touch.clientY;
       updateDragTarget(touch.clientX, touch.clientY);
+      if (!autoScrollFrame) {
+        autoScrollFrame = window.requestAnimationFrame(scrollNearEdge);
+      }
     };
-    const end = () => { cleanup(); if (active) finishDrag(); window.setTimeout(() => { suppressClickRef.current = false; }, 350); };
-    const cancel = () => { cleanup(); dragSourceRef.current = null; dragTargetRef.current = null; setDragPreview(null); };
+    const end = () => { cleanup(); if (active) finishDrag(); setDraggingTouchId(null); window.setTimeout(() => { suppressClickRef.current = false; }, 350); };
+    const cancel = () => { cleanup(); dragSourceRef.current = null; dragTargetRef.current = null; dragMinuteRef.current = null; dragPreviewKeyRef.current = ""; setDragPreview(null); setDraggingTouchId(null); suppressClickRef.current = false; };
     window.addEventListener("touchmove", move, { passive: false });
     window.addEventListener("touchend", end, { once: true });
     window.addEventListener("touchcancel", cancel, { once: true });
@@ -307,7 +352,7 @@ export function ProfessionalTimeline({
                 : displayProfessionals.length === 2
                   ? "w-[calc(50%_-_0.25rem)] min-w-0"
                   : "w-[11rem]"
-            }`}
+            } ${dragPreview?.staffId === person.id ? dragPreview.valid ? "ring-2 ring-sky-500" : "ring-2 ring-rose-500" : ""}`}
             aria-pressed={person.id === mobileProfessionalId}
             aria-label={`${person.name}, ${appointmentCounts.get(person.id) ?? 0} ${
               (appointmentCounts.get(person.id) ?? 0) === 1 ? "marcação" : "marcações"
@@ -326,7 +371,9 @@ export function ProfessionalTimeline({
                 >
                   {appointmentCounts.get(person.id) ?? 0}
                 </span>
-                {(appointmentCounts.get(person.id) ?? 0) === 1 ? "agendamento" : "agendamentos"}
+                {dragPreview?.staffId === person.id
+                  ? `${dragPreview.valid ? "Soltar" : "Indisponível"} · ${formatMinutes(dragPreview.minutes)}`
+                  : (appointmentCounts.get(person.id) ?? 0) === 1 ? "agendamento" : "agendamentos"}
               </span>
             </span>
           </button>
@@ -334,6 +381,9 @@ export function ProfessionalTimeline({
       </div>
 
       )}
+      {!unified && onDropAppointment && <p className="flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-muted-foreground md:hidden">
+        <GripVertical className="size-3" /> Arraste a pega da marcação para outro horário ou profissional.
+      </p>}
       <div
         ref={scrollRef}
         className="h-auto max-h-none overflow-visible md:max-h-[calc(100dvh-8.5rem)] md:overflow-auto md:overscroll-contain md:scroll-smooth md:[scrollbar-width:thin]"
@@ -603,10 +653,10 @@ export function ProfessionalTimeline({
                           event.dataTransfer.effectAllowed = "move";
                           event.dataTransfer.setData("text/plain", appointment.id);
                         }}
-                        onDragEnd={() => { dragSourceRef.current = null; dragTargetRef.current = null; setDragPreview(null); }}
+                        onDragEnd={() => { dragSourceRef.current = null; dragTargetRef.current = null; dragMinuteRef.current = null; dragPreviewKeyRef.current = ""; setDragPreview(null); }}
                         onTouchStart={(event) => { if (appointment.privateDetails && appointment.status === "confirmed") startTouchDrag(appointment, event); }}
                         onClick={() => { if (suppressClickRef.current) { suppressClickRef.current = false; return; } onOpenAppointment(appointment); }}
-                        className={`absolute z-10 box-border overflow-hidden rounded-lg border border-l-[3px] px-1.5 text-left shadow-[0_1px_2px_hsl(0_0%_0%/0.06)] transition hover:z-20 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:rounded-xl md:px-2.5 ${appointment.height < 32 ? "py-px" : "py-0.5"} ${appointmentTone(appointment.status, appointment.manualFit, appointmentColor)}`}
+                        className={`absolute z-10 box-border overflow-hidden rounded-lg border border-l-[3px] px-1.5 text-left shadow-[0_1px_2px_hsl(0_0%_0%/0.06)] transition hover:z-20 hover:shadow-sm focus-visible:z-20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:rounded-xl md:px-2.5 ${appointment.height < 32 ? "py-px" : "py-0.5"} ${onDropAppointment && !unified && appointment.privateDetails && appointment.status === "confirmed" ? "pr-9 md:pr-2.5" : ""} ${draggingTouchId === appointment.id ? "ring-2 ring-sky-500 shadow-lg" : ""} ${appointmentTone(appointment.status, appointment.manualFit, appointmentColor)}`}
                         style={{
                           top: appointment.top,
                           height: appointment.height,
@@ -616,6 +666,11 @@ export function ProfessionalTimeline({
                         aria-label={`${formatTime(appointment.startsAt, timeZone)}, ${appointment.clientName}, ${appointment.serviceName}, ${appointment.professionalName}, ${appointment.jointBooking ? "Atendimento conjunto, " : ""}${appointment.relatedServiceSummary ?? ""}, ${appointment.valueLabel ?? "valor privado"}, ${statusLabel(appointment.status)}`}
                         data-timeline-entry="appointment"
                       >
+                        {onDropAppointment && !unified && appointment.privateDetails && appointment.status === "confirmed" &&
+                          <span data-agenda-drag-handle aria-hidden="true"
+                            className="absolute right-0 top-0 z-20 flex h-full max-h-8 w-8 items-center justify-center rounded-bl-lg bg-background/75 text-foreground touch-none md:hidden">
+                            <GripVertical className="size-4" />
+                          </span>}
                         <span className="flex min-w-0 items-center justify-between gap-1">
                           <span className="shrink-0 whitespace-nowrap font-mono text-[9px] font-black leading-none tabular-nums md:text-[10px]">
                             {formatTime(appointment.startsAt, timeZone)} –{" "}
