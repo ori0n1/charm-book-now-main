@@ -35,6 +35,19 @@ export type CurrentStudio = {
 
 export type AppRole = "saas_owner" | "studio_owner" | "manager" | "staff" | "desk_staff";
 
+const selectedStudioKey = (userId: string) => `bellza:selected-studio:${userId}`;
+
+export function chooseCurrentStudio<T extends { id: string }>(
+  studios: T[],
+  preferredId: string | null,
+): T | null {
+  return studios.find((studio) => studio.id === preferredId) ?? studios[0] ?? null;
+}
+
+export function saveSelectedStudio(userId: string, studioId: string) {
+  window.localStorage.setItem(selectedStudioKey(userId), studioId);
+}
+
 async function fetchStudios(
   user: User,
   loadDeskStudioShells: () => Promise<unknown>,
@@ -187,9 +200,19 @@ export function useCurrentStudio() {
     retry: 1,
   });
 
+  const studios = query.data ?? [];
+  let preferredId: string | null = null;
+  if (typeof window !== "undefined" && user?.id) {
+    try {
+      preferredId = window.localStorage.getItem(selectedStudioKey(user.id));
+    } catch {
+      // Private browsing can disable localStorage; the first membership remains usable.
+    }
+  }
+
   return {
-    studio: query.data?.[0] ?? null,
-    studios: query.data ?? [],
+    studio: chooseCurrentStudio(studios, preferredId),
+    studios,
     loading: authLoading || !user || query.isLoading,
     error: query.error,
     refetch: query.refetch,

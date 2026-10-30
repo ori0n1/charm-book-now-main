@@ -2,6 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import {
   ArrowRight,
   BadgeCheck,
@@ -34,7 +35,7 @@ import { BrandLoadingState } from "@/components/brand-loading-state";
 import { PwaInstallGuide } from "@/components/pwa-install-guide";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { supabase } from "@/integrations/supabase/client";
-import { useCurrentStudio, type AppRole } from "@/hooks/use-current-studio";
+import { saveSelectedStudio, useCurrentStudio, type AppRole } from "@/hooks/use-current-studio";
 import { APP_BRAND } from "@/lib/app-brand";
 import { getSegmentConfig } from "@/lib/segments";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
@@ -58,6 +59,14 @@ export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: APP_BRAND.name }] }),
   component: AdminLayout,
 });
+
+function studioRoleLabel(role: AppRole) {
+  if (role === "studio_owner") return "Proprietária";
+  if (role === "saas_owner") return "Administração";
+  if (role === "manager") return "Gestão";
+  if (role === "staff") return "Profissional";
+  return "Balcão";
+}
 
 const LazyAdminNotifications = lazy(() =>
   import("@/components/admin-notifications").then((module) => ({
@@ -301,6 +310,9 @@ function AdminLayout() {
 function AdminPanelLayout({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
   const { studio, studios, loading, error, refetch } = useCurrentStudio();
+  const availableStudios = studios.filter(
+    (item, index) => studios.findIndex((candidate) => candidate.id === item.id) === index,
+  );
   const loadBilling = useServerFn(getPlatformSubscriptionSummary);
   const revokeCurrentDevicePush = useServerFn(revokeCurrentDevicePushSubscription);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -424,6 +436,16 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     }
     await supabase.auth.signOut();
     navigate({ to: "/login" });
+  }
+
+  function switchStudio(studioId: string) {
+    if (!studio || studioId === studio.id || !availableStudios.some((item) => item.id === studioId)) return;
+    try {
+      saveSelectedStudio(studio.user_id, studioId);
+      window.location.assign("/admin/agenda");
+    } catch {
+      toast.error("Não foi possível guardar a escolha do estúdio neste dispositivo.");
+    }
   }
 
   if (loading) {
@@ -787,6 +809,20 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           </div>
         </div>
         <div className={`flex items-center ${showOverviewPrivacy ? "gap-1 md:gap-2" : "gap-2"}`}>
+          {availableStudios.length > 1 && (
+            <select
+              aria-label="Selecionar estúdio"
+              value={studio.id}
+              onChange={(event) => switchStudio(event.target.value)}
+              className="hidden max-w-44 rounded-xl border border-border bg-card px-2 py-2 text-xs font-medium md:block"
+            >
+              {availableStudios.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name} · {studioRoleLabel(item.role)}
+                </option>
+              ))}
+            </select>
+          )}
           {accessMode === "full" && (planHasFeature(effectivePlan, "notifications") || studio.role === "studio_owner" || studio.role === "saas_owner") && (
             notificationsReady ? (
               <Suspense fallback={<span className="block size-10" aria-hidden="true" />}>
@@ -863,6 +899,25 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
                 <X className="h-4 w-4" />
               </button>
             </div>
+            {availableStudios.length > 1 && (
+              <div className="shrink-0 border-b border-border/70 px-3.5 py-3">
+                <label htmlFor="mobile-studio-switcher" className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Estúdio
+                </label>
+                <select
+                  id="mobile-studio-switcher"
+                  value={studio.id}
+                  onChange={(event) => switchStudio(event.target.value)}
+                  className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
+                >
+                  {availableStudios.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} · {studioRoleLabel(item.role)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-2 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-2">
               {secondaryMobileGroups.map((group) => {
                 return (
