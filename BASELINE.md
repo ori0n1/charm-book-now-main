@@ -1,6 +1,15 @@
 # Base oficial da produção Bellza — 2026-10-30
 
-## Produção ativa — permissões e edição da agenda
+## Produção ativa — seleção de estúdio no painel
+
+- Worker `tanstack-start-app`: deployment `6209abb3-f29f-4682-a4e6-e09c176de527`, versão `2b06292f-6001-445b-ad51-d558400edd78` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `694c1c29fbd3de10a792a97b64c15db2d1b51d38`.
+- O painel permite escolher entre estúdios a que o utilizador já tem acesso, no cabeçalho desktop ou em Menu > Estúdio no telemóvel. A escolha fica guardada por utilizador neste dispositivo. Alteração de produto limitada a `src/hooks/use-current-studio.ts` e `src/routes/_authenticated/admin.tsx`; sem migração, alteração de dados, cobrança ou concessão de acesso.
+- Artefacto local: 465 ficheiros, SHA-256 da árvore `641806602dfdef422e1e8937b644e95afe044fdd6ef836541f367105cbea0cff` (excluídos apenas o ficheiro temporário de configuração de upload e `.wrangler`). `dist/server/index.js`: `518c8c582219faf88c9882d73af070396bd5b48b66b1392231ce8c21d8e7be9c`. Configuração de upload: `c717a56226a59e94b267a2b9b8f31bb642c69a2c8b08ca812bad605e0b03a456`.
+- A versão nova preservou os 51 nomes/tipos de bindings, os valores das 27 variáveis simples, os 24 secrets sem ler os seus valores, o runtime `2025-09-24` com `nodejs_compat` e os assets configurados. O deploy de versão não alterou triggers. A configuração de produção foi composta a partir da versão ativa via OAuth para manter as três variáveis simples adicionais ausentes do ficheiro local.
+- Verificações: `npm run typecheck`, `node scripts/build-safe.mjs`, `git diff --check`, `wrangler versions upload --dry-run`, `wrangler versions deploy --dry-run`. Smoke GET imediato: `/`, `/login` e `/s/studio27braga` responderam HTTP 200. A sessão da Ranni não estava disponível; ainda é necessário confirmar que `studio27braga` aparece em Menu > Estúdio no dispositivo dela.
+- Rollback do Worker, se necessário e após autorização específica: reativar a versão anterior `3554b436-d866-43d3-9a7c-bbb25315814a`. Não há SQL a reverter.
+
+## Histórico — permissões e edição da agenda
 
 - Worker `tanstack-start-app`: deployment `3554804a-89cd-4283-8516-085955e46f6a`, versão `3554b436-d866-43d3-9a7c-bbb25315814a` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `875bc4b1d0597fa5bf6bb6bf04f02b9ff9b596ed`.
 - Artefacto local: 464 ficheiros, SHA-256 da árvore `d727a64eeebfd2000ab9cefb65b3237d3ab12fb5975ac54b005d23ed09d05a77`. Configuração de upload SHA-256 `23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b`. Foram preservados 51 bindings, incluindo 24 secrets, o cron `*/10 * * * *`, o runtime `2025-09-24` com `nodejs_compat` e ambos os domínios.

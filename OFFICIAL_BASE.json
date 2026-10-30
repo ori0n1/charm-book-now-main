@@ -2,9 +2,21 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "3554804a-89cd-4283-8516-085955e46f6a",
-  "cloudflareVersionId": "3554b436-d866-43d3-9a7c-bbb25315814a",
-  "sourceCommit": "875bc4b1d0597fa5bf6bb6bf04f02b9ff9b596ed",
+  "deploymentId": "6209abb3-f29f-4682-a4e6-e09c176de527",
+  "cloudflareVersionId": "2b06292f-6001-445b-ad51-d558400edd78",
+  "sourceCommit": "694c1c29fbd3de10a792a97b64c15db2d1b51d38",
+  "studioSelectionRelease": {
+    "publishedOn": "2026-10-30",
+    "trafficPercent": 100,
+    "artifactFileCount": 465,
+    "artifactTreeSha256": "641806602dfdef422e1e8937b644e95afe044fdd6ef836541f367105cbea0cff",
+    "entrypointSha256": "518c8c582219faf88c9882d73af070396bd5b48b66b1392231ce8c21d8e7be9c",
+    "uploadConfigSha256": "c717a56226a59e94b267a2b9b8f31bb642c69a2c8b08ca812bad605e0b03a456",
+    "workerRollbackVersionId": "3554b436-d866-43d3-9a7c-bbb25315814a",
+    "databaseMigrations": 0,
+    "productionDataWrites": 0,
+    "postReleaseSmoke": "Cloudflare 100%; home, login and studio27braga public page returned HTTP 200; authenticated Ranni session unavailable"
+  },
   "agendaRelease": {
     "publishedOn": "2026-10-30",
     "artifactFileCount": 464,
@@ -37,10 +49,7 @@
     "additionalPlainNames": [
       "ARARA_CANARY_PROBE_SHA256",
       "GOOGLE_PLACES_ENABLED",
-      "JOINT_BOOKING_CREATE_ENABLED",
-      "VITE_CONNECT_FINANCIAL_LIVE_APP_ORIGIN",
-      "VITE_CONNECT_FINANCIAL_LIVE_ENABLED",
-      "VITE_CONNECT_FINANCIAL_LIVE_ENDPOINT"
+      "JOINT_BOOKING_CREATE_ENABLED"
     ],
     "additionalPlainNamesAbsentFromLocalWranglerConfig": true
   },
