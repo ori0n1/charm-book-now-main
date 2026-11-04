@@ -1,6 +1,15 @@
-# Base oficial da produção Bellza — 2026-10-30
+# Base oficial da produção Bellza — 2026-11-04
 
-## Produção ativa — arrastar marcações no mobile
+## Produção ativa — histórico e evolução dos profissionais
+
+- Worker `tanstack-start-app`: deployment `73dbc88f-3e8c-4fd7-b2df-bc548f434d5f`, versão `285057b1-dcc9-4aae-9e33-c3b811822baf` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `58266de80060c9200119a75629865afda39ae315` da branch isolada `agent/desempenho/historico-profissionais-20261104`.
+- Funcionalidade limitada aos filtros históricos da Equipa e ao painel Meu desempenho, com gráfico e serviços mais realizados. O ajuste adicional no commit `58266de` faz o gráfico caber no cartão mobile. Sem alteração de regras financeiras, pagamentos, permissões, SQL ou dados reais.
+- Artefacto publicado: 465 ficheiros. SHA-256 da árvore `9231c7cae9c73336ac13dff8e321595c7c4651752e90c64574b5c9806ad50b3a` (linhas ordenadas `caminho:SHA-256` com newline final, excluindo configuração temporária de upload e `.wrangler`); `dist/server/index.js`: `55ce9cce2b95ad3a354397eb25a0c5590e38e5c025b32bad6ed7ce4f75f5a8fb`. Configuração de upload SHA-256 `23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b`.
+- Cloudflare OAuth confirmou antes e depois da publicação os 51 bindings, incluindo 24 secrets e três variáveis adicionais, runtime `2025-09-24`, cron e dois domínios preservados. A versão enviada foi comparada com a anterior antes de receber tráfego.
+- Verificações: filtros Hoje/7/15/30 da Equipa e 7/15/30 do profissional em produção com contas sintéticas, sem erros; gráfico e ranking apareceram. Antes da publicação, testes sintéticos direcionados, verificação de tipos, build, ensaio de upload e rollback passaram. Nenhuma marcação real foi modificada.
+- Rollback do Worker, se houver regressão relevante: reativar a versão anterior `93152aca-83b2-4c5b-aac3-08627dcb5882` com 100% do tráfego após reconfirmar o estado ativo. Não há SQL a reverter.
+
+## Histórico — arrastar marcações no mobile
 
 - Worker `tanstack-start-app`: deployment `0c75454f-477f-4106-8471-da4689004ff6`, versão `93152aca-83b2-4c5b-aac3-08627dcb5882` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional publicada: commit `7bd6fb4114a8d9b9e693323b2d99078691ba9b4a` da branch isolada `agent/ux-mobile/mobile-drag-touch-fix-20261030-211250`.
 - Correção limitada a `src/components/agenda/professional-timeline.tsx`: pega visível para arrastar de imediato no mobile, toque prolongado alternativo mais curto, pré-visualização de profissional e hora, rolagem da agenda durante o gesto e preservação do cartão de origem. A lógica de reagendamento, validações, pagamentos e backend não mudou. `tests/agenda-drag.spec.ts` recebeu os testes direcionados. Sem SQL ou alterações de dados reais.
