@@ -914,18 +914,18 @@ function ProfessionalOverview({ studio }: { studio: { id: string; staff_id?: str
 
 function PerformanceChart({ points }: { points: { date: string; completed: number }[] }) {
   const maximum = Math.max(2, ...points.map((point) => point.completed));
-  const x = (index: number) => 42 + index * 540 / Math.max(1, points.length - 1);
+  const x = (index: number) => 35 + index * 310 / Math.max(1, points.length - 1);
   const y = (count: number) => 145 - count * 120 / maximum;
   const line = points.map((point, index) => `${x(index)},${y(point.completed)}`).join(" ");
   const labelDate = (date: string) => date.slice(8, 10) + "/" + date.slice(5, 7);
   return (
-    <div className="mt-2 w-full overflow-x-auto">
-      <svg viewBox="0 0 600 180" className="h-auto min-w-[480px] w-full" role="img"
+    <div className="mt-2 w-full">
+      <svg viewBox="0 0 360 180" className="h-auto w-full" role="img"
         aria-label={`Evolução diária: ${points.map((point) => `${labelDate(point.date)}: ${point.completed}`).join(", ")}`}>
         {[0, 1, 2].map((step) => {
           const value = Math.round(maximum * step / 2);
-          return <g key={step}><line x1="42" x2="582" y1={y(value)} y2={y(value)} stroke="currentColor" opacity="0.12" />
-            <text x="33" y={y(value) + 4} textAnchor="end" fill="currentColor" opacity="0.6" fontSize="11">{value}</text></g>;
+          return <g key={step}><line x1="35" x2="345" y1={y(value)} y2={y(value)} stroke="currentColor" opacity="0.12" />
+            <text x="26" y={y(value) + 4} textAnchor="end" fill="currentColor" opacity="0.6" fontSize="11">{value}</text></g>;
         })}
         <polyline points={line} fill="none" stroke="#059669" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
         {points.map((point, index) => <circle key={point.date} cx={x(index)} cy={y(point.completed)} r="2.5" fill="#059669" />)}
