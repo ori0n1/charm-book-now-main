@@ -294,25 +294,27 @@ function compactAccessState(memberAccess?: StaffAccess) {
 
 function TeamPage() {
   const { studio, refetch } = useCurrentStudio();
+  const [summaryDays, setSummaryDays] = useState<1 | 7 | 15 | 30>(1);
   const canSeeStudioFinance = studio?.role === "studio_owner" || studio?.role === "saas_owner";
   const summaryVisible = studio?.role === "staff" || studio?.role === "manager" || canSeeStudioFinance;
   const loadDailySummaries = useServerFn(getProfessionalDailySummaries);
   const dailySummaries = useQuery({
-    queryKey: ["professional-daily-summary", studio?.id],
+    queryKey: ["professional-daily-summary", studio?.id, summaryDays],
     enabled: Boolean(studio?.id && summaryVisible),
     staleTime: 0,
-    refetchInterval: 10_000,
+    refetchInterval: summaryDays === 1 ? 10_000 : 60_000,
     refetchOnWindowFocus: true,
-    queryFn: () => loadDailySummaries({ data: { studioId: studio!.id } }),
+    queryFn: () => loadDailySummaries({ data: { studioId: studio!.id, days: summaryDays } }),
   });
+  const refetchSummaries = dailySummaries.refetch;
   useEffect(() => {
     if (!studio?.id || !summaryVisible) return;
     const channel = supabase.channel(`team-finance-${studio.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studio.id}` }, () => void dailySummaries.refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, () => void dailySummaries.refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studio.id}` }, () => void refetchSummaries())
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, () => void refetchSummaries())
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [studio?.id, summaryVisible, dailySummaries.refetch]);
+  }, [studio?.id, summaryVisible, refetchSummaries]);
   const labels = getSegmentConfig(studio?.business_segment).labels;
   const [staff, setStaff] = useState<Staff[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -799,7 +801,18 @@ function TeamPage() {
                   </p>
 
               <div className="mt-3 rounded-2xl border border-emerald-700/20 bg-emerald-950/[0.03] p-2.5 dark:bg-emerald-400/[0.05]">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Resumo de hoje</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{summaryDays === 1 ? "Resumo de hoje" : `Resumo dos últimos ${summaryDays} dias`}</p>
+                {summaryVisible && (
+                  <div className="mt-2 flex flex-wrap gap-1" role="group" aria-label="Período do resumo">
+                    {([1, 7, 15, 30] as const).map((days) => (
+                      <button key={days} type="button" onClick={() => setSummaryDays(days)}
+                        aria-pressed={summaryDays === days}
+                        className={`rounded-full px-2.5 py-1 text-[10px] font-semibold transition ${summaryDays === days ? "bg-emerald-600 text-white" : "bg-background/70 text-muted-foreground hover:text-foreground"}`}>
+                        {days === 1 ? "Hoje" : `${days} dias`}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {!summaryVisible ? (
                   <p className="mt-2 text-xs text-muted-foreground">Valores ocultos. Desbloqueie no Início.</p>
                 ) : dailySummaries.isError ? (
@@ -809,7 +822,7 @@ function TeamPage() {
                 ) : (
                   <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-3">
                     {[
-                      { label: "Atendimentos hoje", value: String(dailySummaries.data[m.id].completed) },
+                      { label: summaryDays === 1 ? "Atendimentos hoje" : "Atendimentos", value: String(dailySummaries.data[m.id].completed) },
                       { label: "Ganhos do profissional", value: formatEUR(dailySummaries.data[m.id].commissionCents / 100) },
                       { label: "Parte do estúdio", value: formatEUR(dailySummaries.data[m.id].studioCents / 100) },
                     ].map((fact) => (

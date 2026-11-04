@@ -5,6 +5,7 @@ import { computeAppointmentFinancialSplit, toCents } from "@/lib/financial-ledge
 import { assertStudioAccessWithOptions } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { getStudioDateKey, getZonedDateParts, normalizeStudioTimeZone } from "@/lib/studio-time";
+import { periodDateKeys, summarizeProfessionalHistory, type AttendanceEvent, type ServiceEvent } from "@/lib/professional-history";
 
 export type ProfessionalDailySummary = {
   staffId: string;
@@ -14,6 +15,8 @@ export type ProfessionalDailySummary = {
   commissionCents: number;
   studioCents: number;
   baseCents: number;
+  evolution: { date: string; completed: number }[];
+  topServices: { serviceId: string; name: string; count: number; percent: number }[];
 };
 
 function midnightUtc(dateKey: string, timezone: string) {
@@ -37,7 +40,7 @@ export function studioTodayBounds(timezone: string, now = new Date()) {
 
 export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ studioId: z.string().uuid() }).parse(input))
+  .inputValidator((input) => z.object({ studioId: z.string().uuid(), days: z.union([z.literal(1), z.literal(7), z.literal(15), z.literal(30)]).default(1) }).parse(input))
   .handler(async ({ data, context }): Promise<Record<string, ProfessionalDailySummary>> => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
@@ -56,18 +59,31 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     }
 
     const timezone = normalizeStudioTimeZone(studio.timezone);
-    const { date, from, until } = studioTodayBounds(timezone);
+    const { date, until } = studioTodayBounds(timezone);
+    const days = data.days;
+    const dateKeys = periodDateKeys(date, days);
+    const firstDate = dateKeys[0];
+    const from = midnightUtc(firstDate, timezone);
     const result: Record<string, ProfessionalDailySummary> = {};
     for (const member of staff ?? []) {
-      result[member.id] = { staffId: member.id, date, timezone, completed: 0, commissionCents: 0, studioCents: 0, baseCents: 0 };
+      result[member.id] = { staffId: member.id, date, timezone, completed: 0, commissionCents: 0, studioCents: 0, baseCents: 0,
+        evolution: dateKeys.map((key) => ({ date: key, completed: 0 })), topServices: [] };
     }
     if (!staff?.length) return result;
     const staffById = new Map(staff.map((member: { id: string; commission_percent: number | null }) => [member.id, member]));
     const seen = new Set<string>();
+    const attendanceEvents: AttendanceEvent[] = [];
+    const serviceEvents: ServiceEvent[] = [];
+    const recordAttendance = (staffId: string, appointmentId: string, startsAt: string) => {
+      attendanceEvents.push({ staffId, appointmentId, date: getStudioDateKey(new Date(startsAt), timezone) });
+    };
+    const recordService = (staffId: string, lineId: string, serviceId: string, name: string | null | undefined) => {
+      serviceEvents.push({ staffId, lineId, serviceId, name });
+    };
     const pageSize = 500;
     for (let offset = 0; ; offset += pageSize) {
       const { data: appointments, error } = await admin.from("appointments")
-        .select("id,staff_id,status,total_price,studio_commission_percent_snapshot,appointment_services(price,service_state,studio_commission_percent_snapshot,services(commission_percent))")
+        .select("id,staff_id,starts_at,status,total_price,studio_commission_percent_snapshot,appointment_services(id,service_id,price,service_state,studio_commission_percent_snapshot,services(name,commission_percent))")
         .eq("studio_id", data.studioId)
         .eq("status", "completed")
         .gte("starts_at", from)
@@ -93,7 +109,10 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
         const commissionCents = toCents(split.professional);
         const studioCents = toCents(split.studio);
         if (commissionCents + studioCents !== baseCents) throw new Error("professional_summary_reconciliation_failed");
-        summary.completed++;
+        recordAttendance(appointment.staff_id, appointment.id, appointment.starts_at);
+        for (const line of appointment.appointment_services ?? []) {
+          recordService(appointment.staff_id, line.id, line.service_id, line.services?.name);
+        }
         summary.baseCents += baseCents;
         summary.commissionCents += commissionCents;
         summary.studioCents += studioCents;
@@ -102,7 +121,7 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     }
     for (let offset = 0; ; offset += pageSize) {
       const { data: lines, error } = await admin.from("appointment_services")
-        .select("id,staff_id,price,service_state,professional_commission_percent_snapshot,appointments!inner(studio_id)")
+        .select("id,appointment_id,service_id,staff_id,starts_at,price,service_state,professional_commission_percent_snapshot,services(name),appointments!inner(studio_id)")
         .eq("appointments.studio_id", data.studioId)
         .eq("service_state", "completed")
         .gte("starts_at", from)
@@ -120,12 +139,19 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
             (staffById.get(line.staff_id) as { commission_percent: number | null } | undefined)?.commission_percent ??
             studio.commission_percent ?? 0)));
         const commissionCents = Math.round(baseCents * percent / 100);
-        summary.completed++;
+        recordAttendance(line.staff_id, line.appointment_id, line.starts_at);
+        recordService(line.staff_id, line.id, line.service_id, line.services?.name);
         summary.baseCents += baseCents;
         summary.commissionCents += commissionCents;
         summary.studioCents += baseCents - commissionCents;
       }
       if ((lines ?? []).length < pageSize) break;
+    }
+    const history = summarizeProfessionalHistory(Object.keys(result), dateKeys, attendanceEvents, serviceEvents);
+    for (const [staffId, values] of Object.entries(history)) {
+      result[staffId].completed = values.completed;
+      result[staffId].evolution = values.evolution;
+      result[staffId].topServices = values.topServices;
     }
     return result;
   });
