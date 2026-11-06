@@ -1,4 +1,12 @@
-# Base oficial da produção Bellza — 2026-11-04
+# Base oficial da produção Bellza — 2026-11-06
+
+## Produção ativa — estado de mensagens por clique no WhatsApp em Clientes
+
+- Worker `tanstack-start-app`: deployment `d004b4b5-9e30-4ec1-8e8c-1d0a505579bf`, versão `96a83592-8823-4ce1-9513-f738b84dbac6` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional: commit `48d123bca098e30656a1d069dc061e5d193a6cd5` da branch isolada `agent/bugs/clientes-mensagens-manuais-20261106-151122`.
+- Funcionalidade limitada à página Clientes: o clique no WhatsApp grava o estado sem confirmar entrega; filtros e contadores são isolados por estúdio. A migração `20261106150000_client_manual_whatsapp_confirmations.sql` foi aplicada uma única vez por `supabase db query --linked`, sem executar as migrações históricas pendentes nem alterar o histórico da CLI. A leitura autenticada com RLS confirmou a tabela acessível e vazia após a migração.
+- Artefacto publicado: 465 ficheiros. SHA-256 da árvore `26662f16839ad7dd8b239c3378a833b77b808b34ac2d982ce29060267cc3d3db` (linhas ordenadas `caminho:SHA-256` com newline final, excluindo a configuração temporária de upload); `dist/server/index.js`: `bee50582f9ab7a5bf1c15c95b3dbf90d1e6ce1ff9c4aecf868b3e402c4832c74`. Configuração de upload SHA-256 `23c6ac958b7a05c814b08c4bbceabf710d45e1069b7eae7f001e00950670c36b`. Os 226 módulos enviados coincidiram byte a byte com o artefacto local.
+- Cloudflare OAuth confirmou 51 bindings, incluindo 24 secrets sem ler valores, runtime `2025-09-24` com `nodejs_compat`, cron e domínios preservados. Smoke autenticado e somente leitura em desktop e mobile: Clientes, filtros, pesquisa e contadores passaram no estúdio sintético QA; nenhuma mensagem foi aberta ou enviada e nenhum registo de confirmação foi inserido.
+- Rollback seguro do Worker: reativar a versão anterior `285057b1-dcc9-4aae-9e33-c3b811822baf` a 100% após reconfirmar o estado ativo. Preservar a tabela e os seus dados se houver qualquer registo; o SQL em `supabase/rollback/20261106150000_client_manual_whatsapp_confirmations.sql` só remove a tabela vazia.
 
 ## Produção ativa — histórico e evolução dos profissionais
 
