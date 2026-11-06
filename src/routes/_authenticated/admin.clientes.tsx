@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -55,6 +55,7 @@ import {
   isClientAtRiskByCadence,
 } from "@/lib/client-risk";
 import { resolveScopedNotificationEntity } from "@/lib/notification-deep-link";
+import { manualMessageCounts, matchesManualMessageFilter, type MessageFilter } from "@/lib/client-manual-message-filter";
 
 type ClientsRouteSearch = {
   client?: string;
@@ -185,8 +186,12 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("alphabetical");
+  const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
+  const [messageSaveError, setMessageSaveError] = useState(false);
+  const savingMessageIdsRef = useRef(new Set<string>());
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const handledNotificationTargetRef = useRef<string | null>(null);
+  const isStudioOwner = studio?.role === "studio_owner";
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
@@ -251,6 +256,54 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   });
 
   const clients = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
+  const manualMessagesQuery = useQuery({
+    queryKey: ["client-manual-whatsapp-confirmations", studio?.id],
+    enabled: !!studio?.id && isStudioOwner,
+    queryFn: () => fetchAllStudioRows<{ client_id: string }>((from, to) =>
+      (supabase as any)
+        .from("client_manual_whatsapp_confirmations")
+        .select("client_id")
+        .eq("studio_id", studio!.id)
+        .order("client_id")
+        .range(from, to)),
+  });
+  const messageCounts = useMemo(
+    () => manualMessageCounts(clients.map((client) => client.id), (manualMessagesQuery.data ?? []).map((row) => row.client_id)),
+    [clients, manualMessagesQuery.data],
+  );
+  const sentClientIds = messageCounts.sentClientIds;
+
+  function handleWhatsAppClick(event: MouseEvent<HTMLDivElement>) {
+    if (!isStudioOwner || !studio?.id || !(event.target instanceof Element)) return;
+    const anchor = event.target.closest<HTMLAnchorElement>("[data-client-whatsapp-id]");
+    const clientId = anchor?.dataset.clientWhatsappId;
+    if (!clientId || sentClientIds.has(clientId) || savingMessageIdsRef.current.has(clientId) || !clients.some((client) => client.id === clientId)) return;
+    savingMessageIdsRef.current.add(clientId);
+    setMessageSaveError(false);
+    void recordWhatsAppClick(studio.id, clientId);
+  }
+
+  async function recordWhatsAppClick(studioId: string, clientId: string) {
+    // This record means the owner clicked WhatsApp; delivery is not verified.
+    try {
+      const { error } = await (supabase as any).from("client_manual_whatsapp_confirmations").insert({
+        studio_id: studioId,
+        client_id: clientId,
+      });
+      if (error && error.code !== "23505") throw error;
+      queryClient.setQueryData<{ client_id: string }[]>(
+        ["client-manual-whatsapp-confirmations", studioId],
+        (rows = []) => rows.some((row) => row.client_id === clientId)
+          ? rows
+          : [...rows, { client_id: clientId }],
+      );
+      void manualMessagesQuery.refetch();
+    } catch {
+      setMessageSaveError(true);
+    } finally {
+      savingMessageIdsRef.current.delete(clientId);
+    }
+  }
 
   useEffect(() => {
     if (clientsQuery.isLoading || !studio?.id || !notificationTarget.client || !notificationTarget.studio) {
@@ -270,7 +323,9 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
 
   const selectedClient = clients.find((client) => client.id === selectedClientId) ?? null;
   const filteredClients = useMemo(() => {
-    const filtered = clients.filter((client) => clientMatchesSearch(client, query));
+    const filtered = clients.filter((client) =>
+      clientMatchesSearch(client, query) &&
+      (!isStudioOwner || !manualMessagesQuery.isSuccess || matchesManualMessageFilter(client.id, messageFilter, sentClientIds)));
 
     return [...filtered].sort((a, b) => {
       if (sort === "alphabetical") return compareClientNames(a, b);
@@ -280,7 +335,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       const aTime = a.lastAppointmentAt ? new Date(a.lastAppointmentAt).getTime() : 0;
       return bTime - aTime || compareClientNames(a, b);
     });
-  }, [clients, query, sort, financialVisible]);
+  }, [clients, query, sort, financialVisible, isStudioOwner, manualMessagesQuery.isSuccess, messageFilter, sentClientIds]);
 
   const totals = clients.reduce(
     (acc, client) => ({
@@ -295,7 +350,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   }
 
   return (
-    <div className="space-y-3 md:space-y-4">
+    <div className="space-y-3 md:space-y-4" onClickCapture={handleWhatsAppClick}>
       <header className={selectedClient ? "hidden" : "border-b border-border/70 pb-3 md:pb-4"}>
         <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="min-w-0">
@@ -319,6 +374,36 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
           </div>
         </div>
       </header>
+
+      {isStudioOwner && !selectedClient && (
+        <section className="rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3">
+          {manualMessagesQuery.isError ? (
+            <p className="text-xs text-destructive">Não foi possível carregar as confirmações de mensagens.</p>
+          ) : !manualMessagesQuery.isSuccess ? (
+            <p className="text-xs text-muted-foreground">A carregar confirmações de mensagens...</p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="mr-1 text-muted-foreground">Total de clientes: <strong className="text-foreground">{messageCounts.total}</strong></span>
+              <span className="mr-1 text-muted-foreground">Mensagens enviadas: <strong className="text-foreground">{messageCounts.sent}</strong></span>
+              <span className="mr-auto text-muted-foreground">Mensagens pendentes: <strong className="text-foreground">{messageCounts.pending}</strong></span>
+              <Select value={messageFilter} onValueChange={(value) => setMessageFilter(value as MessageFilter)}>
+                <SelectTrigger aria-label="Filtrar mensagens" className="h-9 w-full rounded-xl border-border bg-background/80 text-xs sm:w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="sent">Mensagem enviada</SelectItem>
+                  <SelectItem value="pending">Pendente</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </section>
+      )}
+
+      {isStudioOwner && messageSaveError && (
+        <p role="alert" className="text-xs text-destructive">Não foi possível guardar o registo. Tente novamente.</p>
+      )}
 
       <section className={selectedClient ? "hidden" : "rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3"}>
         <div className="grid gap-2 md:grid-cols-[1fr_13.5rem]">
@@ -808,7 +893,7 @@ function ClientActions({
           Ver ficha
         </DropdownMenuItem>
         <DropdownMenuItem asChild className="rounded-xl">
-          <a href={whatsAppUrl(client)} target="_blank" rel="noreferrer">
+          <a href={whatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer">
             <MessageCircle className="mr-2 h-4 w-4" />
             WhatsApp
           </a>
@@ -822,7 +907,7 @@ function ClientTableRow({ client, onDetails }: { client: ClientSummary; onDetail
   return (
     <div className="box-border grid grid-cols-[minmax(11rem,1.2fr)_minmax(7rem,0.9fr)_minmax(6rem,0.65fr)_minmax(7rem,0.75fr)_minmax(7.5rem,0.85fr)_20rem] items-center gap-4 border-b border-border/70 px-4 py-3 text-sm last:border-b-0 hover:bg-muted/20">
       <ClientIdentity client={client} />
-      <a href={whatsAppUrl(client)} target="_blank" rel="noreferrer" className="hover:underline">
+      <a href={whatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="hover:underline">
         {client.phone}
       </a>
       <span className="text-right">{client.totalAppointments}</span>
@@ -870,6 +955,7 @@ function ClientDesktopCard({ client, onDetails }: { client: ClientSummary; onDet
           </div>
           <a
             href={whatsAppUrl(client)}
+            data-client-whatsapp-id={client.id}
             target="_blank"
             rel="noreferrer"
             className="mt-2 inline-flex max-w-full items-center gap-2 rounded-full border border-border/80 bg-background/40 px-3 py-1.5 text-xs font-medium leading-none text-muted-foreground transition hover:border-emerald-700/50"
@@ -1277,7 +1363,7 @@ function ClientDetails({
       <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
         <div className="shrink-0 rounded-full bg-violet-50 p-1 dark:bg-violet-950"><ClientAvatar name={display.name} avatarUrl={client.avatarUrl} size="lg" /></div>
         <div className="min-w-0 flex-1"><h3 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{display.name}</h3><div className="mt-1 flex flex-wrap gap-1">{primaryBadge && <ClientBadge badge={primaryBadge} compact />}{secondaryBadges.map((badge) => <ClientBadge key={badge.label} badge={badge} compact />)}</div>{display.subtitle && <p className="mt-1 text-xs text-slate-500">{display.subtitle}</p>}<p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{client.phone}</p></div>
-        <a href={whatsAppUrl(client, studioName)} target="_blank" rel="noreferrer" aria-label="Abrir WhatsApp do cliente" className="flex h-10 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"><MessageCircle className="h-4 w-4" /><span className="hidden sm:inline">WhatsApp</span></a>
+        <a href={whatsAppUrl(client, studioName)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" aria-label="Abrir WhatsApp do cliente" className="flex h-10 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"><MessageCircle className="h-4 w-4" /><span className="hidden sm:inline">WhatsApp</span></a>
       </div>
       <div className="grid grid-cols-4 divide-x divide-slate-100 rounded-3xl border border-slate-100 bg-white py-3 shadow-sm dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
         {[
@@ -1310,11 +1396,11 @@ function ClientDetails({
           </dl>}
         </div>
         <div className="grid gap-3 md:grid-cols-2"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><Star className="h-5 w-5 text-amber-500" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><BarChart3 className="h-5 w-5 text-blue-600" />Estatísticas</h3><div className="mt-3 space-y-2">{keyContextMetrics.map((metric) => <div key={metric.label} className="flex justify-between gap-3 text-xs sm:text-sm"><span className="text-slate-500">{metric.label}</span><strong className={metric.money ? "text-emerald-700" : ""}>{metric.value}</strong></div>)}</div></div></div>
-        {relationshipInsight && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><div className="flex items-start gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-sm font-bold">{hasDelayedReturn ? "Cliente com retorno atrasado" : relationshipInsight}</p>{hasDelayedReturn && client.daysSinceLastVisit !== null && client.suggestedReturnAt && <p className="mt-1 text-xs">Não retorna há {client.daysSinceLastVisit} dias. O retorno era esperado em {formatDate(client.suggestedReturnAt)}.</p>}</div></div><a href={whatsAppUrl(client, studioName)} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar mensagem</a></div>}
+        {relationshipInsight && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><div className="flex items-start gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-sm font-bold">{hasDelayedReturn ? "Cliente com retorno atrasado" : relationshipInsight}</p>{hasDelayedReturn && client.daysSinceLastVisit !== null && client.suggestedReturnAt && <p className="mt-1 text-xs">Não retorna há {client.daysSinceLastVisit} dias. O retorno era esperado em {formatDate(client.suggestedReturnAt)}.</p>}</div></div><a href={whatsAppUrl(client, studioName)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar mensagem</a></div>}
         <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="flex items-center gap-2 text-sm font-bold"><ShieldAlert className="h-4 w-4" />Status: {statusLabel}</h3><button type="button" onClick={() => setStatusPanelOpen((open) => !open)} className="rounded-full border px-3 py-1.5 text-xs">{statusPanelOpen ? "Fechar" : "Alterar"}</button></div>{statusPanelOpen && <div className="mt-3 space-y-3"><div className="grid gap-2 sm:grid-cols-3"><StatusOption active={status === "active"} title="Ativo" description="Marcações normais." onClick={() => { setStatus("active"); setUntil(""); }} /><StatusOption active={status === "suspended"} title="Suspenso temporariamente" description="Até uma data definida." onClick={() => setStatus("suspended")} /><StatusOption active={status === "blocked"} title="Bloqueado definitivamente" description="Sem novas marcações." onClick={() => { setStatus("blocked"); setUntil(""); }} /></div>{status === "suspended" && <label className="block text-xs">Suspenso até<PremiumDatePicker value={until} onChange={setUntil} placeholder="dd/mm/aaaa" className="mt-1" /></label>}{status !== "active" && <label className="block text-xs">Motivo interno opcional<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} className="mt-1 w-full rounded-xl border bg-white p-2 text-sm text-slate-950" /></label>}<button type="button" onClick={saveStatus} disabled={saving || (status === "suspended" && !until)} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? "A guardar..." : "Guardar status"}</button></div>}</div>
       </div>}
       {activeTab === "history" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold">Resumo das marcações</h3><button type="button" onClick={() => setShowAppointmentDetails((open) => !open)} className="flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs">{showAppointmentDetails ? "Ocultar" : "Ver detalhes"}<ChevronDown className={`h-3.5 w-3.5 ${showAppointmentDetails ? "rotate-180" : ""}`} /></button></div><div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">{mainAppointmentMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} />)}</div>{showAppointmentDetails && <div className="mt-4 grid grid-cols-3 gap-3 border-t pt-3">{visibleSecondaryMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />)}</div>}</div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><ContextGroup title="Relacionamento" items={relationshipDetails} /><p className="mt-3 text-xs text-slate-500">Último serviço: {client.lastService}</p></div>{explainedTotal !== client.totalAppointments && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Existem estados antigos sem categoria clara. O total mantém todas as marcações reais deste cliente.</p>}{faltasWarning && <p className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.</p>}</div>}
-      {activeTab === "preferences" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><Heart className="h-5 w-5 text-violet-600" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div>{birthdayToday && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><p className="text-sm font-semibold">Hoje é aniversário deste cliente. Mensagem de aniversário pendente.</p><a href={birthdayWhatsAppUrl(client)} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar agora</a></div>}{automationEvents.length > 0 && <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold">Automações do cliente</h3>{automationEvents.map((event) => <p key={event} className="mt-2 text-sm text-slate-600">{event}</p>)}</div>}</div>}
+      {activeTab === "preferences" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold"><Heart className="h-5 w-5 text-violet-600" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div>{birthdayToday && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><p className="text-sm font-semibold">Hoje é aniversário deste cliente. Mensagem de aniversário pendente.</p><a href={birthdayWhatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar agora</a></div>}{automationEvents.length > 0 && <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold">Automações do cliente</h3>{automationEvents.map((event) => <p key={event} className="mt-2 text-sm text-slate-600">{event}</p>)}</div>}</div>}
       {canEdit && <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-4"><button type="button" onClick={() => { setArchiveOpen((open) => !open); setArchiveError(""); setArchiveConfirmation(""); }} className="flex w-full items-center gap-3 text-left"><Trash2 className="h-5 w-5 shrink-0 text-rose-600" /><span className="min-w-0 flex-1 whitespace-normal"><strong className="block text-sm text-rose-700">Excluir cliente</strong><span className="block max-w-full whitespace-normal break-words text-xs leading-relaxed text-slate-600">Anonimiza a ficha; mantém marcações e histórico financeiro.</span></span><ChevronDown className={`h-4 w-4 shrink-0 text-rose-600 ${archiveOpen ? "rotate-180" : ""}`} /></button>{archiveOpen && <div className="mt-4 border-t border-rose-200 pt-4"><p className="text-xs text-rose-800">Para confirmar, escreva EXCLUIR. Contas ligadas e marcações futuras ficam protegidas.</p><label className="mt-3 block text-xs font-semibold">Confirmação<input value={archiveConfirmation} onChange={(event) => setArchiveConfirmation(event.target.value)} autoComplete="off" className="mt-1 block h-10 w-full rounded-xl border border-rose-300 bg-white px-3 text-sm text-slate-950" /></label>{archiveError && <p role="alert" className="mt-2 text-xs text-rose-700">{archiveError}</p>}<button type="button" onClick={archiveClient} disabled={!archiveConfirmationValid || archiveSaving} className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{archiveSaving ? "A excluir..." : "Confirmar exclusão"}</button></div>}</div>}
     </section>
   );
@@ -1377,6 +1463,7 @@ function WhatsAppButton({
   return (
     <a
       href={whatsAppUrl(client)}
+      data-client-whatsapp-id={client.id}
       target="_blank"
       rel="noreferrer"
       className={
