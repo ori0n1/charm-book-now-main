@@ -191,7 +191,6 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const savingMessageIdsRef = useRef(new Set<string>());
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const handledNotificationTargetRef = useRef<string | null>(null);
-  const isStudioOwner = studio?.role === "studio_owner";
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
@@ -258,7 +257,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const clients = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
   const manualMessagesQuery = useQuery({
     queryKey: ["client-manual-whatsapp-confirmations", studio?.id],
-    enabled: !!studio?.id && isStudioOwner,
+    enabled: !!studio?.id,
     queryFn: () => fetchAllStudioRows<{ client_id: string }>((from, to) =>
       (supabase as any)
         .from("client_manual_whatsapp_confirmations")
@@ -274,7 +273,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const sentClientIds = messageCounts.sentClientIds;
 
   function handleWhatsAppClick(event: MouseEvent<HTMLDivElement>) {
-    if (!isStudioOwner || !studio?.id || !(event.target instanceof Element)) return;
+    if (!studio?.id || !(event.target instanceof Element)) return;
     const anchor = event.target.closest<HTMLAnchorElement>("[data-client-whatsapp-id]");
     const clientId = anchor?.dataset.clientWhatsappId;
     if (!clientId || sentClientIds.has(clientId) || savingMessageIdsRef.current.has(clientId) || !clients.some((client) => client.id === clientId)) return;
@@ -325,7 +324,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const filteredClients = useMemo(() => {
     const filtered = clients.filter((client) =>
       clientMatchesSearch(client, query) &&
-      (!isStudioOwner || !manualMessagesQuery.isSuccess || matchesManualMessageFilter(client.id, messageFilter, sentClientIds)));
+      (!manualMessagesQuery.isSuccess || matchesManualMessageFilter(client.id, messageFilter, sentClientIds)));
 
     return [...filtered].sort((a, b) => {
       if (sort === "alphabetical") return compareClientNames(a, b);
@@ -335,7 +334,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       const aTime = a.lastAppointmentAt ? new Date(a.lastAppointmentAt).getTime() : 0;
       return bTime - aTime || compareClientNames(a, b);
     });
-  }, [clients, query, sort, financialVisible, isStudioOwner, manualMessagesQuery.isSuccess, messageFilter, sentClientIds]);
+  }, [clients, query, sort, financialVisible, manualMessagesQuery.isSuccess, messageFilter, sentClientIds]);
 
   const totals = clients.reduce(
     (acc, client) => ({
@@ -375,33 +374,28 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         </div>
       </header>
 
-      {isStudioOwner && !selectedClient && (
+      {!selectedClient && (
         <section className="rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3">
-          {manualMessagesQuery.isError ? (
-            <p className="text-xs text-destructive">Não foi possível carregar as confirmações de mensagens.</p>
-          ) : !manualMessagesQuery.isSuccess ? (
-            <p className="text-xs text-muted-foreground">A carregar confirmações de mensagens...</p>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="mr-1 text-muted-foreground">Total de clientes: <strong className="text-foreground">{messageCounts.total}</strong></span>
-              <span className="mr-1 text-muted-foreground">Mensagens enviadas: <strong className="text-foreground">{messageCounts.sent}</strong></span>
-              <span className="mr-auto text-muted-foreground">Mensagens pendentes: <strong className="text-foreground">{messageCounts.pending}</strong></span>
-              <Select value={messageFilter} onValueChange={(value) => setMessageFilter(value as MessageFilter)}>
-                <SelectTrigger aria-label="Filtrar mensagens" className="h-9 w-full rounded-xl border-border bg-background/80 text-xs sm:w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todos</SelectItem>
-                  <SelectItem value="sent">Mensagem enviada</SelectItem>
-                  <SelectItem value="pending">Pendente</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="mr-1 text-muted-foreground">Total de clientes: <strong className="text-foreground">{messageCounts.total}</strong></span>
+            <span className="mr-1 text-muted-foreground">Mensagens enviadas: <strong className="text-foreground">{manualMessagesQuery.isSuccess ? messageCounts.sent : "—"}</strong></span>
+            <span className="mr-auto text-muted-foreground">Mensagens pendentes: <strong className="text-foreground">{manualMessagesQuery.isSuccess ? messageCounts.pending : "—"}</strong></span>
+            <Select value={messageFilter} onValueChange={(value) => setMessageFilter(value as MessageFilter)} disabled={!manualMessagesQuery.isSuccess}>
+              <SelectTrigger aria-label="Filtrar mensagens" className="h-9 w-full rounded-xl border-border bg-background/80 text-xs sm:w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="sent">Mensagens enviadas</SelectItem>
+                <SelectItem value="pending">Pendentes</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {manualMessagesQuery.isError && <p className="mt-2 text-xs text-destructive">Não foi possível carregar as confirmações de mensagens.</p>}
         </section>
       )}
 
-      {isStudioOwner && messageSaveError && (
+      {messageSaveError && (
         <p role="alert" className="text-xs text-destructive">Não foi possível guardar o registo. Tente novamente.</p>
       )}
 
