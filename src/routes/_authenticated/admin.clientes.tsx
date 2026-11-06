@@ -290,12 +290,14 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         client_id: clientId,
       });
       if (error && error.code !== "23505") throw error;
-      queryClient.setQueryData<{ client_id: string }[]>(
-        ["client-manual-whatsapp-confirmations", studioId],
-        (rows = []) => rows.some((row) => row.client_id === clientId)
-          ? rows
-          : [...rows, { client_id: clientId }],
-      );
+      if (manualMessagesQuery.isSuccess) {
+        queryClient.setQueryData<{ client_id: string }[]>(
+          ["client-manual-whatsapp-confirmations", studioId],
+          (rows = []) => rows.some((row) => row.client_id === clientId)
+            ? rows
+            : [...rows, { client_id: clientId }],
+        );
+      }
       void manualMessagesQuery.refetch();
     } catch {
       setMessageSaveError(true);
