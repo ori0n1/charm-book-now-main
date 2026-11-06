@@ -1,6 +1,14 @@
 # Base oficial da produção Bellza — 2026-11-06
 
-## Produção ativa — estado de mensagens por clique no WhatsApp em Clientes
+## Produção ativa — filtro de mensagens para quem acede a Clientes
+
+- Worker `tanstack-start-app`: deployment `7eca0314-980e-461d-927f-8afbd750b1cd`, versão `825f1c38-cda9-4058-9f38-3bcde9074af2` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `f6e746beefe3f3937c9b55df5bc648dded035d04` da branch isolada `agent/bugs/clientes-filtro-todos-perfis-20261106-223550`.
+- A página Clientes mostra filtros e contadores para os perfis que já a consultam. A migração `20261106224000_client_manual_whatsapp_page_access.sql` foi aplicada exclusivamente por `supabase db query --linked`: acrescenta leitura e registo de cliques para `saas_owner`, `manager` e `staff` com vínculo ao estúdio e acesso RLS ao cliente. As políticas da proprietária permaneceram. Nenhuma permissão de acesso à página, registo de cliente ou dado real foi alterado.
+- Artefacto: 465 ficheiros; SHA-256 da árvore `fe2582b1749d775bea23890181c92aa3d6c7f55658c23bfbd883760c0167813e` (linhas ordenadas `caminho:sha256-minúsculo`, LF final, sem configuração temporária de upload); entrada `dist/server/index.js` `0db941f8d5b3a3f5b473799891d89897219935d2285c1de48da613d992afb8dd`; asset de Clientes servido `7ed7d59788dd2faa11f48e051a99a8bd7b7c2ea98e08e5db177a2c46eab6abcc`. Dos 440 ficheiros lógicos normalizados, apenas os módulos cliente/servidor de Clientes diferem do candidato anterior; os hashes de importação e caminhos de build foram normalizados.
+- Cloudflare OAuth confirmou 51 bindings, 24 secrets por nome e tipo sem ler valores, runtime `2025-09-24` com `nodejs_compat`, cron `*/10 * * * *` e domínios `bellza.pt` e `www.bellza.pt`. Dois testes de filtro, TypeScript e teste SQL local sintético de perfis, cliente oculto, outro estúdio, cliente arquivado e rollback passaram. Smoke HTTP em desktop e iPhone carregou o novo asset idêntico ao candidato. Não houve clique real no WhatsApp nem teste de interface autenticado em produção.
+- Rollback seguro do Worker: reativar `96a83592-8823-4ce1-9513-f738b84dbac6` após nova autorização e verificação do estado ativo. O rollback SQL `supabase/rollback/20261106224000_client_manual_whatsapp_page_access.sql` remove apenas as duas políticas novas e preserva todos os registos.
+
+## Histórico — estado de mensagens por clique no WhatsApp em Clientes
 
 - Worker `tanstack-start-app`: deployment `d004b4b5-9e30-4ec1-8e8c-1d0a505579bf`, versão `96a83592-8823-4ce1-9513-f738b84dbac6` confirmada por Cloudflare OAuth com 100% do tráfego. Fonte funcional: commit `48d123bca098e30656a1d069dc061e5d193a6cd5` da branch isolada `agent/bugs/clientes-mensagens-manuais-20261106-151122`.
 - Funcionalidade limitada à página Clientes: o clique no WhatsApp grava o estado sem confirmar entrega; filtros e contadores são isolados por estúdio. A migração `20261106150000_client_manual_whatsapp_confirmations.sql` foi aplicada uma única vez por `supabase db query --linked`, sem executar as migrações históricas pendentes nem alterar o histórico da CLI. A leitura autenticada com RLS confirmou a tabela acessível e vazia após a migração.
