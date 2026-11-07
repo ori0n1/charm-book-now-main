@@ -1,6 +1,14 @@
-# Base oficial da produção Bellza — 2026-11-06
+# Base oficial da produção Bellza — 2026-11-07
 
-## Produção ativa — organização visual de Clientes
+## Produção ativa — textos completos no menu de ordenação de Clientes
+
+- Worker `tanstack-start-app`: deployment `e9b1c7d0-bef2-479a-83c9-dbf163b2c767`, versão `46cb7725-d7bc-4259-9085-070e94b24614` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `91337a98b246081f843cddfb88f278f5e7632d8c` na branch isolada `agent/bugs/txt-20261107-003219`.
+- O único ficheiro de produto alterado foi `src/routes/_authenticated/admin.clientes.tsx`, com uma classe de largura no menu de ordenação. Todas as quatro opções foram medidas sem truncamento a 320, 390 e 1280 px. Dois testes direcionados, TypeScript e build passaram. Sem SQL, backend ou escrita em dados reais.
+- Artefacto: 465 ficheiros; SHA-256 da árvore `809435262f83dd43a607b17f2848e6cdb6e0f1b7a1d4f324626cf91b33cf7f8b` (linhas ordenadas `caminho:sha256-minúsculo`, LF final, excluindo configuração temporária de upload); entrada `dist/server/index.js` `bc45e75518843307473dfb5f071d5c656bdacb435fc30cf7e6dfe71287064fb1`; asset Clientes `af214f56f95351a93fb275340fa4396820f8de667cac2973c9001a4f0e646625`; CSS `51048fc17a6c0847dc8edafb8819da4b112b4eb54d6045b34c307daf63058b55`; configuração de upload `b780096de05031e6c7d5ee55ad3fe16f8b4f124347a48de5bc30d33e3c1900e2`.
+- A API confirmou 226 módulos idênticos ao candidato, 51 bindings incluindo 24 secrets por nome e tipo sem ler valores, runtime `2025-09-24` com `nodejs_compat`, cron `*/10 * * * *` e domínios `bellza.pt` e `www.bellza.pt`. JavaScript e CSS novos servidos byte a byte como no build. A interface autenticada em produção não foi automatizada neste ambiente.
+- Rollback preparado e ensaiado sem executar: reativar `13aa3849-1371-4e11-a1ef-a92170d546bb` após autorização específica. Nenhuma migração SQL acompanha este ajuste.
+
+## Histórico — organização visual de Clientes
 
 - Worker `tanstack-start-app`: deployment `e47c6319-63f8-4938-94f3-e1ce65b96c03`, versão `13aa3849-1371-4e11-a1ef-a92170d546bb` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `7142d55e48c45f699dd96833d127c0bb5ce74207` na branch isolada `agent/bugs/uix-20261106-235024`.
 - O único ficheiro de produto alterado foi `src/routes/_authenticated/admin.clientes.tsx`: pesquisa, filtro de mensagens e ordenação partilham a mesma área; cada cliente mostra o estado já persistido. Sem SQL, backend, novas permissões ou escrita em dados reais.
