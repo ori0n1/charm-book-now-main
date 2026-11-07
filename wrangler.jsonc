@@ -16,6 +16,9 @@
       "name": "tanstack-start-app",
       "workers_dev": false,
       "preview_urls": false,
+      "triggers": {
+        "crons": ["*/10 * * * *", "* * * * *"]
+      },
       "vars": {
         "STRIPE_ENV": "live",
         "STRIPE_CONNECT_NEW_ACCOUNT_MODEL": "standard_full_v1",
@@ -25,6 +28,8 @@
         "SENDDM_WHATSAPP_TEMPLATE_ID": "1772571720773309",
         "SENDDM_WHATSAPP_TEMPLATE_NAME": "new_template__hkmlmqkyap",
         "SENDDM_WHATSAPP_TEMPLATE_LANGUAGE": "pt_BR",
+        "SENDDM_SMART_REMINDER_TEMPLATE_ID": "ceb5d4be-985c-48fd-896c-7afff61e9d1c",
+        "SENDDM_SMART_REMINDER_TEMPLATE_NAME": "new_template__esevqffhes",
         "ARARA_WHATSAPP_MODE": "off",
         "ARARA_CANARY_PHONE": "",
         "EMAIL_NOTIFICATIONS_ENABLED": "true",

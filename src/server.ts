@@ -352,6 +352,14 @@ export default {
     _env: unknown,
     ctx: { waitUntil: (promise: Promise<unknown>) => void },
   ) {
+    if (event.cron === "* * * * *") {
+      ctx.waitUntil(
+        import("./lib/whatsapp.functions")
+          .then((module) => module.dispatchSmartRemindersFromCron())
+          .catch((error) => console.error("booking_smart_reminder_dispatch_failed", error)),
+      );
+      return;
+    }
     if (event.cron === "*/10 * * * *") {
       ctx.waitUntil(
         import("./lib/payments.functions")

@@ -2,6 +2,11 @@ export const SENDDM_LIFECYCLE_PARAMETERS = [
   "nomeCliente", "data", "hora", "servico", "profissional", "reservaToken",
 ] as const;
 
+// Keep every existing parameter, especially the button's URL suffix.
+export const SENDDM_SMART_REMINDER_PARAMETERS = [
+  ...SENDDM_LIFECYCLE_PARAMETERS, "nomeEstudio",
+] as const;
+
 export const SENDDM_LIFECYCLE_TEMPLATES = {
   reschedule: {
     id: "d4a6003c-a3b5-4966-838c-42a6d2dbca89",
@@ -42,4 +47,16 @@ export function buildSendDmLifecycleParameters(
   }
   const reservaToken = url.pathname.slice("/r/".length);
   return { ...values, reservaToken };
+}
+
+export function buildSendDmSmartReminderParameters(
+  values: Record<"nomeCliente" | "data" | "hora" | "servico" | "profissional", string>,
+  reservationUrl: string,
+  studioName: string,
+) {
+  const nomeEstudio = studioName.normalize("NFC").replace(/\s+/g, " ").trim();
+  if (!nomeEstudio || nomeEstudio.length > 200) {
+    throw new Error("senddm_reminder_studio_name_missing_or_invalid");
+  }
+  return { ...buildSendDmLifecycleParameters(values, reservationUrl), nomeEstudio };
 }

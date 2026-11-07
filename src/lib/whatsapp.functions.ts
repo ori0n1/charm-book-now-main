@@ -31,12 +31,15 @@ import {
 } from "@/lib/senddm-whatsapp";
 import {
   SENDDM_LIFECYCLE_PARAMETERS,
+  SENDDM_SMART_REMINDER_PARAMETERS,
   SENDDM_LIFECYCLE_TEMPLATES,
   buildSendDmLifecycleParameters,
+  buildSendDmSmartReminderParameters,
   isSendDmLifecycleKind,
 } from "@/lib/senddm-booking-lifecycle";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { formatStudioDate, formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
+import { isSmartReminderDue, smartReminderTemplateId, whatsappReminderIdempotencyKey } from "@/lib/smart-whatsapp-reminder";
 import {
   appointmentConfirmationIdempotencyKey,
   shouldSendAutomaticManualAppointmentConfirmation,
@@ -62,6 +65,7 @@ type WhatsAppSendInput = {
   templateVariables: WhatsAppTemplateVariables;
   bookingDetails: AraraBookingDetails;
   messageKind?: ConfirmationContext["messageKind"];
+  legacyReminder?: boolean;
   idempotencyKey: string;
 };
 
@@ -124,6 +128,7 @@ type ConfirmationContext = {
   autoEnabled: boolean;
   bookingUrl: string;
   messageKind?: "confirmation" | "reschedule" | "cancellation" | "reminder_2h";
+  legacyReminder?: boolean;
 };
 
 function admin(): any {
@@ -378,6 +383,18 @@ async function sendConfirmationFromContext(
   idempotencyKey: string,
   options: { explicitRetry?: boolean; skipEmail?: boolean; recoveryAttempt?: boolean } = {},
 ) {
+  if (ctx.messageKind === "reminder_2h" && ctx.appointmentId) {
+    const { data: current, error } = await sb.from("appointments")
+      .select(ctx.legacyReminder ? "status,starts_at,whatsapp_reminder_confirmed_at" : "status,starts_at")
+      .eq("id", ctx.appointmentId)
+      .eq("studio_id", ctx.studioId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (current?.status !== "confirmed" || Date.parse(current.starts_at) !== Date.parse(ctx.startsAt) ||
+      (ctx.legacyReminder && current.whatsapp_reminder_confirmed_at !== null)) {
+      return null;
+    }
+  }
   const [notificationsEnabled, whatsappEnabled] = await Promise.all([
     hasStudioEntitlement(sb, ctx.studioId, "notifications"),
     hasStudioEntitlement(sb, ctx.studioId, "whatsapp"),
@@ -539,6 +556,7 @@ async function sendConfirmationFromContext(
         reservationUrl: ctx.bookingUrl,
       },
       messageKind: ctx.messageKind ?? "confirmation",
+      legacyReminder: ctx.legacyReminder,
       // A new key is used only for an explicit resend after a verified terminal
       // failure with BUSINESS_017 or a corrected recipient. Unknown outcomes
       // retain the original key.
@@ -605,15 +623,28 @@ async function sendConfirmationFromContext(
 }
 
 export async function dispatchDueAraraTwoHourReminders() {
+  return dispatchLegacyTwoHourReminders(Boolean(await getServerEnv("SENDDM_SMART_REMINDER_TEMPLATE_ID")));
+}
+
+export async function dispatchSmartRemindersFromCron() {
+  if (!(await getServerEnv("SENDDM_SMART_REMINDER_TEMPLATE_ID"))) {
+    return { checked: 0, dispatched: 0 };
+  }
+  return dispatchDueSmartWhatsAppReminders();
+}
+
+async function dispatchLegacyTwoHourReminders(onlyWithoutConfirmationAnchor: boolean) {
   const mode = (await getServerEnv("ARARA_WHATSAPP_MODE")).toLowerCase();
   const canaryPhone = normalizeWhatsAppPhone(await getServerEnv("ARARA_CANARY_PHONE"));
 
   const sb = admin();
   const now = Date.now();
-  const { data, error } = await sb
+  let query = sb
     .from("appointments")
     .select("id,studio_id,starts_at,clients:clients!appointments_client_same_studio(phone)")
-    .eq("status", "confirmed")
+    .eq("status", "confirmed");
+  if (onlyWithoutConfirmationAnchor) query = query.is("whatsapp_reminder_confirmed_at", null);
+  const { data, error } = await query
     .gte("starts_at", new Date(now + 15 * 60 * 1000).toISOString())
     .lt("starts_at", new Date(now + 120 * 60 * 1000).toISOString())
     .order("starts_at", { ascending: true })
@@ -622,7 +653,7 @@ export async function dispatchDueAraraTwoHourReminders() {
   if ((data ?? []).length === 500) console.warn("[whatsapp] reminder scan reached 500 appointment cap");
 
   const due = (data ?? []).filter((row: any) => Number.isFinite(Date.parse(row.starts_at)));
-  const keys = due.map((row: any) => `arara-reminder-2h-${row.id}-${Date.parse(row.starts_at)}`);
+  const keys = due.map((row: any) => whatsappReminderIdempotencyKey(row.id, row.starts_at));
   const { data: priorLogs, error: logsError } = keys.length
     ? await sb.from("whatsapp_message_logs").select("idempotency_key,status").in("idempotency_key", keys)
     : { data: [], error: null };
@@ -634,7 +665,7 @@ export async function dispatchDueAraraTwoHourReminders() {
   let dispatched = 0;
   for (const row of due) {
     const startsAt = Date.parse(row.starts_at);
-    const idempotencyKey = `arara-reminder-2h-${row.id}-${startsAt}`;
+    const idempotencyKey = whatsappReminderIdempotencyKey(row.id, row.starts_at);
     if (alreadyHandled.has(idempotencyKey)) continue;
     const client = Array.isArray(row.clients) ? row.clients[0] : row.clients;
     const ctx = await loadAppointmentConfirmationContext(sb, row.id);
@@ -648,6 +679,7 @@ export async function dispatchDueAraraTwoHourReminders() {
       {
         ...ctx,
         messageKind: "reminder_2h",
+        legacyReminder: onlyWithoutConfirmationAnchor,
         template: "Olá, {nomeCliente}. A sua marcação em {nome_estudio} para {servico} é hoje, {data}, às {hora}. Esperamos por si dentro de duas horas.",
       },
       idempotencyKey,
@@ -656,6 +688,64 @@ export async function dispatchDueAraraTwoHourReminders() {
     if (result?.status === "sent" || result?.status === "pending") dispatched += 1;
   }
   return { checked: (data ?? []).length, dispatched };
+}
+
+async function dispatchDueSmartWhatsAppReminders() {
+  const sb = admin();
+  const now = Date.now();
+  const maxLateMs = 2 * 60_000;
+  let checked = 0;
+  let dispatched = 0;
+  for (const windowMinutes of [1440, 120, 30]) {
+    const offset = windowMinutes * 60_000;
+    const { data, error } = await sb.from("appointments")
+      .select("id,studio_id,starts_at,status,whatsapp_reminder_confirmed_at")
+      .eq("status", "confirmed")
+      .not("whatsapp_reminder_confirmed_at", "is", null)
+      .gte("starts_at", new Date(now + offset - maxLateMs).toISOString())
+      .lte("starts_at", new Date(now + offset).toISOString())
+      .order("starts_at", { ascending: true })
+      .limit(500);
+    if (error) throw new Error(error.message);
+    if ((data ?? []).length === 500) {
+      console.warn("[whatsapp] smart reminder scan reached 500 appointment cap", { windowMinutes });
+    }
+    checked += (data ?? []).length;
+    for (const row of data ?? []) {
+      if (!isSmartReminderDue({
+        status: row.status,
+        confirmedAt: row.whatsapp_reminder_confirmed_at,
+        startsAt: row.starts_at,
+        now: new Date(now),
+      })) continue;
+      const { data: studio, error: studioError } = await sb.from("studios")
+        .select("name")
+        .eq("id", row.studio_id)
+        .maybeSingle();
+      if (studioError) throw new Error(studioError.message);
+      if (!String(studio?.name ?? "").trim()) continue;
+      const ctx = await loadAppointmentConfirmationContext(sb, row.id);
+      if (!ctx?.autoEnabled || Date.parse(ctx.startsAt) !== Date.parse(row.starts_at)) continue;
+      const { data: fresh, error: freshError } = await sb.from("appointments")
+        .select("status,starts_at,whatsapp_reminder_confirmed_at")
+        .eq("id", row.id)
+        .eq("studio_id", row.studio_id)
+        .maybeSingle();
+      if (freshError) throw new Error(freshError.message);
+      if (!fresh || fresh.status !== "confirmed" ||
+        Date.parse(fresh.starts_at) !== Date.parse(row.starts_at) ||
+        Date.parse(fresh.whatsapp_reminder_confirmed_at) !== Date.parse(row.whatsapp_reminder_confirmed_at)) continue;
+      const idempotencyKey = whatsappReminderIdempotencyKey(row.id, row.starts_at);
+      const result = await sendConfirmationFromContext(sb, {
+        ...ctx,
+        studioName: studio.name,
+        messageKind: "reminder_2h",
+        template: "Olá! Passamos para lembrar que a sua reserva no {nome_estudio} está marcada para {data} às {hora}. Esperamos por si!",
+      }, idempotencyKey, { skipEmail: true });
+      if (result?.status === "sent" || result?.status === "pending") dispatched += 1;
+    }
+  }
+  return { checked, dispatched };
 }
 
 async function hasStudioEntitlement(sb: any, studioId: string, feature: string) {
@@ -761,7 +851,9 @@ class HybridWhatsAppService implements WhatsAppProvider {
     const canaryPhone = normalizeWhatsAppPhone(await getServerEnv("ARARA_CANARY_PHONE"));
     const enabled = mode === "on" || (mode === "canary" && canaryPhone === input.to);
     const kind = input.messageKind ?? "confirmation";
-    if (!enabled || kind === "reschedule" || !input.appointmentId) {
+    const smartReminder = Boolean(smartReminderTemplateId(kind, input.legacyReminder,
+      kind === "reminder_2h" ? await getServerEnv("SENDDM_SMART_REMINDER_TEMPLATE_ID") : ""));
+    if (!enabled || smartReminder || kind === "reschedule" || !input.appointmentId) {
       return new SendDmService().sendText(input);
     }
 
@@ -871,10 +963,12 @@ class SendDmService implements WhatsAppProvider {
       ? await getServerEnv("SENDDM_API_KEY")
       : (await getServerEnv("SENDDM_CONFIRMATION_API_KEY")) ||
         (await getServerEnv("SENDDM_API_KEY"));
+    const smartReminderId = smartReminderTemplateId(input.messageKind, input.legacyReminder,
+      input.messageKind === "reminder_2h" ? await getServerEnv("SENDDM_SMART_REMINDER_TEMPLATE_ID") : "");
     const lifecycleTemplate = input.messageKind && isSendDmLifecycleKind(input.messageKind)
       ? SENDDM_LIFECYCLE_TEMPLATES[input.messageKind]
       : null;
-    const modelId = lifecycleTemplate?.id ??
+    const modelId = smartReminderId || lifecycleTemplate?.id ||
       ((await getServerEnv("SENDDM_MODEL_ID")) || SENDDM_TEMPLATE_MODEL_ID);
     const whatsappTemplateId = lifecycleTemplate ? null :
       (await getServerEnv("SENDDM_WHATSAPP_TEMPLATE_ID")) || SENDDM_WHATSAPP_TEMPLATE_ID;
@@ -883,15 +977,26 @@ class SendDmService implements WhatsAppProvider {
       "",
     );
     const language = (await getServerEnv("SENDDM_WHATSAPP_TEMPLATE_LANGUAGE")) || "pt_BR";
-    const templateName = lifecycleTemplate?.name ??
+    const templateName = smartReminderId
+      ? await getServerEnv("SENDDM_SMART_REMINDER_TEMPLATE_NAME")
+      : lifecycleTemplate?.name ??
       ((await getServerEnv("SENDDM_WHATSAPP_TEMPLATE_NAME")) || SENDDM_TEMPLATE_APPROVED_NAME);
-    const internalTemplate = lifecycleTemplate?.title ??
+    const internalTemplate = smartReminderId ? "Lembrete inteligente de reserva" : lifecycleTemplate?.title ??
       ((await getServerEnv("SENDDM_TEMPLATE_INTERNAL_NAME")) || SENDDM_TEMPLATE_INTERNAL_NAME);
 
     if (!apiKey) throw new Error("SENDDM_API_KEY em falta.");
     if (!modelId) throw new Error("SENDDM_MODEL_ID em falta.");
+    if (smartReminderId && !templateName) throw new Error("SENDDM_SMART_REMINDER_TEMPLATE_NAME em falta.");
 
-    const templateParameters = lifecycleTemplate
+    const templateParameters = smartReminderId
+      ? buildSendDmSmartReminderParameters({
+          nomeCliente: input.templateVariables.nomeCliente,
+          data: input.templateVariables.data,
+          hora: input.templateVariables.hora,
+          servico: input.templateVariables.servico,
+          profissional: input.templateVariables.profissional,
+        }, input.reservationUrl, input.bookingDetails.studioName)
+      : lifecycleTemplate
       ? buildSendDmLifecycleParameters({
           nomeCliente: input.templateVariables.nomeCliente,
           data: input.templateVariables.data,
@@ -900,7 +1005,9 @@ class SendDmService implements WhatsAppProvider {
           profissional: input.templateVariables.profissional,
         }, input.reservationUrl)
       : buildSendDmTemplateParameterObject(input.templateVariables);
-    const expectedParameters = lifecycleTemplate
+    const expectedParameters = smartReminderId
+      ? SENDDM_SMART_REMINDER_PARAMETERS
+      : lifecycleTemplate
       ? SENDDM_LIFECYCLE_PARAMETERS
       : SENDDM_BOOKING_CONFIRMATION_PARAMETERS;
     const validation = validateSendDmTemplateParameters(
@@ -1536,6 +1643,7 @@ export async function recoverInterruptedAppointmentWhatsAppMessages(options?: {
   studioId?: string;
 }) {
   const sb = admin();
+  const smartReminderEnabled = Boolean(await getServerEnv("SENDDM_SMART_REMINDER_TEMPLATE_ID"));
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   let query = sb
     .from("whatsapp_message_logs")
@@ -1567,7 +1675,7 @@ export async function recoverInterruptedAppointmentWhatsAppMessages(options?: {
     if (!appointmentId || !kind || Number(row.payload?.recovery_attempts || 0) >= 2) continue;
     const { data: appointment, error: appointmentError } = await sb
       .from("appointments")
-      .select("status,starts_at")
+      .select(smartReminderEnabled ? "status,starts_at,whatsapp_reminder_confirmed_at" : "status,starts_at")
       .eq("id", appointmentId)
       .maybeSingle();
     if (appointmentError) throw new Error(appointmentError.message);
@@ -1579,19 +1687,28 @@ export async function recoverInterruptedAppointmentWhatsAppMessages(options?: {
     if (kind === "cancellation" || kind === "reschedule") {
       if (key !== `senddm-whatsapp-${kind}-appointment-${appointmentId}-${startsAt}`) continue;
     } else if (kind === "reminder_2h") {
-      if (key !== `arara-reminder-2h-${appointmentId}-${startsAt}` ||
-        startsAt <= Date.now() || startsAt > Date.now() + 120 * 60 * 1000) continue;
+      if (key !== `arara-reminder-2h-${appointmentId}-${startsAt}`) continue;
+      if (smartReminderEnabled && appointment.whatsapp_reminder_confirmed_at) {
+        if (!isSmartReminderDue({ status: appointment.status,
+          confirmedAt: appointment.whatsapp_reminder_confirmed_at,
+          startsAt: appointment.starts_at, now: new Date() })) continue;
+      } else if (startsAt <= Date.now() || startsAt > Date.now() + 120 * 60 * 1000) continue;
     }
     const ctx = await loadAppointmentConfirmationContext(sb, appointmentId);
     if (!ctx) continue;
+    const legacyReminder = kind === "reminder_2h" && smartReminderEnabled &&
+      appointment.whatsapp_reminder_confirmed_at === null;
     const template = kind === "cancellation"
       ? "Ola, {nomeCliente}. A sua marcacao de {servico} com {profissional} para {data} as {hora} foi cancelada."
       : kind === "reschedule"
         ? "Ola, {nomeCliente}. A sua marcacao de {servico} com {profissional} foi remarcada para {data} as {hora}."
         : kind === "reminder_2h"
-          ? "Olá, {nomeCliente}. A sua marcação em {nome_estudio} para {servico} é hoje, {data}, às {hora}. Esperamos por si dentro de duas horas."
+          ? smartReminderEnabled && !legacyReminder
+            ? "Olá! Passamos para lembrar que a sua reserva no {nome_estudio} está marcada para {data} às {hora}. Esperamos por si!"
+            : "Olá, {nomeCliente}. A sua marcação em {nome_estudio} para {servico} é hoje, {data}, às {hora}. Esperamos por si dentro de duas horas."
           : ctx.template;
-    await sendConfirmationFromContext(sb, { ...ctx, template, messageKind: kind === "confirmation" ? undefined : kind }, key, {
+    await sendConfirmationFromContext(sb, { ...ctx, template,
+      messageKind: kind === "confirmation" ? undefined : kind, legacyReminder }, key, {
       skipEmail: true,
       recoveryAttempt: true,
     });
