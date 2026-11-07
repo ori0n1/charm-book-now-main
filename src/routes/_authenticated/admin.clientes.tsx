@@ -407,7 +407,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
             <SelectTrigger aria-label="Ordenar clientes" className="h-10 min-w-0 rounded-xl border-border bg-background/80 px-3 text-sm shadow-sm md:h-11">
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="rounded-3xl border-border/80 p-2 shadow-xl">
+            <SelectContent className="w-[min(16rem,calc(100vw-1.5rem))] rounded-3xl border-border/80 p-2 shadow-xl">
               <SelectItem value="alphabetical" className="rounded-2xl py-2.5">
                 Nome (A–Z)
               </SelectItem>
