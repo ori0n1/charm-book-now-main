@@ -1,6 +1,14 @@
 # Base oficial da produção Bellza — 2026-11-06
 
-## Produção ativa — filtro de mensagens para quem acede a Clientes
+## Produção ativa — organização visual de Clientes
+
+- Worker `tanstack-start-app`: deployment `e47c6319-63f8-4938-94f3-e1ce65b96c03`, versão `13aa3849-1371-4e11-a1ef-a92170d546bb` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `7142d55e48c45f699dd96833d127c0bb5ce74207` na branch isolada `agent/bugs/uix-20261106-235024`.
+- O único ficheiro de produto alterado foi `src/routes/_authenticated/admin.clientes.tsx`: pesquisa, filtro de mensagens e ordenação partilham a mesma área; cada cliente mostra o estado já persistido. Sem SQL, backend, novas permissões ou escrita em dados reais.
+- Artefacto: 465 ficheiros; SHA-256 da árvore `a6b35522a443f61a049c900c0d4b5f25e9d48c8000cffb06d9e713fec4eb3c46` (linhas ordenadas `caminho:sha256-minúsculo`, LF final, excluindo configuração temporária de upload); entrada `dist/server/index.js` `76da660a397698bd10d3debe4e9cd02d2b315aeed83a7bd41267faba3a0bb1eb`; asset Clientes `832cf6de082e4004fcf5f17c9faa61c35fc72a06d270007a40243a3257d8541f`; configuração de upload `b780096de05031e6c7d5ee55ad3fe16f8b4f124347a48de5bc30d33e3c1900e2`.
+- A API confirmou 226 módulos idênticos ao candidato, 51 bindings incluindo 24 secrets por nome e tipo sem ler valores, runtime `2025-09-24` com `nodejs_compat`, cron `*/10 * * * *` e domínios `bellza.pt` e `www.bellza.pt`. O JavaScript e CSS novos foram servidos byte a byte como no build. Os dois testes direcionados, TypeScript, build e prévia visual local a 390 e 1280 px passaram. A página autenticada em produção não foi testada por indisponibilidade de sessão de navegador autenticada neste ambiente.
+- Rollback preparado e ensaiado sem executar: reativar `825f1c38-cda9-4058-9f38-3bcde9074af2` após autorização específica, mantendo todos os dados e configurações. Nenhuma migração SQL acompanha este ajuste.
+
+## Histórico — filtro de mensagens para quem acede a Clientes
 
 - Worker `tanstack-start-app`: deployment `7eca0314-980e-461d-927f-8afbd750b1cd`, versão `825f1c38-cda9-4058-9f38-3bcde9074af2` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `f6e746beefe3f3937c9b55df5bc648dded035d04` da branch isolada `agent/bugs/clientes-filtro-todos-perfis-20261106-223550`.
 - A página Clientes mostra filtros e contadores para os perfis que já a consultam. A migração `20261106224000_client_manual_whatsapp_page_access.sql` foi aplicada exclusivamente por `supabase db query --linked`: acrescenta leitura e registo de cliques para `saas_owner`, `manager` e `staff` com vínculo ao estúdio e acesso RLS ao cliente. As políticas da proprietária permaneceram. Nenhuma permissão de acesso à página, registo de cliente ou dado real foi alterado.
