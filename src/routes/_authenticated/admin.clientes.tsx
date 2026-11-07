@@ -376,34 +376,13 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         </div>
       </header>
 
-      {!selectedClient && (
-        <section className="rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="mr-1 text-muted-foreground">Total de clientes: <strong className="text-foreground">{messageCounts.total}</strong></span>
-            <span className="mr-1 text-muted-foreground">Mensagens enviadas: <strong className="text-foreground">{manualMessagesQuery.isSuccess ? messageCounts.sent : "—"}</strong></span>
-            <span className="mr-auto text-muted-foreground">Mensagens pendentes: <strong className="text-foreground">{manualMessagesQuery.isSuccess ? messageCounts.pending : "—"}</strong></span>
-            <Select value={messageFilter} onValueChange={(value) => setMessageFilter(value as MessageFilter)} disabled={!manualMessagesQuery.isSuccess}>
-              <SelectTrigger aria-label="Filtrar mensagens" className="h-9 w-full rounded-xl border-border bg-background/80 text-xs sm:w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="sent">Mensagens enviadas</SelectItem>
-                <SelectItem value="pending">Pendentes</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {manualMessagesQuery.isError && <p className="mt-2 text-xs text-destructive">Não foi possível carregar as confirmações de mensagens.</p>}
-        </section>
-      )}
-
       {messageSaveError && (
         <p role="alert" className="text-xs text-destructive">Não foi possível guardar o registo. Tente novamente.</p>
       )}
 
       <section className={selectedClient ? "hidden" : "rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3"}>
-        <div className="grid gap-2 md:grid-cols-[1fr_13.5rem]">
-          <label className="flex h-10 items-center gap-2 rounded-xl border border-border bg-background/80 px-3 text-sm shadow-sm transition focus-within:ring-2 focus-within:ring-ring/15 md:h-11">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_10.5rem_13.5rem]">
+          <label className="col-span-2 flex h-10 items-center gap-2 rounded-xl border border-border bg-background/80 px-3 text-sm shadow-sm transition focus-within:ring-2 focus-within:ring-ring/15 md:col-span-1 md:h-11">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <input
               value={query}
@@ -413,8 +392,19 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
             />
           </label>
 
+          <Select value={messageFilter} onValueChange={(value) => setMessageFilter(value as MessageFilter)} disabled={!manualMessagesQuery.isSuccess}>
+            <SelectTrigger aria-label="Filtrar mensagens" className="h-10 min-w-0 rounded-xl border-border bg-background/80 px-3 text-sm shadow-sm md:h-11">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="rounded-3xl border-border/80 p-2 shadow-xl">
+              <SelectItem value="all" className="rounded-2xl py-2.5">Todos ({messageCounts.total})</SelectItem>
+              <SelectItem value="sent" className="rounded-2xl py-2.5">Enviadas ({manualMessagesQuery.isSuccess ? messageCounts.sent : "—"})</SelectItem>
+              <SelectItem value="pending" className="rounded-2xl py-2.5">Pendentes ({manualMessagesQuery.isSuccess ? messageCounts.pending : "—"})</SelectItem>
+            </SelectContent>
+          </Select>
+
           <Select value={sort} onValueChange={(value) => setSort(value as SortMode)}>
-            <SelectTrigger className="h-10 rounded-xl border-border bg-background/80 px-3 text-sm shadow-sm md:h-11">
+            <SelectTrigger aria-label="Ordenar clientes" className="h-10 min-w-0 rounded-xl border-border bg-background/80 px-3 text-sm shadow-sm md:h-11">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="rounded-3xl border-border/80 p-2 shadow-xl">
@@ -433,6 +423,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
             </SelectContent>
           </Select>
         </div>
+        {manualMessagesQuery.isError && <p className="mt-2 text-xs text-destructive">Não foi possível carregar as confirmações de mensagens.</p>}
       </section>
 
       {selectedClient && (
@@ -455,6 +446,8 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         ) : (
           <ClientDesktopTable
             clients={filteredClients}
+            sentClientIds={sentClientIds}
+            messageStatusReady={manualMessagesQuery.isSuccess}
             onDetails={(clientId) => setSelectedClientId(clientId)}
           />
         )}
@@ -475,6 +468,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
             renderItem={(client) => (
               <ClientCompactCard
                 client={client}
+                messageSent={manualMessagesQuery.isSuccess ? sentClientIds.has(client.id) : null}
                 onDetails={() => setSelectedClientId(client.id)}
               />
             )}
@@ -774,9 +768,13 @@ function getClientAppointmentBucket(appointment: AppointmentRow) {
 
 function ClientDesktopTable({
   clients,
+  sentClientIds,
+  messageStatusReady,
   onDetails,
 }: {
   clients: ClientSummary[];
+  sentClientIds: Set<string>;
+  messageStatusReady: boolean;
   onDetails: (clientId: string) => void;
 }) {
   return (
@@ -808,7 +806,7 @@ function ClientDesktopTable({
             }}
             className="grid w-full grid-cols-[minmax(13rem,1.35fr)_minmax(10rem,1fr)_8rem_8rem_7rem_3.5rem] items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
           >
-            <ClientIdentity client={client} compact />
+            <ClientIdentity client={client} compact messageSent={messageStatusReady ? sentClientIds.has(client.id) : null} />
             <span className="min-w-0 whitespace-normal text-muted-foreground">{client.lastService}</span>
             <MoneyText value={client.totalPaid} className="text-right text-sm" />
             <span className="text-right text-sm text-muted-foreground">
@@ -827,16 +825,18 @@ function ClientDesktopTable({
 
 function ClientCompactCard({
   client,
+  messageSent,
   onDetails,
 }: {
   client: ClientSummary;
+  messageSent: boolean | null;
   onDetails: () => void;
 }) {
   return (
     <article className="rounded-2xl border border-border/80 bg-card px-3 py-2.5 shadow-sm transition active:scale-[0.995]">
       <div className="flex items-center gap-3">
         <button type="button" onClick={onDetails} className="min-w-0 flex-1 text-left">
-          <ClientIdentity client={client} compact />
+          <ClientIdentity client={client} compact messageSent={messageSent} />
         </button>
         <button
           type="button"
@@ -1040,9 +1040,11 @@ function ClientCard({ client, onDetails }: { client: ClientSummary; onDetails: (
 function ClientIdentity({
   client,
   compact = false,
+  messageSent,
 }: {
   client: ClientSummary;
   compact?: boolean;
+  messageSent?: boolean | null;
 }) {
   const display = getClientDisplayInfo(client);
 
@@ -1061,8 +1063,9 @@ function ClientIdentity({
             </p>
             {client.bookingStatus !== "active" && <StatusDot status={client.bookingStatus} />}
           </div>
-          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+          <div className={`mt-0.5 flex min-w-0 items-center gap-1.5 ${messageSent !== undefined ? "flex-wrap" : ""}`}>
             <ClientPrimaryStatus client={client} compact={compact} />
+            {messageSent !== undefined && <ClientMessageStatus sent={messageSent} />}
             {!compact && (
               <span className="min-w-0 truncate text-xs text-muted-foreground">
                 {display.subtitle ?? client.lastService}
@@ -1072,6 +1075,23 @@ function ClientIdentity({
         </div>
       </div>
     </div>
+  );
+}
+
+function ClientMessageStatus({ sent }: { sent: boolean | null }) {
+  if (sent === null) return null;
+  return (
+    <span
+      aria-label={sent ? "Mensagem registada após clique no WhatsApp; entrega não confirmada" : "Mensagem pendente"}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none ${
+        sent
+          ? "border-emerald-700/15 bg-emerald-600/[0.07] text-emerald-700 dark:text-emerald-300"
+          : "border-border/70 bg-muted/35 text-muted-foreground"
+      }`}
+    >
+      <MessageCircle className="size-3" aria-hidden="true" />
+      {sent ? "Enviada" : "Pendente"}
+    </span>
   );
 }
 
