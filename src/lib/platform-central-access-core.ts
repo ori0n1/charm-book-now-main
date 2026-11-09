@@ -28,13 +28,15 @@ export type CentralAccessSnapshot = {
 export function centralVolumeWithoutAccount(
   rows: Array<{ id: string; volumeCents: number | null }>,
   access: CentralAccessSnapshot | undefined,
+  includedStudioIds?: ReadonlySet<string>,
 ): { visibleCents: number; excludedCents: number } | null {
   if (!access?.excludedAccountFound || rows.some((row) => row.volumeCents === null)) return null;
   const excluded = new Set(access.excludedStudioIds);
   if (access.excludedStudioIds.some((id) => !rows.some((row) => row.id === id))) return null;
   return rows.reduce(
     (total, row) => {
-      total[excluded.has(row.id) ? "excludedCents" : "visibleCents"] += row.volumeCents ?? 0;
+      if (excluded.has(row.id)) total.excludedCents += row.volumeCents ?? 0;
+      else if (!includedStudioIds || includedStudioIds.has(row.id)) total.visibleCents += row.volumeCents ?? 0;
       return total;
     },
     { visibleCents: 0, excludedCents: 0 },

@@ -19,6 +19,8 @@ export type CentralStudio = {
   appointments: number | null;
   completedAppointments: number | null;
   volumeCents: number | null;
+  clients: number | null;
+  isBusinessActive: boolean | null;
 };
 
 export type CentralOverview = {
@@ -34,6 +36,11 @@ export type CentralOverview = {
     paidActive: number;
     paymentIssues: number;
     expiringTrials: number;
+    businessActive: number | null;
+    businessTrial: number | null;
+    businessPaidActive: number | null;
+    businessClients: number | null;
+    businessAttention: number | null;
   };
   activity: { appointments: number; completed: number; volumeCents: number } | null;
   billing: { revenueCents: number; paidInvoices: number } | null;
@@ -48,6 +55,7 @@ type Appointment = {
   total_price: number | string | null;
 };
 type BillingEvent = { id: string; event_type: string; created_at: string; payload: unknown };
+type Client = { studio_id: string };
 
 const filters: PlatformMetricsFilters = {
   studioId: null,
@@ -63,6 +71,7 @@ export function buildCentralOverview(input: {
   studios: PlatformStudioSource[];
   subscriptions: PlatformSubscriptionSource[];
   appointments: Appointment[] | null;
+  clients: Client[] | null;
   billingEvents: BillingEvent[] | null;
   now?: Date;
 }): CentralOverview {
@@ -109,6 +118,8 @@ export function buildCentralOverview(input: {
       appointments: input.appointments ? 0 : null,
       completedAppointments: input.appointments ? 0 : null,
       volumeCents: input.appointments ? 0 : null,
+      clients: input.clients ? 0 : null,
+      isBusinessActive: null,
     };
   });
   const byId = new Map(rows.map((row) => [row.id, row]));
@@ -133,6 +144,16 @@ export function buildCentralOverview(input: {
       row.volumeCents! += amount;
     }
   }
+  for (const client of input.clients ?? []) {
+    const row = byId.get(client.studio_id);
+    if (row) row.clients! += 1;
+  }
+  if (input.appointments && input.clients) {
+    for (const row of rows) {
+      row.isBusinessActive = row.accountStatus === "active" && row.volumeCents! > 0 && row.clients! > 0;
+    }
+  }
+  const businessRows = rows.filter((row) => row.isBusinessActive === true);
   const invoices = new Set<string>();
   let revenueCents = 0;
   let paidInvoices = 0;
@@ -158,6 +179,7 @@ export function buildCentralOverview(input: {
   }
   const issues: string[] = [];
   if (!input.appointments) issues.push("Atividade e volume dos estúdios indisponíveis.");
+  if (!input.clients) issues.push("Clientes e classificação de estúdios com movimento indisponíveis.");
   if (!input.billingEvents) issues.push("Receita de assinaturas indisponível.");
   return {
     generatedAt: now.toISOString(),
@@ -178,6 +200,18 @@ export function buildCentralOverview(input: {
       expiringTrials: rows.filter(
         (row) => row.subscriptionStatus === "trialing" && row.trialDaysRemaining <= 3,
       ).length,
+      businessActive: input.appointments && input.clients ? businessRows.length : null,
+      businessTrial: input.appointments && input.clients
+        ? businessRows.filter((row) => row.subscriptionStatus === "trialing" && row.trialDaysRemaining > 0).length : null,
+      businessPaidActive: input.appointments && input.clients
+        ? businessRows.filter((row) => row.subscriptionStatus === "active").length : null,
+      businessClients: input.appointments && input.clients
+        ? businessRows.reduce((total, row) => total + (row.clients ?? 0), 0) : null,
+      businessAttention: input.appointments && input.clients
+        ? businessRows.filter((row) =>
+          (row.subscriptionStatus === "trialing" && row.trialDaysRemaining <= 3) ||
+          ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(row.subscriptionStatus),
+        ).length : null,
     },
     activity: input.appointments ? { appointments, completed, volumeCents } : null,
     billing: input.billingEvents ? { revenueCents, paidInvoices } : null,

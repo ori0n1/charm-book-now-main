@@ -198,6 +198,7 @@ export type PlatformMetricsInput = {
   clients: PlatformClientSource[];
   billingEvents: PlatformBillingEventSource[];
   identities: PlatformStudioIdentity[];
+  excludedStudioIds?: string[];
   now?: Date;
 };
 
@@ -457,9 +458,22 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
     input.studios.find((studio) => studio.id === input.filters.studioId)?.timezone ||
     "Europe/Lisbon";
   const period = resolveMetricsPeriod(input.filters, selectedTimezone, now);
-  const scopedStudios = input.studios.filter((studio) =>
+  const candidateStudios = input.studios.filter((studio) =>
     matchesStudioFilters(studio, latestByStudio.get(studio.id), input.filters),
   );
+  const showUnqualified = Boolean(input.filters.studioId) ||
+    ["blocked", "cancelled"].includes(input.filters.accountStatus);
+  const scopedStudios = showUnqualified ? candidateStudios : candidateStudios.filter((studio) => {
+    if (accountStatus(studio, latestByStudio.get(studio.id)) !== "active") return false;
+    if (!input.clients.some((client) => client.studio_id === studio.id)) return false;
+    const timezone = normalizeStudioTimeZone(studio.timezone);
+    return input.appointments.some((appointment) =>
+      appointment.studio_id === studio.id &&
+      appointment.status === "completed" &&
+      Number(appointment.total_price || 0) > 0 &&
+      inPeriod(appointment.starts_at, period.from, period.to, timezone),
+    );
+  });
   const studioIds = new Set(scopedStudios.map((studio) => studio.id));
   const timezoneByStudio = new Map(
     scopedStudios.map((studio) => [studio.id, normalizeStudioTimeZone(studio.timezone)]),
@@ -538,7 +552,13 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
   const completedAppointments = periodAppointments.filter(
     (appointment) => appointment.status === "completed",
   );
-  const studioVolumeCents = studioRows.reduce((total, studio) => total + studio.volumeCents, 0);
+  const excludedVolumeIds = new Set(input.filters.studioId ? [] : input.excludedStudioIds ?? []);
+  const reportedCompleted = completedAppointments.filter(
+    (appointment) => !excludedVolumeIds.has(appointment.studio_id),
+  );
+  const studioVolumeCents = studioRows
+    .filter((studio) => !excludedVolumeIds.has(studio.id))
+    .reduce((total, studio) => total + studio.volumeCents, 0);
   const trialsInPeriod = scopedStudios.filter((studio) =>
     inPeriod(
       studio.trial_claimed_at || studio.created_at,
@@ -587,7 +607,7 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
           withinBucket(invoice.createdAt, bucket, timezoneForStudio(invoice.studioId)),
         )
         .reduce((total, invoice) => total + invoice.amountCents, 0),
-      studioVolumeCents: completedAppointments
+      studioVolumeCents: reportedCompleted
         .filter((appointment) =>
           withinBucket(appointment.starts_at, bucket, timezoneForStudio(appointment.studio_id)),
         )
@@ -607,7 +627,8 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
   });
 
   const inactiveThreshold = now.getTime() - 30 * 86400000;
-  const byVolume = [...studioRows].sort((a, b) => b.volumeCents - a.volumeCents).slice(0, 10);
+  const byVolume = studioRows.filter((studio) => !excludedVolumeIds.has(studio.id))
+    .sort((a, b) => b.volumeCents - a.volumeCents).slice(0, 10);
   const byAppointments = [...studioRows]
     .sort((a, b) => b.appointments - a.appointments)
     .slice(0, 10);
@@ -645,7 +666,7 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
       newInPeriod: scopedStudios.filter((studio) =>
         inPeriod(studio.created_at, period.from, period.to, timezoneForStudio(studio.id)),
       ).length,
-      trial: scopedStudios.filter((studio) => currentSubscriptionStatus(studio) === "trialing")
+      trial: scopedStudios.filter((studio) => currentSubscriptionStatus(studio) === "trialing" && trialDaysRemaining(studio, now) > 0)
         .length,
       paidActive,
       expired: scopedStudios.filter((studio) =>
@@ -664,8 +685,8 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
       ),
       studioVolumeCents,
       averageAppointmentCents:
-        completedAppointments.length > 0
-          ? Math.round(studioVolumeCents / completedAppointments.length)
+        reportedCompleted.length > 0
+          ? Math.round(studioVolumeCents / reportedCompleted.length)
           : 0,
     },
     appointments: {

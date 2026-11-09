@@ -39,6 +39,11 @@ test("counts linked studio logins, separates never signed in, and excludes only 
     { id: "silas-studio", volumeCents: 2500 },
     { id: "old-studio", volumeCents: 4000 },
   ], access), { visibleCents: 4000, excludedCents: 2500 });
+  assert.deepEqual(centralVolumeWithoutAccount([
+    { id: "silas-studio", volumeCents: 2500 },
+    { id: "old-studio", volumeCents: 4000 },
+    { id: "unqualified", volumeCents: 500 },
+  ], access, new Set(["old-studio"])), { visibleCents: 4000, excludedCents: 2500 });
 });
 
 test("hides total when exclusion identity or matching studio is unavailable", () => {

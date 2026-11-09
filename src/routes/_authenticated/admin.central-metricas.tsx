@@ -109,7 +109,7 @@ function CentralMetricsPage() {
     staleTime: 60_000,
     retry: 1,
   });
-  const metrics = query.data?.metrics;
+  const metrics = query.isError ? undefined : query.data?.metrics;
   useEffect(() => {
     if (query.data?.studioOptions) setStudioOptions(query.data.studioOptions);
   }, [query.data?.studioOptions]);
@@ -169,8 +169,9 @@ function CentralMetricsPage() {
                 Central de Métricas
               </h1>
               <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground sm:text-sm">
-                Receita Bellza e volume dos estúdios são apresentados separadamente, usando dados
-                reais do período e do estúdio selecionado.
+                Receita Bellza e volume dos estúdios são apresentados separadamente. Na visão geral,
+                entram apenas contas operacionais com clientes e volume positivo no período; o volume
+                da conta silas18.so@gmail.com é excluído.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -215,7 +216,7 @@ function CentralMetricsPage() {
                 setActiveView("overview");
               }}
             >
-              <option value="all">Todos os estúdios</option>
+              <option value="all">Estúdios com movimento</option>
               {studioOptions.map((studio) => (
                 <option key={studio.id} value={studio.id}>
                   {studio.name}
@@ -312,11 +313,15 @@ function CentralMetricsPage() {
         </Panel>
 
         {query.isError && (
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">
+          <div role="alert" className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">
             Não foi possível atualizar os dados agora. A análise anterior foi removida para não
             misturar informações. Tente novamente ou escolha outro período.
           </div>
         )}
+
+        {query.isLoading && <p role="status" className="text-xs text-muted-foreground">A carregar métricas…</p>}
+
+        {metrics && <>
 
         {metrics?.selectedStudio && (
           <section className="overflow-hidden rounded-2xl border border-violet-500/20 bg-card shadow-sm">
@@ -854,6 +859,7 @@ function CentralMetricsPage() {
             />
           </div>
         )}
+        </>}
       </div>
     </CentralShell>
   );

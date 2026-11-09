@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { buildCentralAccessSnapshot } from "@/lib/platform-central-access-core";
 import {
   buildPlatformMetrics,
   resolvePlatformMetricsAccess,
@@ -92,9 +93,9 @@ async function pagedRows(
     const { data, error } = await createQuery(from, from + pageSize - 1);
     if (error) throw new Error(error.message);
     rows.push(...(data ?? []));
-    if (!data || data.length < pageSize) break;
+    if (!data || data.length < pageSize) return rows;
   }
-  return rows;
+  throw new Error("metrics_result_limit");
 }
 
 async function listAllAuthUsers(sb: any) {
@@ -103,9 +104,9 @@ async function listAllAuthUsers(sb: any) {
     const { data, error } = await sb.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) throw new Error(error.message);
     users.push(...(data.users ?? []));
-    if (!data.users || data.users.length < 1000) break;
+    if (!data.users || data.users.length < 1000) return users;
   }
-  return users;
+  throw new Error("metrics_auth_users_limit");
 }
 
 function payloadObject(payload: unknown): Record<string, any> | null {
@@ -203,7 +204,7 @@ async function loadPlatformData(
       sb
         .from("studios")
         .select(
-          "id,name,owner_name,email,is_active,plan,subscription_status,subscription_current_period_end,trial_ends_at,trial_claimed_at,premium_access_until,timezone,created_at",
+          "id,name,owner_name,email,is_active,plan,subscription_status,subscription_current_period_end,trial_ends_at,premium_access_until,timezone,created_at",
         )
         .order("created_at", { ascending: true })
         .range(from, to),
@@ -269,6 +270,8 @@ async function loadPlatformData(
           "invoice.payment_succeeded",
           "customer.subscription.deleted",
         ])
+        .gte("created_at", bounds.from)
+        .lte("created_at", bounds.to)
         .order("created_at", { ascending: true });
       // Events without studio_id are retained because the subscription/customer fallback
       // below may still resolve them to a selected studio.
@@ -277,6 +280,10 @@ async function loadPlatformData(
   ]);
 
   const identities = buildIdentities(roles, profiles, authUsers);
+  const exclusion = buildCentralAccessSnapshot({ users: authUsers, roles });
+  if (access?.isSaasOwner && !filters.studioId && !exclusion.excludedAccountFound) {
+    throw new Error("metrics_excluded_account_unavailable");
+  }
   const resolvedBillingEvents = resolveEventStudioIds(billingEvents, subscriptions);
   const metrics = buildPlatformMetrics({
     filters,
@@ -286,6 +293,7 @@ async function loadPlatformData(
     clients,
     billingEvents: resolvedBillingEvents,
     identities,
+    excludedStudioIds: exclusion.excludedStudioIds,
   });
 
   return {
