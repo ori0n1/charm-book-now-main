@@ -57,6 +57,9 @@ test("general metrics count only operational studios with clients and positive v
   assert.equal(result.finances.studioVolumeCents, 2500);
   assert.equal(result.finances.averageAppointmentCents, 2500);
   assert.deepEqual(result.rankings.byVolume.map((row) => row.id), ["active"]);
+  const day = result.timeline.find((point) => point.key === "2026-11-08");
+  assert.equal(day?.appointments, 2);
+  assert.equal(day?.studioVolumeCents, 2500);
 });
 
 test("an explicitly selected studio remains inspectable, including its own volume", () => {
@@ -64,4 +67,14 @@ test("an explicitly selected studio remains inspectable, including its own volum
   assert.equal(result.studios.total, 1);
   assert.equal(result.finances.studioVolumeCents, 1000);
   assert.equal(result.selectedStudio?.id, "owner");
+});
+
+test("monthly timeline places qualified studios and volume in their actual months", () => {
+  const result = buildPlatformMetrics({ ...input, filters: { ...filters, preset: "year" } });
+  const october = result.timeline.find((point) => point.key === "2026-10");
+  const november = result.timeline.find((point) => point.key === "2026-11");
+  assert.equal(october?.studios, 2);
+  assert.equal(october?.trials, 2);
+  assert.equal(november?.appointments, 2);
+  assert.equal(november?.studioVolumeCents, 2500);
 });

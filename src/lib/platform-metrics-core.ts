@@ -266,12 +266,6 @@ export function resolveMetricsPeriod(
   return { from, to, label: periodLabel(from, to), timezone: safeTimezone };
 }
 
-function inPeriod(value: string | null | undefined, from: string, to: string, timezone: string) {
-  if (!value) return false;
-  const key = getStudioDateKey(value, timezone);
-  return key >= from && key <= to;
-}
-
 function normalizeSubscriptionStatus(value?: string | null) {
   const status = String(value || "trialing").toLowerCase();
   return status === "cancelled" ? "canceled" : status;
@@ -387,15 +381,14 @@ function cancellationEvents(events: PlatformBillingEventSource[]) {
 function bucketKeys(from: string, to: string) {
   const span = daysBetween(from, to);
   if (span <= 31) {
+    const labelFormatter = new Intl.DateTimeFormat("pt-PT", {
+      day: "2-digit", month: "short", timeZone: "UTC",
+    });
     const keys: { key: string; label: string; from: string; to: string }[] = [];
     for (let cursor = from; cursor <= to; cursor = addDays(cursor, 1)) {
       keys.push({
         key: cursor,
-        label: new Intl.DateTimeFormat("pt-PT", {
-          day: "2-digit",
-          month: "short",
-          timeZone: "UTC",
-        }).format(new Date(`${cursor}T12:00:00.000Z`)),
+        label: labelFormatter.format(new Date(`${cursor}T12:00:00.000Z`)),
         from: cursor,
         to: cursor,
       });
@@ -413,6 +406,9 @@ function bucketKeys(from: string, to: string) {
   }
 
   const keys: { key: string; label: string; from: string; to: string }[] = [];
+  const labelFormatter = new Intl.DateTimeFormat("pt-PT", {
+    month: "short", year: "2-digit", timeZone: "UTC",
+  });
   let cursor = startOfMonth(from);
   while (cursor <= to) {
     const [year, month] = cursor.split("-").map(Number);
@@ -421,25 +417,13 @@ function bucketKeys(from: string, to: string) {
     const bucketTo = addDays(nextMonth, -1) > to ? to : addDays(nextMonth, -1);
     keys.push({
       key: cursor.slice(0, 7),
-      label: new Intl.DateTimeFormat("pt-PT", {
-        month: "short",
-        year: "2-digit",
-        timeZone: "UTC",
-      }).format(new Date(`${cursor}T12:00:00.000Z`)),
+      label: labelFormatter.format(new Date(`${cursor}T12:00:00.000Z`)),
       from: bucketFrom,
       to: bucketTo,
     });
     cursor = nextMonth;
   }
   return keys;
-}
-
-function withinBucket(
-  value: string | null | undefined,
-  bucket: { from: string; to: string },
-  timezone: string,
-) {
-  return inPeriod(value, bucket.from, bucket.to, timezone);
 }
 
 function safePercent(numerator: number, denominator: number) {
@@ -453,11 +437,50 @@ function trialDaysRemaining(studio: PlatformStudioSource, now: Date) {
 
 export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetrics {
   const now = input.now ?? new Date();
+  const dateKeys = new Map<string, string>();
+  const dateRanges = new Map<string, { start: number; end: number }>();
+  const localDate = (value: string, timezone: string) => {
+    const cacheKey = `${timezone}\u0000${value}`;
+    let key = dateKeys.get(cacheKey);
+    if (!key) {
+      key = getStudioDateKey(value, timezone);
+      dateKeys.set(cacheKey, key);
+    }
+    return key;
+  };
+  const inPeriod = (value: string | null | undefined, from: string, to: string, timezone: string) => {
+    if (!value) return false;
+    const rangeKey = `${from}/${to}`;
+    let range = dateRanges.get(rangeKey);
+    if (!range) {
+      range = {
+        start: Date.parse(`${from}T00:00:00.000Z`),
+        end: Date.parse(`${to}T00:00:00.000Z`) + 86400000,
+      };
+      dateRanges.set(rangeKey, range);
+    }
+    const timestamp = Date.parse(value);
+    // A local day can differ from its UTC day by at most one calendar day.
+    if (timestamp < range.start - 86400000 || timestamp >= range.end + 86400000) return false;
+    if (timestamp >= range.start + 86400000 && timestamp < range.end - 86400000) return true;
+    const key = localDate(value, timezone);
+    return key >= from && key <= to;
+  };
   const latestByStudio = latestSubscriptions(input.subscriptions);
   const selectedTimezone =
     input.studios.find((studio) => studio.id === input.filters.studioId)?.timezone ||
     "Europe/Lisbon";
   const period = resolveMetricsPeriod(input.filters, selectedTimezone, now);
+  const clientStudioIds = new Set(input.clients.map((client) => client.studio_id));
+  const candidateTimezones = new Map(input.studios.map((studio) => [studio.id, normalizeStudioTimeZone(studio.timezone)]));
+  const volumeStudioIds = new Set<string>();
+  for (const appointment of input.appointments) {
+    if (appointment.status !== "completed" || Number(appointment.total_price || 0) <= 0) continue;
+    const timezone = candidateTimezones.get(appointment.studio_id);
+    if (timezone && inPeriod(appointment.starts_at, period.from, period.to, timezone)) {
+      volumeStudioIds.add(appointment.studio_id);
+    }
+  }
   const candidateStudios = input.studios.filter((studio) =>
     matchesStudioFilters(studio, latestByStudio.get(studio.id), input.filters),
   );
@@ -465,14 +488,7 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
     ["blocked", "cancelled"].includes(input.filters.accountStatus);
   const scopedStudios = showUnqualified ? candidateStudios : candidateStudios.filter((studio) => {
     if (accountStatus(studio, latestByStudio.get(studio.id)) !== "active") return false;
-    if (!input.clients.some((client) => client.studio_id === studio.id)) return false;
-    const timezone = normalizeStudioTimeZone(studio.timezone);
-    return input.appointments.some((appointment) =>
-      appointment.studio_id === studio.id &&
-      appointment.status === "completed" &&
-      Number(appointment.total_price || 0) > 0 &&
-      inPeriod(appointment.starts_at, period.from, period.to, timezone),
-    );
+    return clientStudioIds.has(studio.id) && volumeStudioIds.has(studio.id);
   });
   const studioIds = new Set(scopedStudios.map((studio) => studio.id));
   const timezoneByStudio = new Map(
@@ -502,16 +518,32 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
       inPeriod(invoice.createdAt, period.from, period.to, timezoneForStudio(invoice.studioId)),
   );
 
+  const appointmentsByStudio = new Map<string, typeof periodAppointments>();
+  for (const appointment of periodAppointments) {
+    const rows = appointmentsByStudio.get(appointment.studio_id) ?? [];
+    rows.push(appointment);
+    appointmentsByStudio.set(appointment.studio_id, rows);
+  }
+  const clientsByStudio = new Map<string, typeof scopedClients>();
+  for (const client of scopedClients) {
+    const rows = clientsByStudio.get(client.studio_id) ?? [];
+    rows.push(client);
+    clientsByStudio.set(client.studio_id, rows);
+  }
+  const revenueByStudio = new Map<string, number>();
+  for (const invoice of periodInvoices) {
+    if (!invoice.studioId) continue;
+    revenueByStudio.set(invoice.studioId, (revenueByStudio.get(invoice.studioId) ?? 0) + invoice.amountCents);
+  }
+
   const studioRows: PlatformStudioRow[] = scopedStudios.map((studio) => {
     const subscription = latestByStudio.get(studio.id);
     const identity = identities.get(studio.id);
-    const studioAppointments = periodAppointments.filter(
-      (appointment) => appointment.studio_id === studio.id,
-    );
+    const studioAppointments = appointmentsByStudio.get(studio.id) ?? [];
     const completed = studioAppointments.filter(
       (appointment) => appointment.status === "completed",
     );
-    const studioClients = scopedClients.filter((client) => client.studio_id === studio.id);
+    const studioClients = clientsByStudio.get(studio.id) ?? [];
     return {
       id: studio.id,
       name: studio.name,
@@ -533,9 +565,7 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
         studio.subscription_current_period_end ||
         studio.trial_ends_at ||
         null,
-      revenueCents: periodInvoices
-        .filter((invoice) => invoice.studioId === studio.id)
-        .reduce((total, invoice) => total + invoice.amountCents, 0),
+      revenueCents: revenueByStudio.get(studio.id) ?? 0,
       volumeCents: completed.reduce(
         (total, appointment) => total + Math.round(Number(appointment.total_price || 0) * 100),
         0,
@@ -588,43 +618,49 @@ export function buildPlatformMetrics(input: PlatformMetricsInput): PlatformMetri
   ).length;
 
   const buckets = bucketKeys(period.from, period.to);
-  const timeline = buckets.map((bucket): PlatformMetricPoint => {
-    const bucketTrials = scopedStudios.filter((studio) =>
-      withinBucket(
-        studio.trial_claimed_at || studio.created_at,
-        bucket,
-        timezoneForStudio(studio.id),
-      ),
-    );
-    return {
+  const timeline = buckets.map((bucket): PlatformMetricPoint => ({
       key: bucket.key,
       label: bucket.label,
-      studios: scopedStudios.filter((studio) =>
-        withinBucket(studio.created_at, bucket, timezoneForStudio(studio.id)),
-      ).length,
-      platformRevenueCents: periodInvoices
-        .filter((invoice) =>
-          withinBucket(invoice.createdAt, bucket, timezoneForStudio(invoice.studioId)),
-        )
-        .reduce((total, invoice) => total + invoice.amountCents, 0),
-      studioVolumeCents: reportedCompleted
-        .filter((appointment) =>
-          withinBucket(appointment.starts_at, bucket, timezoneForStudio(appointment.studio_id)),
-        )
-        .reduce(
-          (total, appointment) => total + Math.round(Number(appointment.total_price || 0) * 100),
-          0,
-        ),
-      appointments: periodAppointments.filter((appointment) =>
-        withinBucket(appointment.starts_at, bucket, timezoneForStudio(appointment.studio_id)),
-      ).length,
-      trials: bucketTrials.length,
-      conversions: bucketTrials.filter((studio) => paidStudioIds.has(studio.id)).length,
-      cancellations: periodCancellations.filter((event) =>
-        withinBucket(event.createdAt, bucket, timezoneForStudio(event.studioId)),
-      ).length,
-    };
+      studios: 0,
+      platformRevenueCents: 0,
+      studioVolumeCents: 0,
+      appointments: 0,
+      trials: 0,
+      conversions: 0,
+      cancellations: 0,
+  }));
+  const bucketByDay = new Map<string, PlatformMetricPoint>();
+  buckets.forEach((bucket, index) => {
+    for (let day = bucket.from; day <= bucket.to; day = addDays(day, 1)) {
+      bucketByDay.set(day, timeline[index]);
+    }
   });
+  for (const studio of scopedStudios) {
+    const timezone = timezoneForStudio(studio.id);
+    const created = bucketByDay.get(localDate(studio.created_at, timezone));
+    if (created) created.studios += 1;
+    const trial = bucketByDay.get(localDate(studio.trial_claimed_at || studio.created_at, timezone));
+    if (trial) {
+      trial.trials += 1;
+      if (paidStudioIds.has(studio.id)) trial.conversions += 1;
+    }
+  }
+  for (const invoice of periodInvoices) {
+    const bucket = bucketByDay.get(localDate(invoice.createdAt, timezoneForStudio(invoice.studioId)));
+    if (bucket) bucket.platformRevenueCents += invoice.amountCents;
+  }
+  for (const appointment of periodAppointments) {
+    const bucket = bucketByDay.get(localDate(appointment.starts_at, timezoneForStudio(appointment.studio_id)));
+    if (!bucket) continue;
+    bucket.appointments += 1;
+    if (appointment.status === "completed" && !excludedVolumeIds.has(appointment.studio_id)) {
+      bucket.studioVolumeCents += Math.round(Number(appointment.total_price || 0) * 100);
+    }
+  }
+  for (const event of periodCancellations) {
+    const bucket = bucketByDay.get(localDate(event.createdAt, timezoneForStudio(event.studioId)));
+    if (bucket) bucket.cancellations += 1;
+  }
 
   const inactiveThreshold = now.getTime() - 30 * 86400000;
   const byVolume = studioRows.filter((studio) => !excludedVolumeIds.has(studio.id))

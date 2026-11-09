@@ -1,27 +1,41 @@
 export const DEFAULT_STUDIO_TIME_ZONE = "Europe/Lisbon";
 
+const normalizedTimeZones = new Map<string, string>();
+const datePartsFormatters = new Map<string, Intl.DateTimeFormat>();
+const dateKeyFormatters = new Map<string, Intl.DateTimeFormat>();
+
 export function normalizeStudioTimeZone(value?: string | null) {
   const candidate = value?.trim() || DEFAULT_STUDIO_TIME_ZONE;
+  const cached = normalizedTimeZones.get(candidate);
+  if (cached) return cached;
   try {
     new Intl.DateTimeFormat("pt-PT", { timeZone: candidate }).format(new Date());
+    normalizedTimeZones.set(candidate, candidate);
     return candidate;
   } catch {
+    normalizedTimeZones.set(candidate, DEFAULT_STUDIO_TIME_ZONE);
     return DEFAULT_STUDIO_TIME_ZONE;
   }
 }
 
 export function getZonedDateParts(value: string | Date, timeZone?: string | null) {
   const date = value instanceof Date ? value : new Date(value);
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: normalizeStudioTimeZone(timeZone),
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
+  const zone = normalizeStudioTimeZone(timeZone);
+  let formatter = datePartsFormatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    datePartsFormatters.set(zone, formatter);
+  }
+  const parts = formatter.formatToParts(date);
   const read = (type: Intl.DateTimeFormatPartTypes) =>
     Number(parts.find((part) => part.type === type)?.value ?? 0);
   return {
@@ -71,7 +85,21 @@ export function formatStudioTimeRange(
 }
 
 export function getStudioDateKey(value: string | Date, timeZone?: string | null) {
-  const { year, month, day } = getZonedDateParts(value, timeZone);
+  const zone = normalizeStudioTimeZone(timeZone);
+  const date = value instanceof Date ? value : new Date(value);
+  let formatter = dateKeyFormatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    dateKeyFormatters.set(zone, formatter);
+  }
+  const formatted = formatter.format(date);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(formatted)) return formatted;
+  const { year, month, day } = getZonedDateParts(date, zone);
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 

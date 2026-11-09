@@ -57,6 +57,16 @@ type Appointment = {
 type BillingEvent = { id: string; event_type: string; created_at: string; payload: unknown };
 type Client = { studio_id: string };
 
+function inOverviewPeriod(value: string, from: string, to: string) {
+  const date = new Date(value);
+  const utcDay = date.toISOString().slice(0, 10);
+  // Every UTC day strictly inside the range is also inside it in Lisbon.
+  // Only dates at the edges need the more expensive timezone conversion.
+  if (utcDay > from && utcDay < to) return true;
+  const localDay = getStudioDateKey(date, "Europe/Lisbon");
+  return localDay >= from && localDay <= to;
+}
+
 const filters: PlatformMetricsFilters = {
   studioId: null,
   preset: "30d",
@@ -130,8 +140,7 @@ export function buildCentralOverview(input: {
     const row = byId.get(appointment.studio_id);
     if (
       !row ||
-      getStudioDateKey(appointment.starts_at, "Europe/Lisbon") < period.from ||
-      getStudioDateKey(appointment.starts_at, "Europe/Lisbon") > period.to
+      !inOverviewPeriod(appointment.starts_at, period.from, period.to)
     )
       continue;
     appointments += 1;
@@ -167,8 +176,7 @@ export function buildCentralOverview(input: {
     if (invoices.has(invoiceId)) continue;
     invoices.add(invoiceId);
     if (
-      getStudioDateKey(event.created_at, "Europe/Lisbon") < period.from ||
-      getStudioDateKey(event.created_at, "Europe/Lisbon") > period.to
+      !inOverviewPeriod(event.created_at, period.from, period.to)
     )
       continue;
     const amount = Number(object.amount_paid || 0);
