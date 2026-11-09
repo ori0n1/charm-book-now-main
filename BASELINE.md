@@ -1,6 +1,14 @@
 # Base oficial da produção Bellza — 2026-11-09
 
-## Produção ativa — Central administrativa Bellza
+## Produção ativa — inatividade e volume da Central
+
+- Worker `tanstack-start-app`: deployment `1792864a-d177-438a-8564-c959859ae96a`, versão `0771f7bc-a0c0-4f8e-ba17-b265046060ad` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `0307a347460d575d7b9fb40ee208b9a425fbb73b` da branch `agent/ux-mobile/central-inatividade-volume-20261109-215546`. Versão anterior para rollback, somente após autorização específica: `2f7e64dc-611c-4683-8d71-dc4bc7fe3fc2`.
+- A Central lista estúdios cujo último login de pessoas vinculadas foi há mais de 30 dias e separa contas sem login registado ou com identidade desconhecida. O volume agregado dos últimos 30 dias exclui estúdios associados como proprietários à conta administrativa indicada; se a identidade ou os valores não puderem ser verificados, o total fica indisponível. A consulta exige `saas_owner`, não altera o banco e não depende da página pesada de métricas.
+- Artefacto publicado: 467 ficheiros, SHA-256 da árvore `c38741b41653173eb776313b64304812c8f0c2ff487835c38925a77d6085089e` (linhas ordenadas `caminho:sha256` com LF final, excluindo a configuração temporária de upload); entrada `dist/server/index.js` `a46be5d4deba713cd4d06be25630615c64facf0ced3de243ff390dd72377594d`; asset da Central `fbadcda9b2150d3c59d9bec620df3c21f378959db4e1b77b6647dc0a9d7b6136`; manifesto `68507be742e346f6e18171c58682bdd6a907f0938a28acef338713c1b85707e8`; configuração de upload `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`.
+- A versão enviada preservou 53 bindings, incluindo 24 secrets por nome e tipo, todos os valores públicos, runtime `2025-09-24` com `nodejs_compat` e os dois crons. Sem migração nem escrita em dados reais. Testes direcionados, tipagem, lint e build passaram. O ensaio responsivo automático não conseguiu iniciar a prévia neste checkout; a Central foi conferida no Chrome autenticado em produção.
+- Smoke após publicação: 27 estúdios, sete com último login há mais de 30 dias, volume excluído de 611,00 € e volume agregado exibido de 6.571,00 €. Asset JS público igual ao artefacto byte a byte; `/` e `/login` retornaram HTTP 200.
+
+## Histórico — Central administrativa Bellza
 
 - Worker `tanstack-start-app`: deployment `7be0d92b-db3f-41c0-be23-476871f6f146`, versão `2f7e64dc-611c-4683-8d71-dc4bc7fe3fc2` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `1dfd75f55c2dab3e2b331aab2db8b2d0d29f0e8c` da branch `agent/ux-mobile/central-admin-20261109`. Rollback do Worker preparado e ensaiado sem executar: versão anterior `67354410-fe10-4900-8e3f-01c42d8d63ec`, após autorização específica.
 - A Central usa uma consulta própria e limitada para contas, assinaturas, marcações e faturas pagas dos últimos 30 dias. O endpoint exige a função `saas_owner`; o acesso à Central não depende do prazo de teste de um estúdio. Falhas nas leituras opcionais são mostradas como indisponibilidade, sem totais parciais falsos. Nenhuma assinatura, permissão, migração ou dado real foi alterado.
