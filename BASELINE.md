@@ -1,6 +1,14 @@
-# Base oficial da produção Bellza — 2026-11-07
+# Base oficial da produção Bellza — 2026-11-09
 
-## Produção ativa — lembrete inteligente de reservas
+## Produção ativa — Central administrativa Bellza
+
+- Worker `tanstack-start-app`: deployment `7be0d92b-db3f-41c0-be23-476871f6f146`, versão `2f7e64dc-611c-4683-8d71-dc4bc7fe3fc2` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `1dfd75f55c2dab3e2b331aab2db8b2d0d29f0e8c` da branch `agent/ux-mobile/central-admin-20261109`. Rollback do Worker preparado e ensaiado sem executar: versão anterior `67354410-fe10-4900-8e3f-01c42d8d63ec`, após autorização específica.
+- A Central usa uma consulta própria e limitada para contas, assinaturas, marcações e faturas pagas dos últimos 30 dias. O endpoint exige a função `saas_owner`; o acesso à Central não depende do prazo de teste de um estúdio. Falhas nas leituras opcionais são mostradas como indisponibilidade, sem totais parciais falsos. Nenhuma assinatura, permissão, migração ou dado real foi alterado.
+- Artefacto publicado: 465 ficheiros, SHA-256 da árvore `1653dea9645163bcc44715c9886757aea7311599e3275e8d8912c1a42664db64` (linhas ordenadas `caminho:sha256` com LF final, excluindo a configuração temporária de upload); entrada `dist/server/index.js` `10af2edc29aab8c5363fa0050d8960be8373d38aeabf620b9b1aeac60097c406`; configuração de upload `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`.
+- A base oficial anterior e o candidato foram compilados com as mesmas variáveis públicas efetivas. Os artefactos têm 465 ficheiros cada; depois de normalizar referências aos nomes com hash, 452 ficheiros coincidiram e as diferenças ficaram nos módulos da Central, compartilhados e CSS. O upload foi validado byte a byte: entrypoint e 226 módulos adicionais iguais aos ficheiros locais. OAuth confirmou 53 bindings, 24 secrets por nome e tipo, runtime `2025-09-24` com `nodejs_compat`, os dois crons e domínios preservados.
+- Verificações: checagem de tipos, lint, dois testes direcionados, build com variáveis públicas efetivas e dry-runs de upload e rollback. Após a publicação, `/`, `/login` e `/s/studio27braga` responderam 200, a Central sem sessão redirecionou com 307, e os assets JS e CSS servidos coincidiram byte a byte com o build. A Central autenticada carregou cartões, estúdios, filtros e lista operacional no Chrome. Nenhuma operação financeira real ou escrita em clientes foi feita.
+
+## Histórico — lembrete inteligente de reservas
 
 - Worker `tanstack-start-app`: deployment `db703970-8b06-40a3-92c0-e828b18e8d18`, versão `2aab3166-5ff6-4803-868e-8f36303fc81c` ativa a 100% por Cloudflare OAuth. Fonte funcional: commit `480c6b1f827e57f5c46ba2f2951660a97584c131` da branch `agent/bugs/bellza-smart-reminder-send-20261105`. Versão anterior: `46cb7725-d7bc-4259-9085-070e94b24614`.
 - Migração aditiva `supabase/migrations/20261105124500_whatsapp_reminder_confirmation_anchor.sql` aplicada em 2026-11-07 no SQL Editor do projeto de produção dentro de uma transação; SHA-256 `2e083f6f44274eaee4270a3f16d8f0066537812fc4d6f4bdf25e62754f12a07a`. Coluna `whatsapp_reminder_confirmed_at` e trigger confirmados no painel. Sem preenchimento de reservas antigas nem envio de teste a clientes. Histórico de migrações não atualizado manualmente.

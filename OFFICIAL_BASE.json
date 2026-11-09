@@ -2,9 +2,27 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "db703970-8b06-40a3-92c0-e828b18e8d18",
-  "cloudflareVersionId": "2aab3166-5ff6-4803-868e-8f36303fc81c",
-  "sourceCommit": "480c6b1f827e57f5c46ba2f2951660a97584c131",
+  "deploymentId": "7be0d92b-db3f-41c0-be23-476871f6f146",
+  "cloudflareVersionId": "2f7e64dc-611c-4683-8d71-dc4bc7fe3fc2",
+  "sourceCommit": "1dfd75f55c2dab3e2b331aab2db8b2d0d29f0e8c",
+  "centralAdminRelease": {
+    "publishedOn": "2026-11-09",
+    "trafficPercent": 100,
+    "artifactFileCount": 465,
+    "artifactTreeSha256": "1653dea9645163bcc44715c9886757aea7311599e3275e8d8912c1a42664db64",
+    "artifactHashMethod": "SHA-256 of sorted relative path:lowercase per-file SHA-256 lines with trailing LF, excluding generated upload config",
+    "entrypointSha256": "10af2edc29aab8c5363fa0050d8960be8373d38aeabf620b9b1aeac60097c406",
+    "centralAssetSha256": "3b9f1c9862a6bb93609f829c1690d3e474f10fcf5fb8b23b9350ed3cbba93c2f",
+    "cssAssetSha256": "14958af70b04979377418bad0e014b82d31b9f13636987544b1d3ffa01983919",
+    "uploadConfigSha256": "cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634",
+    "bindingCount": 53,
+    "secretCount": 24,
+    "crons": ["* * * * *", "*/10 * * * *"],
+    "workerRollbackVersionId": "67354410-fe10-4900-8e3f-01c42d8d63ec",
+    "databaseMigrations": 0,
+    "productionDataWrites": 0,
+    "postReleaseSmoke": "OAuth confirmed 100% traffic, 227 matching uploaded entrypoint/modules, 53 matching bindings including 24 secrets, runtime, both crons and both domains. Central JS and CSS matched the artifact byte for byte. Authenticated Chrome loaded 27 studios, financial cards, filters and operational list; public routes returned 200 and unauthenticated Central redirected with 307."
+  },
   "smartReminderRelease": {
     "publishedOn": "2026-11-07",
     "trafficPercent": 100,
@@ -163,7 +181,7 @@
     "clientAssetsVerifiedByGet": 0
   },
   "productionBindings": {
-    "total": 51,
+    "total": 53,
     "secrets": 24,
     "additionalPlainNames": [
       "ARARA_CANARY_PROBE_SHA256",
@@ -194,6 +212,7 @@
     "www.bellza.pt"
   ],
   "cron": [
+    "* * * * *",
     "*/10 * * * *"
   ],
   "previousReleaseValidation": {
