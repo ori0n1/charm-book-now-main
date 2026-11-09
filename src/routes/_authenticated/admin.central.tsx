@@ -15,6 +15,8 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { getCentralOverview, type CentralStudio } from "@/lib/platform-central.functions";
+import { getCentralAccessSnapshot } from "@/lib/platform-central-access.functions";
+import { centralVolumeWithoutAccount } from "@/lib/platform-central-access-core";
 import {
   CentralShell,
   formatMoney,
@@ -62,6 +64,7 @@ function accountBadge(row: CentralStudio) {
 
 function CentralPage() {
   const fetchOverview = useServerFn(getCentralOverview);
+  const fetchAccess = useServerFn(getCentralAccessSnapshot);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const query = useQuery({
@@ -70,7 +73,29 @@ function CentralPage() {
     staleTime: 60_000,
     retry: 1,
   });
+  const accessQuery = useQuery({
+    queryKey: ["platform-central-access"],
+    queryFn: () => fetchAccess(),
+    staleTime: 60_000,
+    retry: 1,
+  });
   const overview = query.data;
+  const access = accessQuery.data;
+  const accessByStudio = useMemo(
+    () => new Map(access?.studios.map((studio) => [studio.studioId, studio]) ?? []),
+    [access],
+  );
+  const visibleVolume = useMemo(
+    () => overview?.activity ? centralVolumeWithoutAccount(overview.studios, access) : null,
+    [overview, access],
+  );
+  const excludedIds = useMemo(() => new Set(access?.excludedStudioIds ?? []), [access]);
+  const inactiveStudios = useMemo(
+    () => (overview?.studios ?? [])
+      .filter((row) => !excludedIds.has(row.id) && ["inactive", "never"].includes(accessByStudio.get(row.id)?.state ?? ""))
+      .sort((a, b) => a.name.localeCompare(b.name, "pt")),
+    [overview, excludedIds, accessByStudio],
+  );
   const rows = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("pt");
     return (overview?.studios ?? [])
@@ -81,6 +106,8 @@ function CentralPage() {
             ? ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
                 row.subscriptionStatus,
               )
+            : filter === "inactive" || filter === "never"
+              ? !excludedIds.has(row.id) && accessByStudio.get(row.id)?.state === filter
             : filter === "trial"
               ? row.subscriptionStatus === "trialing"
               : row.accountStatus === filter),
@@ -91,7 +118,7 @@ function CentralPage() {
           [row.name, row.ownerName, row.email].join(" ").toLocaleLowerCase("pt").includes(needle),
       )
       .sort((a, b) => a.name.localeCompare(b.name, "pt"));
-  }, [overview?.studios, filter, search]);
+  }, [overview?.studios, filter, search, excludedIds, accessByStudio]);
   const expiring =
     overview?.studios
       .filter((row) => row.subscriptionStatus === "trialing" && row.trialDaysRemaining <= 3)
@@ -113,8 +140,8 @@ function CentralPage() {
       actions={
         <button
           type="button"
-          onClick={() => query.refetch()}
-          disabled={query.isFetching}
+          onClick={() => { void query.refetch(); void accessQuery.refetch(); }}
+          disabled={query.isFetching || accessQuery.isFetching}
           className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-semibold disabled:opacity-50"
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -166,6 +193,16 @@ function CentralPage() {
           >
             Não foi possível carregar as contas da Central. Verifique a ligação e tente atualizar.
             Se o problema continuar, confirme a função de administração da plataforma.
+          </div>
+        )}
+        {accessQuery.isError && (
+          <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-200">
+            Últimos acessos e exclusão do volume indisponíveis. Atualize a Central para tentar novamente.
+          </div>
+        )}
+        {access && !access.excludedAccountFound && (
+          <div role="alert" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-200">
+            A conta silas18.so@gmail.com não foi identificada. O volume total fica oculto até confirmar a exclusão.
           </div>
         )}
         {overview?.issues.map((issue) => (
@@ -245,12 +282,12 @@ function CentralPage() {
           />
           <MetricCard
             label="Volume estúdios"
-            value={overview?.activity ? formatMoney(overview.activity.volumeCents) : unavailable}
-            hint="Marcações concluídas · 30 dias"
+            value={visibleVolume ? formatMoney(visibleVolume.visibleCents) : unavailable}
+            hint="30 dias · sem conta silas18.so@gmail.com"
             icon={Euro}
             accent="violet"
             money
-            loading={query.isLoading}
+            loading={query.isLoading || accessQuery.isLoading}
           />
         </section>
 
@@ -285,6 +322,8 @@ function CentralPage() {
                 <option value="cancelled">Canceladas</option>
                 <option value="trial">Em teste</option>
                 <option value="payment">Cobrança pendente</option>
+                <option value="inactive">Sem login há 30 dias</option>
+                <option value="never">Sem login registado</option>
               </select>
             </div>
             <div className="max-h-[40rem] overflow-auto">
@@ -316,6 +355,14 @@ function CentralPage() {
                         </div>
                         <p className="mt-1 truncate text-[11px] text-muted-foreground">
                           {row.ownerName} · {row.email}
+                        </p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {excludedIds.has(row.id) ? "Volume excluído do total · " : ""}
+                          {accessByStudio.get(row.id)?.lastAccessAt
+                            ? `Último login: ${new Date(accessByStudio.get(row.id)!.lastAccessAt!).toLocaleDateString("pt-PT")}`
+                            : accessByStudio.get(row.id)?.state === "never"
+                              ? "Sem login registado"
+                              : "Último login desconhecido"}
                         </p>
                       </div>
                       <div className="min-w-28">
@@ -351,6 +398,33 @@ function CentralPage() {
             </div>
           </Panel>
           <div className="space-y-4">
+            <Panel title="Contas sem acesso" description="Último login de pessoas vinculadas · limite de 30 dias">
+              {!access || !overview ? (
+                <p className="p-4 text-xs text-muted-foreground">Dados de acesso indisponíveis.</p>
+              ) : inactiveStudios.length === 0 ? (
+                <p className="p-4 text-xs text-muted-foreground">Nenhuma conta nesta condição.</p>
+              ) : (
+                <div className="max-h-80 overflow-auto divide-y divide-border/60">
+                  {inactiveStudios.map((row) => {
+                    const studioAccess = accessByStudio.get(row.id)!;
+                    return <div key={row.id} className="px-4 py-2 text-xs">
+                      <p className="font-semibold">{row.name}</p>
+                      <p className="text-muted-foreground">{studioAccess.ownerEmail || row.email} · {studioAccess.lastAccessAt
+                        ? `Último login: ${new Date(studioAccess.lastAccessAt).toLocaleDateString("pt-PT")}`
+                        : "Sem login registado"}</p>
+                    </div>;
+                  })}
+                </div>
+              )}
+            </Panel>
+            <Panel title="Volume excluído" description="Conta silas18.so@gmail.com · últimos 30 dias">
+              <div className="p-4 text-xs">
+                <p className="text-xl font-semibold">{visibleVolume ? formatMoney(visibleVolume.excludedCents) : "—"}</p>
+                <p className="mt-1 text-muted-foreground">{access?.excludedStudioIds.length ?? "—"} estúdio(s) vinculado(s): {overview && access
+                  ? overview.studios.filter((row) => excludedIds.has(row.id)).map((row) => row.name).join(", ") || "nenhum"
+                  : "indisponível"}</p>
+              </div>
+            </Panel>
             <Panel title="Atenção operacional" description="Pendências que merecem acompanhamento">
               <div className="grid grid-cols-2 gap-3 p-4 text-center">
                 <div className="rounded-xl bg-amber-500/5 p-3">
