@@ -1,0 +1,186 @@
+import { getStudioDateKey } from "@/lib/studio-time";
+import {
+  resolveMetricsPeriod,
+  type PlatformMetricsFilters,
+  type PlatformStudioSource,
+  type PlatformSubscriptionSource,
+} from "@/lib/platform-metrics-core";
+
+export type CentralStudio = {
+  id: string;
+  name: string;
+  ownerName: string;
+  email: string;
+  plan: string;
+  accountStatus: "active" | "blocked" | "cancelled";
+  subscriptionStatus: string;
+  trialEndsAt: string | null;
+  trialDaysRemaining: number;
+  appointments: number | null;
+  completedAppointments: number | null;
+  volumeCents: number | null;
+};
+
+export type CentralOverview = {
+  generatedAt: string;
+  period: { from: string; to: string; label: string };
+  studios: CentralStudio[];
+  counts: {
+    total: number;
+    active: number;
+    blocked: number;
+    cancelled: number;
+    trial: number;
+    paidActive: number;
+    paymentIssues: number;
+    expiringTrials: number;
+  };
+  activity: { appointments: number; completed: number; volumeCents: number } | null;
+  billing: { revenueCents: number; paidInvoices: number } | null;
+  issues: string[];
+};
+
+type Appointment = {
+  id: string;
+  studio_id: string;
+  status: string;
+  starts_at: string;
+  total_price: number | string | null;
+};
+type BillingEvent = { id: string; event_type: string; created_at: string; payload: unknown };
+
+const filters: PlatformMetricsFilters = {
+  studioId: null,
+  preset: "30d",
+  from: null,
+  to: null,
+  plan: "all",
+  accountStatus: "all",
+  subscriptionStatus: "all",
+};
+
+export function buildCentralOverview(input: {
+  studios: PlatformStudioSource[];
+  subscriptions: PlatformSubscriptionSource[];
+  appointments: Appointment[] | null;
+  billingEvents: BillingEvent[] | null;
+  now?: Date;
+}): CentralOverview {
+  const now = input.now ?? new Date();
+  const period = resolveMetricsPeriod(filters, "Europe/Lisbon", now);
+  const latest = new Map<string, PlatformSubscriptionSource>();
+  for (const subscription of input.subscriptions) {
+    if (!subscription.studio_id) continue;
+    const previous = latest.get(subscription.studio_id);
+    if (
+      !previous ||
+      Date.parse(subscription.updated_at || subscription.created_at) >
+        Date.parse(previous.updated_at || previous.created_at)
+    ) {
+      latest.set(subscription.studio_id, subscription);
+    }
+  }
+  const rows: CentralStudio[] = input.studios.map((studio) => {
+    const subscription = latest.get(studio.id);
+    const subscriptionStatus = String(
+      subscription?.status || studio.subscription_status || "unknown",
+    )
+      .toLowerCase()
+      .replace("cancelled", "canceled");
+    const plan = String(subscription?.plan || studio.plan || "unknown").toLowerCase();
+    const trialDaysRemaining = studio.trial_ends_at
+      ? Math.max(0, Math.ceil((Date.parse(studio.trial_ends_at) - now.getTime()) / 86400000))
+      : 0;
+    return {
+      id: studio.id,
+      name: studio.name,
+      ownerName: studio.owner_name || "Não informado",
+      email: studio.email || "Não informado",
+      plan,
+      accountStatus:
+        subscriptionStatus === "canceled"
+          ? "cancelled"
+          : studio.is_active === false
+            ? "blocked"
+            : "active",
+      subscriptionStatus,
+      trialEndsAt: studio.trial_ends_at || null,
+      trialDaysRemaining,
+      appointments: input.appointments ? 0 : null,
+      completedAppointments: input.appointments ? 0 : null,
+      volumeCents: input.appointments ? 0 : null,
+    };
+  });
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  let completed = 0;
+  let volumeCents = 0;
+  let appointments = 0;
+  for (const appointment of input.appointments ?? []) {
+    const row = byId.get(appointment.studio_id);
+    if (
+      !row ||
+      getStudioDateKey(appointment.starts_at, "Europe/Lisbon") < period.from ||
+      getStudioDateKey(appointment.starts_at, "Europe/Lisbon") > period.to
+    )
+      continue;
+    appointments += 1;
+    row.appointments! += 1;
+    if (appointment.status === "completed") {
+      completed += 1;
+      const amount = Math.round(Number(appointment.total_price || 0) * 100);
+      volumeCents += amount;
+      row.completedAppointments! += 1;
+      row.volumeCents! += amount;
+    }
+  }
+  const invoices = new Set<string>();
+  let revenueCents = 0;
+  let paidInvoices = 0;
+  for (const event of input.billingEvents ?? []) {
+    if (event.event_type !== "invoice.paid" && event.event_type !== "invoice.payment_succeeded")
+      continue;
+    const object = (event.payload as { data?: { object?: Record<string, unknown> } } | null)?.data
+      ?.object;
+    if (!object) continue;
+    const invoiceId = String(object.id || event.id);
+    if (invoices.has(invoiceId)) continue;
+    invoices.add(invoiceId);
+    if (
+      getStudioDateKey(event.created_at, "Europe/Lisbon") < period.from ||
+      getStudioDateKey(event.created_at, "Europe/Lisbon") > period.to
+    )
+      continue;
+    const amount = Number(object.amount_paid || 0);
+    if (amount > 0 && (!object.currency || String(object.currency).toLowerCase() === "eur")) {
+      revenueCents += amount;
+      paidInvoices += 1;
+    }
+  }
+  const issues: string[] = [];
+  if (!input.appointments) issues.push("Atividade e volume dos estúdios indisponíveis.");
+  if (!input.billingEvents) issues.push("Receita de assinaturas indisponível.");
+  return {
+    generatedAt: now.toISOString(),
+    period: { from: period.from, to: period.to, label: period.label },
+    studios: rows,
+    counts: {
+      total: rows.length,
+      active: rows.filter((row) => row.accountStatus === "active").length,
+      blocked: rows.filter((row) => row.accountStatus === "blocked").length,
+      cancelled: rows.filter((row) => row.accountStatus === "cancelled").length,
+      trial: rows.filter((row) => row.subscriptionStatus === "trialing").length,
+      paidActive: rows.filter((row) => row.subscriptionStatus === "active").length,
+      paymentIssues: rows.filter((row) =>
+        ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
+          row.subscriptionStatus,
+        ),
+      ).length,
+      expiringTrials: rows.filter(
+        (row) => row.subscriptionStatus === "trialing" && row.trialDaysRemaining <= 3,
+      ).length,
+    },
+    activity: input.appointments ? { appointments, completed, volumeCents } : null,
+    billing: input.billingEvents ? { revenueCents, paidInvoices } : null,
+    issues,
+  };
+}

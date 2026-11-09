@@ -3,48 +3,30 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import {
+  AlertTriangle,
   Ban,
   Building2,
   CalendarCheck2,
-  CircleOff,
   Clock3,
   Euro,
+  MessageCircle,
   RefreshCw,
   Search,
   TrendingUp,
-  Users,
-  MessageCircle,
 } from "lucide-react";
-import {
-  getPlatformMetrics,
-  type PlatformMetricsFilters,
-  type PlatformMetricsResponse,
-  type PlatformStudioRow,
-} from "@/lib/platform-metrics.functions";
+import { getCentralOverview, type CentralStudio } from "@/lib/platform-central.functions";
 import {
   CentralShell,
-  formatDateTime,
   formatMoney,
   MetricCard,
   Panel,
   StatusBadge,
 } from "@/components/central/central-ui";
-import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/_authenticated/admin/central")({
   head: () => ({ meta: [{ title: "Central Bellza" }] }),
   component: CentralPage,
 });
-
-const CENTRAL_FILTERS: PlatformMetricsFilters = {
-  studioId: null,
-  preset: "30d",
-  from: null,
-  to: null,
-  plan: "all",
-  accountStatus: "all",
-  subscriptionStatus: "all",
-};
 
 const PLAN_LABELS: Record<string, string> = {
   trial: "Teste gratuito",
@@ -53,11 +35,10 @@ const PLAN_LABELS: Record<string, string> = {
   yearly: "Anual",
   pro: "Premium",
 };
-
-const SUBSCRIPTION_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<string, string> = {
   trialing: "Em teste",
   active: "Ativa",
-  past_due: "Vencida",
+  past_due: "Pagamento em atraso",
   unpaid: "Não paga",
   incomplete: "Incompleta",
   incomplete_expired: "Expirada",
@@ -65,66 +46,84 @@ const SUBSCRIPTION_LABELS: Record<string, string> = {
   canceled: "Cancelada",
 };
 
-function accountBadge(row: PlatformStudioRow) {
-  if (row.accountStatus === "active") {
-    return <StatusBadge value="Ativa" kind="success" />;
-  }
-  if (row.accountStatus === "blocked") {
-    return <StatusBadge value="Bloqueada" kind="danger" />;
-  }
-  return <StatusBadge value="Cancelada" kind="neutral" />;
-}
-
 function subscriptionKind(status: string): "success" | "warning" | "danger" | "neutral" {
   if (status === "active") return "success";
   if (status === "trialing") return "warning";
-  if (["past_due", "unpaid", "incomplete", "incomplete_expired"].includes(status)) return "danger";
+  if (["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(status))
+    return "danger";
   return "neutral";
 }
 
+function accountBadge(row: CentralStudio) {
+  if (row.accountStatus === "active") return <StatusBadge value="Ativa" kind="success" />;
+  if (row.accountStatus === "blocked") return <StatusBadge value="Bloqueada" kind="danger" />;
+  return <StatusBadge value="Cancelada" />;
+}
+
 function CentralPage() {
-  const fetchMetrics = useServerFn(getPlatformMetrics);
+  const fetchOverview = useServerFn(getCentralOverview);
   const [search, setSearch] = useState("");
-  const [accountFilter, setAccountFilter] = useState("all");
-  const query = useQuery<PlatformMetricsResponse>({
-    queryKey: ["platform-central", CENTRAL_FILTERS],
-    queryFn: () => fetchMetrics({ data: CENTRAL_FILTERS }),
+  const [filter, setFilter] = useState("all");
+  const query = useQuery({
+    queryKey: ["platform-central-overview"],
+    queryFn: () => fetchOverview(),
     staleTime: 60_000,
     retry: 1,
   });
-  const metrics = query.data?.metrics;
-
-  const visibleStudios = useMemo(() => {
-    const normalizedSearch = search.trim().toLocaleLowerCase("pt");
-    return (metrics?.studioRows ?? [])
-      .filter((studio) => accountFilter === "all" || studio.accountStatus === accountFilter)
-      .filter((studio) => {
-        if (!normalizedSearch) return true;
-        return [studio.name, studio.ownerName, studio.email]
-          .join(" ")
-          .toLocaleLowerCase("pt")
-          .includes(normalizedSearch);
-      })
+  const overview = query.data;
+  const rows = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase("pt");
+    return (overview?.studios ?? [])
+      .filter(
+        (row) =>
+          filter === "all" ||
+          (filter === "payment"
+            ? ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
+                row.subscriptionStatus,
+              )
+            : filter === "trial"
+              ? row.subscriptionStatus === "trialing"
+              : row.accountStatus === filter),
+      )
+      .filter(
+        (row) =>
+          !needle ||
+          [row.name, row.ownerName, row.email].join(" ").toLocaleLowerCase("pt").includes(needle),
+      )
       .sort((a, b) => a.name.localeCompare(b.name, "pt"));
-  }, [accountFilter, metrics?.studioRows, search]);
+  }, [overview?.studios, filter, search]);
+  const expiring =
+    overview?.studios
+      .filter((row) => row.subscriptionStatus === "trialing" && row.trialDaysRemaining <= 3)
+      .sort((a, b) => a.trialDaysRemaining - b.trialDaysRemaining)
+      .slice(0, 6) ?? [];
+  const paymentIssues =
+    overview?.studios
+      .filter((row) =>
+        ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
+          row.subscriptionStatus,
+        ),
+      )
+      .slice(0, 6) ?? [];
+  const unavailable = "—";
 
   return (
     <CentralShell
-      updatedAt={metrics?.generatedAt}
+      updatedAt={overview?.generatedAt}
       actions={
         <button
           type="button"
           onClick={() => query.refetch()}
           disabled={query.isFetching}
-          className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-semibold text-muted-foreground shadow-sm disabled:opacity-50"
+          className="inline-flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-semibold disabled:opacity-50"
         >
-          <RefreshCw className={cn("h-3.5 w-3.5", query.isFetching && "animate-spin")} />
-          <span className="hidden sm:inline">Atualizar</span>
+          <RefreshCw className="h-3.5 w-3.5" />
+          Atualizar
         </button>
       }
     >
-      <div className="space-y-4 sm:space-y-5">
-        <section className="flex flex-col gap-3 rounded-2xl border border-border/80 bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+      <div className="space-y-4">
+        <section className="flex flex-col gap-4 rounded-2xl border border-border/80 bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">
               Operação geral
@@ -132,14 +131,19 @@ function CentralPage() {
             <h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">
               Central Bellza
             </h1>
-            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground sm:text-sm">
-              Estado das contas, assinaturas, atividade e resultados dos estúdios cadastrados.
+            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+              Contas, assinaturas e saúde financeira da plataforma em um só lugar.
             </p>
+            {overview && (
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Atividade e receita: {overview.period.label}
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
               to="/admin/central-whatsapp"
-              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 text-xs font-semibold shadow-sm"
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border px-4 text-xs font-semibold"
             >
               <MessageCircle className="h-4 w-4" />
               WhatsApp
@@ -147,33 +151,48 @@ function CentralPage() {
             <Link
               to="/admin/central-metricas"
               search={{ studio: undefined }}
-              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-xs font-semibold text-background shadow-sm"
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-foreground px-4 text-xs font-semibold text-background"
             >
               <TrendingUp className="h-4 w-4" />
-              Abrir métricas detalhadas
+              Métricas detalhadas
             </Link>
           </div>
         </section>
 
         {query.isError && (
-          <div className="rounded-2xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300">
-            Não foi possível carregar a Central. Confirme a permissão administrativa e tente
-            novamente.
+          <div
+            role="alert"
+            className="rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-700 dark:text-red-300"
+          >
+            Não foi possível carregar as contas da Central. Verifique a ligação e tente atualizar.
+            Se o problema continuar, confirme a função de administração da plataforma.
           </div>
         )}
+        {overview?.issues.map((issue) => (
+          <div
+            key={issue}
+            role="status"
+            className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-200"
+          >
+            {issue} Os demais dados continuam disponíveis.
+          </div>
+        ))}
 
-        <section className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 xl:grid-cols-8">
+        <section
+          className="grid grid-cols-2 gap-2.5 lg:grid-cols-4 xl:grid-cols-8"
+          aria-label="Resumo da plataforma"
+        >
           <MetricCard
             label="Estúdios"
-            value={metrics?.studios.total ?? 0}
-            hint="Total cadastrado"
+            value={overview?.counts.total ?? unavailable}
+            hint="Contas cadastradas"
             icon={Building2}
             accent="violet"
             loading={query.isLoading}
           />
           <MetricCard
             label="Ativos"
-            value={metrics?.studios.active ?? 0}
+            value={overview?.counts.active ?? unavailable}
             hint="Contas operacionais"
             icon={CalendarCheck2}
             accent="emerald"
@@ -181,47 +200,52 @@ function CentralPage() {
           />
           <MetricCard
             label="Bloqueados"
-            value={metrics?.studios.blocked ?? 0}
+            value={overview?.counts.blocked ?? unavailable}
             hint="Acesso desativado"
             icon={Ban}
             accent="red"
             loading={query.isLoading}
           />
           <MetricCard
-            label="Cancelados"
-            value={metrics?.studios.cancelled ?? 0}
-            hint="Assinatura cancelada"
-            icon={CircleOff}
-            loading={query.isLoading}
-          />
-          <MetricCard
             label="Em teste"
-            value={metrics?.studios.trial ?? 0}
-            hint="Teste gratuito"
+            value={overview?.counts.trial ?? unavailable}
+            hint="Assinaturas em teste"
             icon={Clock3}
             accent="amber"
             loading={query.isLoading}
           />
           <MetricCard
-            label="Assinaturas ativas"
-            value={metrics?.studios.paidActive ?? 0}
-            hint="Planos pagos"
+            label="Pagas ativas"
+            value={overview?.counts.paidActive ?? unavailable}
+            hint="Assinaturas ativas"
             icon={TrendingUp}
             accent="blue"
             loading={query.isLoading}
           />
           <MetricCard
+            label="Atenção"
+            value={
+              overview
+                ? overview.counts.paymentIssues + overview.counts.expiringTrials
+                : unavailable
+            }
+            hint="Cobranças e testes a vencer"
+            icon={AlertTriangle}
+            accent="amber"
+            loading={query.isLoading}
+          />
+          <MetricCard
             label="Receita Bellza"
-            value={formatMoney(metrics?.finances.platformRevenueCents ?? 0)}
-            hint="Assinaturas · 30 dias"
+            value={overview?.billing ? formatMoney(overview.billing.revenueCents) : unavailable}
+            hint="Faturas pagas · 30 dias"
             icon={Euro}
             accent="emerald"
             money
             loading={query.isLoading}
           />
           <MetricCard
-            label="Volume dos estúdios"
-            value={formatMoney(metrics?.finances.studioVolumeCents ?? 0)}
+            label="Volume estúdios"
+            value={overview?.activity ? formatMoney(overview.activity.volumeCents) : unavailable}
             hint="Marcações concluídas · 30 dias"
             icon={Euro}
             accent="violet"
@@ -230,18 +254,13 @@ function CentralPage() {
           />
         </section>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(20rem,0.65fr)]">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(18rem,0.7fr)]">
           <Panel
             title="Estúdios cadastrados"
-            description={`${visibleStudios.length} conta${visibleStudios.length === 1 ? "" : "s"} encontrada${visibleStudios.length === 1 ? "" : "s"}`}
-            action={
-              <Link
-                to="/admin/central-metricas"
-                search={{ studio: undefined }}
-                className="whitespace-nowrap text-[11px] font-semibold text-muted-foreground hover:text-foreground"
-              >
-                Comparar métricas
-              </Link>
+            description={
+              overview
+                ? `${rows.length} conta${rows.length === 1 ? "" : "s"} encontrada${rows.length === 1 ? "" : "s"}`
+                : "Lista de contas"
             }
           >
             <div className="grid gap-2 border-b border-border/60 p-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
@@ -250,85 +269,78 @@ function CentralPage() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Pesquisar estúdio, responsável ou e-mail"
+                  placeholder="Pesquisar estúdio ou e-mail"
                   className="h-10 w-full rounded-xl border border-border bg-background pl-9 pr-3 text-xs outline-none focus:border-foreground/30"
                 />
               </label>
               <select
-                value={accountFilter}
-                onChange={(event) => setAccountFilter(event.target.value)}
-                className="h-10 rounded-xl border border-border bg-background px-3 text-xs outline-none"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+                aria-label="Filtrar contas"
+                className="h-10 rounded-xl border border-border bg-background px-3 text-xs"
               >
-                <option value="all">Todas as contas</option>
+                <option value="all">Todas</option>
                 <option value="active">Ativas</option>
                 <option value="blocked">Bloqueadas</option>
                 <option value="cancelled">Canceladas</option>
+                <option value="trial">Em teste</option>
+                <option value="payment">Cobrança pendente</option>
               </select>
             </div>
-
-            <div className="max-h-[42rem] overflow-auto">
+            <div className="max-h-[40rem] overflow-auto">
               {query.isLoading ? (
                 <div className="space-y-2 p-3">
-                  {Array.from({ length: 6 }).map((_, index) => (
-                    <div key={index} className="h-20 animate-pulse rounded-xl bg-muted/60" />
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div key={index} className="h-16 animate-pulse rounded-xl bg-muted/60" />
                   ))}
                 </div>
-              ) : visibleStudios.length === 0 ? (
+              ) : !overview ? (
+                <p className="p-8 text-center text-xs text-muted-foreground">
+                  Contas indisponíveis.
+                </p>
+              ) : rows.length === 0 ? (
                 <p className="p-8 text-center text-xs text-muted-foreground">
                   Nenhum estúdio corresponde aos filtros.
                 </p>
               ) : (
                 <div className="divide-y divide-border/60">
-                  {visibleStudios.map((studio) => (
+                  {rows.map((row) => (
                     <article
-                      key={studio.id}
-                      className="grid gap-3 px-4 py-3.5 transition hover:bg-muted/20 lg:grid-cols-[minmax(12rem,1.3fr)_minmax(9rem,0.7fr)_minmax(10rem,0.8fr)_auto] lg:items-center"
+                      key={row.id}
+                      className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-muted/20"
                     >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-semibold">{studio.name}</p>
-                          {accountBadge(studio)}
+                      <div className="min-w-44 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-semibold">{row.name}</p>
+                          {accountBadge(row)}
                         </div>
                         <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                          {studio.ownerName} · {studio.email}
+                          {row.ownerName} · {row.email}
                         </p>
                       </div>
-                      <div className="flex min-w-0 flex-wrap gap-2 lg:block">
+                      <div className="min-w-28">
                         <StatusBadge
-                          value={SUBSCRIPTION_LABELS[studio.subscriptionStatus] || studio.subscriptionStatus}
-                          kind={subscriptionKind(studio.subscriptionStatus)}
+                          value={STATUS_LABELS[row.subscriptionStatus] || row.subscriptionStatus}
+                          kind={subscriptionKind(row.subscriptionStatus)}
                         />
                         <p className="mt-1 text-[10px] text-muted-foreground">
-                          {PLAN_LABELS[studio.plan] || studio.plan}
-                          {studio.plan === "trial" && ` · ${studio.trialDaysRemaining} dias`}
+                          {PLAN_LABELS[row.plan] || row.plan}
+                          {row.subscriptionStatus === "trialing" &&
+                            ` · ${row.trialDaysRemaining} dias`}
                         </p>
                       </div>
-                      <div className="grid grid-cols-3 gap-2 text-left">
-                        <div>
-                          <p className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                            Volume
-                          </p>
-                          <p className="whitespace-nowrap text-xs font-semibold">
-                            {formatMoney(studio.volumeCents)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                            Marcações
-                          </p>
-                          <p className="text-xs font-semibold">{studio.appointments}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                            Clientes
-                          </p>
-                          <p className="text-xs font-semibold">{studio.clients}</p>
-                        </div>
+                      <div className="min-w-24 text-xs">
+                        <p className="font-semibold">{row.appointments ?? "—"} marcações</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {row.volumeCents === null
+                            ? "Volume indisponível"
+                            : formatMoney(row.volumeCents)}
+                        </p>
                       </div>
                       <Link
                         to="/admin/central-metricas"
-                        search={{ studio: studio.id }}
-                        className="inline-flex min-h-9 items-center justify-center rounded-xl border border-border bg-background px-3 text-[11px] font-semibold hover:border-foreground/30"
+                        search={{ studio: row.id }}
+                        className="inline-flex min-h-9 items-center rounded-xl border border-border px-3 text-[11px] font-semibold"
                       >
                         Analisar
                       </Link>
@@ -338,75 +350,54 @@ function CentralPage() {
               )}
             </div>
           </Panel>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-            <Panel
-              title="Pouco ou nenhum uso"
-              description="Até 2 marcações nos últimos 30 dias"
-            >
-              <CompactStudioList
-                rows={metrics?.rankings.lowUsage ?? []}
-                empty="Nenhuma conta com baixo uso."
-                value={(studio) => `${studio.appointments} marcações`}
-              />
+          <div className="space-y-4">
+            <Panel title="Atenção operacional" description="Pendências que merecem acompanhamento">
+              <div className="grid grid-cols-2 gap-3 p-4 text-center">
+                <div className="rounded-xl bg-amber-500/5 p-3">
+                  <p className="text-2xl font-semibold">{overview?.counts.expiringTrials ?? "—"}</p>
+                  <p className="text-[10px] text-muted-foreground">Testes vencidos ou a vencer em 3 dias</p>
+                </div>
+                <div className="rounded-xl bg-red-500/5 p-3">
+                  <p className="text-2xl font-semibold">{overview?.counts.paymentIssues ?? "—"}</p>
+                  <p className="text-[10px] text-muted-foreground">Cobranças pendentes</p>
+                </div>
+              </div>
+              {[...paymentIssues, ...expiring].slice(0, 8).map((row) => (
+                <Link
+                  key={row.id}
+                  to="/admin/central-metricas"
+                  search={{ studio: row.id }}
+                  className="flex justify-between gap-2 border-t border-border/60 px-4 py-3 text-xs hover:bg-muted/20"
+                >
+                  <span className="truncate font-semibold">{row.name}</span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {row.subscriptionStatus === "trialing"
+                      ? `${row.trialDaysRemaining} dias`
+                      : STATUS_LABELS[row.subscriptionStatus] || row.subscriptionStatus}
+                  </span>
+                </Link>
+              ))}
+              {overview && !paymentIssues.length && !expiring.length && (
+                <p className="px-4 pb-4 text-xs text-muted-foreground">
+                  Nenhuma pendência encontrada.
+                </p>
+              )}
             </Panel>
-            <Panel title="Contas inativas" description="Sem acesso há mais de 30 dias">
-              <CompactStudioList
-                rows={metrics?.rankings.inactive ?? []}
-                empty="Nenhuma conta inativa."
-                value={(studio) => formatDateTime(studio.lastAccessAt, studio.timezone)}
-              />
-            </Panel>
-            <Panel title="Mais marcações" description="Desempenho dos últimos 30 dias">
-              <CompactStudioList
-                rows={metrics?.rankings.byAppointments.slice(0, 6) ?? []}
-                empty="Sem marcações no período."
-                value={(studio) => `${studio.appointments} marcações`}
-                icon={Users}
-              />
+            <Panel title="Atividade dos últimos 30 dias" description="Marcações dos estúdios">
+              <div className="grid grid-cols-2 gap-3 p-4 text-center">
+                <div>
+                  <p className="text-xl font-semibold">{overview?.activity?.appointments ?? "—"}</p>
+                  <p className="text-[10px] text-muted-foreground">Marcações</p>
+                </div>
+                <div>
+                  <p className="text-xl font-semibold">{overview?.activity?.completed ?? "—"}</p>
+                  <p className="text-[10px] text-muted-foreground">Concluídas</p>
+                </div>
+              </div>
             </Panel>
           </div>
         </div>
       </div>
     </CentralShell>
-  );
-}
-
-function CompactStudioList({
-  rows,
-  empty,
-  value,
-  icon: Icon = Clock3,
-}: {
-  rows: PlatformStudioRow[];
-  empty: string;
-  value: (studio: PlatformStudioRow) => string;
-  icon?: typeof Clock3;
-}) {
-  if (rows.length === 0) {
-    return <p className="p-6 text-center text-xs text-muted-foreground">{empty}</p>;
-  }
-  return (
-    <div className="divide-y divide-border/60">
-      {rows.slice(0, 8).map((studio) => (
-        <Link
-          key={studio.id}
-          to="/admin/central-metricas"
-          search={{ studio: studio.id }}
-          className="flex min-w-0 items-center gap-3 px-4 py-3 hover:bg-muted/20"
-        >
-          <span className="grid size-8 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground">
-            <Icon className="h-3.5 w-3.5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold">{studio.name}</p>
-            <p className="truncate text-[10px] text-muted-foreground">{studio.ownerName}</p>
-          </div>
-          <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">
-            {value(studio)}
-          </span>
-        </Link>
-      ))}
-    </div>
   );
 }
