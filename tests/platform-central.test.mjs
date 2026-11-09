@@ -55,6 +55,7 @@ test("central counts an expired trial and deduplicates paid invoices", () => {
     studios: [studio],
     subscriptions: [],
     appointments: [appointment],
+    clients: [{ studio_id: studio.id }],
     billingEvents: [
       invoice("inv_1", "invoice.paid"),
       invoice("inv_1", "invoice.payment_succeeded"),
@@ -62,6 +63,9 @@ test("central counts an expired trial and deduplicates paid invoices", () => {
     now,
   });
   assert.equal(result.counts.trial, 1);
+  assert.equal(result.counts.businessActive, 1);
+  assert.equal(result.counts.businessTrial, 0);
+  assert.equal(result.counts.businessClients, 1);
   assert.equal(result.counts.expiringTrials, 1);
   assert.equal(result.counts.paidActive, 0);
   assert.equal(result.billing.revenueCents, 1300);
@@ -76,11 +80,35 @@ test("failed optional reads remain unavailable instead of reporting zero", () =>
     studios: [studio],
     subscriptions: [],
     appointments: null,
+    clients: null,
     billingEvents: null,
     now,
   });
   assert.equal(result.activity, null);
   assert.equal(result.billing, null);
   assert.equal(result.studios[0].appointments, null);
-  assert.equal(result.issues.length, 2);
+  assert.equal(result.counts.businessActive, null);
+  assert.equal(result.issues.length, 3);
+});
+
+test("only an operational studio with a client and positive completed volume qualifies", () => {
+  const zeroClients = { ...studio, id: "zero-clients", name: "Sem clientes" };
+  const zeroVolume = { ...studio, id: "zero-volume", name: "Sem volume" };
+  const blocked = { ...studio, id: "blocked", name: "Bloqueado", is_active: false };
+  const result = buildCentralOverview({
+    studios: [{ ...studio, trial_ends_at: "2026-11-12T09:00:00.000Z" }, zeroClients, zeroVolume, blocked],
+    subscriptions: [],
+    appointments: [appointment,
+      { ...appointment, id: "2", studio_id: zeroClients.id },
+      { ...appointment, id: "3", studio_id: zeroVolume.id, total_price: 0 },
+      { ...appointment, id: "4", studio_id: blocked.id },
+    ],
+    clients: [studio, zeroVolume, blocked].map((row) => ({ studio_id: row.id })),
+    billingEvents: [],
+    now,
+  });
+  assert.equal(result.counts.total, 4);
+  assert.equal(result.counts.businessActive, 1);
+  assert.equal(result.counts.businessTrial, 1);
+  assert.deepEqual(result.studios.map((row) => row.isBusinessActive), [true, false, false, false]);
 });

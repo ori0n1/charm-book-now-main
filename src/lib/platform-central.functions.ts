@@ -38,7 +38,7 @@ export const getCentralOverview = createServerFn({ method: "POST" })
     from.setUTCDate(from.getUTCDate() - 32);
     const until = new Date(now);
     until.setUTCDate(until.getUTCDate() + 1);
-    const [studios, subscriptions, activity, billing] = await Promise.all([
+    const [studios, subscriptions, activity, clients, billing] = await Promise.all([
       pagedRows((start, end) =>
         sb
           .from("studios")
@@ -69,6 +69,16 @@ export const getCentralOverview = createServerFn({ method: "POST" })
       ),
       pagedRows((start, end) =>
         sb
+          .from("clients")
+          .select("studio_id")
+          .order("id", { ascending: true })
+          .range(start, end),
+      ).then(
+        (rows) => rows,
+        () => null,
+      ),
+      pagedRows((start, end) =>
+        sb
           .from("platform_billing_events")
           .select("id,event_type,created_at,payload")
           .in("event_type", ["invoice.paid", "invoice.payment_succeeded"])
@@ -85,6 +95,7 @@ export const getCentralOverview = createServerFn({ method: "POST" })
       studios,
       subscriptions,
       appointments: activity,
+      clients,
       billingEvents: billing,
       now,
     });

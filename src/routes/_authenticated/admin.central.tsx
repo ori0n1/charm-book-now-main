@@ -6,13 +6,13 @@ import {
   AlertTriangle,
   Ban,
   Building2,
-  CalendarCheck2,
   Clock3,
   Euro,
   MessageCircle,
   RefreshCw,
   Search,
   TrendingUp,
+  Users,
 } from "lucide-react";
 import { getCentralOverview, type CentralStudio } from "@/lib/platform-central.functions";
 import { getCentralAccessSnapshot } from "@/lib/platform-central-access.functions";
@@ -66,7 +66,7 @@ function CentralPage() {
   const fetchOverview = useServerFn(getCentralOverview);
   const fetchAccess = useServerFn(getCentralAccessSnapshot);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("qualified");
   const query = useQuery({
     queryKey: ["platform-central-overview"],
     queryFn: () => fetchOverview(),
@@ -81,20 +81,30 @@ function CentralPage() {
   });
   const overview = query.data;
   const access = accessQuery.data;
+  const businessRows = useMemo(
+    () => (overview?.studios ?? []).filter((row) => row.isBusinessActive === true),
+    [overview?.studios],
+  );
+  const businessIds = useMemo(() => new Set(businessRows.map((row) => row.id)), [businessRows]);
+  const businessActivity = !overview || overview.counts.businessActive === null ? null : {
+    appointments: businessRows.reduce((total, row) => total + (row.appointments ?? 0), 0),
+    completed: businessRows.reduce((total, row) => total + (row.completedAppointments ?? 0), 0),
+  };
   const accessByStudio = useMemo(
     () => new Map(access?.studios.map((studio) => [studio.studioId, studio]) ?? []),
     [access],
   );
   const visibleVolume = useMemo(
-    () => overview?.activity ? centralVolumeWithoutAccount(overview.studios, access) : null,
-    [overview, access],
+    () => overview?.counts.businessActive !== null && overview?.activity
+      ? centralVolumeWithoutAccount(overview.studios, access, businessIds) : null,
+    [overview, access, businessIds],
   );
   const excludedIds = useMemo(() => new Set(access?.excludedStudioIds ?? []), [access]);
   const inactiveStudios = useMemo(
-    () => (overview?.studios ?? [])
+    () => businessRows
       .filter((row) => !excludedIds.has(row.id) && ["inactive", "never"].includes(accessByStudio.get(row.id)?.state ?? ""))
       .sort((a, b) => a.name.localeCompare(b.name, "pt")),
-    [overview, excludedIds, accessByStudio],
+    [businessRows, excludedIds, accessByStudio],
   );
   const rows = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("pt");
@@ -102,15 +112,17 @@ function CentralPage() {
       .filter(
         (row) =>
           filter === "all" ||
+          ((filter === "blocked" || filter === "cancelled") && row.accountStatus === filter) ||
+          (filter === "qualified" && row.isBusinessActive === true) ||
           (filter === "payment"
-            ? ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
+            ? row.isBusinessActive === true && ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
                 row.subscriptionStatus,
               )
             : filter === "inactive" || filter === "never"
-              ? !excludedIds.has(row.id) && accessByStudio.get(row.id)?.state === filter
+              ? row.isBusinessActive === true && !excludedIds.has(row.id) && accessByStudio.get(row.id)?.state === filter
             : filter === "trial"
-              ? row.subscriptionStatus === "trialing"
-              : row.accountStatus === filter),
+              ? row.isBusinessActive === true && row.subscriptionStatus === "trialing"
+              : row.isBusinessActive === true && row.accountStatus === filter),
       )
       .filter(
         (row) =>
@@ -120,18 +132,16 @@ function CentralPage() {
       .sort((a, b) => a.name.localeCompare(b.name, "pt"));
   }, [overview?.studios, filter, search, excludedIds, accessByStudio]);
   const expiring =
-    overview?.studios
+    businessRows
       .filter((row) => row.subscriptionStatus === "trialing" && row.trialDaysRemaining <= 3)
-      .sort((a, b) => a.trialDaysRemaining - b.trialDaysRemaining)
-      .slice(0, 6) ?? [];
+      .sort((a, b) => a.trialDaysRemaining - b.trialDaysRemaining);
   const paymentIssues =
-    overview?.studios
+    businessRows
       .filter((row) =>
         ["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(
           row.subscriptionStatus,
         ),
-      )
-      .slice(0, 6) ?? [];
+      );
   const unavailable = "—";
 
   return (
@@ -220,18 +230,18 @@ function CentralPage() {
           aria-label="Resumo da plataforma"
         >
           <MetricCard
-            label="Estúdios"
-            value={overview?.counts.total ?? unavailable}
-            hint="Contas cadastradas"
+            label="Com movimento"
+            value={overview?.counts.businessActive ?? unavailable}
+            hint="Ativos · clientes e volume"
             icon={Building2}
             accent="violet"
             loading={query.isLoading}
           />
           <MetricCard
-            label="Ativos"
-            value={overview?.counts.active ?? unavailable}
-            hint="Contas operacionais"
-            icon={CalendarCheck2}
+            label="Clientes"
+            value={overview?.counts.businessClients ?? unavailable}
+            hint="Nos estúdios com movimento"
+            icon={Users}
             accent="emerald"
             loading={query.isLoading}
           />
@@ -245,28 +255,24 @@ function CentralPage() {
           />
           <MetricCard
             label="Em teste"
-            value={overview?.counts.trial ?? unavailable}
-            hint="Assinaturas em teste"
+            value={overview?.counts.businessTrial ?? unavailable}
+            hint="Com clientes e volume"
             icon={Clock3}
             accent="amber"
             loading={query.isLoading}
           />
           <MetricCard
             label="Pagas ativas"
-            value={overview?.counts.paidActive ?? unavailable}
-            hint="Assinaturas ativas"
+            value={overview?.counts.businessPaidActive ?? unavailable}
+            hint="Com clientes e volume"
             icon={TrendingUp}
             accent="blue"
             loading={query.isLoading}
           />
           <MetricCard
             label="Atenção"
-            value={
-              overview
-                ? overview.counts.paymentIssues + overview.counts.expiringTrials
-                : unavailable
-            }
-            hint="Cobranças e testes a vencer"
+            value={overview?.counts.businessAttention ?? unavailable}
+            hint="Pendências com movimento"
             icon={AlertTriangle}
             accent="amber"
             loading={query.isLoading}
@@ -283,7 +289,7 @@ function CentralPage() {
           <MetricCard
             label="Volume estúdios"
             value={visibleVolume ? formatMoney(visibleVolume.visibleCents) : unavailable}
-            hint="30 dias · sem conta silas18.so@gmail.com"
+            hint="Com clientes · sem conta silas18.so@gmail.com"
             icon={Euro}
             accent="violet"
             money
@@ -293,10 +299,10 @@ function CentralPage() {
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(18rem,0.7fr)]">
           <Panel
-            title="Estúdios cadastrados"
+            title="Estúdios com movimento"
             description={
               overview
-                ? `${rows.length} conta${rows.length === 1 ? "" : "s"} encontrada${rows.length === 1 ? "" : "s"}`
+                ? `${rows.length} na lista · ${overview.counts.total} contas cadastradas no total`
                 : "Lista de contas"
             }
           >
@@ -316,7 +322,8 @@ function CentralPage() {
                 aria-label="Filtrar contas"
                 className="h-10 rounded-xl border border-border bg-background px-3 text-xs"
               >
-                <option value="all">Todas</option>
+                <option value="qualified">Com clientes e volume</option>
+                <option value="all">Todas cadastradas</option>
                 <option value="active">Ativas</option>
                 <option value="blocked">Bloqueadas</option>
                 <option value="cancelled">Canceladas</option>
@@ -336,6 +343,10 @@ function CentralPage() {
               ) : !overview ? (
                 <p className="p-8 text-center text-xs text-muted-foreground">
                   Contas indisponíveis.
+                </p>
+              ) : overview.counts.businessActive === null && filter === "qualified" ? (
+                <p className="p-8 text-center text-xs text-muted-foreground">
+                  Não foi possível verificar clientes e volume. Atualize para tentar novamente.
                 </p>
               ) : rows.length === 0 ? (
                 <p className="p-8 text-center text-xs text-muted-foreground">
@@ -383,6 +394,7 @@ function CentralPage() {
                             ? "Volume indisponível"
                             : formatMoney(row.volumeCents)}
                         </p>
+                        <p className="text-[10px] text-muted-foreground">{row.clients ?? "—"} clientes</p>
                       </div>
                       <Link
                         to="/admin/central-metricas"
@@ -398,11 +410,11 @@ function CentralPage() {
             </div>
           </Panel>
           <div className="space-y-4">
-            <Panel title="Contas sem acesso" description="Último login de pessoas vinculadas · limite de 30 dias">
-              {!access || !overview ? (
+            <Panel title="Sem acesso recente" description="Estúdios com movimento · último login há 30 dias">
+              {!access || !overview || overview.counts.businessActive === null ? (
                 <p className="p-4 text-xs text-muted-foreground">Dados de acesso indisponíveis.</p>
               ) : inactiveStudios.length === 0 ? (
-                <p className="p-4 text-xs text-muted-foreground">Nenhuma conta nesta condição.</p>
+                <p className="p-4 text-xs text-muted-foreground">Nenhum estúdio com movimento nesta condição.</p>
               ) : (
                 <div className="max-h-80 overflow-auto divide-y divide-border/60">
                   {inactiveStudios.map((row) => {
@@ -428,12 +440,12 @@ function CentralPage() {
             <Panel title="Atenção operacional" description="Pendências que merecem acompanhamento">
               <div className="grid grid-cols-2 gap-3 p-4 text-center">
                 <div className="rounded-xl bg-amber-500/5 p-3">
-                  <p className="text-2xl font-semibold">{overview?.counts.expiringTrials ?? "—"}</p>
-                  <p className="text-[10px] text-muted-foreground">Testes vencidos ou a vencer em 3 dias</p>
+                  <p className="text-2xl font-semibold">{!overview || overview.counts.businessActive === null ? "—" : expiring.length}</p>
+                  <p className="text-[10px] text-muted-foreground">Testes com movimento vencidos ou a vencer</p>
                 </div>
                 <div className="rounded-xl bg-red-500/5 p-3">
-                  <p className="text-2xl font-semibold">{overview?.counts.paymentIssues ?? "—"}</p>
-                  <p className="text-[10px] text-muted-foreground">Cobranças pendentes</p>
+                  <p className="text-2xl font-semibold">{!overview || overview.counts.businessActive === null ? "—" : paymentIssues.length}</p>
+                  <p className="text-[10px] text-muted-foreground">Cobranças pendentes com movimento</p>
                 </div>
               </div>
               {[...paymentIssues, ...expiring].slice(0, 8).map((row) => (
@@ -451,20 +463,20 @@ function CentralPage() {
                   </span>
                 </Link>
               ))}
-              {overview && !paymentIssues.length && !expiring.length && (
+              {overview && overview.counts.businessActive !== null && !paymentIssues.length && !expiring.length && (
                 <p className="px-4 pb-4 text-xs text-muted-foreground">
                   Nenhuma pendência encontrada.
                 </p>
               )}
             </Panel>
-            <Panel title="Atividade dos últimos 30 dias" description="Marcações dos estúdios">
+            <Panel title="Atividade dos últimos 30 dias" description="Marcações dos estúdios com clientes e volume">
               <div className="grid grid-cols-2 gap-3 p-4 text-center">
                 <div>
-                  <p className="text-xl font-semibold">{overview?.activity?.appointments ?? "—"}</p>
+                  <p className="text-xl font-semibold">{businessActivity?.appointments ?? "—"}</p>
                   <p className="text-[10px] text-muted-foreground">Marcações</p>
                 </div>
                 <div>
-                  <p className="text-xl font-semibold">{overview?.activity?.completed ?? "—"}</p>
+                  <p className="text-xl font-semibold">{businessActivity?.completed ?? "—"}</p>
                   <p className="text-[10px] text-muted-foreground">Concluídas</p>
                 </div>
               </div>
