@@ -1,6 +1,14 @@
 # Base oficial da produção Bellza — 2026-11-10
 
-## Produção ativa — gestão de clientes duplicados restaurada
+## Produção ativa — benefícios dos cards Premium
+
+- Worker `tanstack-start-app`: deployment `fc97b5c5-44be-460c-afef-26662bed58f3`, versão `53ee668b-2840-455b-af7a-807afeea26ac` ativa a 100% por Cloudflare OAuth. Fonte funcional publicada: commit `843693943d39a68b11fd59a1f1bfb1e688b2f7bd` da branch `agent/ux-mobile/premium-cards-informativos-20261110-085354`. Versão anterior preservada para rollback especificamente autorizado: `69281df6-7e30-4eb2-a43f-c3ef1edfabda`.
+- Os únicos ficheiros de produto alterados são `src/lib/landing-content.ts` e `src/routes/_authenticated/admin.premium.tsx`: seis benefícios Premium curtos e iguais nos cards públicos e do painel, em ambas as periodicidades. Preços, regras comerciais, permissões, Stripe, outros planos e banco não mudaram.
+- Artefacto publicado: 465 ficheiros, SHA-256 da árvore `ad3bb71e3bf18e829e9d84a902d67bba1b6b1c117ba2a40d87078ca70e12895d` (caminho em minúsculas e SHA-256 por ficheiro, com LF, excluindo a configuração de upload); entrada `dist/server/index.js` `84423c273a51ddf6765d66ce26f858bac63fbb23a6614fcd313e057f08e6b424`; configuração de upload `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`.
+- O rebuild do commit de produção anterior reproduziu os 410 assets do pacote ativo após normalizar nomes com hash e o caminho local do manifesto. O candidato diferiu apenas nos quatro módulos de texto Premium e nas referências de hash; os restantes 405 assets foram equivalentes. Os 228 módulos enviados coincidiram byte a byte com o artefacto. OAuth confirmou 53 bindings, 24 secrets por nome e tipo, runtime, dois crons e domínios preservados. TypeScript, lint direcionado, 17 testes de preservação e build passaram.
+- Antes da ativação, a versão em 0% serviu os seis benefícios, login 200, `/admin/premium` 307 sem sessão e os dois assets alterados byte a byte. O Chrome verificou mensal e anual em 375 e 1280 px, sem texto cortado ou overflow horizontal. Após a ativação, OAuth confirmou 100% e o smoke sem override repetiu esses resultados. Nenhuma migração, alteração de dados reais ou cobrança foi realizada.
+
+## Histórico — gestão de clientes duplicados restaurada
 
 - Worker `tanstack-start-app`: deployment `25956084-78a4-43f2-99b3-006eaa070d8a`, versão `69281df6-7e30-4eb2-a43f-c3ef1edfabda` ativa a 100% por Cloudflare OAuth. Fonte funcional publicada: commit `50ad36c1dded0f9ebbcc7e5ba8b71772837fb60e` da branch `agent/bugs/clientes-filtro-duplicados-20261110`. Versão anterior disponível para rollback aprovado: `63eca2cb-5e5c-4315-bff8-6f52afa11e20`.
 - A publicação repôs o filtro de possíveis duplicados, a seleção de clientes, a inspeção de dependências, a remoção segura e a unificação de fichas vazias. O banco de produção já tinha as funções SQL necessárias; nenhuma migração ou alteração de dados de clientes foi executada neste release. O build inclui contratos que bloqueiam a remoção acidental das funções de Clientes, Central e Métricas, e a regra de publicação exige comparar os módulos compilados com a versão ativa.
