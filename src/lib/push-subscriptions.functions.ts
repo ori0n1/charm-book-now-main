@@ -224,7 +224,9 @@ export const savePushSubscription = createServerFn({ method: "POST" })
           notification_consent_at: now,
           updated_at: now,
         })
-        .eq("id", clientId);
+        .eq("id", clientId)
+        .eq("studio_id", studioId)
+        .is("archived_at", null);
     }
 
     await pruneOldPushSubscriptions(sb, userId, studioId);
@@ -419,29 +421,19 @@ async function resolveClientId(
   studioId: string,
   claims: Record<string, unknown>,
 ) {
-  const email = String(claims.email ?? "").trim().toLowerCase();
   const query = sb
     .from("clients")
     .select("id")
     .eq("studio_id", studioId)
     .eq("auth_user_id", userId)
+    .is("archived_at", null)
     .limit(1);
 
-  let { data, error } = await query.maybeSingle();
+  const { data, error } = await query.maybeSingle();
   if (error) throw new Error(error.message);
   if (data?.id) return data.id as string;
 
-  if (!email) return null;
-  ({ data, error } = await sb
-    .from("clients")
-    .select("id")
-    .eq("studio_id", studioId)
-    .ilike("email", email)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle());
-  if (error) throw new Error(error.message);
-  return (data?.id as string | undefined) ?? null;
+  return null;
 }
 
 async function revokeEndpointSubscriptionsFromOtherAccounts(

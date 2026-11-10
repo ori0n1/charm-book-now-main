@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { groupDuplicateClients } from "../src/lib/client-duplicates.ts";
 
 const client = (id, extra = {}) => ({
-  id, name: `Cliente ${id}`, email: null, phone: "", authUserId: null,
+  id, studioId: "studio-test", createdAt: "2026-01-01", name: `Cliente ${id}`, email: null, phone: "", authUserId: null,
   totalAppointments: 0, completedAppointments: 0, ...extra,
 });
 
@@ -33,7 +33,11 @@ test("a mesma conta autentificada confirma a duplicidade; nomes iguais isolados 
 
 test("contrato de publicação preserva filtros funcionais na página de Clientes", () => {
   const route = readFileSync(new URL("../src/routes/_authenticated/admin.clientes.tsx", import.meta.url), "utf8");
-  for (const feature of ["Filtrar clientes", "Possíveis duplicados", "groupDuplicateClients", "Filtrar mensagens", "Ordenar clientes", "ClientDesktopTable", "ClientCompactCard"]) {
+  for (const feature of ["Filtrar clientes", "Possíveis duplicados", "groupDuplicateClients", "Filtrar mensagens", "Ordenar clientes", "ClientDesktopTable", "ClientCompactCard", "Selecionar clientes", "ClientReviewList", "removeClientProfiles", "unifyEmptyClientProfiles"]) {
     assert.ok(route.includes(feature), `Funcionalidade removida da página de Clientes: ${feature}`);
+  }
+  const core = readFileSync(new URL("../src/lib/client-profile-core.ts", import.meta.url), "utf8");
+  for (const rpc of ["client_dependency_counts", "remove_clients_for_owner", "unify_empty_client_for_owner"]) {
+    assert.ok(core.includes(rpc), `RPC de duplicados removida do servidor: ${rpc}`);
   }
 });

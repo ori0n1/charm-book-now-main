@@ -7,7 +7,7 @@ import {
   getStudioBookingActionSetting,
 } from "@/lib/booking-manageability";
 import { loadCustomerLoyaltySummaryForClient } from "@/lib/customer-loyalty.functions";
-import { canAttachAppointmentClientToSession, normalizePublicClientEmail } from "@/lib/public-client-identity";
+import { normalizePublicClientEmail } from "@/lib/public-client-identity";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendWebPush } from "@/lib/web-push.server";
 import { formatStudioDateTime } from "@/lib/studio-time";
@@ -116,7 +116,11 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const claims = (context as any).claims as Record<string, any>;
     const userId = String((context as any).userId ?? claims?.sub ?? "").trim();
-    const email = String(data.email ?? claims?.email ?? "").trim().toLowerCase();
+    // Form fields and user_metadata are not proof of email ownership.
+    const { data: verifiedUserResult, error: verifiedUserError } = await (context as any).supabase.auth.getUser();
+    if (verifiedUserError) throw new Error(verifiedUserError.message);
+    const email = verifiedUserResult?.user?.id === userId && verifiedUserResult.user.email_confirmed_at
+      ? normalizePublicClientEmail(verifiedUserResult.user.email) : "";
     const inferredName = inferName(claims);
     const name = String(data.name ?? inferredName ?? email.split("@")[0] ?? "").trim();
     const phone = normalizePhone(data.phone ?? inferPhone(claims));
@@ -128,7 +132,6 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       : normalizeDateOfBirth(inferDateOfBirth(claims));
 
     if (!userId) throw new Response("public_client_auth_missing", { status: 401 });
-    if (!email) throw new Error("public_client_email_missing");
     if (name.length < 2) throw new Error("public_client_name_missing");
 
     const sb = getAdminClient();
@@ -141,42 +144,30 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
     if (studioError) throw new Error(studioError.message);
     if (!studio) throw new Response("studio_not_found", { status: 404 });
 
-    const { data: byUserRows, error: byUserError } = await sb
-      .from("clients")
-      .select(PUBLIC_CLIENT_SELECT)
-      .eq("studio_id", data.studioId)
-      .eq("auth_user_id", userId)
-      .order("updated_at", { ascending: false })
-      .limit(20);
-    if (byUserError) throw new Error(byUserError.message);
-    const phoneOwner = phone
-      ? await findPublicClientByPhoneForSession(sb, {
-          studioId: data.studioId,
-          sessionEmail: email,
-          userId,
-          phone,
-        })
-      : null;
-    const existing =
-      chooseCanonicalPublicClient(
-        [...(byUserRows ?? []), ...(phoneOwner ? [phoneOwner] : [])],
-        {
-          sessionEmail: email,
-          phone: storedPhone,
-        },
-      ) ??
-      (await findAttachableLegacyClient(sb, {
-        studioId: data.studioId,
-        sessionEmail: email,
-        phone: storedPhone,
-      }));
+    if (!email) {
+      return { profile: { id: null, name, phone, email: "", avatarUrl, dateOfBirth,
+        accountKind: "account", needsPhone: !phone, identityReview: true } };
+    }
+
+    const { data: resolutionRows, error: resolutionError } = await (context as any).supabase.rpc(
+      "resolve_authenticated_studio_client",
+      { p_studio_id: data.studioId, p_name: name, p_phone: storedPhone },
+    );
+    if (resolutionError) throw new Error(resolutionError.message);
+    const resolved = Array.isArray(resolutionRows) ? resolutionRows[0] : resolutionRows;
+    const { data: existing, error: existingError } = resolved?.client_id
+      ? await sb.from("clients").select(PUBLIC_CLIENT_SELECT)
+        .eq("id", resolved.client_id).eq("studio_id", data.studioId).maybeSingle()
+      : { data: null, error: null };
+    if (existingError) throw new Error(existingError.message);
 
     const now = new Date().toISOString();
     const policyVersion = String(data.policyVersion ?? "").trim() || null;
     const payload = {
       studio_id: data.studioId,
       name,
-      phone: phone || existing?.phone || storedPhone,
+      phone: existing?.phone && !isAccountProfilePhone(existing.phone)
+        ? existing.phone : phone || existing?.phone || storedPhone,
       email,
       avatar_url: avatarUrl ?? existing?.avatar_url ?? null,
       date_of_birth: dateOfBirth ?? (hasDateOfBirthInput ? null : existing?.date_of_birth ?? null),
@@ -193,6 +184,22 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
         : {}),
       updated_at: now,
     };
+
+    if (!existing) {
+      return {
+        profile: {
+          id: null,
+          name,
+          phone: phone || "",
+          email,
+          avatarUrl,
+          dateOfBirth,
+          accountKind: "account",
+          needsPhone: !phone,
+          identityReview: resolved?.resolution === "manual_review",
+        },
+      };
+    }
 
     if (!payload.phone) {
       if (existing?.id && (avatarUrl || hasDateOfBirthInput || dateOfBirth)) {
@@ -232,9 +239,8 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       };
     }
 
-    const query = existing?.id
-      ? sb.from("clients").update(payload).eq("id", existing.id).select("id,name,phone,email,avatar_url,date_of_birth,account_kind,contact_consent_at,contact_consent_version,policy_accepted_at,policy_version").single()
-      : sb.from("clients").insert(payload).select("id,name,phone,email,avatar_url,date_of_birth,account_kind,contact_consent_at,contact_consent_version,policy_accepted_at,policy_version").single();
+    const query = sb.from("clients").update(payload).eq("id", existing.id).eq("studio_id", data.studioId).is("archived_at", null)
+      .select("id,name,phone,email,avatar_url,date_of_birth,account_kind,contact_consent_at,contact_consent_version,policy_accepted_at,policy_version").single();
 
     const { data: client, error } = await query;
     if (error) throw new Error(error.message);
@@ -281,18 +287,13 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
 
     const entitlements = await loadPublicClientEntitlements(sb, data.studioId);
 
-    await attachLegacyClientsByVerifiedEmail(sb, {
-      studioId: data.studioId,
-      userId,
-      email,
-    });
-
     const { data: clientsByUser, error: clientsByUserError } = userId
       ? await sb
           .from("clients")
           .select("id,name,phone,email,avatar_url,date_of_birth,account_kind,total_spent,total_visits,updated_at,contact_consent_at,contact_consent_version,policy_accepted_at,policy_version")
           .eq("studio_id", data.studioId)
           .eq("auth_user_id", userId)
+          .is("archived_at", null)
       : { data: [], error: null };
     if (clientsByUserError) throw new Error(clientsByUserError.message);
 
@@ -509,7 +510,7 @@ export const finalizePublicClientBooking = createServerFn({ method: "POST" })
     const { data: appointment, error: appointmentError } = await sb
       .from("appointments")
       .select(
-        "id,studio_id,client_id,clients:clients!appointments_client_same_studio(id,auth_user_id,email)",
+        "id,studio_id,client_id,clients:clients!appointments_client_same_studio(id,name,phone,auth_user_id,email)",
       )
       .eq("id", appointmentId)
       .eq("studio_id", data.studioId)
@@ -520,32 +521,25 @@ export const finalizePublicClientBooking = createServerFn({ method: "POST" })
     const clientRecord = Array.isArray((appointment as any).clients)
       ? (appointment as any).clients[0]
       : (appointment as any).clients;
-    const currentAuthUserId = String(clientRecord?.auth_user_id ?? "").trim();
-    const canAttachToSession = canAttachAppointmentClientToSession({
-      currentAuthUserId,
-      clientEmail: clientRecord?.email,
-      sessionUserId: userId,
-      sessionEmail: email,
-    });
-
-    if (canAttachToSession) {
-      const { error: clientError } = await sb
-        .from("clients")
-        .update({
-          auth_user_id: userId,
-          account_kind: "account",
-          ...(email && !clientRecord?.email ? { email } : {}),
-          updated_at: new Date().toISOString(),
-        } as any)
-        .eq("id", appointment.client_id)
-        .eq("studio_id", data.studioId);
-      if (clientError) throw new Error(clientError.message);
-    } else {
+    const { data: verified } = await (context as any).supabase.auth.getUser();
+    const verifiedEmail = verified?.user?.id === userId && verified.user.email_confirmed_at
+      ? normalizePublicClientEmail(verified.user.email) : "";
+    let linked = false;
+    if (verifiedEmail && verifiedEmail === normalizePublicClientEmail(clientRecord?.email)) {
+      const { data: resolved, error: resolveError } = await (context as any).supabase.rpc(
+        "resolve_authenticated_studio_client",
+        { p_studio_id: data.studioId, p_name: clientRecord?.name ?? verifiedEmail.split("@")[0], p_phone: clientRecord?.phone ?? "" },
+      );
+      if (resolveError) throw new Error(resolveError.message);
+      const result = Array.isArray(resolved) ? resolved[0] : resolved;
+      linked = result?.client_id === appointment.client_id;
+    }
+    if (!linked) {
       console.warn("[public-client] booking_link_rejected", {
         studio_id: data.studioId,
         appointment_id: appointmentId,
         user_id: userId,
-        reason: currentAuthUserId && currentAuthUserId !== userId ? "client_already_linked" : "email_mismatch",
+        reason: "identity_needs_review",
       });
     }
 
@@ -563,93 +557,6 @@ export const finalizePublicClientBooking = createServerFn({ method: "POST" })
 
     return { ok: true, appointmentId };
   });
-
-async function findAttachableLegacyClient(
-  sb: any,
-  input: { studioId: string; sessionEmail: string; phone?: string | null },
-) {
-  if (input.sessionEmail) {
-    const { data, error } = await sb
-      .from("clients")
-      .select(PUBLIC_CLIENT_SELECT)
-      .eq("studio_id", input.studioId)
-      .is("auth_user_id", null)
-      .ilike("email", input.sessionEmail)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (data?.id) return data;
-  }
-
-  const phone = publicPhone(input.phone);
-  if (!phone) return null;
-
-  const { data, error } = await sb
-    .from("clients")
-    .select(PUBLIC_CLIENT_SELECT)
-    .eq("studio_id", input.studioId)
-    .eq("phone", phone)
-    .is("auth_user_id", null)
-    .order("updated_at", { ascending: false })
-    .limit(5);
-  if (error) throw new Error(error.message);
-  return (
-    (data ?? []).find((client: any) => {
-      const clientEmail = normalizePublicClientEmail(client?.email);
-      return !clientEmail || clientEmail === input.sessionEmail;
-    }) ?? null
-  );
-}
-
-async function findPublicClientByPhoneForSession(
-  sb: any,
-  input: { studioId: string; sessionEmail: string; userId: string; phone: string },
-) {
-  const phone = publicPhone(input.phone);
-  if (!phone) return null;
-
-  const { data, error } = await sb
-    .from("clients")
-    .select(PUBLIC_CLIENT_SELECT)
-    .eq("studio_id", input.studioId)
-    .eq("phone", phone)
-    .order("updated_at", { ascending: false })
-    .limit(5);
-  if (error) throw new Error(error.message);
-
-  const attachable =
-    (data ?? []).find((client: any) => {
-      const authUserId = String(client?.auth_user_id ?? "").trim();
-      const clientEmail = normalizePublicClientEmail(client?.email);
-      if (authUserId && authUserId !== input.userId) return false;
-      if (authUserId === input.userId) return true;
-      if (clientEmail && clientEmail !== input.sessionEmail) return false;
-      return true;
-    }) ?? null;
-  if (!attachable && (data ?? []).length > 0) {
-    throw new Error("public_client_phone_already_in_use");
-  }
-  return attachable;
-}
-
-async function attachLegacyClientsByVerifiedEmail(
-  sb: any,
-  input: { studioId: string; userId: string; email: string },
-) {
-  if (!input.userId || !input.email) return;
-  const { error } = await sb
-    .from("clients")
-    .update({
-      auth_user_id: input.userId,
-      account_kind: "account",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("studio_id", input.studioId)
-    .is("auth_user_id", null)
-    .ilike("email", input.email);
-  if (error) throw new Error(error.message);
-}
 
 function chooseCanonicalPublicClient(
   clients: any[],

@@ -263,7 +263,7 @@ export const findCustomerLoyaltyClients = createServerFn({ method: "POST" })
     const sb = getAdminClient();
     await assertLoyaltyManager(sb, (context as any).userId, data.studioId);
     let request = (sb as any).from("clients").select("id,name")
-      .eq("studio_id", data.studioId).order("name").limit(30);
+      .eq("studio_id", data.studioId).is("archived_at", null).order("name").limit(30);
     if (data.query) request = request.ilike("name", `%${data.query.replace(/[%_\\]/g, "\\$&")}%`);
     const { data: clients, error } = await request;
     if (error) throw new Error(error.message);

@@ -120,6 +120,8 @@ function invalidBookingConfirmation() {
 
 export function translateBookingError(msg: string): string {
   msg = msg.toLowerCase();
+  if (msg.includes("client_identity_review_required"))
+    return "Não foi possível confirmar estes contactos automaticamente. Contacte o estúdio para concluir a marcação com segurança.";
   if (msg.includes("booking_request_mode_only"))
     return "Este estúdio recebe solicitações pelo WhatsApp. Escolha as preferências e envie o pedido ao estúdio.";
   if (msg.includes("duplicate key"))

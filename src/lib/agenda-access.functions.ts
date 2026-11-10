@@ -115,7 +115,7 @@ export const getProtectedAgendaCatalog = createServerFn({ method: "POST" })
         .eq("studio_id", data.studioId).eq("is_active", true)
         .match(data.staffId ? { id: data.staffId } : {}).order("sort_order"),
       admin.from("clients").select("id,name,phone")
-        .eq("studio_id", data.studioId).order("name"),
+        .eq("studio_id", data.studioId).is("archived_at", null).order("name"),
     ]);
     if (serviceError || staffError || clientError) {
       throw new Error("agenda_catalog_unavailable");
@@ -752,6 +752,7 @@ export const searchProtectedStudioClients = createServerFn({ method: "GET" })
         .from("clients")
         .select("id,name,phone")
         .eq("studio_id", data.studioId)
+        .is("archived_at", null)
         .ilike("name", `%${escaped}%`)
         .order("name")
         .limit(10),
@@ -762,6 +763,7 @@ export const searchProtectedStudioClients = createServerFn({ method: "GET" })
           .from("clients")
           .select("id,name,phone")
           .eq("studio_id", data.studioId)
+          .is("archived_at", null)
           .ilike("phone", `%${escapeLike(digits)}%`)
           .order("name")
           .limit(10),

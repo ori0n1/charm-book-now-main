@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { archiveClientForOwner, archiveClientInput, clientProfileInput, updateClientProfileForOwner } from "@/lib/client-profile-core";
+import { archiveClientForOwner, archiveClientInput, clientProfileInput, inspectClientForOwner, inspectClientInput, removeClientsForOwner, removeClientsInput, unifyEmptyClientForOwner, unifyEmptyClientInput, updateClientProfileForOwner } from "@/lib/client-profile-core";
 
 export const getClientProfileEditPermission = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -28,3 +28,18 @@ export const archiveClientProfile = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => archiveClientInput.parse(input))
   .handler(({ data, context }) => archiveClientForOwner(context.supabase, context.userId, data));
+
+export const inspectClientProfile = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => inspectClientInput.parse(input))
+  .handler(({ data, context }) => inspectClientForOwner(context.supabase, context.userId, data));
+
+export const removeClientProfiles = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => removeClientsInput.parse(input))
+  .handler(({ data, context }) => removeClientsForOwner(context.supabase, context.userId, data));
+
+export const unifyEmptyClientProfiles = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => unifyEmptyClientInput.parse(input))
+  .handler(({ data, context }) => unifyEmptyClientForOwner(context.supabase, context.userId, data));

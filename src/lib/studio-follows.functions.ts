@@ -326,7 +326,7 @@ async function loadAtRiskAudience(sb: any, studioId: string) {
     await Promise.all([
       sb
         .from("appointments")
-        .select("client_id,starts_at,status,clients(id,auth_user_id,booking_status,suspended_until)")
+        .select("client_id,starts_at,status,clients(id,auth_user_id,archived_at,booking_status,suspended_until)")
         .eq("studio_id", studioId)
         .in("status", ["completed", "confirmed", "pending", "pending_payment"])
         .limit(10_000),
@@ -352,6 +352,7 @@ async function loadAtRiskAudience(sb: any, studioId: string) {
 
   for (const row of appointments ?? []) {
     const client = Array.isArray(row.clients) ? row.clients[0] : row.clients;
+    if (!client || client.archived_at) continue;
     const clientId = String(row.client_id ?? client?.id ?? "").trim();
     if (!clientId) continue;
     const current = histories.get(clientId) ?? {

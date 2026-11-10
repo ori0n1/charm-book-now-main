@@ -6837,6 +6837,8 @@ function sortAppointmentsChronologically(items: Appt[], mode: "future" | "histor
 
 function formatManualAppointmentError(message?: string) {
   const value = String(message ?? "");
+  if (value.includes("client_identity_review_required"))
+    return "Este contacto já aparece noutra ficha ou pertence a uma conta autenticada. Selecione a cliente existente após confirmar a identidade, ou peça revisão à proprietária.";
   if (value.includes("appointment_not_editable")) {
     return "Esta marcação já foi concluída, cancelada ou marcada como falta e não pode ser editada. Atualize a agenda.";
   }

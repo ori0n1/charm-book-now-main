@@ -48,8 +48,8 @@ import {
 import { ClientAvatar } from "@/components/client-avatar";
 import { AgendaExportButton } from "@/components/agenda/agenda-export-button";
 import { ExpandableList } from "@/components/ui/expandable-list";
-import { archiveClientProfile, getClientProfileEditPermission, updateClientProfile } from "@/lib/client-profile.functions";
-import { groupDuplicateClients } from "@/lib/client-duplicates";
+import { getClientProfileEditPermission, inspectClientProfile, removeClientProfiles, unifyEmptyClientProfiles, updateClientProfile } from "@/lib/client-profile.functions";
+import { groupDuplicateClients, type DuplicateGroup } from "@/lib/client-duplicates";
 import {
   assessClientRisk,
   isActiveFutureAppointment,
@@ -89,6 +89,8 @@ type PaymentRow = {
 
 type StudioClientRow = {
   id: string;
+  studio_id: string;
+  created_at: string;
   name: string;
   phone: string;
   email: string | null;
@@ -115,6 +117,8 @@ type ReturnReminderInsight = {
 
 type ClientSummary = {
   id: string;
+  studioId: string;
+  createdAt: string;
   name: string;
   phone: string;
   email: string | null;
@@ -149,7 +153,7 @@ type ClientSummary = {
 
 type ClientBookingStatus = "active" | "suspended" | "blocked";
 type SortMode = "alphabetical" | "recent" | "value" | "appointments";
-type ClientFilter = "all" | "duplicates";
+type ActivityFilter = "all" | "duplicates" | "no_appointments" | "no_attendance" | "new_clients" | "recent_appointments";
 type ClientBadge = {
   label: string;
   tone: "emerald" | "amber" | "blue" | "rose" | "violet";
@@ -188,7 +192,18 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("alphabetical");
-  const [clientFilter, setClientFilter] = useState<ClientFilter>("all");
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkConfirmation, setBulkConfirmation] = useState("");
+  const [bulkError, setBulkError] = useState("");
+  const [bulkResult, setBulkResult] = useState("");
+  const [bulkOutcomes, setBulkOutcomes] = useState<{ id: string; name: string; outcome: string; dependencies: Record<string, number> }[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const inspectProfile = useServerFn(inspectClientProfile);
+  const removeProfiles = useServerFn(removeClientProfiles);
+  const unifyProfiles = useServerFn(unifyEmptyClientProfiles);
+  const getEditPermission = useServerFn(getClientProfileEditPermission);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [messageSaveError, setMessageSaveError] = useState(false);
   const savingMessageIdsRef = useRef(new Set<string>());
@@ -219,7 +234,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
           (supabase as any)
             .from("clients")
             .select(
-              "id,name,phone,email,notes,auth_user_id,avatar_url,booking_status,suspended_until,block_reason,date_of_birth",
+              "id,studio_id,created_at,name,phone,email,notes,auth_user_id,avatar_url,booking_status,suspended_until,block_reason,date_of_birth",
             )
             .eq("studio_id", studio!.id)
             .is("archived_at", null)
@@ -258,8 +273,62 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   });
 
   const clients = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
+  const ownerPermission = useQuery({
+    queryKey: ["clients-removal-permission", studio?.id],
+    enabled: !!studio?.id,
+    queryFn: () => getEditPermission({ data: { studioId: studio!.id } }),
+  });
+  const canRemove = ownerPermission.data?.canEdit === true;
   const duplicateGroups = useMemo(() => groupDuplicateClients(clients), [clients]);
   const duplicateIds = useMemo(() => new Set(duplicateGroups.flatMap((group) => group.clients.map((client) => client.id))), [duplicateGroups]);
+  const dependencyChecks = useQuery({
+    queryKey: ["client-removal-dependencies", studio?.id, [...selectedIds].sort().join(",")],
+    enabled: !!studio?.id && canRemove && selectedIds.length > 0,
+    queryFn: async () => Promise.all(selectedIds.map(async (clientId) => ({
+      clientId,
+      ...(await inspectProfile({ data: { studioId: studio!.id, clientId } })),
+    }))),
+  });
+  const eligibleCount = (dependencyChecks.data ?? []).filter((row) => Object.keys(row.dependencies).length === 0).length;
+  const protectedCount = (dependencyChecks.data ?? []).length - eligibleCount;
+
+  function toggleSelected(clientId: string) {
+    setBulkConfirmation("");
+    setSelectedIds((current) => current.includes(clientId)
+      ? current.filter((id) => id !== clientId)
+      : current.length < 100 ? [...current, clientId] : current);
+  }
+
+  async function removeSelected() {
+    if (!studio?.id || !canRemove || bulkConfirmation.trim().toUpperCase() !== "EXCLUIR" ||
+      !dependencyChecks.isSuccess || bulkSaving || selectedIds.length === 0) return;
+    setBulkSaving(true);
+    setBulkError("");
+    try {
+      const result = await removeProfiles({ data: { studioId: studio.id, clientIds: selectedIds, confirmation: "EXCLUIR" } });
+      setBulkOutcomes(result.map((row) => ({ id: row.client_id, name: clients.find((client) => client.id === row.client_id)?.name ?? "Cliente", outcome: row.outcome, dependencies: row.dependencies })));
+      setBulkResult(`${result.filter((row) => row.outcome === "deleted").length} eliminados; ${result.filter((row) => row.outcome === "archived").length} removidos da lista; ${result.filter((row) => row.outcome === "not_found").length} já indisponíveis.`);
+      setSelectedIds([]);
+      setBulkConfirmation("");
+      await queryClient.invalidateQueries({ queryKey: ["admin-clients", studio.id] });
+    } catch {
+      setBulkError("A remoção não foi concluída. Nenhum cliente foi removido nesta tentativa.");
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
+  async function unifyEmpty(primaryId: string, secondaryId: string) {
+    if (!studio?.id || !canRemove || !window.confirm("Unificar este registo vazio com o principal? A operação exige ausência de vínculos e será validada no servidor.")) return;
+    setBulkError("");
+    try {
+      await unifyProfiles({ data: { studioId: studio.id, primaryId, secondaryId, confirmation: "UNIFICAR" } });
+      setBulkResult("Registo vazio unificado com o principal.");
+      await queryClient.invalidateQueries({ queryKey: ["admin-clients", studio.id] });
+    } catch {
+      setBulkError("A unificação exige revisão manual: o registo pode ter vínculos ou dados contraditórios.");
+    }
+  }
   const manualMessagesQuery = useQuery({
     queryKey: ["client-manual-whatsapp-confirmations", studio?.id],
     enabled: !!studio?.id,
@@ -329,10 +398,16 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
 
   const selectedClient = clients.find((client) => client.id === selectedClientId) ?? null;
   const filteredClients = useMemo(() => {
+    const now = Date.now();
     const filtered = clients.filter((client) =>
       clientMatchesSearch(client, query) &&
-      (clientFilter === "all" || duplicateIds.has(client.id)) &&
-      (!manualMessagesQuery.isSuccess || matchesManualMessageFilter(client.id, messageFilter, sentClientIds)));
+      (!manualMessagesQuery.isSuccess || matchesManualMessageFilter(client.id, messageFilter, sentClientIds)) &&
+      (activityFilter === "all" ||
+        (activityFilter === "duplicates" && duplicateIds.has(client.id)) ||
+        (activityFilter === "no_appointments" && client.totalAppointments === 0) ||
+        (activityFilter === "no_attendance" && client.completedAppointments === 0) ||
+        (activityFilter === "new_clients" && now - new Date(client.createdAt).getTime() <= 30 * 86400000) ||
+        (activityFilter === "recent_appointments" && !!client.lastAppointmentAt && now - new Date(client.lastAppointmentAt).getTime() <= 90 * 86400000)));
 
     return [...filtered].sort((a, b) => {
       if (sort === "alphabetical") return compareClientNames(a, b);
@@ -342,7 +417,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       const aTime = a.lastAppointmentAt ? new Date(a.lastAppointmentAt).getTime() : 0;
       return bTime - aTime || compareClientNames(a, b);
     });
-  }, [clients, query, sort, financialVisible, manualMessagesQuery.isSuccess, messageFilter, sentClientIds, clientFilter, duplicateIds]);
+  }, [clients, query, sort, financialVisible, manualMessagesQuery.isSuccess, messageFilter, sentClientIds, activityFilter, duplicateIds]);
 
   const totals = clients.reduce(
     (acc, client) => ({
@@ -387,7 +462,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       )}
 
       <section className={selectedClient ? "hidden" : "rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3"}>
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_10.5rem_13.5rem_13.5rem]">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_10.5rem_11.5rem_11.5rem]">
           <label className="col-span-2 flex h-10 items-center gap-2 rounded-xl border border-border bg-background/80 px-3 text-sm shadow-sm transition focus-within:ring-2 focus-within:ring-ring/15 md:col-span-1 md:h-11">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <input
@@ -409,13 +484,15 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
             </SelectContent>
           </Select>
 
-          <Select value={clientFilter} onValueChange={(value) => setClientFilter(value as ClientFilter)}>
-            <SelectTrigger aria-label="Filtrar clientes" className="h-10 min-w-0 rounded-xl border-border bg-background/80 px-3 text-sm shadow-sm md:h-11">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="w-[min(16rem,calc(100vw-1.5rem))] rounded-3xl border-border/80 p-2 shadow-xl">
+          <Select value={activityFilter} onValueChange={(value) => setActivityFilter(value as ActivityFilter)}>
+            <SelectTrigger aria-label="Filtrar clientes" className="h-10 min-w-0 rounded-xl border-border bg-background/80 px-3 text-sm shadow-sm md:h-11"><SelectValue /></SelectTrigger>
+            <SelectContent className="w-[min(15rem,calc(100vw-1.5rem))] rounded-3xl border-border/80 p-2 shadow-xl">
               <SelectItem value="all">Todos os clientes</SelectItem>
               <SelectItem value="duplicates">Possíveis duplicados ({duplicateGroups.length})</SelectItem>
+              <SelectItem value="no_appointments">Sem marcações</SelectItem>
+              <SelectItem value="no_attendance">Sem presenças</SelectItem>
+              <SelectItem value="new_clients">Clientes recentes</SelectItem>
+              <SelectItem value="recent_appointments">Com marcações recentes</SelectItem>
             </SelectContent>
           </Select>
 
@@ -440,7 +517,19 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
           </Select>
         </div>
         {manualMessagesQuery.isError && <p className="mt-2 text-xs text-destructive">Não foi possível carregar as confirmações de mensagens.</p>}
+        {canRemove && <button type="button" onClick={() => { setSelectionMode((value) => !value); setSelectedIds([]); }} className="mt-2 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold">{selectionMode ? "Terminar seleção" : "Selecionar clientes"}</button>}
       </section>
+
+      {!selectedClient && bulkResult && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">{bulkResult}</p>}
+      {!selectedClient && bulkOutcomes.length > 0 && <ul className="space-y-1 rounded-xl border border-border bg-card p-3 text-xs">{bulkOutcomes.map((row) => <li key={row.id} className="break-words"><strong>{row.name}:</strong> {row.outcome === "deleted" ? "eliminado" : row.outcome === "archived" ? `removido da lista; ${describeClientDependencies(row.dependencies)}` : "já indisponível"}</li>)}</ul>}
+      {!selectedClient && bulkError && <p role="alert" className="rounded-xl bg-rose-50 p-3 text-xs text-rose-800">{bulkError}</p>}
+
+      {!selectedClient && canRemove && selectedIds.length > 0 && <section className="space-y-2 rounded-2xl border border-rose-200 bg-rose-50/60 p-3 text-xs">
+        <p><strong>{selectedIds.length} selecionados</strong> · {dependencyChecks.isLoading ? "a verificar vínculos" : dependencyChecks.isError ? "não foi possível verificar vínculos" : `${eligibleCount} elegíveis para eliminação · ${protectedCount} protegidos, serão removidos da lista`}</p>
+        <p>Marcações, pagamentos, fidelidade e contas autenticadas permanecem guardados. Registos com vínculos são arquivados.</p>
+        <label className="block font-semibold">Escreva EXCLUIR para confirmar<input value={bulkConfirmation} onChange={(event) => setBulkConfirmation(event.target.value)} autoComplete="off" className="mt-1 block h-10 w-full rounded-xl border border-rose-300 bg-white px-3 text-sm sm:max-w-xs" /></label>
+        <button type="button" onClick={removeSelected} disabled={bulkConfirmation.trim().toUpperCase() !== "EXCLUIR" || !dependencyChecks.isSuccess || bulkSaving} className="rounded-xl bg-rose-700 px-4 py-2 font-bold text-white disabled:opacity-50">{bulkSaving ? "A remover..." : "Eliminar selecionados / remover da lista"}</button>
+      </section>}
 
       {selectedClient && (
         <ClientDetails
@@ -454,36 +543,18 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         />
       )}
 
-      {!selectedClient && clientFilter === "duplicates" && (
-        <section className="space-y-3" aria-label="Possíveis duplicados">
-          {duplicateGroups.filter((group) => group.clients.some((client) => filteredClients.includes(client))).map((group) => (
-            <div key={group.id} className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
-              <div className="flex flex-wrap items-center gap-2 border-b border-border/70 bg-muted/25 px-3 py-2 text-xs">
-                <strong>{group.kind === "confirmed" ? "Duplicidade confirmada" : "Possível duplicidade"}</strong>
-                <span className="text-muted-foreground">{group.reasons.join(" · ") || "Dados de contacto relacionados"} · confirme antes de alterar registos</span>
-              </div>
-              <div className="divide-y divide-border/70">
-                {group.clients.filter((client) => filteredClients.includes(client)).map((client) => (
-                  <div key={client.id} className="flex min-w-0 items-start justify-between gap-3 p-3 text-xs">
-                    <div className="min-w-0 space-y-1">
-                      <p className="flex flex-wrap items-center gap-2">
-                        <span className="break-words text-sm font-semibold">{client.name}</span>
-                        {client.id === group.primary.id && <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">Principal sugerido</span>}
-                      </p>
-                      <p className="break-all text-muted-foreground">{client.phone || "Sem telefone"} · {client.email || "Sem e-mail"}</p>
-                      <p className="text-muted-foreground">{client.totalAppointments} marcações · {client.completedAppointments} presenças</p>
-                    </div>
-                    <button type="button" onClick={() => setSelectedClientId(client.id)} className="shrink-0 rounded-lg border border-border px-2 py-1 font-semibold">Ver cliente</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-          {filteredClients.length === 0 && <div className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">Nenhum possível duplicado encontrado.</div>}
-        </section>
-      )}
+      {!selectedClient && (selectionMode || activityFilter === "duplicates") && <ClientReviewList
+        clients={filteredClients}
+        groups={activityFilter === "duplicates" ? duplicateGroups : []}
+        duplicateMode={activityFilter === "duplicates"}
+        selectedIds={selectedIds}
+        canRemove={canRemove}
+        onToggle={toggleSelected}
+        onDetails={setSelectedClientId}
+        onUnify={unifyEmpty}
+      />}
 
-      <section className={selectedClient || clientFilter === "duplicates" ? "hidden" : "hidden lg:block"}>
+      <section className={selectedClient || selectionMode || activityFilter === "duplicates" ? "hidden" : "hidden lg:block"}>
         {filteredClients.length === 0 ? (
           <div className="rounded-2xl border border-border bg-card">
             <EmptyState />
@@ -498,7 +569,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         )}
       </section>
 
-      <section className={selectedClient || clientFilter === "duplicates" ? "hidden" : "space-y-2 lg:hidden"}>
+      <section className={selectedClient || selectionMode || activityFilter === "duplicates" ? "hidden" : "space-y-2 lg:hidden"}>
         {filteredClients.length === 0 ? (
           <div className="rounded-2xl border border-border bg-card">
             <EmptyState />
@@ -591,6 +662,8 @@ function buildClientSummaries(
   for (const client of studioClients) {
     map.set(client.id, {
       id: client.id,
+      studioId: client.studio_id,
+      createdAt: client.created_at,
       name: client.name,
       phone: client.phone,
       email: client.email ?? null,
@@ -809,6 +882,56 @@ function getClientAppointmentBucket(appointment: AppointmentRow) {
     return "future";
   }
   return "other";
+}
+
+function ClientReviewList({ clients, groups, duplicateMode, selectedIds, canRemove, onToggle, onDetails, onUnify }: {
+  clients: ClientSummary[];
+  groups: DuplicateGroup<ClientSummary>[];
+  duplicateMode: boolean;
+  selectedIds: string[];
+  canRemove: boolean;
+  onToggle: (id: string) => void;
+  onDetails: (id: string) => void;
+  onUnify: (primaryId: string, secondaryId: string) => void;
+}) {
+  const visibleIds = new Set(clients.map((client) => client.id));
+  const sections = duplicateMode
+    ? groups.map((group) => ({ ...group, clients: group.clients.filter((client) => visibleIds.has(client.id)) })).filter((group) => group.clients.length > 0)
+    : [{ id: "all", kind: "possible" as const, reasons: [], primary: clients[0], clients }];
+  if (clients.length === 0) return <div className="rounded-2xl border border-border bg-card"><EmptyState /></div>;
+  return <section className="space-y-3">
+    {sections.map((group) => <div key={group.id} className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+      {duplicateMode && <div className="flex flex-wrap items-center gap-2 border-b border-border/70 bg-muted/25 px-3 py-2 text-xs">
+        <strong>{group.kind === "confirmed" ? "Duplicidade confirmada" : "Possível duplicidade"}</strong>
+        <span className="text-muted-foreground">{group.reasons.join(" · ") || "Dados de contacto relacionados"} · confirmar antes de unificar</span>
+      </div>}
+      <div className="divide-y divide-border/70">
+        {group.clients.map((client) => <div key={client.id} className="flex min-w-0 items-start gap-3 p-3 text-xs">
+          {canRemove && <input type="checkbox" aria-label={`Selecionar ${client.name}`} checked={selectedIds.includes(client.id)} onChange={() => onToggle(client.id)} className="mt-1 h-4 w-4 shrink-0" />}
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={() => onDetails(client.id)} className="break-words text-left text-sm font-semibold underline-offset-2 hover:underline">{client.name}</button>{duplicateMode && client.id === group.primary.id && <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">Principal sugerido</span>}</div>
+            <p className="break-all text-muted-foreground">{client.phone || "Sem telefone"} · {client.email || "Sem e-mail"}</p>
+            <p className="text-muted-foreground">Criado: {formatDate(client.createdAt)} · Última marcação: {formatDate(client.lastAppointmentAt)}</p>
+            <p className="text-muted-foreground">{client.totalAppointments} marcações · {client.completedAppointments} presenças · {client.authUserId ? "Conta autenticada" : "Registo local; origem não registada"}</p>
+            {duplicateMode && canRemove && client.id !== group.primary.id && !client.authUserId && client.totalAppointments === 0 && <button type="button" onClick={() => onUnify(group.primary.id, client.id)} className="rounded-lg border border-border px-2 py-1 font-semibold">Unificar registo vazio</button>}
+            {duplicateMode && client.id !== group.primary.id && (client.authUserId || client.totalAppointments > 0) && <span className="block text-amber-700">Unificação com histórico: revisão manual necessária.</span>}
+          </div>
+        </div>)}
+      </div>
+    </div>)}
+  </section>;
+}
+
+function describeClientDependencies(dependencies: Record<string, number>) {
+  const labels: Record<string, string> = {
+    appointments: "marcações",
+    payment_intents: "pagamentos",
+    booking_payment_requests: "pedidos de pagamento",
+    customer_loyalty_ledger: "fidelidade",
+    conta_autenticada: "conta autenticada",
+    other_relation: "outros vínculos",
+  };
+  return Object.entries(dependencies).map(([key, count]) => `${count} ${labels[key] ?? `registos de ${key.replaceAll("_", " ")}`}`).join(", ");
 }
 
 function ClientDesktopTable({
@@ -1264,7 +1387,8 @@ function ClientDetails({
   onSaved: () => void;
 }) {
   const saveProfile = useServerFn(updateClientProfile);
-  const archiveProfile = useServerFn(archiveClientProfile);
+  const removeProfiles = useServerFn(removeClientProfiles);
+  const inspectProfile = useServerFn(inspectClientProfile);
   const checkEditPermission = useServerFn(getClientProfileEditPermission);
   const editPermission = useQuery({
     queryKey: ["client-profile-edit-permission", studioId, userId],
@@ -1296,6 +1420,11 @@ function ClientDetails({
   const [archiveSaving, setArchiveSaving] = useState(false);
   const [archiveError, setArchiveError] = useState("");
   const archiveConfirmationValid = archiveConfirmation.trim().toUpperCase() === "EXCLUIR";
+  const removalInspection = useQuery({
+    queryKey: ["client-removal-inspection", studioId, client.id],
+    enabled: canEdit && archiveOpen,
+    queryFn: () => inspectProfile({ data: { studioId, clientId: client.id } }),
+  });
   const financialVisible = useContext(ClientFinancialVisible);
 
   async function saveClientProfile(event: React.FormEvent<HTMLFormElement>) {
@@ -1344,16 +1473,11 @@ function ClientDetails({
     setArchiveSaving(true);
     setArchiveError("");
     try {
-      await archiveProfile({ data: { studioId, clientId: client.id, confirmation: "EXCLUIR" } });
+      await removeProfiles({ data: { studioId, clientIds: [client.id], confirmation: "EXCLUIR" } });
       await onSaved();
       onClose();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "";
-      setArchiveError(message.includes("client_archive_linked_account")
-        ? "Este cliente tem uma conta ligada. Não é possível excluí-lo com segurança."
-        : message.includes("client_archive_future_appointment")
-          ? "Este cliente tem uma marcação futura. Resolva-a antes de excluir."
-          : "Não foi possível excluir este cliente com segurança. Nenhum dado foi alterado.");
+      setArchiveError("Não foi possível remover este cliente. Verifique os vínculos e tente novamente; os dados históricos foram preservados.");
     } finally {
       setArchiveSaving(false);
     }
@@ -1462,7 +1586,23 @@ function ClientDetails({
       </div>}
       {activeTab === "history" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold">Resumo das marcações</h3><button type="button" onClick={() => setShowAppointmentDetails((open) => !open)} className="flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs">{showAppointmentDetails ? "Ocultar" : "Ver detalhes"}<ChevronDown className={`h-3.5 w-3.5 ${showAppointmentDetails ? "rotate-180" : ""}`} /></button></div><div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">{mainAppointmentMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} />)}</div>{showAppointmentDetails && <div className="mt-4 grid grid-cols-3 gap-3 border-t pt-3">{visibleSecondaryMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />)}</div>}</div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><ContextGroup title="Relacionamento" items={relationshipDetails} /><p className="mt-3 text-xs text-slate-500">Último serviço: {client.lastService}</p></div>{explainedTotal !== client.totalAppointments && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Existem estados antigos sem categoria clara. O total mantém todas as marcações reais deste cliente.</p>}{faltasWarning && <p className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.</p>}</div>}
       {activeTab === "preferences" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold"><Heart className="h-5 w-5 text-violet-600" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div>{birthdayToday && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><p className="text-sm font-semibold">Hoje é aniversário deste cliente. Mensagem de aniversário pendente.</p><a href={birthdayWhatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar agora</a></div>}{automationEvents.length > 0 && <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold">Automações do cliente</h3>{automationEvents.map((event) => <p key={event} className="mt-2 text-sm text-slate-600">{event}</p>)}</div>}</div>}
-      {canEdit && <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-4"><button type="button" onClick={() => { setArchiveOpen((open) => !open); setArchiveError(""); setArchiveConfirmation(""); }} className="flex w-full items-center gap-3 text-left"><Trash2 className="h-5 w-5 shrink-0 text-rose-600" /><span className="min-w-0 flex-1 whitespace-normal"><strong className="block text-sm text-rose-700">Excluir cliente</strong><span className="block max-w-full whitespace-normal break-words text-xs leading-relaxed text-slate-600">Anonimiza a ficha; mantém marcações e histórico financeiro.</span></span><ChevronDown className={`h-4 w-4 shrink-0 text-rose-600 ${archiveOpen ? "rotate-180" : ""}`} /></button>{archiveOpen && <div className="mt-4 border-t border-rose-200 pt-4"><p className="text-xs text-rose-800">Para confirmar, escreva EXCLUIR. Contas ligadas e marcações futuras ficam protegidas.</p><label className="mt-3 block text-xs font-semibold">Confirmação<input value={archiveConfirmation} onChange={(event) => setArchiveConfirmation(event.target.value)} autoComplete="off" className="mt-1 block h-10 w-full rounded-xl border border-rose-300 bg-white px-3 text-sm text-slate-950" /></label>{archiveError && <p role="alert" className="mt-2 text-xs text-rose-700">{archiveError}</p>}<button type="button" onClick={archiveClient} disabled={!archiveConfirmationValid || archiveSaving} className="mt-3 rounded-xl bg-rose-700 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{archiveSaving ? "A excluir..." : "Confirmar exclusão"}</button></div>}</div>}
+      {canEdit && <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-4">
+        <button type="button" onClick={() => { setArchiveOpen((open) => !open); setArchiveError(""); setArchiveConfirmation(""); }} className="flex w-full items-center gap-3 text-left">
+          <Trash2 className="h-5 w-5 shrink-0 text-rose-600" />
+          <span className="min-w-0 flex-1"><strong className="block text-sm text-rose-700">Remover da lista de clientes</strong><span className="block text-xs leading-relaxed text-slate-600">Elimina registos vazios; arquiva os que têm histórico ou conta ligada.</span></span>
+          <ChevronDown className={`h-4 w-4 shrink-0 text-rose-600 ${archiveOpen ? "rotate-180" : ""}`} />
+        </button>
+        {archiveOpen && <div className="mt-4 space-y-2 border-t border-rose-200 pt-4 text-xs text-rose-800">
+          {removalInspection.isLoading && <p>A verificar vínculos...</p>}
+          {removalInspection.isError && <p role="alert">Não foi possível verificar os vínculos.</p>}
+          {removalInspection.data && <p>{Object.keys(removalInspection.data.dependencies).length === 0
+            ? "Sem vínculos: este registo será eliminado definitivamente."
+            : `Vínculos encontrados: ${describeClientDependencies(removalInspection.data.dependencies)}. O cliente será removido da lista e o histórico ficará preservado.`}</p>}
+          <label className="block font-semibold">Escreva EXCLUIR para confirmar<input value={archiveConfirmation} onChange={(event) => setArchiveConfirmation(event.target.value)} autoComplete="off" className="mt-1 block h-10 w-full rounded-xl border border-rose-300 bg-white px-3 text-sm text-slate-950" /></label>
+          {archiveError && <p role="alert" className="text-rose-700">{archiveError}</p>}
+          <button type="button" onClick={archiveClient} disabled={!archiveConfirmationValid || !removalInspection.isSuccess || archiveSaving} className="rounded-xl bg-rose-700 px-4 py-2 font-bold text-white disabled:opacity-50">{archiveSaving ? "A remover..." : "Confirmar remoção"}</button>
+        </div>}
+      </div>}
     </section>
   );
 }

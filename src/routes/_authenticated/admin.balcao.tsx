@@ -275,7 +275,7 @@ function BalcaoPage() {
     const openRegister = Array.isArray(openRows) ? openRows[0] ?? null : openRows ?? null;
     setCashRegister(openRegister as CashRegister | null);
 
-    let openMovements: CashMovement[] = [];
+    const openMovements: CashMovement[] = [];
     if (openRegister?.id) {
       for (let offset = 0; ; offset += 1000) {
         const { data, error } = await db
@@ -1792,6 +1792,8 @@ function cashErrorMessage(message: string) {
 }
 
 function walkInErrorMessage(message: string) {
+  if (message.includes("client_identity_review_required"))
+    return "Este contacto precisa de revisão. Confirme a identidade e escolha a ficha existente na pesquisa de clientes.";
   if (message.includes("cash_register_not_open")) return "Abra o caixa antes de criar um encaixe pago.";
   if (message.includes("outside_staff_availability")) return "Este horário está fora da disponibilidade do profissional.";
   if (message.includes("staff_unavailable")) return "O profissional está indisponível neste horário.";

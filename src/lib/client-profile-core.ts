@@ -20,6 +20,24 @@ export const archiveClientInput = z.object({
 
 export type ArchiveClientInput = z.infer<typeof archiveClientInput>;
 
+export const removeClientsInput = z.object({
+  studioId: z.string().uuid(),
+  clientIds: z.array(z.string().uuid()).min(1).max(100),
+  confirmation: z.literal("EXCLUIR"),
+}).strict();
+
+export const inspectClientInput = z.object({
+  studioId: z.string().uuid(),
+  clientId: z.string().uuid(),
+}).strict();
+
+export const unifyEmptyClientInput = z.object({
+  studioId: z.string().uuid(),
+  primaryId: z.string().uuid(),
+  secondaryId: z.string().uuid(),
+  confirmation: z.literal("UNIFICAR"),
+}).strict();
+
 type ProfileDatabase = { from: (table: string) => any };
 
 async function requireStudioOwner(db: ProfileDatabase, userId: string, studioId: string) {
@@ -48,6 +66,39 @@ export async function archiveClientForOwner(
   });
   if (error) throw new Error(error.message || "client_archive_unavailable");
   return { archived: true };
+}
+
+export async function inspectClientForOwner(db: ProfileDatabase, userId: string, data: z.infer<typeof inspectClientInput>) {
+  await requireStudioOwner(db, userId, data.studioId);
+  const { data: dependencies, error } = await (db as any).rpc("client_dependency_counts", {
+    p_studio_id: data.studioId,
+    p_client_id: data.clientId,
+  });
+  if (error) throw new Error(error.message);
+  return { dependencies: (dependencies ?? {}) as Record<string, number> };
+}
+
+export async function removeClientsForOwner(db: ProfileDatabase, userId: string, data: z.infer<typeof removeClientsInput>) {
+  await requireStudioOwner(db, userId, data.studioId);
+  const { data: outcomes, error } = await (db as any).rpc("remove_clients_for_owner", {
+    p_studio_id: data.studioId,
+    p_client_ids: [...new Set(data.clientIds)],
+    p_confirmation: data.confirmation,
+  });
+  if (error) throw new Error(error.message);
+  return outcomes as { client_id: string; outcome: "deleted" | "archived" | "not_found"; dependencies: Record<string, number> }[];
+}
+
+export async function unifyEmptyClientForOwner(db: ProfileDatabase, userId: string, data: z.infer<typeof unifyEmptyClientInput>) {
+  await requireStudioOwner(db, userId, data.studioId);
+  const { error } = await (db as any).rpc("unify_empty_client_for_owner", {
+    p_studio_id: data.studioId,
+    p_primary_id: data.primaryId,
+    p_secondary_id: data.secondaryId,
+    p_confirmation: data.confirmation,
+  });
+  if (error) throw new Error(error.message);
+  return { unified: true };
 }
 
 export async function updateClientProfileForOwner(
