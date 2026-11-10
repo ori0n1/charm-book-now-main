@@ -49,6 +49,7 @@ import { ClientAvatar } from "@/components/client-avatar";
 import { AgendaExportButton } from "@/components/agenda/agenda-export-button";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { archiveClientProfile, getClientProfileEditPermission, updateClientProfile } from "@/lib/client-profile.functions";
+import { groupDuplicateClients } from "@/lib/client-duplicates";
 import {
   assessClientRisk,
   isActiveFutureAppointment,
@@ -148,6 +149,7 @@ type ClientSummary = {
 
 type ClientBookingStatus = "active" | "suspended" | "blocked";
 type SortMode = "alphabetical" | "recent" | "value" | "appointments";
+type ClientFilter = "all" | "duplicates";
 type ClientBadge = {
   label: string;
   tone: "emerald" | "amber" | "blue" | "rose" | "violet";
@@ -186,6 +188,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("alphabetical");
+  const [clientFilter, setClientFilter] = useState<ClientFilter>("all");
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [messageSaveError, setMessageSaveError] = useState(false);
   const savingMessageIdsRef = useRef(new Set<string>());
@@ -255,6 +258,8 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   });
 
   const clients = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
+  const duplicateGroups = useMemo(() => groupDuplicateClients(clients), [clients]);
+  const duplicateIds = useMemo(() => new Set(duplicateGroups.flatMap((group) => group.clients.map((client) => client.id))), [duplicateGroups]);
   const manualMessagesQuery = useQuery({
     queryKey: ["client-manual-whatsapp-confirmations", studio?.id],
     enabled: !!studio?.id,
@@ -326,6 +331,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const filteredClients = useMemo(() => {
     const filtered = clients.filter((client) =>
       clientMatchesSearch(client, query) &&
+      (clientFilter === "all" || duplicateIds.has(client.id)) &&
       (!manualMessagesQuery.isSuccess || matchesManualMessageFilter(client.id, messageFilter, sentClientIds)));
 
     return [...filtered].sort((a, b) => {
@@ -336,7 +342,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       const aTime = a.lastAppointmentAt ? new Date(a.lastAppointmentAt).getTime() : 0;
       return bTime - aTime || compareClientNames(a, b);
     });
-  }, [clients, query, sort, financialVisible, manualMessagesQuery.isSuccess, messageFilter, sentClientIds]);
+  }, [clients, query, sort, financialVisible, manualMessagesQuery.isSuccess, messageFilter, sentClientIds, clientFilter, duplicateIds]);
 
   const totals = clients.reduce(
     (acc, client) => ({
@@ -381,7 +387,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       )}
 
       <section className={selectedClient ? "hidden" : "rounded-2xl border border-border/80 bg-card/80 p-2.5 shadow-sm md:p-3"}>
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_10.5rem_13.5rem]">
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1fr)_10.5rem_13.5rem_13.5rem]">
           <label className="col-span-2 flex h-10 items-center gap-2 rounded-xl border border-border bg-background/80 px-3 text-sm shadow-sm transition focus-within:ring-2 focus-within:ring-ring/15 md:col-span-1 md:h-11">
             <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <input
@@ -400,6 +406,16 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
               <SelectItem value="all" className="rounded-2xl py-2.5">Todos ({messageCounts.total})</SelectItem>
               <SelectItem value="sent" className="rounded-2xl py-2.5">Enviadas ({manualMessagesQuery.isSuccess ? messageCounts.sent : "—"})</SelectItem>
               <SelectItem value="pending" className="rounded-2xl py-2.5">Pendentes ({manualMessagesQuery.isSuccess ? messageCounts.pending : "—"})</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={clientFilter} onValueChange={(value) => setClientFilter(value as ClientFilter)}>
+            <SelectTrigger aria-label="Filtrar clientes" className="h-10 min-w-0 rounded-xl border-border bg-background/80 px-3 text-sm shadow-sm md:h-11">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="w-[min(16rem,calc(100vw-1.5rem))] rounded-3xl border-border/80 p-2 shadow-xl">
+              <SelectItem value="all">Todos os clientes</SelectItem>
+              <SelectItem value="duplicates">Possíveis duplicados ({duplicateGroups.length})</SelectItem>
             </SelectContent>
           </Select>
 
@@ -438,7 +454,36 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         />
       )}
 
-      <section className={selectedClient ? "hidden" : "hidden lg:block"}>
+      {!selectedClient && clientFilter === "duplicates" && (
+        <section className="space-y-3" aria-label="Possíveis duplicados">
+          {duplicateGroups.filter((group) => group.clients.some((client) => filteredClients.includes(client))).map((group) => (
+            <div key={group.id} className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+              <div className="flex flex-wrap items-center gap-2 border-b border-border/70 bg-muted/25 px-3 py-2 text-xs">
+                <strong>{group.kind === "confirmed" ? "Duplicidade confirmada" : "Possível duplicidade"}</strong>
+                <span className="text-muted-foreground">{group.reasons.join(" · ") || "Dados de contacto relacionados"} · confirme antes de alterar registos</span>
+              </div>
+              <div className="divide-y divide-border/70">
+                {group.clients.filter((client) => filteredClients.includes(client)).map((client) => (
+                  <div key={client.id} className="flex min-w-0 items-start justify-between gap-3 p-3 text-xs">
+                    <div className="min-w-0 space-y-1">
+                      <p className="flex flex-wrap items-center gap-2">
+                        <span className="break-words text-sm font-semibold">{client.name}</span>
+                        {client.id === group.primary.id && <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">Principal sugerido</span>}
+                      </p>
+                      <p className="break-all text-muted-foreground">{client.phone || "Sem telefone"} · {client.email || "Sem e-mail"}</p>
+                      <p className="text-muted-foreground">{client.totalAppointments} marcações · {client.completedAppointments} presenças</p>
+                    </div>
+                    <button type="button" onClick={() => setSelectedClientId(client.id)} className="shrink-0 rounded-lg border border-border px-2 py-1 font-semibold">Ver cliente</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {filteredClients.length === 0 && <div className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">Nenhum possível duplicado encontrado.</div>}
+        </section>
+      )}
+
+      <section className={selectedClient || clientFilter === "duplicates" ? "hidden" : "hidden lg:block"}>
         {filteredClients.length === 0 ? (
           <div className="rounded-2xl border border-border bg-card">
             <EmptyState />
@@ -453,7 +498,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
         )}
       </section>
 
-      <section className={selectedClient ? "hidden" : "space-y-2 lg:hidden"}>
+      <section className={selectedClient || clientFilter === "duplicates" ? "hidden" : "space-y-2 lg:hidden"}>
         {filteredClients.length === 0 ? (
           <div className="rounded-2xl border border-border bg-card">
             <EmptyState />

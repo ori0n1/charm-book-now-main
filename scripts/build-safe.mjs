@@ -5,6 +5,14 @@ import { fileURLToPath } from "node:url";
 import { removeWranglerDeployRedirect } from "./lib/wrangler-deploy-redirect.mjs";
 
 const viteCli = fileURLToPath(new URL("../node_modules/vite/bin/vite.js", import.meta.url));
+const featureContract = fileURLToPath(new URL("../tests/client-duplicates-filter.test.mjs", import.meta.url));
+const contract = spawnSync(process.execPath, ["--test", featureContract], {
+  cwd: process.cwd(), env: process.env, stdio: "inherit", windowsHide: true,
+});
+if (contract.error || contract.status !== 0) {
+  console.error("release_feature_contract_failed", contract.error?.message ?? contract.status);
+  process.exit(1);
+}
 removeWranglerDeployRedirect();
 const result = spawnSync(process.execPath, [viteCli, "build"], {
   cwd: process.cwd(),

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "node scripts/build-safe.mjs && node scripts/responsive-audit.mjs",
+    "build:production": "node scripts/build-referral-with-production-public-vars.mjs active",
     "build:staging": "node scripts/build-staging.mjs",
     "check:staging-artifact": "node scripts/check-staging-artifact.mjs",
     "build:dev": "vite build --mode development",
