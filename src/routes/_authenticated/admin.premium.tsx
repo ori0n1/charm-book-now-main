@@ -70,9 +70,12 @@ const FEATURES: Record<PlanTier, readonly string[]> = {
     "Clientes, presença e relatórios",
   ],
   premium: [
-    "WhatsApp e automações com franquia controlada",
-    "Fidelidade, promoções e campanhas",
-    "Financeiro, equipa e relatórios avançados",
+    "Agendas e profissionais ativos sem limite",
+    "Reservas online na página pública do estúdio",
+    "WhatsApp com franquia; lembretes e notificações",
+    "Pagamentos, sinais e financeiro avançado",
+    "Clientes, fidelidade, promoções e campanhas",
+    "Relatórios e gestão avançada da equipa",
   ],
 };
 
