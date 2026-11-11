@@ -126,7 +126,7 @@ It preserves existing bookings and client rows, but restoring the old guard
 would reintroduce shared-contact booking failures. Apply only after separate
 owner approval and review of the effective production state.
 
-## MB Way checkout correction — unpublished
+## Initial MB Way checkout candidate
 
 The owner clarified that the MB Way payment number must be chosen at payment
 time and may differ from the booking contact number. Stripe's hosted MB Way
@@ -160,9 +160,9 @@ absolute build path. JavaScript chunk filenames also change transitively when
 shared imports change. Source comparison to `de3bb4a` shows changes only in
 the booking UI, booking result type, payment intent, webhook and a new focused
 phone comparator. Therefore byte-for-byte artifact parity to the active
-version is not claimed. A 0%-traffic candidate and remote smoke are still
-needed before considering customer traffic. No payment was attempted and no
-Worker version was uploaded or activated.
+version is not claimed. At that stage, a 0%-traffic candidate and remote smoke
+were still needed before considering customer traffic. No payment was attempted
+and no Worker version had been uploaded or activated at that stage.
 
 ## Authenticated account phone editing — candidate extension
 
@@ -181,3 +181,29 @@ be submitted normally; the already-applied SQL migration routes a shared
 number to an account-owned non-contact marker. The customer then enters any
 eligible MB Way number at Stripe Checkout. No real account metadata was
 changed during testing.
+
+## Worker release — shared phone editing and MB Way
+
+The complete Worker correction was built from isolated source commit
+`c77e9dfd3c6d5333337a759d3630b2fc4ffb51b5` and published as Cloudflare
+version `a4159818-b41b-4833-9f01-081f6b2fcc31`. Its 465-file artifact tree
+SHA-256 is `fe3ca5af8086075e4bef41a4b77217274c3d89689b4b1572c99620f1085602aa`;
+the entrypoint SHA-256 is `aeff1dcf08c47abbeb3694cd114b52e8c182ec9a73a41859a803c3616715e636`.
+The production upload config SHA-256 remained
+`cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`.
+Compared with the proven production source `de3bb4a`, only eight scoped
+modules changed; all 75 rebuilt non-JavaScript files matched. The previous
+Worker version `3fb84c5a-eb2d-45ee-b6f6-265fcd79bf4e` remains available
+for a separately approved, safety-checked rollback.
+
+Four focused tests, TypeScript typecheck, 17 build feature contract tests,
+the production build and Wrangler upload dry run passed. Cloudflare OAuth
+confirmed 53 unchanged bindings, including 24 secret names, unchanged
+runtime, two crons and both domains. The candidate was first deployed at 0%
+traffic as deployment `c416d4dc-241d-4ddc-ba93-652bffbd4dc1`. Version
+override smoke returned 200 for home, login and booking, and 307 for
+unauthenticated admin; candidate main and booking assets matched local hashes.
+It was then activated at 100% as deployment
+`4fc8c172-e03b-4373-a1cd-4fa22daaba07`. Immediate post-activation smoke
+returned the same route statuses and the candidate assets matched again.
+No real booking, account edit or payment was performed as a smoke test.
