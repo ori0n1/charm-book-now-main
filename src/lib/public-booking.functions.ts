@@ -84,7 +84,7 @@ const PublicJointBookingInput = z.object({
 export const createProtectedPublicJointBooking = createServerFn({ method: "POST" })
   .inputValidator((input) => PublicJointBookingInput.parse(input))
   .handler(async ({ data }) => {
-    await requirePublicBookingUser();
+    const verifiedUser = await requirePublicBookingUser();
     assertJointBookingCreationEnabled();
     const admin = getAdminClient() as any;
     const phone = data.clientPhone.replace(/\D/g, "");
@@ -122,7 +122,8 @@ export const createProtectedPublicJointBooking = createServerFn({ method: "POST"
       throw new Error(translateBookingError("booking_request_mode_only"));
     }
 
-    const { data: rawResult, error } = await admin.rpc("create_public_joint_booking", {
+    const { data: rawResult, error } = await admin.rpc("create_public_joint_booking_verified", {
+      p_verified_auth_user_id: verifiedUser.id,
       p_studio_slug: data.studioSlug,
       p_starts_at: data.startsAt,
       p_service_assignments: data.serviceAssignments.map((line, position) => ({
@@ -197,7 +198,7 @@ export const getProtectedPublicBookingQuote = createServerFn({ method: "POST" })
 export const createProtectedPublicBooking = createServerFn({ method: "POST" })
   .inputValidator((input) => PublicBookingInput.parse(input))
   .handler(async ({ data }) => {
-    await requirePublicBookingUser();
+    const verifiedUser = await requirePublicBookingUser();
     const admin = getAdminClient() as any;
     const phone = data.clientPhone.replace(/\D/g, "");
     const fingerprintHash = await sha256Hex(getRequestFingerprint());
@@ -258,7 +259,8 @@ export const createProtectedPublicBooking = createServerFn({ method: "POST" })
       throw new Error(translateBookingError("booking_request_mode_only"));
     }
 
-    const { data: rawResult, error } = await admin.rpc("create_public_booking", {
+    const { data: rawResult, error } = await admin.rpc("create_public_booking_verified", {
+      p_verified_auth_user_id: verifiedUser.id,
       p_studio_slug: data.studioSlug,
       p_staff_id: data.staffDbId,
       p_starts_at: data.startsAt,

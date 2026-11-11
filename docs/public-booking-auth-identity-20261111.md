@@ -1,0 +1,31 @@
+# Reserva pública de clientes autenticados — candidato 11/11/2026
+
+## Incidente e base
+
+- O aviso da reserva traduz `client_identity_review_required`.
+- A Cloudflare indicou a versão ativa `53ee668b-2840-455b-af7a-807afeea26ac` com 100% do tráfego; `OFFICIAL_BASE.json` associa-a ao código `8436939`.
+- No SQL Editor do projeto de produção `pwmdzpvnatrvfpgcvnzg`, a leitura `BEGIN READ ONLY; SET LOCAL ROLE authenticated` confirmou `row_security=on`, `rolbypassrls=false` e MD5 `757995fa2be9097b3a7030385c909dbd` para `resolve_booking_client_identity`. A definição rejeita toda a ficha com `auth_user_id IS NOT NULL`.
+- A função de servidor confirma o utilizador por `auth.getUser`, mas a chamada de reserva usa `admin.rpc` sem levar esse ID ao banco. A role `authenticated` não tem `EXECUTE` nas funções de reserva, logo trocar simplesmente o cliente RPC não funciona.
+
+## Alteração proposta
+
+1. A migração adiciona duas funções de entrada executáveis apenas pela `service_role`. Recebem o ID que o Worker acabou de confirmar e colocam-no numa definição local à transação antes de chamar as funções de reserva existentes.
+2. Uma substituição com hash e âncora exatos altera apenas a condição de ficha autenticada em `resolve_booking_client_identity`: permite a ficha quando o ID coincide. Telefone duplicado, ficha arquivada, conflito de e-mail e conta diferente continuam a exigir revisão manual.
+3. O Worker usa essas duas funções para reservas simples e conjuntas. Não modifica outros fluxos de marcação.
+
+Aplicar SQL antes do Worker. A migração aborta se as definições ativas ou as permissões esperadas tiverem mudado. O Worker anterior continua compatível com o SQL novo: sem ID verificado na transação, o bloqueio anterior permanece. Este é o rollback primário do Worker; reverter SQL requer decisão específica e nova verificação de dependências.
+
+A equivalência do rollback decorre da condição: com o ID verificado ausente, uma ficha com `auth_user_id` continua bloqueada e uma ficha sem `auth_user_id` segue as regras anteriores. Os demais ramos da função não são alterados. Em caso de regressão após a publicação, restaurar apenas a versão anterior do Worker, após aprovação específica; manter a migração compatível no banco até uma revisão separada.
+
+## Estado de verificação
+
+- Edição limitada a `src/lib/public-booking.functions.ts` e à migração nova.
+- Sintaxe TypeScript do ficheiro alterado, lint direcionado e typecheck completo passaram (este último com heap Node de 2048 MB).
+- O script de build passou 17 verificações. `npm run build:production` concluiu com código 0, compilando cliente e Worker/SSR com os valores públicos de produção configurados. `npm run build` também compilou ambos, mas terminou com código 1 na auditoria responsiva: o Wrangler local não conseguiu servir `127.0.0.1:4177`. No sandbox, a ligação à porta 9229 recebeu `EACCES`; fora do sandbox, o binário `workerd` terminou com `std::terminate()` antes de servir a página. A auditoria visual local não passou.
+- O build de produção gerou 465 ficheiros em `dist`; o SHA-256 do manifesto ordenado (`caminho + SHA-256 do ficheiro` por linha) é `cac2e00cb76e3b49e538e6f0a2f5468c108fe3b13f7087b6bc8cea1bb05110e2`. O `dist/server/wrangler.json` gerado ainda tem o nome protetor `bellza-deploy-blocked`; não é um manifesto de publicação.
+- Via Cloudflare OAuth, a versão ativa confirmou 53 bindings: 29 `plain_text` e 24 `secret_text`. Os 24 valores públicos em `wrangler.production.jsonc` coincidem com a versão ativa. Cinco nomes ativos estão ausentes desse ficheiro: `ARARA_CANARY_PROBE_SHA256`, `GOOGLE_PLACES_ENABLED`, `JOINT_BOOKING_CREATE_ENABLED`, `SENDDM_SMART_REMINDER_TEMPLATE_ID` e `SENDDM_SMART_REMINDER_TEMPLATE_NAME`. O `OFFICIAL_BASE.json` regista apenas os três primeiros como adicionais. Os nomes e tipos foram lidos sem expor valores. Um plano de publicação deve comprovar que os 53 bindings permanecem efetivos.
+- Docker Desktop foi iniciado e um container PostgreSQL descartável sem porta de rede executou os testes anteriores completos. A migração candidata, com **somente os hashes substituídos na cópia de teste** para a fixture antiga, aplicou-se sem erro. Testes transacionais passaram para conta correspondente nas reservas simples e conjuntas, conta diferente, ficha arquivada, e-mail divergente, prevenção de duplicados e execução real pela `service_role`. A migração original recusou a fixture divergente com `verified_booking_helper_definition_changed`, comprovando a guarda de falha segura. Os testes terminaram em `ROLLBACK`; a migração candidata original não foi alterada.
+- Um preflight OAuth de leitura confirmou a versão `53ee668b-2840-455b-af7a-807afeea26ac` ativa, os 53 bindings da versão e das configurações efetivas idênticos entre si, 24 secrets por nome/tipo, cinco variáveis ativas adicionais à configuração local, os dois crons, domínios e runtime. O ficheiro local `dist/server/wrangler.booking.production.json` preserva os bindings e tem SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, igual ao hash de configuração publicado na base oficial. `wrangler deploy --dry-run --strict` terminou com código 0, sem upload.
+- O snapshot local de referência e o candidato têm 465 ficheiros e os mesmos 441 nomes lógicos de módulos/assets; não houve perda de um módulo lógico. O commit de origem `8436939` é ancestral do worktree e, entre ele e o HEAD base, só mudaram `BASELINE.md` e `OFFICIAL_BASE.json`. A diferença de código autorizada continua restrita ao ficheiro de reserva.
+- Antes de declarar publicação apta, ainda faltam leitura final das definições SQL ativas e aplicação da migração pela aba autorizada, auditoria responsiva ou alternativa equivalente, smoke autenticado e confirmação de bindings/versão após deploy. A ligação do navegador ao SQL Editor desligou-se apesar da aba estar aberta; foi pedida uma aba nova para recuperar o controlo.
+- Nenhuma alteração foi aplicada ao banco ou ao Worker de produção.
