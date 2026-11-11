@@ -15,5 +15,6 @@ test("a shared phone remains a valid account preference", () => {
 
 test("an internal booking marker cannot become a displayed phone", () => {
   assert.equal(readAccountPreferredPhone({ bellza_booking_phone: "account:abcdefgh" }), "");
+  assert.equal(readAccountPreferredPhone({ bellza_booking_phone: "account:123456789" }), "");
   assert.equal(readAccountPreferredPhone({ bellza_booking_phone: "abc" }), "");
 });

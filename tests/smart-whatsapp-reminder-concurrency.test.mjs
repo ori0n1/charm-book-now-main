@@ -14,10 +14,12 @@ const compiled = ts.transpileModule(`export ${declaration.getText(ast)}`, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-function harness({ existingLog = null, synchronizeFirstReads = false } = {}) {
+function harness({ existingLog = null, synchronizeFirstReads = false,
+  authorizedPhone = '+351900000000', clientPhone = 'account:marker' } = {}) {
   const startsAt = '2026-11-08T12:00:00.000Z';
   const key = `arara-reminder-2h-appointment-1-${Date.parse(startsAt)}`;
   const sentKeys = [];
+  let accountLookups = 0;
   let log = existingLog;
   let firstReads = 0;
   let releaseReads;
@@ -34,11 +36,16 @@ function harness({ existingLog = null, synchronizeFirstReads = false } = {}) {
     findExistingConfirmationLog: async () => null,
     renderMessage: () => 'synthetic reminder',
     sendEmailConfirmationFromContext: async () => null,
-    normalizeWhatsAppPhone: () => '+351900000000',
+    normalizeWhatsAppPhone: (value) => value || null,
+    resolveAccountMarkerWhatsAppRecipient: async () => {
+      accountLookups += 1;
+      return authorizedPhone;
+    },
     reserveWhatsAppUsage: async () => ({ allowed: true }),
-    insertLog: async () => {
+    insertLog: async (_sb, _ctx, _key, input) => {
       if (log) return null;
-      log = { id: 'synthetic-log', status: 'pending', provider: 'senddm', payload: {}, created_at: new Date().toISOString() };
+      log = { id: 'synthetic-log', status: input.status, reason: input.reason,
+        provider: 'senddm', payload: {}, created_at: new Date().toISOString() };
       return log;
     },
     updateLog: async (_sb, _id, patch) => { log = { ...log, ...patch }; return log; },
@@ -68,11 +75,11 @@ function harness({ existingLog = null, synchronizeFirstReads = false } = {}) {
       async maybeSingle() { return { data: { status: 'confirmed', starts_at: startsAt, whatsapp_reminder_confirmed_at: null }, error: null }; } };
   } };
   const ctx = { appointmentId: 'appointment-1', studioId: 'studio-1', startsAt,
-    clientPhone: '+351900000000', paymentRowId: 'appointment-1', bookingUrl: 'https://bellza.pt/reserva',
+    clientPhone, paymentRowId: 'appointment-1', bookingUrl: 'https://bellza.pt/reserva',
     studioTimezone: 'Europe/Lisbon', studioName: 'Estúdio', serviceName: 'Serviço', clientName: 'Cliente',
     messageKind: 'reminder_2h', autoEnabled: true, template: 'synthetic reminder' };
   const send = () => exports.sendConfirmationFromContext(sb, ctx, key, { skipEmail: true });
-  return { send, sentKeys, key, getLog: () => log };
+  return { send, sentKeys, key, getLog: () => log, getAccountLookups: () => accountLookups };
 }
 
 test('concurrent first attempts claim one log and emit one provider request', async () => {
@@ -89,4 +96,19 @@ test('concurrent stale retries retain the same provider idempotency key', async 
     payload: {}, created_at: '2026-11-07T00:00:00.000Z' } });
   await Promise.all([h.send(), h.send()]);
   assert.deepEqual(h.sentKeys, [h.key, h.key]);
+});
+
+test('an account marker without authorized contact does not call the provider', async () => {
+  const h = harness({ authorizedPhone: null });
+  await h.send();
+  assert.deepEqual(h.sentKeys, []);
+  assert.equal(h.getLog().status, 'skipped');
+  assert.equal(h.getLog().reason, 'account_contact_not_authorized');
+});
+
+test('an ordinary client phone keeps the existing route', async () => {
+  const h = harness({ clientPhone: '+351900000000' });
+  await h.send();
+  assert.deepEqual(h.sentKeys, [h.key]);
+  assert.equal(h.getAccountLookups(), 0);
 });

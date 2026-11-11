@@ -38,6 +38,7 @@ import {
   isSendDmLifecycleKind,
 } from "@/lib/senddm-booking-lifecycle";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { chooseAccountBookingContactRecipient } from "@/lib/account-booking-phone";
 import { formatStudioDate, formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
 import { isSmartReminderDue, smartReminderTemplateId, whatsappReminderIdempotencyKey } from "@/lib/smart-whatsapp-reminder";
 import {
@@ -443,7 +444,11 @@ async function sendConfirmationFromContext(
     });
   }
 
-  const recipient = normalizeWhatsAppPhone(ctx.clientPhone);
+  const accountMarker = /^account:/i.test(ctx.clientPhone);
+  const accountContact = accountMarker && ctx.autoEnabled
+    ? await resolveAccountMarkerWhatsAppRecipient(sb, ctx)
+    : ctx.clientPhone;
+  const recipient = normalizeWhatsAppPhone(accountContact);
   const providerIdempotencyKey = options.explicitRetry
     ? sendDmExplicitRetryKey(idempotencyKey, existing, recipient)
     : idempotencyKey;
@@ -464,16 +469,16 @@ async function sendConfirmationFromContext(
     return log;
   }
   if (!recipient) {
-    console.warn("[whatsapp] skipped — invalid_phone", {
+    console.warn("[whatsapp] skipped — recipient_unavailable", {
       studio_id: ctx.studioId,
       appointment_id: ctx.appointmentId,
       phone: maskPhoneForLog(ctx.clientPhone),
     });
     const log = await insertLog(sb, ctx, idempotencyKey, {
       status: "skipped",
-      reason: "invalid_phone",
+      reason: accountMarker ? "account_contact_not_authorized" : "invalid_phone",
       message: rendered,
-      recipientPhone: ctx.clientPhone || null,
+      recipientPhone: accountMarker ? null : ctx.clientPhone || null,
       provider: WHATSAPP_PROVIDER,
     });
     await emailPromise;
@@ -2225,6 +2230,43 @@ async function loadAppointmentConfirmationContext(
     autoEnabled: Boolean(studio?.whatsapp_auto_send_enabled),
     bookingUrl: await ensureAppointmentPublicUrl(sb, appointmentId),
   };
+}
+
+async function resolveAccountMarkerWhatsAppRecipient(
+  sb: any, ctx: ConfirmationContext,
+): Promise<string | null> {
+  if (!ctx.appointmentId) return null;
+  const { data: appointment, error: appointmentError } = await sb
+    .from("appointments")
+    .select("client_id")
+    .eq("id", ctx.appointmentId)
+    .eq("studio_id", ctx.studioId)
+    .maybeSingle();
+  if (appointmentError || !appointment?.client_id) return null;
+  const { data: bookedClient, error: clientError } = await sb
+    .from("clients")
+    .select("auth_user_id,phone")
+    .eq("id", appointment.client_id)
+    .eq("studio_id", ctx.studioId)
+    .maybeSingle();
+  const authUserId = String(bookedClient?.auth_user_id ?? "");
+  if (clientError || !authUserId || bookedClient?.phone !== ctx.clientPhone) return null;
+  const [{ data: ownedClients, error: ownedError }, { data: auth, error: authError }] =
+    await Promise.all([
+      sb.from("clients")
+        .select("studio_id,auth_user_id,phone,contact_consent_at,contact_consent_version")
+        .eq("studio_id", ctx.studioId)
+        .eq("auth_user_id", authUserId)
+        .is("archived_at", null),
+      sb.auth.admin.getUserById(authUserId),
+    ]);
+  if (ownedError || authError || auth?.user?.id !== authUserId) return null;
+  return chooseAccountBookingContactRecipient({
+    studioId: ctx.studioId,
+    authUserId,
+    metadata: auth.user.user_metadata,
+    ownedClients: ownedClients ?? [],
+  });
 }
 
 async function loadStudioWhatsApp(sb: any, studioId: string) {

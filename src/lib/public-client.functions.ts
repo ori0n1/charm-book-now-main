@@ -8,7 +8,13 @@ import {
 } from "@/lib/booking-manageability";
 import { loadCustomerLoyaltySummaryForClient } from "@/lib/customer-loyalty.functions";
 import { normalizePublicClientEmail } from "@/lib/public-client-identity";
-import { normalizeAccountBookingPhone, isUsableAccountPhone, readAccountPreferredPhone } from "@/lib/account-booking-phone";
+import {
+  authorizeAccountBookingContact,
+  changeAccountBookingPhone,
+  normalizeAccountBookingPhone,
+  isUsableAccountPhone,
+  readAccountPreferredPhone,
+} from "@/lib/account-booking-phone";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendWebPush } from "@/lib/web-push.server";
 import { formatStudioDateTime } from "@/lib/studio-time";
@@ -154,7 +160,9 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       if (!isUsableAccountPhone(phone)) throw new Error("invalid_public_client_phone");
       if (phone !== savedPhonePreference) {
         const { error: preferenceError } = await sb.auth.admin.updateUserById(userId, {
-          user_metadata: { bellza_booking_phone: phone },
+          user_metadata: changeAccountBookingPhone(
+            verifiedUserResult.user.user_metadata, data.studioId, phone,
+          ),
         });
         if (preferenceError) throw new Error(preferenceError.message);
       }
@@ -162,6 +170,21 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       // Booking and payment resolve ownership from the authenticated user ID.
       return { profile: { id: null, name, phone, email, avatarUrl, dateOfBirth,
         accountKind: "account", needsPhone: false } };
+    }
+
+    // The existing booking checkbox authorizes messages to this account's
+    // chosen contact for this studio. It does not verify phone ownership.
+    if (data.contactConsent && data.phone && isUsableAccountPhone(phone)) {
+      if (verifiedUserResult?.user?.id !== userId) {
+        throw new Response("public_client_auth_missing", { status: 401 });
+      }
+      const { error: consentError } = await sb.auth.admin.updateUserById(userId, {
+        user_metadata: authorizeAccountBookingContact(
+          verifiedUserResult.user.user_metadata, data.studioId, phone,
+          new Date().toISOString(),
+        ),
+      });
+      if (consentError) throw new Error(consentError.message);
     }
 
     if (!email) {
