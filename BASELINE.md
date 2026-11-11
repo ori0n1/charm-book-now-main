@@ -1,6 +1,13 @@
-# Base oficial da produção Bellza — 2026-11-10
+# Base oficial da produção Bellza — 2026-11-11
 
-## Produção ativa — benefícios dos cards Premium
+## Produção ativa — reserva pública com identidade autenticada
+
+- Worker `tanstack-start-app`: deployment `1dfa4e11-adf5-44ca-993b-b77cb848e2b5`, versão `3fb84c5a-eb2d-45ee-b6f6-265fcd79bf4e` ativa a 100% por Cloudflare OAuth. Fonte funcional publicada: commit `de3bb4a294613149eaccfb3beaa6012398feb917` da branch `agent/bugs/public-booking-auth-identity-20261111-145743`. Versão anterior `53ee668b-2840-455b-af7a-807afeea26ac` preservada para rollback especificamente autorizado.
+- A alteração cirúrgica do Worker envia à RPC o ID confirmado por `auth.getUser` nas reservas simples e conjuntas. A migração `20261111150000_verified_public_booking_identity.sql` foi aplicada no SQL Editor do projeto `pwmdzpvnatrvfpgcvnzg`. A definição da função SQL foi verificada com a role `authenticated` sem `BYPASSRLS`: aceita apenas a ficha cujo `auth_user_id` coincide com o ID confirmado; os restantes conflitos mantêm a revisão manual. As funções originais não mudaram, as duas novas entradas só podem ser executadas pela `service_role`, e o Worker anterior continua compatível. O estado do ledger `supabase_migrations` não pôde ser lido por essa role; a migração manual deve ser reconciliada antes de um futuro `db push`.
+- Artefacto publicado: 465 ficheiros, SHA-256 da árvore `a94d1d8f4f134adb5f45df3dd62d34d3d154110952f0eaff92665a98ec4c7560` (linhas ordenadas `caminho em minúsculas:sha256` com LF sem LF final, excluindo configuração de upload e testes temporários); entrada `dist/server/index.js` `56bdd8addd1a6286dc340affe72452cdfa65cd72b6221e301a0b4e79793eb326`; configuração de upload `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`.
+- Typecheck, lint direcionado, build de produção, ensaio Wrangler e testes PostgreSQL sintéticos passaram. A versão candidata foi testada a 0% por override e depois ativada a 100%. OAuth confirmou 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime preservados. Smoke sem override: `/`, `/login`, `/s/studio27braga` e `/admin/agenda` responderam HTTP 200 após redirecionamentos; a agenda autenticada carregou no Chrome. Não foi criada marcação real nem alterado dado de cliente durante os testes. Ver `docs/public-booking-auth-identity-20261111.md`.
+
+## Histórico — benefícios dos cards Premium
 
 - Worker `tanstack-start-app`: deployment `fc97b5c5-44be-460c-afef-26662bed58f3`, versão `53ee668b-2840-455b-af7a-807afeea26ac` ativa a 100% por Cloudflare OAuth. Fonte funcional publicada: commit `843693943d39a68b11fd59a1f1bfb1e688b2f7bd` da branch `agent/ux-mobile/premium-cards-informativos-20261110-085354`. Versão anterior preservada para rollback especificamente autorizado: `69281df6-7e30-4eb2-a43f-c3ef1edfabda`.
 - Os únicos ficheiros de produto alterados são `src/lib/landing-content.ts` e `src/routes/_authenticated/admin.premium.tsx`: seis benefícios Premium curtos e iguais nos cards públicos e do painel, em ambas as periodicidades. Preços, regras comerciais, permissões, Stripe, outros planos e banco não mudaram.
