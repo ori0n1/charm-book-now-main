@@ -53,8 +53,10 @@ push. No Worker deployment or binding change was made in this correction.
 
 The later request covers authenticated customers whose submitted phone or
 email also appears in another client row. The proposed migration
-`20261111190000_authenticated_booking_owned_client_resolution.sql` has **not**
-been applied to production. It checks the five active function hashes before
+`20261111190000_authenticated_booking_owned_client_resolution.sql` was applied
+to production in the Supabase SQL Editor on 2026-11-11 after the owner
+authorized publication conditioned on preserving the working reservation.
+It checks the five active function hashes before
 changing anything, resolves bookings by the verified Auth ID, and leaves the
 unverified booking guard intact. A shared phone uses an account-owned marker
 with no digits. The verified account email is used only when confirmed; form
@@ -93,9 +95,25 @@ The synthetic PostgreSQL test passed owner, other-account phone, duplicate
 email, unconfirmed email, old numeric marker, individual and joint pending
 requests, paid conversion ownership, and preserved unverified/grant guards.
 The rollback script restored the synthetic helper and profile definitions by
-hash. Typecheck and bundle build passed. The local responsive preview could
-not start because the Windows `workerd` process terminated; no production
-publish or real customer booking was attempted for this candidate.
+hash, including a CRLF text reversal simulation. Typecheck and bundle build
+passed. The local responsive preview could not start because the Windows
+`workerd` process terminated. The UI Worker candidate was **not** published;
+no real customer booking was created for testing.
+
+The SQL Editor reported `Success. No rows returned` for the approved migration
+whose file SHA-256 was
+`96841e2877b5359cbdee1667a32602668f24a2023dda1bf1369a45c12a4c5666`.
+Read-only verification under role `authenticated` (non-superuser,
+non-BYPASSRLS) found the helper definition hash
+`169de6469a5699262ca5ef92df945e37`, the profile resolver hash
+`a3e311cfa22d834b097944f70d44a53e`, and the two wrapper hashes
+`541f808359f78020eb71b123c4c4cb5a` and
+`9f1f15d868498b8fdf90070d7f44b359`. The paid-conversion routine remained
+`bfe13ebf06626ce840834f90345209fe`. Anon and authenticated roles still
+lack execute on the protected helper and wrappers; service_role retained
+execute on both wrappers. The original individual booking function remained
+`733296c0b6027bc73c95d0a41f41276e`. A GET of the public booking page
+returned HTTP 200. No new booking was made in the smoke test.
 
 Rollback file: `supabase/rollback/20261111190000_authenticated_booking_owned_client_resolution.sql`.
 It preserves existing bookings and client rows, but restoring the old guard
