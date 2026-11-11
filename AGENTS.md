@@ -89,3 +89,21 @@ npm.cmd run test:e2e:chromium
 8. Se uma migração de banco não permitir rollback seguro, interrompa antes de modificar produção e solicite decisão. Nunca faça reset, sobrescreva ou apague dados reais.
 
 Áreas futuras de trabalho isolado: bugs, Stripe/financeiro, testes, Cloudflare/deploy, desempenho, UX/mobile e marketing/anúncios. Esta lista não autoriza instalar agentes, skills ou MCPs nem executar trabalhos funcionais.
+
+
+# AGENTS.md
+
+Leia este arquivo antes de qualquer alteração ou preparação de deploy no projeto Bellza.
+
+## Regra permanente — deploy seguro e preservação de funcionalidades
+
+Esta regra tem prioridade máxima em todos os próximos desenvolvimentos, correções e deploys Bellza. Preserve integralmente as funcionalidades existentes fora do escopo autorizado. Aplique-a automaticamente, com verificações proporcionais ao risco, sem enfraquecer as regras de segurança anteriores.
+
+1. **Produção é a fonte de verdade.** Antes de modificar uma funcionalidade ou preparar sua publicação, identifique a versão efetivamente ativa em produção. Trate como protegidos os fluxos, componentes, regras de negócio, permissões, integrações, notificações e configurações já publicados e aprovados. Compare o candidato com essa versão e identifique possíveis perdas ou mudanças. Nunca publique a partir de uma branch antiga sem incorporar e validar as alterações posteriores presentes em produção.
+2. **Alterações estritamente cirúrgicas.** Modifique exclusivamente o escopo autorizado e preserve todo o comportamento restante. Não remova, substitua, simplifique nem sobrescreva melhorias anteriores sem necessidade comprovada e autorização específica. Se a solução exigir uma alteração fora do escopo, interrompa essa parte e peça autorização antes de executá-la.
+3. **Proteção contra regressões.** Antes de cada deploy, compare o artefato candidato completo com a versão ativa; confira a presença das funcionalidades e correções já publicadas; identifique conflitos, sobrescritas, exclusões e regressões potenciais. Execute testes direcionados à mudança e aos fluxos diretamente afetados. Confirme rotas, variáveis, bindings, secrets por nome e tipo, integrações, permissões e demais configurações efetivas sem expor valores secretos. Se houver divergência não explicada ou risco relevante de regressão, bloqueie a publicação. Um build aprovado, isoladamente, não prova segurança.
+4. **Deploy controlado.** Use a versão ativa como referência e preserve as alterações acumuladas dos deploys anteriores. Mantenha uma versão anterior comprovadamente válida e um plano de rollback seguro. Publique somente após autorização explícita do proprietário para o artefato específico. Depois, confirme a versão e o tráfego ativos e valide a melhoria e os fluxos críticos relacionados. Diante de regressão, interrompa a operação; reverta apenas quando o rollback for tecnicamente seguro e especificamente autorizado.
+5. **Verificação eficiente.** Priorize diferenças incrementais, testes direcionados e evidências anteriores ainda válidas. Aprofunde a auditoria apenas diante de risco concreto, mudanças estruturais ou dependências relevantes. Não repita análises sem motivo técnico.
+6. **Critério de aptidão.** Declare um deploy **APTO** somente quando a melhoria estiver implementada e validada, nenhuma funcionalidade fora do escopo tiver sido removida ou alterada indevidamente, todas as diferenças frente à produção estiverem identificadas e justificadas, os testes proporcionais ao risco tiverem passado e o rollback estiver preparado. Se não for possível comprovar uma condição crítica, informe a limitação e não declare o deploy seguro.
+
+Mantenha esta política nas instruções persistentes do repositório para que acompanhe futuras sessões, branches, agentes e deploys. Ao criar ou sincronizar branches e worktrees, preserve este `AGENTS.md` juntamente com as demais regras existentes.
