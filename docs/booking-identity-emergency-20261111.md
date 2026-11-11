@@ -140,7 +140,26 @@ WhatsApp when shared. The SQL migration already applied to production is not
 changed by this Worker correction.
 
 The focused marker comparison tests and TypeScript typecheck passed. The
-production build passed its feature contract tests and compiled the browser
-bundle, but local Windows path handling stopped the Worker bundle while
-starting esbuild. A full Worker artifact is still required before upload.
-No payment was attempted and no Worker version was uploaded or activated.
+production build passed its 17 feature contract tests and compiled the browser
+and Worker bundles from a Git archive of commit `ed3685d` in a short local
+path. The long worktree path failed during esbuild startup; the first short
+build failed on a local directory permission, and the short build with normal
+Windows permissions completed. The upload dry run passed. Its `index.js`
+hash matched the compiled entrypoint; the 465-file artifact tree SHA-256 is
+`e85dafc098e9f8614457e0642bcd9520204644c1689ced715fed57612b0e7116`.
+Cloudflare OAuth still showed active version
+`3fb84c5a-eb2d-45ee-b6f6-265fcd79bf4e`, 53 bindings including 24 secret
+names, two crons, both domains and the existing runtime. The generated upload
+config hash remained `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`.
+
+A local rebuild of the proven production source commit `de3bb4a` produced 465
+files in a different path. All 75 non-JavaScript files matched the candidate;
+117 files had the same path and hash. The rebuilt baseline tree hash differed
+from its historical published artifact hash, and the manifest embeds the local
+absolute build path. JavaScript chunk filenames also change transitively when
+shared imports change. Source comparison to `de3bb4a` shows changes only in
+the booking UI, booking result type, payment intent, webhook and a new focused
+phone comparator. Therefore byte-for-byte artifact parity to the active
+version is not claimed. A 0%-traffic candidate and remote smoke are still
+needed before considering customer traffic. No payment was attempted and no
+Worker version was uploaded or activated.
