@@ -26,6 +26,7 @@ export type BookingResult = {
   total_price: number;
   total_duration_min: number;
   requires_payment: boolean;
+  shared_contact_phone?: boolean;
   reservation_status?: string;
   payment_status?: string;
 };
@@ -67,6 +68,9 @@ export function validateConfirmedBookingResult(value: unknown): BookingResult {
   const studioId = cleanBackendId(result.studio_id);
 
   if (typeof result.requires_payment !== "boolean") throw invalidBookingConfirmation();
+  if (result.shared_contact_phone !== undefined && typeof result.shared_contact_phone !== "boolean") {
+    throw invalidBookingConfirmation();
+  }
   if (!studioId) throw invalidBookingConfirmation();
   const totalPrice = Number(result.total_price);
   const totalDuration = Number(result.total_duration_min);

@@ -519,6 +519,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const [requestPrepared, setRequestPrepared] = useState(false);
   const [confirmedTotal, setConfirmedTotal] = useState<number | null>(null);
   const [confirmedStartsAt, setConfirmedStartsAt] = useState<string | null>(null);
+  const [confirmedSharedContactPhone, setConfirmedSharedContactPhone] = useState(false);
   const [bookingQuote, setBookingQuote] = useState<(BookingQuote & { key: string }) | null>(null);
   const [bookingQuoteErrorKey, setBookingQuoteErrorKey] = useState<string | null>(null);
   const [bookingQuoteRetry, setBookingQuoteRetry] = useState(0);
@@ -528,6 +529,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
     appointmentId?: string;
     bookingRequestId?: string;
     depositRule?: DepositRule;
+    sharedContactPhone?: boolean;
   } | null>(null);
   const [confirmedTarget, setConfirmedTarget] = useState<{
     appointmentId?: string | null;
@@ -1302,6 +1304,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       // browser total remains useful only as a preview before submission.
       setConfirmedTotal(result.total_price);
       setConfirmedStartsAt(result.starts_at);
+      setConfirmedSharedContactPhone(result.shared_contact_phone === true);
       try {
         localStorage.removeItem(getDraftStorageKey(studio.slug));
         localStorage.removeItem(STORAGE_KEY);
@@ -1316,10 +1319,12 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
         if (result.booking_request_id) {
           toast.message("Horário reservado temporariamente. Conclua o pagamento para confirmar.");
           setConfirmedTarget({ bookingRequestId: result.booking_request_id });
-          setPendingPayment({ bookingRequestId: result.booking_request_id, depositRule: result.deposit_rule });
+          setPendingPayment({ bookingRequestId: result.booking_request_id, depositRule: result.deposit_rule,
+            sharedContactPhone: result.shared_contact_phone === true });
         } else if (result.appointment_id) {
           setConfirmedTarget({ appointmentId: result.appointment_id });
-          setPendingPayment({ appointmentId: result.appointment_id, depositRule: result.deposit_rule });
+          setPendingPayment({ appointmentId: result.appointment_id, depositRule: result.deposit_rule,
+            sharedContactPhone: result.shared_contact_phone === true });
         } else {
           throw new Error("Não foi possível confirmar a reserva. Atualize a página e tente novamente.");
         }
@@ -1805,8 +1810,9 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           bookingRequestId={pendingPayment.bookingRequestId}
           acceptedMethods={getPublicCheckoutPaymentMethods(studio.accepted_payment_methods as string[] | undefined, {
             connectReady: Boolean(studio.stripe_connect_charges_enabled && studio.stripe_connect_onboarding_completed),
-            mbWayReady: Boolean(studio.stripe_connect_mb_way_payments_enabled),
+            mbWayReady: Boolean(studio.stripe_connect_mb_way_payments_enabled) && !pendingPayment.sharedContactPhone,
           })}
+          sharedContactPhone={pendingPayment.sharedContactPhone === true}
           totalPrice={authoritativeTotal!}
           depositRule={pendingPayment.depositRule}
           reservationSummary={{
@@ -1869,6 +1875,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
         total={authoritativeTotal!}
         savings={quotedSavings}
         paymentStatus={confirmedPaymentStatus}
+        sharedContactPhone={confirmedSharedContactPhone}
         refundEnabled={Boolean(studio.refund_requests_enabled)}
         refundTarget={confirmedTarget}
         onReset={() => {
@@ -1890,6 +1897,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           setConfirmedPaymentStatus("unknown");
           setConfirmedTotal(null);
           setConfirmedStartsAt(null);
+          setConfirmedSharedContactPhone(false);
           setConfirmed(false);
         }}
       />
@@ -9440,6 +9448,7 @@ function ConfirmationView({
   total,
   savings,
   paymentStatus,
+  sharedContactPhone,
   refundEnabled,
   refundTarget,
   installInvite,
@@ -9452,6 +9461,7 @@ function ConfirmationView({
   total: number;
   savings: number;
   paymentStatus: ConfirmedPaymentStatus;
+  sharedContactPhone: boolean;
   refundEnabled: boolean;
   refundTarget: { appointmentId?: string | null; bookingRequestId?: string | null } | null;
   installInvite?: ReactNode;
@@ -9501,6 +9511,12 @@ function ConfirmationView({
               : "A marcação está confirmada. O pagamento será feito presencialmente no estúdio."}
           </p>
         </div>
+        {sharedContactPhone && (
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            Esta marcação ficará na Minha conta. Avisos externos usarão apenas o e-mail
+            confirmado, quando disponível; o telefone partilhado não receberá WhatsApp.
+          </p>
+        )}
         {isPaidOnline && refundEnabled && refundTarget && (
           <div className="mt-3 w-full rounded-2xl bg-card p-4 text-left ring-1 ring-border">
             <p className="text-sm font-semibold">Pedido de reembolso</p>

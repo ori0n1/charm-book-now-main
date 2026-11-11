@@ -48,3 +48,56 @@ studio, service and professional. No additional booking was created for tests.
 These files were applied manually rather than through migration history.
 Reconcile the Supabase migration ledger before any later automated migration
 push. No Worker deployment or binding change was made in this correction.
+
+## Authenticated contact collisions — prepared candidate
+
+The later request covers authenticated customers whose submitted phone or
+email also appears in another client row. The proposed migration
+`20261111190000_authenticated_booking_owned_client_resolution.sql` has **not**
+been applied to production. It checks the five active function hashes before
+changing anything, resolves bookings by the verified Auth ID, and leaves the
+unverified booking guard intact. A shared phone uses an account-owned marker
+with no digits. The verified account email is used only when confirmed; form
+email is not trusted for notifications.
+
+For online payment, the wrapper first creates or reuses that account-owned
+client row and writes its exact phone marker into the pending request. The
+existing `confirm_paid_booking_request` routine selects clients by exact
+`(studio_id, phone)` at conversion, so the paid appointment remains linked to
+the authenticated account. The marker also prevents WhatsApp and MB Way from
+using a shared number. The UI candidate hides MB Way for this booking and
+explains the email-only contact route. If a studio accepts only MB Way for
+mandatory prepayment, the customer must contact the studio or the studio must
+offer card; the candidate does not silently change payment policy.
+
+When a customer already has a normal account row, adding a safe marker row
+must not make profile editing fail. The migration keeps the normal row as the
+profile target only when it is the sole active non-marker row and all other
+rows are digit-free account markers. A submitted phone owned by another row
+still returns manual review. The dynamic SQL anchors normalize LF/CRLF to
+match the production function text; rollback removes both added profile
+blocks while preserving existing client and appointment data.
+The identity result keeps `was_existing = true` when the verified account
+already has another client row, so using a shared phone does not make an
+existing customer eligible for new-customer referral treatment.
+
+Production function definitions were read in SQL Editor with `BEGIN READ
+ONLY`, `SET LOCAL ROLE authenticated` and `ROLLBACK`; the effective role was
+neither superuser nor BYPASSRLS. Cloudflare OAuth confirmed the active Worker
+is still `3fb84c5a-eb2d-45ee-b6f6-265fcd79bf4e`, with 53 bindings (24
+secret names), two crons, both production domains and unchanged runtime. The
+source difference from the proven Worker base is confined to three booking UI
+files; Worker configuration and other source modules are unchanged.
+
+The synthetic PostgreSQL test passed owner, other-account phone, duplicate
+email, unconfirmed email, old numeric marker, individual and joint pending
+requests, paid conversion ownership, and preserved unverified/grant guards.
+The rollback script restored the synthetic helper and profile definitions by
+hash. Typecheck and bundle build passed. The local responsive preview could
+not start because the Windows `workerd` process terminated; no production
+publish or real customer booking was attempted for this candidate.
+
+Rollback file: `supabase/rollback/20261111190000_authenticated_booking_owned_client_resolution.sql`.
+It preserves existing bookings and client rows, but restoring the old guard
+would reintroduce shared-contact booking failures. Apply only after separate
+owner approval and review of the effective production state.

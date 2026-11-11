@@ -10,6 +10,7 @@ type Props = {
   appointmentId?: string;
   bookingRequestId?: string;
   acceptedMethods: string[];
+  sharedContactPhone?: boolean;
   totalPrice: number;
   depositRule?: DepositRule;
   reservationSummary?: {
@@ -52,6 +53,7 @@ export function PaymentPendingView({
   appointmentId,
   bookingRequestId,
   acceptedMethods,
+  sharedContactPhone = false,
   totalPrice,
   depositRule,
   reservationSummary,
@@ -205,7 +207,8 @@ export function PaymentPendingView({
               <SummaryRow className="mt-3" label="Data" value={reservationSummary.date} />
               <SummaryRow className="mt-3" label="Hora" value={reservationSummary.time} />
               <SummaryRow className="mt-3" label="Cliente" value={reservationSummary.clientName} />
-              <SummaryRow className="mt-3" label="WhatsApp" value={reservationSummary.clientPhone} />
+              <SummaryRow className="mt-3" label={sharedContactPhone ? "Contacto" : "WhatsApp"}
+                value={sharedContactPhone ? "Minha conta / e-mail confirmado" : reservationSummary.clientPhone} />
               <SummaryRow className="mt-3" label={isDeposit ? "Sinal" : "Pagamento"} value={reservationSummary.depositLabel} />
             </div>
           )}
@@ -228,6 +231,14 @@ export function PaymentPendingView({
             </p>
           )}
         </div>
+
+        {sharedContactPhone && (
+          <p className="rounded-xl border border-border/80 bg-muted/25 p-3 text-xs leading-relaxed text-muted-foreground">
+            Este telefone também está noutro cadastro. A reserva ficará na Minha conta.
+            Avisos externos usarão apenas o e-mail confirmado, quando disponível;
+            WhatsApp e MB Way não estão disponíveis para esta reserva.
+          </p>
+        )}
 
         {policySummary && (
           <div className="rounded-[1.1rem] border border-border/70 bg-muted/25 p-3 text-xs leading-relaxed text-muted-foreground sm:p-4">
@@ -260,7 +271,9 @@ export function PaymentPendingView({
               />
             )}
             {allowedMethods.length === 0 && (
-              <ErrorPanel text="Este estúdio ainda não tem métodos de pagamento online disponíveis." />
+              <ErrorPanel text={sharedContactPhone
+                ? "O cartão não está disponível neste estúdio. Contacte o estúdio para concluir esta reserva sem usar o telefone partilhado."
+                : "Este estúdio ainda não tem métodos de pagamento online disponíveis."} />
             )}
           </div>
         )}
