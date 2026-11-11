@@ -9,6 +9,11 @@ BEGIN
   )) <> 'cd080513f35e3a0dc3a4355671cff8e7' THEN
     RAISE EXCEPTION 'client_removal_definition_changed';
   END IF;
+  IF md5(pg_catalog.pg_get_functiondef(
+    'public.correct_customer_referral_existing_client()'::regprocedure
+  )) <> '4f95ebd1b3aada5a6acdce739f868814' THEN
+    RAISE EXCEPTION 'referral_trigger_definition_changed';
+  END IF;
   IF EXISTS (
     SELECT 1 FROM pg_catalog.pg_constraint fk
     WHERE fk.contype = 'f' AND fk.confrelid = 'public.clients'::regclass
@@ -55,6 +60,40 @@ ALTER TABLE public.client_removal_audit
     'archive', 'delete_empty', 'delete_client', 'reactivate', 'unify_empty',
     'identity_linked', 'identity_created'
   ));
+
+-- Detaching a referrer must not reclassify an existing referral.
+CREATE OR REPLACE FUNCTION public.correct_customer_referral_existing_client()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE v_had_completed_visit boolean;
+BEGIN
+  IF TG_OP = 'UPDATE'
+     AND current_setting('bellza.client_hard_delete_confirmed', true) = 'yes'
+     AND OLD.referrer_client_id IS DISTINCT FROM NEW.referrer_client_id
+     AND NEW.referrer_client_id IS NULL
+     AND OLD.referred_client_id IS NOT DISTINCT FROM NEW.referred_client_id
+     AND OLD.status IS NOT DISTINCT FROM NEW.status
+     AND OLD.rejection_reason IS NOT DISTINCT FROM NEW.rejection_reason
+     AND OLD.referred_client_was_existing IS NOT DISTINCT FROM NEW.referred_client_was_existing
+  THEN RETURN NEW; END IF;
+  IF NEW.referred_client_id IS NULL OR NEW.referrer_client_id = NEW.referred_client_id
+     OR (NOT NEW.referred_client_was_existing AND NEW.rejection_reason IS DISTINCT FROM 'existing_client')
+  THEN RETURN NEW; END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM public.appointments AS appointment
+    WHERE appointment.studio_id = NEW.studio_id
+      AND appointment.client_id = NEW.referred_client_id
+      AND appointment.id IS DISTINCT FROM NEW.appointment_id
+      AND appointment.status = 'completed'
+  ) INTO v_had_completed_visit;
+  IF NOT v_had_completed_visit THEN
+    NEW.referred_client_was_existing := false;
+    IF NEW.status = 'rejected' AND NEW.rejection_reason = 'existing_client' THEN
+      NEW.status := 'pending_completion';
+      NEW.rejection_reason := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END; $function$;
 
 CREATE FUNCTION public.delete_clients_for_owner(
   p_studio_id uuid, p_client_ids uuid[], p_confirmation text
@@ -120,8 +159,10 @@ BEGIN
       WHERE a.studio_id = p_studio_id AND a.client_id = v_id;
     UPDATE public.customer_referral_codes AS a SET referrer_client_id = NULL
       WHERE a.studio_id = p_studio_id AND a.referrer_client_id = v_id;
+    PERFORM pg_catalog.set_config('bellza.client_hard_delete_confirmed', 'yes', true);
     UPDATE public.customer_referrals AS a SET referrer_client_id = NULL
       WHERE a.studio_id = p_studio_id AND a.referrer_client_id = v_id;
+    PERFORM pg_catalog.set_config('bellza.client_hard_delete_confirmed', '', true);
     UPDATE public.customer_referrals AS a SET referred_client_id = NULL
       WHERE a.studio_id = p_studio_id AND a.referred_client_id = v_id;
     UPDATE public.manual_service_entries AS a SET client_id = NULL

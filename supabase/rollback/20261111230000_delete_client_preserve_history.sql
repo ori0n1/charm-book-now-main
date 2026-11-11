@@ -13,6 +13,29 @@ END;
 $guard$;
 
 DROP FUNCTION public.delete_clients_for_owner(uuid, uuid[], text);
+CREATE OR REPLACE FUNCTION public.correct_customer_referral_existing_client()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $function$
+DECLARE v_had_completed_visit boolean;
+BEGIN
+  IF NEW.referred_client_id IS NULL OR NEW.referrer_client_id = NEW.referred_client_id
+     OR (NOT NEW.referred_client_was_existing AND NEW.rejection_reason IS DISTINCT FROM 'existing_client')
+  THEN RETURN NEW; END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM public.appointments AS appointment
+    WHERE appointment.studio_id = NEW.studio_id
+      AND appointment.client_id = NEW.referred_client_id
+      AND appointment.id IS DISTINCT FROM NEW.appointment_id
+      AND appointment.status = 'completed'
+  ) INTO v_had_completed_visit;
+  IF NOT v_had_completed_visit THEN
+    NEW.referred_client_was_existing := false;
+    IF NEW.status = 'rejected' AND NEW.rejection_reason = 'existing_client' THEN
+      NEW.status := 'pending_completion';
+      NEW.rejection_reason := NULL;
+    END IF;
+  END IF;
+  RETURN NEW;
+END; $function$;
 ALTER TABLE public.customer_loyalty_rewards
   DROP CONSTRAINT customer_loyalty_rewards_client_id_fkey,
   ADD CONSTRAINT customer_loyalty_rewards_client_id_fkey
