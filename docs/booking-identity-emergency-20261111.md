@@ -66,11 +66,15 @@ For online payment, the wrapper first creates or reuses that account-owned
 client row and writes its exact phone marker into the pending request. The
 existing `confirm_paid_booking_request` routine selects clients by exact
 `(studio_id, phone)` at conversion, so the paid appointment remains linked to
-the authenticated account. The marker also prevents WhatsApp and MB Way from
-using a shared number. The UI candidate hides MB Way for this booking and
-explains the email-only contact route. If a studio accepts only MB Way for
-mandatory prepayment, the customer must contact the studio or the studio must
-offer card; the candidate does not silently change payment policy.
+the authenticated account. The marker prevents WhatsApp from using a shared
+booking-contact number. The first UI candidate also hid MB Way, but the owner
+clarified that the customer must be free to choose any MB Way payment number.
+The corrected, unpublished Worker candidate keeps MB Way available whenever
+the studio offers it. Stripe Checkout collects that payment number separately;
+the payment metadata keeps the account-owned booking marker for ownership
+verification. The webhook compares distinct markers exactly rather than
+reducing both to an empty string of digits. No payment number becomes a
+booking contact or WhatsApp destination.
 
 When a customer already has a normal account row, adding a safe marker row
 must not make profile editing fail. The migration keeps the normal row as the
@@ -121,3 +125,22 @@ Rollback file: `supabase/rollback/20261111190000_authenticated_booking_owned_cli
 It preserves existing bookings and client rows, but restoring the old guard
 would reintroduce shared-contact booking failures. Apply only after separate
 owner approval and review of the effective production state.
+
+## MB Way checkout correction — unpublished
+
+The owner clarified that the MB Way payment number must be chosen at payment
+time and may differ from the booking contact number. Stripe's hosted MB Way
+checkout collects that number directly. The Worker correction removes the
+pre-check requiring the account's booking phone to be a Portuguese mobile,
+keeps MB Way available for shared-contact accounts when the studio supports
+it, and uses the account-owned booking marker in payment metadata. The Stripe
+webhook now compares markers exactly; a marker cannot match another marker
+merely because both have no digits. The booking contact is still excluded from
+WhatsApp when shared. The SQL migration already applied to production is not
+changed by this Worker correction.
+
+The focused marker comparison tests and TypeScript typecheck passed. The
+production build passed its feature contract tests and compiled the browser
+bundle, but local Windows path handling stopped the Worker bundle while
+starting esbuild. A full Worker artifact is still required before upload.
+No payment was attempted and no Worker version was uploaded or activated.

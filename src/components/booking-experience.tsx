@@ -1810,7 +1810,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           bookingRequestId={pendingPayment.bookingRequestId}
           acceptedMethods={getPublicCheckoutPaymentMethods(studio.accepted_payment_methods as string[] | undefined, {
             connectReady: Boolean(studio.stripe_connect_charges_enabled && studio.stripe_connect_onboarding_completed),
-            mbWayReady: Boolean(studio.stripe_connect_mb_way_payments_enabled) && !pendingPayment.sharedContactPhone,
+            mbWayReady: Boolean(studio.stripe_connect_mb_way_payments_enabled),
           })}
           sharedContactPhone={pendingPayment.sharedContactPhone === true}
           totalPrice={authoritativeTotal!}

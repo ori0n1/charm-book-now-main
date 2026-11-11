@@ -492,12 +492,6 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
     }
 
     const paymentMethodType = data.method === "mb_way" ? "mb_way" : "card";
-    const billingPhone =
-      data.method === "mb_way" ? normalizePortugueseMobile(source.clientPhone) : source.clientPhone;
-    if (data.method === "mb_way" && !billingPhone) {
-      throw new Error(PAYMENT_METHOD_MESSAGES.mb_way_phone_invalid);
-    }
-
     const stripe = createStripeClient(stripeEnv());
     await assertConnectedAccountReadyForCharge(stripe, {
       accountId: source.connectAccountId,
@@ -510,7 +504,9 @@ export const createBookingPaymentIntent = createServerFn({ method: "POST" })
       ...(bookingRequestId ? { booking_request_id: bookingRequestId } : {}),
       ...(appointmentId ? { appointment_id: appointmentId } : {}),
       studio_id: source.studioId,
-      client_phone: billingPhone || source.clientPhone,
+      // Reservation identity stays on this account. Stripe Checkout collects
+      // the MB WAY payment number independently from the customer.
+      client_phone: source.clientPhone,
       payment_kind: "booking_deposit",
       method: data.method,
     };

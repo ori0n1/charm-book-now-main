@@ -236,7 +236,8 @@ export function PaymentPendingView({
           <p className="rounded-xl border border-border/80 bg-muted/25 p-3 text-xs leading-relaxed text-muted-foreground">
             Este telefone também está noutro cadastro. A reserva ficará na Minha conta.
             Avisos externos usarão apenas o e-mail confirmado, quando disponível;
-            WhatsApp e MB Way não estão disponíveis para esta reserva.
+            este telefone não receberá WhatsApp. Se escolher MB WAY, indique
+            na página segura de pagamento o número em que quer receber o pedido.
           </p>
         )}
 
@@ -271,9 +272,7 @@ export function PaymentPendingView({
               />
             )}
             {allowedMethods.length === 0 && (
-              <ErrorPanel text={sharedContactPhone
-                ? "O cartão não está disponível neste estúdio. Contacte o estúdio para concluir esta reserva sem usar o telefone partilhado."
-                : "Este estúdio ainda não tem métodos de pagamento online disponíveis."} />
+              <ErrorPanel text="Este estúdio ainda não tem métodos de pagamento online disponíveis." />
             )}
           </div>
         )}

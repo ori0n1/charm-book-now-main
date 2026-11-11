@@ -22,6 +22,7 @@ import { isTerminalPaidBookingError, paidBookingRecoveryErrorCode } from "@/lib/
 import { processReferralsOnPayment, rejectReferralOnCancellation } from "@/lib/referrals.functions";
 import { syncConnectAccountFromWebhook } from "@/lib/stripe-connect.functions";
 import { handleInPersonMbWayPaymentIntent } from "@/lib/in-person-mbway.functions";
+import { comparableBookingPaymentPhone } from "@/lib/booking-payment-phone";
 import {
   assertDirectChargeAccount,
   assertExactStripeAmount,
@@ -168,14 +169,8 @@ function assertBookingPaymentMatchesStripe(row: any, pi: StripePayload) {
   }
   const bookingRequest = Array.isArray(row.booking_payment_requests)
     ? row.booking_payment_requests[0] : row.booking_payment_requests;
-  const comparablePhone = (value: string) => {
-    const digits = value.replace(/\D/g, "");
-    if (/^9\d{8}$/.test(digits)) return `351${digits}`;
-    if (/^003519\d{8}$/.test(digits)) return digits.slice(2);
-    return digits;
-  };
   if (row.booking_request_id && metadata.client_phone && bookingRequest?.client_phone &&
-      comparablePhone(metadata.client_phone) !== comparablePhone(bookingRequest.client_phone)) {
+      comparableBookingPaymentPhone(metadata.client_phone) !== comparableBookingPaymentPhone(bookingRequest.client_phone)) {
     throw new Error("payment_client_phone_mismatch");
   }
   if (row.appointment_id && !row.booking_request_id && metadata.appointment_id !== row.appointment_id) {
