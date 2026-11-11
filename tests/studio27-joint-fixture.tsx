@@ -29,7 +29,7 @@ function App() {
       actions={[{ id: "edit", label: "Editar reserva", icon: "✎", onClick: () => setEditCount((n) => n + 1) },
         ...(manual ? [{ id: "cancel", label: "Cancelar marcação", icon: "×", onClick: () => undefined }] : [])]}
       onChangeAttendance={manual ? async (status) => { setAttendanceStatus(status); return true; } : undefined}
-      onServiceState={manual ? undefined : (serviceId, state) => setLines((current) => current.map((line) => line.serviceId === serviceId ? { ...line, serviceState: state } : line))}
+      onServiceState={manual ? undefined : async (serviceId, state) => { setLines((current) => current.map((line) => line.serviceId === serviceId ? { ...line, serviceState: state } : line)); return false; }}
       onConfirmCancel={async () => { setWholeCancellationCount((n) => n + 1); if (manual) setAttendanceStatus("cancelled"); return true; }}
       payment={!manual && !paid ? { busy: false, enableInPersonMbWay: false, prepare: async () => ({ amount: 68, label: "Saldo da reserva" }), confirm: async () => { setPaid(true); return true; }, close: () => undefined } : undefined}
       details={{ clientName: "Cliente sintética", serviceName: "Gel + Pestanas", professionalName: "Raysa + Larissa", jointBooking: true,

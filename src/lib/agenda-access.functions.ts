@@ -7,6 +7,7 @@ import {
   rateLimitOrThrow,
 } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
+import { addCurrentAccountDisplayPhones, readAccountPreferredPhone } from "@/lib/account-booking-phone";
 
 const StudioInput = z.object({ studioId: z.string().uuid() });
 const AgendaCatalogInput = StudioInput.extend({ staffId: z.string().uuid().nullable() });
@@ -812,7 +813,7 @@ async function loadAgendaAppointments(admin: any, studioId: string) {
     const { data, error } = await admin
       .from("appointments")
       .select(
-        "id,public_token,starts_at,ends_at,status,attendance_resolved_at,total_price,total_duration_min,studio_commission_percent_snapshot,notes,is_manual_fit,duration_overridden,clients:clients!appointments_client_same_studio(id,name,phone,avatar_url,date_of_birth),staff:staff!appointments_staff_same_studio(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(id,price,duration_min,position,starts_at,ends_at,service_state,potential_refund_cents,professional_commission_percent_snapshot,staff:staff!appointment_services_staff_id_fkey(id,name),studio_commission_percent_snapshot,services(id,name,commission_percent,deposit_recipient,deposit_professional_percent))",
+        "id,public_token,starts_at,ends_at,status,attendance_resolved_at,total_price,total_duration_min,studio_commission_percent_snapshot,notes,is_manual_fit,duration_overridden,clients:clients!appointments_client_same_studio(id,name,phone,auth_user_id,avatar_url,date_of_birth),staff:staff!appointments_staff_same_studio(id,name,commission_percent,deposit_recipient,deposit_professional_percent),appointment_services(id,price,duration_min,position,starts_at,ends_at,service_state,potential_refund_cents,professional_commission_percent_snapshot,staff:staff!appointment_services_staff_id_fkey(id,name),studio_commission_percent_snapshot,services(id,name,commission_percent,deposit_recipient,deposit_professional_percent))",
       )
       .eq("studio_id", studioId)
       .order("starts_at", { ascending: true })
@@ -820,8 +821,16 @@ async function loadAgendaAppointments(admin: any, studioId: string) {
       .range(offset, offset + pageSize - 1);
     if (error) throw error;
     appointments.push(...(data ?? []));
-    if ((data ?? []).length < pageSize) return appointments;
+    if ((data ?? []).length < pageSize) break;
   }
+  // The account's chosen phone can change without changing the studio client row.
+  // Keep the stored phone for booking, payment and WhatsApp consent decisions.
+  return addCurrentAccountDisplayPhones(appointments, async (id) => {
+    const { data, error } = await admin.auth.admin.getUserById(id);
+    if (error?.status === 404) return "";
+    if (error) throw error;
+    return readAccountPreferredPhone(data?.user?.user_metadata);
+  });
 }
 
 async function loadAppointmentRows(query: () => any, appointmentIds: string[]) {

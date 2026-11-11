@@ -37,7 +37,7 @@ test("contrato de publicação preserva filtros funcionais na página de Cliente
     assert.ok(route.includes(feature), `Funcionalidade removida da página de Clientes: ${feature}`);
   }
   const core = readFileSync(new URL("../src/lib/client-profile-core.ts", import.meta.url), "utf8");
-  for (const rpc of ["client_dependency_counts", "remove_clients_for_owner", "unify_empty_client_for_owner"]) {
+  for (const rpc of ["client_dependency_counts", "delete_clients_for_owner", "unify_empty_client_for_owner"]) {
     assert.ok(core.includes(rpc), `RPC de duplicados removida do servidor: ${rpc}`);
   }
 });

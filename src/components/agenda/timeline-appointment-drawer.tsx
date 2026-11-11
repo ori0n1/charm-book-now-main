@@ -78,6 +78,7 @@ export function TimelineAppointmentDrawer({
   actions,
   onClose,
   onChangeAttendance,
+  attendanceUnavailableReason,
   onConfirmCancel,
   cancellationReasonRequired = false,
   cancellationFinancialNotice,
@@ -98,6 +99,7 @@ export function TimelineAppointmentDrawer({
   actions: TimelineDrawerAction[];
   onClose: () => void;
   onChangeAttendance?: (status: "confirmed" | "completed" | "no_show") => Promise<boolean>;
+  attendanceUnavailableReason?: string;
   onConfirmCancel?: (reason: string) => Promise<boolean>;
   cancellationReasonRequired?: boolean;
   cancellationFinancialNotice?: string;
@@ -282,6 +284,11 @@ export function TimelineAppointmentDrawer({
               </button>;
             })}
           </div>
+          {attendanceUnavailableReason && (
+            <p className="text-[11px] leading-snug text-muted-foreground" role="status">
+              {attendanceUnavailableReason}
+            </p>
+          )}
           {serviceLevelActions && jointAction && onServiceState && (
             <div className="rounded-xl border border-border/70 bg-muted/25 p-2.5" data-testid="joint-service-action-picker">
               <p className="mb-2 text-[11px] font-bold">

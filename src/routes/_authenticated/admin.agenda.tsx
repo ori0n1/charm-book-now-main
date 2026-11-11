@@ -209,6 +209,7 @@ type Appt = {
     id: string;
     name: string;
     phone: string;
+    display_phone?: string;
     avatar_url?: string | null;
     date_of_birth?: string | null;
   } | null;
@@ -725,9 +726,9 @@ function AgendaPage() {
         const canSeeSensitive = canViewSensitiveAppointment(a, studio);
         const canSeeBasic = canSeeSensitive || canStaffViewBasicDetails;
         const hay = normalizeFilterText(
-          `${canSeeSensitive ? `${a.clients?.name ?? ""} ${a.clients?.phone ?? ""}` : ""} ${canSeeBasic ? appointmentServiceLabel(a) : ""} ${a.staff?.name ?? ""}`,
+          `${canSeeSensitive ? `${a.clients?.name ?? ""} ${a.clients?.display_phone ?? a.clients?.phone ?? ""}` : ""} ${canSeeBasic ? appointmentServiceLabel(a) : ""} ${a.staff?.name ?? ""}`,
         );
-        if (!hay.includes(q) && !(canSeeSensitive && clientPhoneMatches(a.clients?.phone, searchQuery))) return false;
+        if (!hay.includes(q) && !(canSeeSensitive && clientPhoneMatches(a.clients?.display_phone ?? a.clients?.phone, searchQuery))) return false;
       }
       return true;
     }),
@@ -1885,6 +1886,9 @@ function AgendaPage() {
               appointmentStatus: timelineDetailAppt.status,
               paidAmount: paid,
             });
+          const attendanceAvailableAt = new Date(
+            new Date(timelineDetailAppt.starts_at).getTime() + attendanceGraceMinutes * 60_000,
+          );
           const canResend = Boolean(
             whatsappAvailable &&
               timelineDetailAppt.clients?.phone &&
@@ -1985,7 +1989,7 @@ function AgendaPage() {
               details={{
                 clientName: timelineDetailAppt.clients?.name ?? "Sem cliente",
                 clientAvatarUrl: timelineDetailAppt.clients?.avatar_url,
-                clientPhone: timelineDetailAppt.clients?.phone,
+                clientPhone: timelineDetailAppt.clients?.display_phone ?? timelineDetailAppt.clients?.phone,
                 serviceName: appointmentServiceLabel(timelineDetailAppt),
                 professionalName: appointmentProfessionalLabel(timelineDetailAppt),
                 jointBooking: isJointBooking,
@@ -2030,6 +2034,20 @@ function AgendaPage() {
                 ),
               }}
               actions={actions}
+              attendanceUnavailableReason={hasJointServiceState
+                ? (timelineDetailAppt.status === "cancelled"
+                    ? "Marcação cancelada: a presença não pode ser registada."
+                    : !owner ? "A presença por serviço está disponível apenas para a proprietária."
+                  : !serviceSegments.some((line) => line.service_state === "confirmed")
+                    ? "Todos os serviços já têm estado definido." : undefined)
+                : timelineDetailAppt.status === "confirmed" && !canConfirm
+                  ? `Compareceu e Faltou ficam disponíveis às ${formatStudioTime(attendanceAvailableAt, studio?.timezone)} (${attendanceGraceMinutes} min após o início), ou após um pagamento elegível.`
+                  : timelineDetailAppt.status === "cancelled"
+                    ? "Marcação cancelada: a presença não pode ser registada."
+                    : timelineDetailAppt.status === "pending_payment"
+                      ? "A presença fica disponível após a confirmação do pagamento e o horário elegível."
+                      : !canCorrectState
+                        ? "Este estado não permite registar ou corrigir a presença." : undefined}
               payment={((!isJointBooking && financialSummary.needsStudioPaymentConfirmation) ||
                 (hasJointServiceState && canOperateJointPayments && jointHasReceivableService && timelineDetailAppt.status !== "cancelled" &&
                   !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id) && split.pending > 0)) ? {
@@ -5223,9 +5241,9 @@ function AppointmentCard({
               <Eye className="h-3.5 w-3.5" />
             </button>
           )}
-          {canUseActions && a.clients?.phone && (
+          {canUseActions && (a.clients?.display_phone ?? a.clients?.phone) && (
             <a
-              href={`tel:${a.clients.phone}`}
+              href={`tel:${a.clients?.display_phone ?? a.clients?.phone}`}
               onClick={(e) => e.stopPropagation()}
               title="Ligar"
               className="hidden md:grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"
@@ -5589,7 +5607,7 @@ function PortalActionMenu({
               <ClientAvatar name={a.clients?.name} avatarUrl={a.clients?.avatar_url} size="sm" />
               <div className="min-w-0">
                 <p className="text-sm font-semibold truncate">{a.clients?.name ?? "Sem cliente"}</p>
-                <p className="text-xs text-muted-foreground">{a.clients?.phone ?? ""}</p>
+                <p className="text-xs text-muted-foreground">{a.clients?.display_phone ?? a.clients?.phone ?? ""}</p>
               </div>
             </div>
             <button
@@ -5615,11 +5633,11 @@ function PortalActionMenu({
                 Receber pagamento
               </SheetItem>
             )}
-            {a.clients?.phone && (
+            {(a.clients?.display_phone ?? a.clients?.phone) && (
               <SheetItem
                 icon={<Phone className="h-4 w-4" />}
                 onClick={() => {
-                  window.open(`tel:${a.clients?.phone}`);
+                  window.open(`tel:${a.clients?.display_phone ?? a.clients?.phone}`);
                   onClose();
                 }}
               >
@@ -5679,11 +5697,11 @@ function PortalActionMenu({
               Receber pagamento
             </DropMenuItem>
           )}
-          {a.clients?.phone && (
+          {(a.clients?.display_phone ?? a.clients?.phone) && (
             <DropMenuItem
               icon={<Phone className="h-3.5 w-3.5" />}
               onClick={() => {
-                window.open(`tel:${a.clients?.phone}`);
+                window.open(`tel:${a.clients?.display_phone ?? a.clients?.phone}`);
                 onClose();
               }}
             >
@@ -6664,7 +6682,7 @@ function appointmentMatchesFilters(
   if (!filters.clientId && filters.client.trim()) {
     const q = normalizeFilterText(filters.client);
     const name = normalizeFilterText(a.clients?.name ?? "");
-    if (!name.includes(q) && !clientPhoneMatches(a.clients?.phone, filters.client)) return false;
+    if (!name.includes(q) && !clientPhoneMatches(a.clients?.display_phone ?? a.clients?.phone, filters.client)) return false;
   }
   if (filters.payment === "online" && ledger.onlineNetCents <= 0) return false;
   if (filters.payment === "studio" && ledger.onsiteNetCents <= 0) return false;

@@ -80,13 +80,13 @@ export async function inspectClientForOwner(db: ProfileDatabase, userId: string,
 
 export async function removeClientsForOwner(db: ProfileDatabase, userId: string, data: z.infer<typeof removeClientsInput>) {
   await requireStudioOwner(db, userId, data.studioId);
-  const { data: outcomes, error } = await (db as any).rpc("remove_clients_for_owner", {
+  const { data: outcomes, error } = await (db as any).rpc("delete_clients_for_owner", {
     p_studio_id: data.studioId,
     p_client_ids: [...new Set(data.clientIds)],
     p_confirmation: data.confirmation,
   });
   if (error) throw new Error(error.message);
-  return outcomes as { client_id: string; outcome: "deleted" | "archived" | "not_found"; dependencies: Record<string, number> }[];
+  return outcomes as { client_id: string; outcome: "deleted" | "not_found"; dependencies: Record<string, number> }[];
 }
 
 export async function unifyEmptyClientForOwner(db: ProfileDatabase, userId: string, data: z.infer<typeof unifyEmptyClientInput>) {

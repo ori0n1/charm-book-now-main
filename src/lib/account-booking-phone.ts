@@ -110,3 +110,28 @@ export function chooseAccountBookingContactRecipient(input: {
   const distinct = new Set(ownedConsentedPhones.map(accountPhoneIdentity));
   return distinct.size === 1 ? ownedConsentedPhones[0] : null;
 }
+
+/** The agenda displays the account preference without changing booking or consent data. */
+export async function addCurrentAccountDisplayPhones<T extends {
+  clients?: { phone?: string | null; auth_user_id?: string | null } | null;
+}>(
+  appointments: T[],
+  lookupPhone: (authUserId: string) => Promise<string>,
+): Promise<T[]> {
+  const accountIds = [...new Set(appointments.map((row) => row.clients?.auth_user_id).filter((id): id is string => Boolean(id)))];
+  const accountPhones = new Map<string, string>();
+  for (let offset = 0; offset < accountIds.length; offset += 10) {
+    const phones = await Promise.all(accountIds.slice(offset, offset + 10).map(lookupPhone));
+    phones.forEach((phone, index) => {
+      if (phone) accountPhones.set(accountIds[offset + index], phone);
+    });
+  }
+  return appointments.map((row) => {
+    if (!row.clients) return row;
+    const { auth_user_id, ...client } = row.clients;
+    return { ...row, clients: {
+      ...client,
+      display_phone: accountPhones.get(auth_user_id ?? "") || client.phone,
+    } } as T;
+  });
+}

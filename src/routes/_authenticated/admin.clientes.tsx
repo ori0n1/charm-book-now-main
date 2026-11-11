@@ -289,8 +289,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       ...(await inspectProfile({ data: { studioId: studio!.id, clientId } })),
     }))),
   });
-  const eligibleCount = (dependencyChecks.data ?? []).filter((row) => Object.keys(row.dependencies).length === 0).length;
-  const protectedCount = (dependencyChecks.data ?? []).length - eligibleCount;
+  const linkedCount = (dependencyChecks.data ?? []).filter((row) => Object.keys(row.dependencies).length > 0).length;
 
   function toggleSelected(clientId: string) {
     setBulkConfirmation("");
@@ -307,7 +306,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
     try {
       const result = await removeProfiles({ data: { studioId: studio.id, clientIds: selectedIds, confirmation: "EXCLUIR" } });
       setBulkOutcomes(result.map((row) => ({ id: row.client_id, name: clients.find((client) => client.id === row.client_id)?.name ?? "Cliente", outcome: row.outcome, dependencies: row.dependencies })));
-      setBulkResult(`${result.filter((row) => row.outcome === "deleted").length} eliminados; ${result.filter((row) => row.outcome === "archived").length} removidos da lista; ${result.filter((row) => row.outcome === "not_found").length} já indisponíveis.`);
+      setBulkResult(`${result.filter((row) => row.outcome === "deleted").length} eliminados; ${result.filter((row) => row.outcome === "not_found").length} já indisponíveis.`);
       setSelectedIds([]);
       setBulkConfirmation("");
       await queryClient.invalidateQueries({ queryKey: ["admin-clients", studio.id] });
@@ -521,14 +520,14 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       </section>
 
       {!selectedClient && bulkResult && <p role="status" className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">{bulkResult}</p>}
-      {!selectedClient && bulkOutcomes.length > 0 && <ul className="space-y-1 rounded-xl border border-border bg-card p-3 text-xs">{bulkOutcomes.map((row) => <li key={row.id} className="break-words"><strong>{row.name}:</strong> {row.outcome === "deleted" ? "eliminado" : row.outcome === "archived" ? `removido da lista; ${describeClientDependencies(row.dependencies)}` : "já indisponível"}</li>)}</ul>}
+      {!selectedClient && bulkOutcomes.length > 0 && <ul className="space-y-1 rounded-xl border border-border bg-card p-3 text-xs">{bulkOutcomes.map((row) => <li key={row.id} className="break-words"><strong>{row.name}:</strong> {row.outcome === "deleted" ? "eliminado" : "já indisponível"}</li>)}</ul>}
       {!selectedClient && bulkError && <p role="alert" className="rounded-xl bg-rose-50 p-3 text-xs text-rose-800">{bulkError}</p>}
 
       {!selectedClient && canRemove && selectedIds.length > 0 && <section className="space-y-2 rounded-2xl border border-rose-200 bg-rose-50/60 p-3 text-xs">
-        <p><strong>{selectedIds.length} selecionados</strong> · {dependencyChecks.isLoading ? "a verificar vínculos" : dependencyChecks.isError ? "não foi possível verificar vínculos" : `${eligibleCount} elegíveis para eliminação · ${protectedCount} protegidos, serão removidos da lista`}</p>
-        <p>Marcações, pagamentos, fidelidade e contas autenticadas permanecem guardados. Registos com vínculos são arquivados.</p>
+        <p><strong>{selectedIds.length} selecionados</strong> · {dependencyChecks.isLoading ? "a verificar vínculos" : dependencyChecks.isError ? "não foi possível verificar vínculos" : `${linkedCount} com histórico a preservar`}</p>
+        <p>As fichas serão excluídas. Marcações, pagamentos, fidelidade e contas autenticadas permanecem guardados.</p>
         <label className="block font-semibold">Escreva EXCLUIR para confirmar<input value={bulkConfirmation} onChange={(event) => setBulkConfirmation(event.target.value)} autoComplete="off" className="mt-1 block h-10 w-full rounded-xl border border-rose-300 bg-white px-3 text-sm sm:max-w-xs" /></label>
-        <button type="button" onClick={removeSelected} disabled={bulkConfirmation.trim().toUpperCase() !== "EXCLUIR" || !dependencyChecks.isSuccess || bulkSaving} className="rounded-xl bg-rose-700 px-4 py-2 font-bold text-white disabled:opacity-50">{bulkSaving ? "A remover..." : "Eliminar selecionados / remover da lista"}</button>
+        <button type="button" onClick={removeSelected} disabled={bulkConfirmation.trim().toUpperCase() !== "EXCLUIR" || !dependencyChecks.isSuccess || bulkSaving} className="rounded-xl bg-rose-700 px-4 py-2 font-bold text-white disabled:opacity-50">{bulkSaving ? "A excluir..." : "Excluir selecionados"}</button>
       </section>}
 
       {selectedClient && (
@@ -1586,18 +1585,18 @@ function ClientDetails({
       </div>}
       {activeTab === "history" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold">Resumo das marcações</h3><button type="button" onClick={() => setShowAppointmentDetails((open) => !open)} className="flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs">{showAppointmentDetails ? "Ocultar" : "Ver detalhes"}<ChevronDown className={`h-3.5 w-3.5 ${showAppointmentDetails ? "rotate-180" : ""}`} /></button></div><div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">{mainAppointmentMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} />)}</div>{showAppointmentDetails && <div className="mt-4 grid grid-cols-3 gap-3 border-t pt-3">{visibleSecondaryMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />)}</div>}</div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><ContextGroup title="Relacionamento" items={relationshipDetails} /><p className="mt-3 text-xs text-slate-500">Último serviço: {client.lastService}</p></div>{explainedTotal !== client.totalAppointments && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Existem estados antigos sem categoria clara. O total mantém todas as marcações reais deste cliente.</p>}{faltasWarning && <p className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.</p>}</div>}
       {activeTab === "preferences" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold"><Heart className="h-5 w-5 text-violet-600" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div>{birthdayToday && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><p className="text-sm font-semibold">Hoje é aniversário deste cliente. Mensagem de aniversário pendente.</p><a href={birthdayWhatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar agora</a></div>}{automationEvents.length > 0 && <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold">Automações do cliente</h3>{automationEvents.map((event) => <p key={event} className="mt-2 text-sm text-slate-600">{event}</p>)}</div>}</div>}
-      {canEdit && <div className="rounded-3xl border border-rose-200 bg-rose-50/80 p-4">
-        <button type="button" onClick={() => { setArchiveOpen((open) => !open); setArchiveError(""); setArchiveConfirmation(""); }} className="flex w-full items-center gap-3 text-left">
+      {canEdit && <div className="min-w-0 rounded-3xl border border-rose-200 bg-rose-50/80 p-4">
+        <button type="button" onClick={() => { setArchiveOpen((open) => !open); setArchiveError(""); setArchiveConfirmation(""); }} className="flex w-full min-w-0 items-center gap-3 text-left">
           <Trash2 className="h-5 w-5 shrink-0 text-rose-600" />
-          <span className="min-w-0 flex-1"><strong className="block text-sm text-rose-700">Remover da lista de clientes</strong><span className="block text-xs leading-relaxed text-slate-600">Elimina registos vazios; arquiva os que têm histórico ou conta ligada.</span></span>
+          <span className="min-w-0 flex-1"><strong className="block break-words text-sm text-rose-700 [overflow-wrap:anywhere]">Excluir cliente do estúdio</strong><span className="block break-words text-xs leading-relaxed text-slate-600 [overflow-wrap:anywhere]">A ficha será excluída; reservas e histórico financeiro serão preservados.</span></span>
           <ChevronDown className={`h-4 w-4 shrink-0 text-rose-600 ${archiveOpen ? "rotate-180" : ""}`} />
         </button>
         {archiveOpen && <div className="mt-4 space-y-2 border-t border-rose-200 pt-4 text-xs text-rose-800">
           {removalInspection.isLoading && <p>A verificar vínculos...</p>}
           {removalInspection.isError && <p role="alert">Não foi possível verificar os vínculos.</p>}
           {removalInspection.data && <p>{Object.keys(removalInspection.data.dependencies).length === 0
-            ? "Sem vínculos: este registo será eliminado definitivamente."
-            : `Vínculos encontrados: ${describeClientDependencies(removalInspection.data.dependencies)}. O cliente será removido da lista e o histórico ficará preservado.`}</p>}
+            ? "Sem vínculos: esta ficha será excluída definitivamente."
+            : `Vínculos encontrados: ${describeClientDependencies(removalInspection.data.dependencies)}. A ficha será excluída e o histórico ficará preservado.`}</p>}
           <label className="block font-semibold">Escreva EXCLUIR para confirmar<input value={archiveConfirmation} onChange={(event) => setArchiveConfirmation(event.target.value)} autoComplete="off" className="mt-1 block h-10 w-full rounded-xl border border-rose-300 bg-white px-3 text-sm text-slate-950" /></label>
           {archiveError && <p role="alert" className="text-rose-700">{archiveError}</p>}
           <button type="button" onClick={archiveClient} disabled={!archiveConfirmationValid || !removalInspection.isSuccess || archiveSaving} className="rounded-xl bg-rose-700 px-4 py-2 font-bold text-white disabled:opacity-50">{archiveSaving ? "A remover..." : "Confirmar remoção"}</button>
