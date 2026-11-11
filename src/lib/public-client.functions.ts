@@ -9,8 +9,11 @@ import {
 import { loadCustomerLoyaltySummaryForClient } from "@/lib/customer-loyalty.functions";
 import { normalizePublicClientEmail } from "@/lib/public-client-identity";
 import {
+  ACCOUNT_CONTACT_CONSENT_VERSION,
+  accountPhoneIdentity,
   authorizeAccountBookingContact,
   changeAccountBookingPhone,
+  hasAccountBookingContactAuthorization,
   normalizeAccountBookingPhone,
   isUsableAccountPhone,
   readAccountPreferredPhone,
@@ -158,11 +161,14 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
         throw new Response("public_client_auth_missing", { status: 401 });
       }
       if (!isUsableAccountPhone(phone)) throw new Error("invalid_public_client_phone");
-      if (phone !== savedPhonePreference) {
+      if (phone !== savedPhonePreference || data.contactConsent) {
         const { error: preferenceError } = await sb.auth.admin.updateUserById(userId, {
-          user_metadata: changeAccountBookingPhone(
-            verifiedUserResult.user.user_metadata, data.studioId, phone,
-          ),
+          user_metadata: data.contactConsent
+            ? authorizeAccountBookingContact(
+                verifiedUserResult.user.user_metadata, data.studioId, phone,
+                new Date().toISOString(),
+              )
+            : changeAccountBookingPhone(verifiedUserResult.user.user_metadata, phone),
         });
         if (preferenceError) throw new Error(preferenceError.message);
       }
@@ -320,6 +326,8 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     const { data: currentUser } = await sb.auth.admin.getUserById(userId);
     const preferredPhone = currentUser?.user?.id === userId
       ? readAccountPreferredPhone(currentUser.user.user_metadata) : "";
+    const accountMetadata = currentUser?.user?.id === userId
+      ? currentUser.user.user_metadata as Record<string, any> | null : null;
     const { data: studio, error: studioError } = await sb
       .from("studios")
       .select(
@@ -353,6 +361,15 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     const latestClient = chooseCanonicalPublicClient(clients ?? [], {
       sessionEmail: email,
     });
+    const accountAuthorized = Boolean(preferredPhone &&
+      hasAccountBookingContactAuthorization(accountMetadata, data.studioId, preferredPhone));
+    const accountConsentAt = accountAuthorized
+      ? accountMetadata?.bellza_booking_contact_authorizations?.[data.studioId]?.acceptedAt ?? null
+      : null;
+    const legacyRowConsent = !accountMetadata?.bellza_booking_phone_revision &&
+      accountPhoneIdentity(latestClient?.phone) !== "" &&
+      accountPhoneIdentity(latestClient?.phone) ===
+        accountPhoneIdentity(preferredPhone || latestClient?.phone);
 
     const inferredAvatarUrl = inferAvatarUrl((context as any).claims);
     if (latestClient?.id && inferredAvatarUrl && latestClient.avatar_url !== inferredAvatarUrl) {
@@ -370,8 +387,9 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
       email,
       avatarUrl: latestClient?.avatar_url ?? inferredAvatarUrl,
       dateOfBirth: latestClient?.date_of_birth ?? null,
-      contactConsentAt: latestClient?.contact_consent_at ?? null,
-      contactConsentVersion: latestClient?.contact_consent_version ?? null,
+      contactConsentAt: accountConsentAt ?? (legacyRowConsent ? latestClient?.contact_consent_at : null) ?? null,
+      contactConsentVersion: accountAuthorized
+        ? ACCOUNT_CONTACT_CONSENT_VERSION : legacyRowConsent ? latestClient?.contact_consent_version ?? null : null,
       policyAcceptedAt: latestClient?.policy_accepted_at ?? null,
       policyVersion: latestClient?.policy_version ?? null,
       totalVisits: Number(latestClient?.total_visits ?? 0),

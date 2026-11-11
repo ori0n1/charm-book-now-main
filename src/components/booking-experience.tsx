@@ -753,7 +753,9 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
   const currentPolicyVersion = getPolicyVersion(studio);
   const hasSavedContactConsent =
     Boolean(clientArea?.profile?.contactConsentAt) &&
-    clientArea?.profile?.contactConsentVersion === PUBLIC_CLIENT_CONTACT_CONSENT_VERSION;
+    clientArea?.profile?.contactConsentVersion === PUBLIC_CLIENT_CONTACT_CONSENT_VERSION &&
+    normalizeSharedInternationalPhone(clientArea?.profile?.phone ?? "") ===
+      normalizeSharedInternationalPhone(client.phone);
   const hasSavedPolicyAcceptance =
     Boolean(clientArea?.profile?.policyAcceptedAt) &&
     clientArea?.profile?.policyVersion === currentPolicyVersion;
@@ -832,8 +834,10 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           email: profile?.email || current.profile.email,
           avatarUrl: profile?.avatarUrl ?? current.profile.avatarUrl,
           dateOfBirth: savedDateOfBirth,
-          contactConsentAt: profile?.contactConsentAt ?? current.profile.contactConsentAt,
-          contactConsentVersion: profile?.contactConsentVersion ?? current.profile.contactConsentVersion,
+          contactConsentAt: options?.persistPhonePreference
+            ? null : profile?.contactConsentAt ?? current.profile.contactConsentAt,
+          contactConsentVersion: options?.persistPhonePreference
+            ? null : profile?.contactConsentVersion ?? current.profile.contactConsentVersion,
           policyAcceptedAt: profile?.policyAcceptedAt ?? current.profile.policyAcceptedAt,
           policyVersion: profile?.policyVersion ?? current.profile.policyVersion,
         },
@@ -1263,7 +1267,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
       if (user?.id) {
         await syncPublicClientProfile({
           phone: client.phone,
-          contactConsent: contactConsent || hasSavedContactConsent,
+          contactConsent,
           policyAccepted: policyAccepted || hasSavedPolicyAcceptance,
           refreshArea: false,
         });
@@ -2336,7 +2340,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
             onInstall={handleInstallApp}
             onDismissInstall={() => setInstallDismissed(true)}
             onEnableNotifications={handleNotificationConsent}
-            onSavePhone={async (phone) => {
+            onSavePhone={async (phone, authorizeContact) => {
               const nextPhone = normalizeSharedInternationalPhone(phone);
               if (!isValidSharedInternationalPhone(nextPhone)) {
                 toast.error("Indique um telefone válido antes de continuar.");
@@ -2344,7 +2348,11 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               }
               setClientProfileSaving(true);
               try {
-                await syncPublicClientProfile({ phone: nextPhone, persistPhonePreference: true, showToast: true });
+                await syncPublicClientProfile({
+                  phone: nextPhone, persistPhonePreference: true,
+                  contactConsent: authorizeContact, showToast: true,
+                });
+                setContactConsent(false);
               } catch (error) {
                 console.error("[public-client] phone save failed", error);
                 toast.error(error instanceof Error ? error.message : "Não foi possível guardar o telefone. Tente novamente.");
@@ -5707,7 +5715,10 @@ function ReviewStep({
           <SharedInternationalPhoneInput
             label="WhatsApp"
             value={client.phone}
-            onChange={(value) => set({ phone: value })}
+            onChange={(value) => {
+              onContactConsentChange(false);
+              set({ phone: value });
+            }}
           />
           <FieldInput
             label="Email (opcional)"
@@ -5972,7 +5983,10 @@ function ReviewStepPremium({
             <SharedInternationalPhoneInput
               label="WhatsApp"
               value={client.phone}
-              onChange={(value) => set({ phone: value })}
+              onChange={(value) => {
+                onContactConsentChange(false);
+                set({ phone: value });
+              }}
             />
           )}
           {showEmailField && (
@@ -6524,7 +6538,7 @@ function PublicClientAccountCard({
   onInstall: () => void;
   onDismissInstall: () => void;
   onEnableNotifications: () => void;
-  onSavePhone: (phone: string) => Promise<void>;
+  onSavePhone: (phone: string, authorizeContact: boolean) => Promise<void>;
   onSaveBirthday: (dateOfBirth: string) => Promise<void>;
   onAutofill: () => void;
   onReload: () => void;
@@ -6796,7 +6810,7 @@ function ClientAccountArea({
   phoneEditorOpen: boolean;
   onPhoneEditorOpenChange: (value: boolean) => void;
   savingProfile: boolean;
-  onSavePhone: (phone: string) => Promise<void>;
+  onSavePhone: (phone: string, authorizeContact: boolean) => Promise<void>;
   onSaveBirthday: (dateOfBirth: string) => Promise<void>;
   loading: boolean;
   onReload: () => void;
@@ -6828,6 +6842,7 @@ function ClientAccountArea({
   const [markingAllNotifications, setMarkingAllNotifications] = useState(false);
   const [birthdayDraft, setBirthdayDraft] = useState(clientProfile?.dateOfBirth ?? "");
   const [birthdayEditorOpen, setBirthdayEditorOpen] = useState(false);
+  const [authorizeEditedPhone, setAuthorizeEditedPhone] = useState(false);
 
   // History filter + expand state
   const [historySearch, setHistorySearch] = useState("");
@@ -7974,12 +7989,18 @@ function ClientAccountArea({
                 <div className="rounded-xl border border-border bg-background/70 p-3">
                   <p className="text-xs font-extrabold text-foreground">{needsPhone ? "Confirme o telefone" : "Atualizar telefone"}</p>
                   <div className="mt-2.5 grid gap-2 sm:grid-cols-[1fr_auto]">
-                    <SharedInternationalPhoneInput value={phoneDraft} onChange={onPhoneDraftChange} />
+                    <SharedInternationalPhoneInput value={phoneDraft} onChange={(value) => {
+                      setAuthorizeEditedPhone(false);
+                      onPhoneDraftChange(value);
+                    }} />
                     <button
                       type="button"
                       onClick={() => {
-                        void onSavePhone(phoneDraft)
-                          .then(() => onPhoneEditorOpenChange(false))
+                        void onSavePhone(phoneDraft, authorizeEditedPhone)
+                          .then(() => {
+                            setAuthorizeEditedPhone(false);
+                            onPhoneEditorOpenChange(false);
+                          })
                           .catch(() => undefined);
                       }}
                       disabled={savingProfile}
@@ -7987,6 +8008,13 @@ function ClientAccountArea({
                     >
                       {savingProfile ? "A guardar" : "Guardar"}
                     </button>
+                  </div>
+                  <div className="mt-3">
+                    <ConsentCheckbox
+                      checked={authorizeEditedPhone}
+                      onChange={setAuthorizeEditedPhone}
+                      label="Autorizo mensagens sobre as minhas marcações neste telefone."
+                    />
                   </div>
                 </div>
               ) : (

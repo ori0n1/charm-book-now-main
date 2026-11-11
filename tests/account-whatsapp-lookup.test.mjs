@@ -9,7 +9,7 @@ const ts = require("typescript");
 const source = readFileSync(new URL("../src/lib/whatsapp.functions.ts", import.meta.url), "utf8");
 const ast = ts.createSourceFile("whatsapp.functions.ts", source, ts.ScriptTarget.ES2022, true);
 const declaration = ast.statements.find((node) => ts.isFunctionDeclaration(node) &&
-  node.name?.text === "resolveAccountMarkerWhatsAppRecipient");
+  node.name?.text === "resolveAppointmentWhatsAppRecipient");
 assert.ok(declaration);
 const compiled = ts.transpileModule(`export ${declaration.getText(ast)}`, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -19,11 +19,14 @@ new Function("exports", "chooseAccountBookingContactRecipient", compiled)(
   exports, chooseAccountBookingContactRecipient,
 );
 
-function syntheticDb({ bookedPhone = "account:marker", authUserId = "account-a", authError = null } = {}) {
+function syntheticDb({ bookedPhone = "account:marker", authUserId = "account-a",
+  authError = null, metadata: suppliedMetadata = null, consentedRow = false } = {}) {
   const queries = [];
   const authReads = [];
   const phone = "+351 912 345 678";
-  const metadata = authorizeAccountBookingContact({}, "studio-a", phone, "2026-11-11T20:00:00Z");
+  const metadata = suppliedMetadata ?? authorizeAccountBookingContact(
+    {}, "studio-a", phone, "2026-11-11T20:00:00Z",
+  );
   const db = {
     auth: { admin: { getUserById: async (id) => {
       authReads.push(id);
@@ -43,7 +46,8 @@ function syntheticDb({ bookedPhone = "account:marker", authUserId = "account-a",
         then(resolve) {
           return Promise.resolve({ data: [
             { studio_id: "studio-a", auth_user_id: authUserId, phone: bookedPhone,
-              contact_consent_at: null, contact_consent_version: null },
+              contact_consent_at: consentedRow ? "2026-11-11T19:00:00Z" : null,
+              contact_consent_version: consentedRow ? "booking-v1" : null },
           ], error: null }).then(resolve);
         },
       };
@@ -57,7 +61,8 @@ const ctx = { appointmentId: "appointment-a", studioId: "studio-a", clientPhone:
 
 test("marker lookup reads only the appointment owner in the same studio", async () => {
   const h = syntheticDb();
-  assert.equal(await exports.resolveAccountMarkerWhatsAppRecipient(h.db, ctx), h.phone);
+  assert.deepEqual(await exports.resolveAppointmentWhatsAppRecipient(h.db, ctx),
+    { accountOwned: true, phone: h.phone });
   assert.deepEqual(h.authReads, ["account-a"]);
   assert.deepEqual(h.queries.map((query) => query.table), ["appointments", "clients", "clients"]);
   assert.ok(h.queries.every((query) => query.filters.some(([key, value]) =>
@@ -68,8 +73,35 @@ test("marker lookup reads only the appointment owner in the same studio", async 
 
 test("a changed appointment client or failed account read cannot supply a phone", async () => {
   const mismatch = syntheticDb({ bookedPhone: "account:different" });
-  assert.equal(await exports.resolveAccountMarkerWhatsAppRecipient(mismatch.db, ctx), null);
+  assert.deepEqual(await exports.resolveAppointmentWhatsAppRecipient(mismatch.db, ctx),
+    { accountOwned: true, phone: null });
   assert.deepEqual(mismatch.authReads, []);
   const unavailable = syntheticDb({ authError: new Error("unavailable") });
-  assert.equal(await exports.resolveAccountMarkerWhatsAppRecipient(unavailable.db, ctx), null);
+  assert.deepEqual(await exports.resolveAppointmentWhatsAppRecipient(unavailable.db, ctx),
+    { accountOwned: true, phone: null });
+});
+
+test("an older appointment with a normal phone uses the account's current phone", async () => {
+  const oldPhone = "+351 911 111 111";
+  const h = syntheticDb({ bookedPhone: oldPhone, consentedRow: true });
+  assert.deepEqual(await exports.resolveAppointmentWhatsAppRecipient(h.db,
+    { ...ctx, clientPhone: oldPhone }), { accountOwned: true, phone: h.phone });
+  assert.deepEqual(h.authReads, ["account-a"]);
+});
+
+test("an older appointment cannot reuse its former number without current authorization", async () => {
+  const oldPhone = "+351 911 111 111";
+  const h = syntheticDb({ bookedPhone: oldPhone, consentedRow: true,
+    metadata: { bellza_booking_phone: "+351 912 345 678",
+      bellza_booking_phone_revision: "new-phone-revision" } });
+  assert.deepEqual(await exports.resolveAppointmentWhatsAppRecipient(h.db,
+    { ...ctx, clientPhone: oldPhone }), { accountOwned: true, phone: null });
+});
+
+test("unlinked appointments keep their existing phone path", async () => {
+  const oldPhone = "+351 911 111 111";
+  const h = syntheticDb({ bookedPhone: oldPhone, authUserId: null });
+  assert.deepEqual(await exports.resolveAppointmentWhatsAppRecipient(h.db,
+    { ...ctx, clientPhone: oldPhone }), { accountOwned: false, phone: oldPhone });
+  assert.deepEqual(h.authReads, []);
 });

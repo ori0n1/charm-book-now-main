@@ -25,7 +25,8 @@ const choose = (metadata, ownedClients = []) => chooseAccountBookingContactRecip
 
 test("an authorized account contact wins over an unlinked historical duplicate", () => {
   const metadata = authorizeAccountBookingContact({}, studioId, phone, acceptedAt);
-  assert.equal(choose(metadata, [row({ auth_user_id: null, phone })]), phone);
+  assert.equal(choose(metadata, [row({ auth_user_id: null, phone }),
+    row({ auth_user_id: "account-b", phone })]), phone);
   assert.equal(hasAccountBookingContactAuthorization(metadata, studioId, phone), true);
 });
 
@@ -51,11 +52,17 @@ test("missing consent, stale consent, and invalid numbers fail closed", () => {
 });
 
 test("editing the number clears its authorization without claiming verification", () => {
-  const initial = authorizeAccountBookingContact({ provider: "google" }, studioId, phone, acceptedAt);
-  const changed = changeAccountBookingPhone(initial, studioId, "+351 900 000 000");
+  const first = authorizeAccountBookingContact({ provider: "google" }, studioId, phone, acceptedAt);
+  const initial = authorizeAccountBookingContact(first, "studio-b", phone, acceptedAt);
+  const changed = changeAccountBookingPhone(initial, "+351 900 000 000");
   assert.equal(changed.provider, "google");
-  assert.equal(choose(changed), null);
+  assert.equal(choose(changed, [row()]), null);
   assert.equal(hasAccountBookingContactAuthorization(changed, studioId, phone), false);
+  assert.equal(hasAccountBookingContactAuthorization(changed, "studio-b", phone), false);
+  const authorizedNew = authorizeAccountBookingContact(changed, studioId, "+351 900 000 000", acceptedAt);
+  assert.equal(choose(authorizedNew, [row()]), "+351 900 000 000");
+  const reverted = changeAccountBookingPhone(authorizedNew, phone);
+  assert.equal(choose(reverted, [row()]), null);
 });
 
 test("conflicting consented account numbers do not select a recipient", () => {

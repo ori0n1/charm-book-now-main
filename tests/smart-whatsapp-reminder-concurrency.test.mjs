@@ -15,10 +15,11 @@ const compiled = ts.transpileModule(`export ${declaration.getText(ast)}`, {
 }).outputText;
 
 function harness({ existingLog = null, synchronizeFirstReads = false,
-  authorizedPhone = '+351900000000', clientPhone = 'account:marker' } = {}) {
+  authorizedPhone = '+351900000000', clientPhone = 'account:marker', accountOwned = true } = {}) {
   const startsAt = '2026-11-08T12:00:00.000Z';
   const key = `arara-reminder-2h-appointment-1-${Date.parse(startsAt)}`;
   const sentKeys = [];
+  const sentTo = [];
   let accountLookups = 0;
   let log = existingLog;
   let firstReads = 0;
@@ -37,9 +38,9 @@ function harness({ existingLog = null, synchronizeFirstReads = false,
     renderMessage: () => 'synthetic reminder',
     sendEmailConfirmationFromContext: async () => null,
     normalizeWhatsAppPhone: (value) => value || null,
-    resolveAccountMarkerWhatsAppRecipient: async () => {
+    resolveAppointmentWhatsAppRecipient: async () => {
       accountLookups += 1;
-      return authorizedPhone;
+      return { accountOwned, phone: accountOwned ? authorizedPhone : clientPhone };
     },
     reserveWhatsAppUsage: async () => ({ allowed: true }),
     insertLog: async (_sb, _ctx, _key, input) => {
@@ -49,8 +50,9 @@ function harness({ existingLog = null, synchronizeFirstReads = false,
       return log;
     },
     updateLog: async (_sb, _id, patch) => { log = { ...log, ...patch }; return log; },
-    getWhatsAppProvider: () => ({ sendText: async ({ idempotencyKey }) => {
+    getWhatsAppProvider: () => ({ sendText: async ({ idempotencyKey, to }) => {
       sentKeys.push(idempotencyKey);
+      sentTo.push(to);
       return { provider: 'senddm', messageId: 'synthetic-message', deliveryStatus: 'DELIVERED', payload: {} };
     } }),
     finalizeWhatsAppUsage: async () => {},
@@ -79,7 +81,8 @@ function harness({ existingLog = null, synchronizeFirstReads = false,
     studioTimezone: 'Europe/Lisbon', studioName: 'Estúdio', serviceName: 'Serviço', clientName: 'Cliente',
     messageKind: 'reminder_2h', autoEnabled: true, template: 'synthetic reminder' };
   const send = () => exports.sendConfirmationFromContext(sb, ctx, key, { skipEmail: true });
-  return { send, sentKeys, key, getLog: () => log, getAccountLookups: () => accountLookups };
+  return { send, sentKeys, sentTo, key, getLog: () => log,
+    getAccountLookups: () => accountLookups };
 }
 
 test('concurrent first attempts claim one log and emit one provider request', async () => {
@@ -106,9 +109,23 @@ test('an account marker without authorized contact does not call the provider', 
   assert.equal(h.getLog().reason, 'account_contact_not_authorized');
 });
 
-test('an ordinary client phone keeps the existing route', async () => {
-  const h = harness({ clientPhone: '+351900000000' });
+test('an unlinked client phone keeps the existing route', async () => {
+  const h = harness({ clientPhone: '+351911111111', accountOwned: false });
   await h.send();
   assert.deepEqual(h.sentKeys, [h.key]);
-  assert.equal(h.getAccountLookups(), 0);
+  assert.deepEqual(h.sentTo, ['+351911111111']);
+  assert.equal(h.getAccountLookups(), 1);
+});
+
+test('an older account reservation sends to the current authorized phone', async () => {
+  const h = harness({ clientPhone: '+351911111111', authorizedPhone: '+351900000000' });
+  await h.send();
+  assert.deepEqual(h.sentTo, ['+351900000000']);
+});
+
+test('an older account reservation does not send to its old phone without authorization', async () => {
+  const h = harness({ clientPhone: '+351911111111', authorizedPhone: null });
+  await h.send();
+  assert.deepEqual(h.sentTo, []);
+  assert.equal(h.getLog().reason, 'account_contact_not_authorized');
 });

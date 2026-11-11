@@ -444,11 +444,10 @@ async function sendConfirmationFromContext(
     });
   }
 
-  const accountMarker = /^account:/i.test(ctx.clientPhone);
-  const accountContact = accountMarker && ctx.autoEnabled
-    ? await resolveAccountMarkerWhatsAppRecipient(sb, ctx)
-    : ctx.clientPhone;
-  const recipient = normalizeWhatsAppPhone(accountContact);
+  const accountContact = ctx.autoEnabled
+    ? await resolveAppointmentWhatsAppRecipient(sb, ctx)
+    : { accountOwned: false, phone: ctx.clientPhone };
+  const recipient = normalizeWhatsAppPhone(accountContact.phone);
   const providerIdempotencyKey = options.explicitRetry
     ? sendDmExplicitRetryKey(idempotencyKey, existing, recipient)
     : idempotencyKey;
@@ -476,9 +475,9 @@ async function sendConfirmationFromContext(
     });
     const log = await insertLog(sb, ctx, idempotencyKey, {
       status: "skipped",
-      reason: accountMarker ? "account_contact_not_authorized" : "invalid_phone",
+      reason: accountContact.accountOwned ? "account_contact_not_authorized" : "invalid_phone",
       message: rendered,
-      recipientPhone: accountMarker ? null : ctx.clientPhone || null,
+      recipientPhone: accountContact.accountOwned ? null : ctx.clientPhone || null,
       provider: WHATSAPP_PROVIDER,
     });
     await emailPromise;
@@ -2232,17 +2231,19 @@ async function loadAppointmentConfirmationContext(
   };
 }
 
-async function resolveAccountMarkerWhatsAppRecipient(
+async function resolveAppointmentWhatsAppRecipient(
   sb: any, ctx: ConfirmationContext,
-): Promise<string | null> {
-  if (!ctx.appointmentId) return null;
+): Promise<{ accountOwned: boolean; phone: string | null }> {
+  if (!ctx.appointmentId) return /^account:/i.test(ctx.clientPhone)
+    ? { accountOwned: true, phone: null }
+    : { accountOwned: false, phone: ctx.clientPhone };
   const { data: appointment, error: appointmentError } = await sb
     .from("appointments")
     .select("client_id")
     .eq("id", ctx.appointmentId)
     .eq("studio_id", ctx.studioId)
     .maybeSingle();
-  if (appointmentError || !appointment?.client_id) return null;
+  if (appointmentError || !appointment?.client_id) return { accountOwned: true, phone: null };
   const { data: bookedClient, error: clientError } = await sb
     .from("clients")
     .select("auth_user_id,phone")
@@ -2250,7 +2251,12 @@ async function resolveAccountMarkerWhatsAppRecipient(
     .eq("studio_id", ctx.studioId)
     .maybeSingle();
   const authUserId = String(bookedClient?.auth_user_id ?? "");
-  if (clientError || !authUserId || bookedClient?.phone !== ctx.clientPhone) return null;
+  if (clientError || bookedClient?.phone !== ctx.clientPhone) {
+    return { accountOwned: true, phone: null };
+  }
+  if (!authUserId) return /^account:/i.test(ctx.clientPhone)
+    ? { accountOwned: true, phone: null }
+    : { accountOwned: false, phone: ctx.clientPhone };
   const [{ data: ownedClients, error: ownedError }, { data: auth, error: authError }] =
     await Promise.all([
       sb.from("clients")
@@ -2260,13 +2266,16 @@ async function resolveAccountMarkerWhatsAppRecipient(
         .is("archived_at", null),
       sb.auth.admin.getUserById(authUserId),
     ]);
-  if (ownedError || authError || auth?.user?.id !== authUserId) return null;
-  return chooseAccountBookingContactRecipient({
+  if (ownedError || authError || auth?.user?.id !== authUserId) {
+    return { accountOwned: true, phone: null };
+  }
+  const phone = chooseAccountBookingContactRecipient({
     studioId: ctx.studioId,
     authUserId,
     metadata: auth.user.user_metadata,
     ownedClients: ownedClients ?? [],
   });
+  return { accountOwned: true, phone };
 }
 
 async function loadStudioWhatsApp(sb: any, studioId: string) {

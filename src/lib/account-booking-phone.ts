@@ -19,6 +19,7 @@ export function readAccountPreferredPhone(metadata: unknown): string {
 
 export const ACCOUNT_CONTACT_CONSENT_VERSION = "booking-v1";
 const ACCOUNT_CONTACT_AUTHORIZATIONS_KEY = "bellza_booking_contact_authorizations";
+const ACCOUNT_PHONE_REVISION_KEY = "bellza_booking_phone_revision";
 
 function metadataRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -37,27 +38,30 @@ export function authorizeAccountBookingContact(
   metadata: unknown, studioId: string, phone: string, acceptedAt: string,
 ): Record<string, unknown> {
   const current = metadataRecord(metadata);
-  const authorizations = metadataRecord(current[ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]);
+  const samePhone = accountPhoneIdentity(readAccountPreferredPhone(current)) === accountPhoneIdentity(phone);
+  const authorizations = samePhone ? metadataRecord(current[ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]) : {};
+  const revision = samePhone ? current[ACCOUNT_PHONE_REVISION_KEY] : crypto.randomUUID();
   return {
     ...current,
     bellza_booking_phone: phone,
+    [ACCOUNT_PHONE_REVISION_KEY]: revision,
     [ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]: {
       ...authorizations,
-      [studioId]: { phone, acceptedAt, version: ACCOUNT_CONTACT_CONSENT_VERSION },
+      [studioId]: { phone, acceptedAt, version: ACCOUNT_CONTACT_CONSENT_VERSION, revision },
     },
   };
 }
 
 export function changeAccountBookingPhone(
-  metadata: unknown, studioId: string, phone: string,
+  metadata: unknown, phone: string,
 ): Record<string, unknown> {
   const current = metadataRecord(metadata);
-  const authorizations = { ...metadataRecord(current[ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]) };
-  if (accountPhoneIdentity(readAccountPreferredPhone(current)) !== accountPhoneIdentity(phone)) {
-    delete authorizations[studioId];
-  }
+  const samePhone = accountPhoneIdentity(readAccountPreferredPhone(current)) === accountPhoneIdentity(phone);
   return { ...current, bellza_booking_phone: phone,
-    [ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]: authorizations };
+    [ACCOUNT_PHONE_REVISION_KEY]: samePhone
+      ? current[ACCOUNT_PHONE_REVISION_KEY] : crypto.randomUUID(),
+    [ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]: samePhone
+      ? metadataRecord(current[ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]) : {} };
 }
 
 export function hasAccountBookingContactAuthorization(
@@ -66,7 +70,9 @@ export function hasAccountBookingContactAuthorization(
   const current = metadataRecord(metadata);
   const authorizations = metadataRecord(current[ACCOUNT_CONTACT_AUTHORIZATIONS_KEY]);
   const authorization = metadataRecord(authorizations[studioId]);
+  const revision = current[ACCOUNT_PHONE_REVISION_KEY];
   return authorization.version === ACCOUNT_CONTACT_CONSENT_VERSION &&
+    (typeof revision !== "string" || authorization.revision === revision) &&
     typeof authorization.acceptedAt === "string" &&
     Number.isFinite(Date.parse(authorization.acceptedAt)) &&
     accountPhoneIdentity(authorization.phone) !== "" &&
@@ -95,8 +101,10 @@ export function chooseAccountBookingContactRecipient(input: {
     .filter((phone) => accountPhoneIdentity(phone) !== "");
   if (preferred) {
     const key = accountPhoneIdentity(preferred);
+    const current = metadataRecord(input.metadata);
     return hasAccountBookingContactAuthorization(input.metadata, input.studioId, preferred) ||
-      ownedConsentedPhones.some((phone) => accountPhoneIdentity(phone) === key)
+      (typeof current[ACCOUNT_PHONE_REVISION_KEY] !== "string" &&
+        ownedConsentedPhones.some((phone) => accountPhoneIdentity(phone) === key))
       ? preferred : null;
   }
   const distinct = new Set(ownedConsentedPhones.map(accountPhoneIdentity));
