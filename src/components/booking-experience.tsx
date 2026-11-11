@@ -772,6 +772,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
 
   async function syncPublicClientProfile(options?: {
     phone?: string;
+    persistPhonePreference?: boolean;
     dateOfBirth?: string | null;
     contactConsent?: boolean;
     policyAccepted?: boolean;
@@ -796,6 +797,7 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           studioId: studio.id,
           name: clientArea?.profile?.name || client.name || getGoogleDisplayName(user) || user.email.split("@")[0],
           ...(nextPhone ? { phone: nextPhone } : {}),
+          ...(options?.persistPhonePreference ? { persistPhonePreference: true } : {}),
           email: user.email,
           avatarUrl: getGoogleAvatarUrl(user),
           ...(typeof dateOfBirth === "undefined" || dateOfBirth === null ? {} : { dateOfBirth }),
@@ -2337,15 +2339,15 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
             onSavePhone={async (phone) => {
               const nextPhone = normalizeSharedInternationalPhone(phone);
               if (!isValidSharedInternationalPhone(nextPhone)) {
-                toast.error("Indique um WhatsApp válido antes de continuar.");
+                toast.error("Indique um telefone válido antes de continuar.");
                 throw new Error("invalid_public_client_phone");
               }
               setClientProfileSaving(true);
               try {
-                await syncPublicClientProfile({ phone: nextPhone, showToast: true });
+                await syncPublicClientProfile({ phone: nextPhone, persistPhonePreference: true, showToast: true });
               } catch (error) {
                 console.error("[public-client] phone save failed", error);
-                toast.error(error instanceof Error ? error.message : "Não foi possível guardar o WhatsApp. Tente novamente.");
+                toast.error(error instanceof Error ? error.message : "Não foi possível guardar o telefone. Tente novamente.");
                 throw error;
               } finally {
                 setClientProfileSaving(false);
@@ -7970,7 +7972,7 @@ function ClientAccountArea({
               )}
               {needsPhone || phoneEditorOpen ? (
                 <div className="rounded-xl border border-border bg-background/70 p-3">
-                  <p className="text-xs font-extrabold text-foreground">{needsPhone ? "Confirme o WhatsApp" : "Atualizar WhatsApp"}</p>
+                  <p className="text-xs font-extrabold text-foreground">{needsPhone ? "Confirme o telefone" : "Atualizar telefone"}</p>
                   <div className="mt-2.5 grid gap-2 sm:grid-cols-[1fr_auto]">
                     <SharedInternationalPhoneInput value={phoneDraft} onChange={onPhoneDraftChange} />
                     <button
@@ -7990,7 +7992,7 @@ function ClientAccountArea({
               ) : (
                 <div className="flex items-center justify-between gap-3 rounded-xl bg-muted/50 px-3 py-2.5">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">WhatsApp</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted-foreground">Telefone da conta</p>
                     <p className="mt-0.5 text-sm font-semibold text-foreground">{savedPhone}</p>
                   </div>
                   <button

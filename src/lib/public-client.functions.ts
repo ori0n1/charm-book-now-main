@@ -8,6 +8,7 @@ import {
 } from "@/lib/booking-manageability";
 import { loadCustomerLoyaltySummaryForClient } from "@/lib/customer-loyalty.functions";
 import { normalizePublicClientEmail } from "@/lib/public-client-identity";
+import { normalizeAccountBookingPhone, isUsableAccountPhone, readAccountPreferredPhone } from "@/lib/account-booking-phone";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { sendWebPush } from "@/lib/web-push.server";
 import { formatStudioDateTime } from "@/lib/studio-time";
@@ -45,6 +46,7 @@ const EnsurePublicClientProfileInput = z.object({
   contactConsent: z.boolean().optional(),
   policyAccepted: z.boolean().optional(),
   policyVersion: z.string().trim().optional().nullable(),
+  persistPhonePreference: z.boolean().optional(),
 });
 
 type AppointmentRow = {
@@ -116,14 +118,17 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const claims = (context as any).claims as Record<string, any>;
     const userId = String((context as any).userId ?? claims?.sub ?? "").trim();
+    if (!userId) throw new Response("public_client_auth_missing", { status: 401 });
+    const sb = getAdminClient();
     // Form fields and user_metadata are not proof of email ownership.
-    const { data: verifiedUserResult, error: verifiedUserError } = await (context as any).supabase.auth.getUser();
+    const { data: verifiedUserResult, error: verifiedUserError } = await sb.auth.admin.getUserById(userId);
     if (verifiedUserError) throw new Error(verifiedUserError.message);
     const email = verifiedUserResult?.user?.id === userId && verifiedUserResult.user.email_confirmed_at
       ? normalizePublicClientEmail(verifiedUserResult.user.email) : "";
     const inferredName = inferName(claims);
     const name = String(data.name ?? inferredName ?? email.split("@")[0] ?? "").trim();
-    const phone = normalizePhone(data.phone ?? inferPhone(claims));
+    const savedPhonePreference = readAccountPreferredPhone(verifiedUserResult?.user?.user_metadata);
+    const phone = normalizeAccountBookingPhone(data.phone ?? (savedPhonePreference || inferPhone(claims)));
     const storedPhone = phone || existingAccountPhone(userId);
     const avatarUrl = data.avatarUrl ?? inferAvatarUrl(claims);
     const hasDateOfBirthInput = Object.prototype.hasOwnProperty.call(data, "dateOfBirth");
@@ -131,10 +136,8 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       ? normalizeDateOfBirth(data.dateOfBirth)
       : normalizeDateOfBirth(inferDateOfBirth(claims));
 
-    if (!userId) throw new Response("public_client_auth_missing", { status: 401 });
     if (name.length < 2) throw new Error("public_client_name_missing");
 
-    const sb = getAdminClient();
     const { data: studio, error: studioError } = await sb
       .from("studios")
       .select("id")
@@ -143,6 +146,23 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       .maybeSingle();
     if (studioError) throw new Error(studioError.message);
     if (!studio) throw new Response("studio_not_found", { status: 404 });
+
+    if (data.persistPhonePreference) {
+      if (verifiedUserResult?.user?.id !== userId) {
+        throw new Response("public_client_auth_missing", { status: 401 });
+      }
+      if (!isUsableAccountPhone(phone)) throw new Error("invalid_public_client_phone");
+      if (phone !== savedPhonePreference) {
+        const { error: preferenceError } = await sb.auth.admin.updateUserById(userId, {
+          user_metadata: { bellza_booking_phone: phone },
+        });
+        if (preferenceError) throw new Error(preferenceError.message);
+      }
+      // A chosen contact number is never used to claim another client's row.
+      // Booking and payment resolve ownership from the authenticated user ID.
+      return { profile: { id: null, name, phone, email, avatarUrl, dateOfBirth,
+        accountKind: "account", needsPhone: false } };
+    }
 
     if (!email) {
       return { profile: { id: null, name, phone, email: "", avatarUrl, dateOfBirth,
@@ -249,7 +269,7 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
       profile: {
         id: client.id,
         name: client.name,
-        phone: publicPhone(client.phone),
+        phone: phone || publicPhone(client.phone),
         email: client.email,
         avatarUrl: client.avatar_url,
         dateOfBirth: client.date_of_birth,
@@ -258,7 +278,7 @@ export const ensurePublicClientProfile = createServerFn({ method: "POST" })
         contactConsentVersion: client.contact_consent_version,
         policyAcceptedAt: client.policy_accepted_at,
         policyVersion: client.policy_version,
-        needsPhone: !publicPhone(client.phone),
+        needsPhone: !phone && !publicPhone(client.phone),
       },
     };
   });
@@ -274,6 +294,9 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
     }
 
     const sb = getAdminClient();
+    const { data: currentUser } = await sb.auth.admin.getUserById(userId);
+    const preferredPhone = currentUser?.user?.id === userId
+      ? readAccountPreferredPhone(currentUser.user.user_metadata) : "";
     const { data: studio, error: studioError } = await sb
       .from("studios")
       .select(
@@ -320,7 +343,7 @@ export const getPublicClientArea = createServerFn({ method: "POST" })
 
     const profile = {
       name: latestClient?.name ?? inferName((context as any).claims),
-      phone: publicPhone(latestClient?.phone),
+      phone: preferredPhone || publicPhone(latestClient?.phone),
       email,
       avatarUrl: latestClient?.avatar_url ?? inferredAvatarUrl,
       dateOfBirth: latestClient?.date_of_birth ?? null,
@@ -883,11 +906,11 @@ function inferAvatarUrl(claims: Record<string, unknown>) {
 
 function inferPhone(claims: Record<string, unknown>) {
   const metadata = (claims.user_metadata ?? claims.raw_user_meta_data ?? {}) as Record<string, unknown>;
-  return typeof metadata.phone === "string"
+  return readAccountPreferredPhone(metadata) || (typeof metadata.phone === "string"
     ? metadata.phone
     : typeof metadata.phone_number === "string"
       ? metadata.phone_number
-      : "";
+      : "");
 }
 
 function inferDateOfBirth(claims: Record<string, unknown>) {
@@ -951,13 +974,6 @@ function normalizeDateOfBirth(value: unknown) {
   return `${String(match.year).padStart(4, "0")}-${String(match.month).padStart(2, "0")}-${String(
     match.day,
   ).padStart(2, "0")}`;
-}
-
-function normalizePhone(value: string | undefined | null) {
-  return String(value ?? "")
-    .trim()
-    .replace(/[^\d+\s]/g, "")
-    .replace(/\s+/g, " ");
 }
 
 function existingAccountPhone(userId: string) {

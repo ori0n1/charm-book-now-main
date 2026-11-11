@@ -163,3 +163,21 @@ phone comparator. Therefore byte-for-byte artifact parity to the active
 version is not claimed. A 0%-traffic candidate and remote smoke are still
 needed before considering customer traffic. No payment was attempted and no
 Worker version was uploaded or activated.
+
+## Authenticated account phone editing — candidate extension
+
+The owner also required an authenticated customer to edit the account phone
+even if another client row already uses it. The prior profile resolver returns
+manual review for that collision, and the old profile writer preserved the
+existing client row phone even after the editor accepted a replacement.
+The Worker candidate now saves an explicit phone edit as the signed-in user's
+`bellza_booking_phone` preference in Supabase Auth metadata, scoped to the
+verified user ID. The account drawer reads that preference on reload. It is
+display data only: authorization, client-row ownership, appointment linkage,
+WhatsApp routing and Stripe payment ownership continue to use their existing
+separate checks. The edit never modifies or claims another client's row and
+requires no new SQL migration. During a new booking, the preferred number can
+be submitted normally; the already-applied SQL migration routes a shared
+number to an account-owned non-contact marker. The customer then enters any
+eligible MB Way number at Stripe Checkout. No real account metadata was
+changed during testing.
