@@ -114,6 +114,8 @@ lack execute on the protected helper and wrappers; service_role retained
 execute on both wrappers. The original individual booking function remained
 `733296c0b6027bc73c95d0a41f41276e`. A GET of the public booking page
 returned HTTP 200. No new booking was made in the smoke test.
+This second migration was also applied manually; its presence in the
+Supabase migration ledger was not verified under the authorized read role.
 
 Rollback file: `supabase/rollback/20261111190000_authenticated_booking_owned_client_resolution.sql`.
 It preserves existing bookings and client rows, but restoring the old guard
