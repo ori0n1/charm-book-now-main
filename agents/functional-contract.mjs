@@ -1,6 +1,7 @@
 export const FUNCTIONAL_DOMAINS = Object.freeze({
   agenda: Object.freeze({
     loadErrors: ["AGENDA_LOAD_FAILED", "critical"],
+    queryErrors: ["AGENDA_QUERY_FAILED", "critical"],
     availabilityMismatches: ["AGENDA_AVAILABILITY_MISMATCH", "warning"],
   }),
   reservas: Object.freeze({
@@ -42,7 +43,8 @@ const exactKeys = (value, expected) => value && typeof value === "object" &&
 // fail closed before any report or history write.
 export function validateFunctionalSnapshot(input) {
   if (!exactKeys(input, ["schema", "source", "observedAt", "studios"]) ||
-      input.schema !== 1 || input.source !== "SYNTHETIC_FIXTURE" ||
+      input.schema !== 1 ||
+      !["SYNTHETIC_FIXTURE", "RLS_AGGREGATE_READ"].includes(input.source) ||
       !Number.isFinite(Date.parse(input.observedAt)) ||
       !Array.isArray(input.studios) || input.studios.length < 1 ||
       input.studios.length > 10) throw new Error("FUNCTIONAL_INPUT_UNSAFE");
@@ -69,7 +71,7 @@ export function validateFunctionalSnapshot(input) {
     }
     return result;
   });
-  return { schema: 1, source: "SYNTHETIC_FIXTURE",
+  return { schema: 1, source: input.source,
     observedAt: input.observedAt, studios };
 }
 

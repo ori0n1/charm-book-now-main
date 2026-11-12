@@ -7,7 +7,7 @@ const emptyStudio = (studioCode) => ({
 });
 
 export function functionalFixture(scenario, { now = () => new Date() } = {}) {
-  if (!["baseline", "issues", "recovery", "proof"].includes(scenario)) {
+  if (!["baseline", "issues", "recovery", "proof", "agenda-reservas"].includes(scenario)) {
     throw new Error("INVALID_FUNCTIONAL_SCENARIO");
   }
   const studios = [emptyStudio("STUDIO_27"), emptyStudio("STUDIO_EXEMPLO")];
@@ -28,6 +28,13 @@ export function functionalFixture(scenario, { now = () => new Date() } = {}) {
       code: "AGENDA_AVAILABILITY_MISMATCH",
       causeCode: "SYNTHETIC_CAPACITY_RULE_MISMATCH",
     };
+  }
+  if (scenario === "agenda-reservas") {
+    studios[0].agenda.loadErrors = 2;
+    studios[0].agenda.queryErrors = 1;
+    studios[0].agenda.availabilityMismatches = 1;
+    studios[0].reservas.stateInconsistencies = 1;
+    studios[0].reservas.processingFailures = 1;
   }
   return {
     snapshot: { schema: 1, source: "SYNTHETIC_FIXTURE",

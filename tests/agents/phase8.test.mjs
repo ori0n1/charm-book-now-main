@@ -128,7 +128,7 @@ test("modo real não consulta rede nem transforma ausência de dados em recupera
     assert.equal(report.activeIssueCount, 7);
     assert.equal(report.integrations.length, 5);
     assert.ok(report.integrations.every((item) =>
-      item.status.startsWith("PENDING_")));
+      item.status.startsWith("PENDING_") || item.status.startsWith("BLOCKED_")));
   } finally { globalThis.fetch = originalFetch; }
 }));
 

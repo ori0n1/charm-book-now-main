@@ -75,8 +75,9 @@ export function diagnoseFunctional({ monitoring, syntheticProof = null,
   };
   if (!monitoring || monitoring.agent !== "sentinela" ||
       !Array.isArray(monitoring.anomalies) ||
-      monitoring.mode !== "SYNTHETIC_SIMULATION") return report;
-  const proofValid = monitoring.anomalies.length === 1 &&
+      !["SYNTHETIC_SIMULATION", "ADAPTER_SIMULATION"].includes(monitoring.mode)) return report;
+  const proofValid = monitoring.mode === "SYNTHETIC_SIMULATION" &&
+    monitoring.anomalies.length === 1 &&
     syntheticProof?.studioCode === monitoring.anomalies[0].studioCode &&
     syntheticProof?.code === monitoring.anomalies[0].code &&
     syntheticProof?.causeCode === "SYNTHETIC_CAPACITY_RULE_MISMATCH" &&

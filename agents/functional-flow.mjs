@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import { DEFAULT_STATE_DIR, acquireAtlasLock, appendAtlasEvent } from "./atlas.mjs";
 import { FUNCTIONAL_INTEGRATIONS } from "./functional-contract.mjs";
+import { collectAgendaReservationAggregates,
+  inspectLocalAgendaReservationAccess } from "./agenda-reservas-source.mjs";
 import { functionalFixture } from "./functional-fixtures.mjs";
 import { inspectFunctionalSnapshot } from "./sentinela.mjs";
 import { diagnoseFunctional } from "./sherlock.mjs";
@@ -11,9 +13,9 @@ import { runValida } from "./valida.mjs";
 import { reviewFunctional } from "./guardiao.mjs";
 
 const RETENTION = 1440;
-// At most 10 studios x 13 metrics may be present in either snapshot.
+// At most 10 studios x 14 metrics may be present in either snapshot.
 // Keep enough space for simultaneous recoveries and new issues.
-const MAX_EVENTS = 260;
+const MAX_EVENTS = 280;
 const runId = () => randomUUID();
 const issueKey = (item) => `${item.studioCode}:${item.code}`;
 
@@ -73,14 +75,22 @@ export function formatFunctionalReport(report) {
     `# Atlas — verificação funcional ${report.status}`, "",
     `Fluxo: ${report.flowId}`, `Modo: ${report.mode}`,
     report.mode === "SYNTHETIC_SIMULATION"
-      ? "Dados e estúdios desta execução são fixtures sintéticas; não representam produção."
-      : "Sem fonte funcional RLS autorizada: nenhuma consulta funcional remota foi executada.",
+      ? "Dados desta execução são fixtures sintéticas; não representam produção."
+      : report.mode === "ADAPTER_SIMULATION"
+        ? "Adaptador e prova simulados em teste local; não representam uma sessão SQL real."
+        : "Sem fonte funcional RLS autorizada: nenhuma consulta funcional remota foi executada.",
+    `Acesso agenda/reservas: ${report.accessStatus ?? "não aplicável"}.`,
+    `Integração funcional: ${report.integrationState}.`,
     "", "## Integrações reais", "",
     ...report.integrations.map((item) => `- ${item.domain}: ${item.status}`),
     "", "## Anomalias observadas", "",
     ...(report.anomalies.length ? report.anomalies.map((item) =>
       `- ${item.studioCode} / ${item.domain}: ${item.code} [${item.severity}], contagem agregada ${item.evidence.aggregateCount}.`)
       : ["- Nenhuma anomalia funcional comprovada."]),
+    "", "## Resumo por estúdio", "",
+    ...(report.studioSummary.length ? report.studioSummary.map((item) =>
+      `- ${item.studioCode}: ${item.issueCount} anomalia(s) nos domínios verificados.`)
+      : ["- Sem agregados por estúdio autorizados nesta execução."]),
     "", "## Alertas locais novos ou recuperados", "",
     ...(report.events.length ? report.events.map((item) =>
       `- ${item.kind} ${item.severity}: ${item.studioCode} / ${item.code}.`)
@@ -99,20 +109,37 @@ export function formatFunctionalReport(report) {
 export async function runFunctionalCheck({
   mode = "live", scenario = "baseline", stateDir = DEFAULT_STATE_DIR,
   now = () => new Date(), validate = () => runValida(),
+  source = null, studioCodes = [], accessCheck = inspectLocalAgendaReservationAccess,
 } = {}) {
-  if (!["live", "synthetic"].includes(mode)) throw new Error("INVALID_FUNCTIONAL_MODE");
+  if (!["live", "synthetic", "adapter-test"].includes(mode)) {
+    throw new Error("INVALID_FUNCTIONAL_MODE");
+  }
   const flowId = runId();
   const release = acquireAtlasLock(stateDir, flowId, "functional-check", now);
   try {
     const state = readState(stateDir);
     const fixture = mode === "synthetic" ? functionalFixture(scenario, { now }) : null;
+    const adapterSnapshot = mode === "adapter-test"
+      ? await collectAgendaReservationAggregates({ source, studioCodes, now }) : null;
+    const snapshot = fixture?.snapshot ?? adapterSnapshot;
+    const accessStatus = mode === "live" ? accessCheck().status :
+      mode === "adapter-test" ? "SIMULATED_PROOF_ONLY" : null;
+    const integrations = mode === "adapter-test"
+      ? FUNCTIONAL_INTEGRATIONS.map((item) => ["agenda", "reservas"].includes(item.domain)
+        ? { domain: item.domain, status: "SIMULATED_RLS_READ" } : item)
+      : mode === "live"
+        ? FUNCTIONAL_INTEGRATIONS.map((item) => ["agenda", "reservas"].includes(item.domain)
+          ? { domain: item.domain, status: accessStatus } : item)
+        : FUNCTIONAL_INTEGRATIONS;
     const observedAt = now().toISOString();
     const monitoring = {
       agent: "sentinela", runId: runId(), observedAt,
-      mode: fixture ? "SYNTHETIC_SIMULATION" : "LIVE_INTEGRATIONS_DISABLED",
-      status: fixture ? "OBSERVADO_EM_FIXTURE" : "INDETERMINADO",
-      anomalies: fixture ? inspectFunctionalSnapshot(fixture.snapshot) : [],
-      integrations: FUNCTIONAL_INTEGRATIONS,
+      mode: fixture ? "SYNTHETIC_SIMULATION" :
+        adapterSnapshot ? "ADAPTER_SIMULATION" : "LIVE_INTEGRATIONS_DISABLED",
+      status: snapshot ? fixture ? "OBSERVADO_EM_FIXTURE" : "OBSERVADO_COM_RLS"
+        : "INDETERMINADO",
+      anomalies: snapshot ? inspectFunctionalSnapshot(snapshot) : [],
+      integrations,
     };
     appendAtlasEvent(stateDir, { id: monitoring.runId, agent: "sentinela",
       state: "COMPLETED", flowId, status: monitoring.status, at: observedAt });
@@ -153,14 +180,23 @@ export async function runFunctionalCheck({
         monitoring.runId, diagnosis.runId, proposal.runId, validation.runId],
       status: opinion.status, at: now().toISOString() });
     const comparison = compareIssues(state.last,
-      fixture ? monitoring.anomalies : null);
+      snapshot ? monitoring.anomalies : null);
     const status = fixture
       ? monitoring.anomalies.length ? "ANOMALIAS_SINTETICAS" : "SEM_ANOMALIAS_SINTETICAS"
-      : "PENDENTE_ACESSO_FUNCIONAL";
+      : adapterSnapshot
+        ? monitoring.anomalies.length ? "ANOMALIAS_ADAPTADOR_SIMULADO"
+          : "SEM_ANOMALIAS_ADAPTADOR_SIMULADO"
+        : "PENDENTE_ACESSO_FUNCIONAL";
     const report = {
       flowId, observedAt, mode: monitoring.mode, status,
-      integrations: FUNCTIONAL_INTEGRATIONS,
+      integrations, accessStatus,
+      integrationState: adapterSnapshot || fixture ? "SIMULACAO" : "BLOQUEADA",
       anomalies: monitoring.anomalies,
+      studioSummary: snapshot ? snapshot.studios.map((item) => ({
+        studioCode: item.studioCode,
+        issueCount: monitoring.anomalies.filter((anomaly) =>
+          anomaly.studioCode === item.studioCode).length,
+      })) : [],
       events: comparison.events, omittedEvents: comparison.omittedEvents ?? 0,
       activeIssueCount: comparison.issues.length,
       causeSummary: diagnosis.findings.length
@@ -184,7 +220,7 @@ export async function runFunctionalCheck({
     };
     const next = {
       schema: 1,
-      last: fixture ? { runId: monitoring.runId, issues: comparison.issues } : state.last,
+      last: snapshot ? { runId: monitoring.runId, issues: comparison.issues } : state.last,
       journal: [...state.journal, {
         flowId, at: observedAt, mode: report.mode, status,
         issueKeys: comparison.issues.map(issueKey),
