@@ -145,6 +145,39 @@ BEGIN
       RETURN NEXT;
       CONTINUE;
     END IF;
+    -- Hold every single-column client reference while checking its tenant.
+    -- The client row lock blocks new FK references; these row locks also block
+    -- a concurrent studio_id change before the same-studio detachments below.
+    PERFORM 1 FROM public.client_manual_whatsapp_confirmations AS a
+      WHERE a.client_id = v_id FOR UPDATE;
+    PERFORM 1 FROM public.customer_loyalty_rewards AS a
+      WHERE a.client_id = v_id FOR UPDATE;
+    PERFORM 1 FROM public.customer_loyalty_stamp_entries AS a
+      WHERE a.client_id = v_id FOR UPDATE;
+    PERFORM 1 FROM public.customer_referral_codes AS a
+      WHERE a.referrer_client_id = v_id FOR UPDATE;
+    PERFORM 1 FROM public.customer_referrals AS a
+      WHERE a.referrer_client_id = v_id OR a.referred_client_id = v_id FOR UPDATE;
+    PERFORM 1 FROM public.manual_service_entries AS a
+      WHERE a.client_id = v_id FOR UPDATE;
+    PERFORM 1 FROM public.push_subscriptions AS a
+      WHERE a.client_id = v_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM public.client_manual_whatsapp_confirmations AS a
+        WHERE a.client_id = v_id AND a.studio_id IS DISTINCT FROM p_studio_id)
+       OR EXISTS (SELECT 1 FROM public.customer_loyalty_rewards AS a
+        WHERE a.client_id = v_id AND a.studio_id IS DISTINCT FROM p_studio_id)
+       OR EXISTS (SELECT 1 FROM public.customer_loyalty_stamp_entries AS a
+        WHERE a.client_id = v_id AND a.studio_id IS DISTINCT FROM p_studio_id)
+       OR EXISTS (SELECT 1 FROM public.customer_referral_codes AS a
+        WHERE a.referrer_client_id = v_id AND a.studio_id IS DISTINCT FROM p_studio_id)
+       OR EXISTS (SELECT 1 FROM public.customer_referrals AS a
+        WHERE (a.referrer_client_id = v_id OR a.referred_client_id = v_id)
+          AND a.studio_id IS DISTINCT FROM p_studio_id)
+       OR EXISTS (SELECT 1 FROM public.manual_service_entries AS a
+        WHERE a.client_id = v_id AND a.studio_id IS DISTINCT FROM p_studio_id)
+       OR EXISTS (SELECT 1 FROM public.push_subscriptions AS a
+        WHERE a.client_id = v_id AND a.studio_id IS DISTINCT FROM p_studio_id)
+    THEN RAISE EXCEPTION 'client_cross_studio_reference'; END IF;
     v_dependencies := public.client_dependency_counts(p_studio_id, v_id);
 
     UPDATE public.appointments AS a SET client_id = NULL
