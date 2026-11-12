@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 import { formatSentinelaReport } from "./sentinela.mjs";
 import { diagnoseSentinela, formatSherlockReport } from "./sherlock.mjs";
 import { TEST_CASES, formatValidaReport, runValida, syntheticEnvironment } from "./valida.mjs";
+import { formatForgeReport, planCorrection } from "./forge.mjs";
+import { formatGuardiaoReport, reviewProposal } from "./guardiao.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_STATE_DIR = join(root, ".bellza-agent-state");
@@ -38,6 +40,18 @@ export const AGENT_REGISTRY = Object.freeze({
     maxDurationMs: 150_000,
     maxOutputBytes: 128_000,
     maxTests: TEST_CASES.length,
+  }),
+  forge: Object.freeze({
+    responsibility: "Planos locais de correção, sem aplicar patches",
+    permissions: ["local:sanitized-reports:read", "local:proposal:write"],
+    maxDurationMs: 20_000,
+    maxOutputBytes: 128_000,
+  }),
+  guardiao: Object.freeze({
+    responsibility: "Parecer técnico local, sem publicar",
+    permissions: ["local:sanitized-reports:read", "local:review:write"],
+    maxDurationMs: 20_000,
+    maxOutputBytes: 128_000,
   }),
   diagnostico: Object.freeze({ status: "DISABLED" }),
   qualidade: Object.freeze({ status: "DISABLED" }),
@@ -88,6 +102,18 @@ function appendEvent(stateDir, event) {
 }
 
 function safeFailure(id, code, now, agent = "sentinela") {
+  if (agent === "forge") return {
+    agent, runId: id, observedAt: now().toISOString(), status: "INDETERMINADO",
+    source: null, plan: null, proposedPatch: null, handoff: ["valida", "guardiao"],
+    recommendations: ["A execução local não foi concluída."], publicationAuthorized: false,
+    failureCode: code,
+  };
+  if (agent === "guardiao") return {
+    agent, runId: id, observedAt: now().toISOString(), status: "INDETERMINADO",
+    sources: { forge: null, valida: null, sherlock: null, sentinela: null },
+    checks: [], risks: ["LOCAL_RUN_FAILED"], publicationAuthorized: false, deployAllowed: false,
+    recommendation: "A execução local não foi concluída; publicação proibida.", failureCode: code,
+  };
   if (agent === "sherlock") {
     return {
       agent, runId: id, observedAt: now().toISOString(), status: "INDETERMINADO",
@@ -239,6 +265,52 @@ function latestSentinelaInput(stateDir) {
   }
 }
 
+function latestCompletedReport(stateDir, agent) {
+  try {
+    const events = readFileSync(join(stateDir, "history.jsonl"), "utf8")
+      .trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const event = events.filter((item) => item.agent === agent && item.state === "COMPLETED").at(-1);
+    if (!event || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(event.id)) return null;
+    const report = JSON.parse(readFileSync(join(stateDir, "runs", `${event.id}.json`), "utf8"));
+    return report.agent === agent && report.runId === event.id ? report : null;
+  } catch {
+    return null;
+  }
+}
+
+function phase3Input(stateDir, agent) {
+  const monitoring = latestSentinelaInput(stateDir).sourceReport;
+  const storedDiagnosis = latestCompletedReport(stateDir, "sherlock");
+  let diagnosis = null;
+  if (monitoring && storedDiagnosis?.source?.runId === monitoring.runId &&
+      Number.isFinite(Date.parse(storedDiagnosis.observedAt))) {
+    const expected = diagnoseSentinela({ sourceReport: monitoring,
+      now: () => new Date(storedDiagnosis.observedAt) });
+    if (expected.status === storedDiagnosis.status) {
+      diagnosis = { ...expected, runId: storedDiagnosis.runId };
+    }
+  }
+  if (agent === "forge") return { diagnosis, monitoring };
+  const storedValidation = latestCompletedReport(stateDir, "valida");
+  let validation = null;
+  try {
+    if (storedValidation) validation = {
+      ...normalizePhase2Report("valida", storedValidation), runId: storedValidation.runId,
+    };
+  } catch { /* Invalid saved evidence cannot approve a proposal. */ }
+  const storedProposal = latestCompletedReport(stateDir, "forge");
+  let proposal = null;
+  if (storedProposal && diagnosis && monitoring &&
+      Number.isFinite(Date.parse(storedProposal.observedAt))) {
+    const expected = planCorrection({ diagnosis, monitoring,
+      now: () => new Date(storedProposal.observedAt) });
+    if (expected.status === storedProposal.status) {
+      proposal = { ...expected, runId: storedProposal.runId };
+    }
+  }
+  return { proposal, validation, diagnosis, monitoring };
+}
+
 function normalizePhase2Report(agent, raw, input) {
   if (!raw || raw.agent !== agent || !Number.isFinite(Date.parse(raw.observedAt))) {
     throw new AtlasError("INVALID_AGENT_REPORT");
@@ -278,9 +350,23 @@ function normalizePhase2Report(agent, raw, input) {
   return safe;
 }
 
+function normalizePhase3Report(agent, raw, input) {
+  if (!raw || raw.agent !== agent || !Number.isFinite(Date.parse(raw.observedAt))) {
+    throw new AtlasError("INVALID_AGENT_REPORT");
+  }
+  const now = () => new Date(raw.observedAt);
+  const safe = agent === "forge"
+    ? planCorrection({ ...input, now })
+    : reviewProposal({ ...input, now });
+  if (raw.status !== safe.status) throw new AtlasError("INVALID_AGENT_REPORT");
+  return safe;
+}
+
 function formatReport(agent, report) {
   if (agent === "sherlock") return formatSherlockReport(report);
   if (agent === "valida") return formatValidaReport(report);
+  if (agent === "forge") return formatForgeReport(report);
+  if (agent === "guardiao") return formatGuardiaoReport(report);
   return formatSentinelaReport(report);
 }
 
@@ -293,32 +379,38 @@ export async function runAtlas({
   maxDurationMs,
   maxOutputBytes,
 } = {}) {
-  if (!["sentinela", "sherlock", "valida"].includes(agent)) throw new AtlasError("AGENT_NOT_ENABLED");
+  if (!["sentinela", "sherlock", "valida", "forge", "guardiao"].includes(agent)) throw new AtlasError("AGENT_NOT_ENABLED");
   const limits = AGENT_REGISTRY[agent];
   const worker = {
     sentinela: "../scripts/agents/sentinela-worker.mjs",
     sherlock: "../scripts/agents/sherlock-worker.mjs",
     valida: "../scripts/agents/valida-worker.mjs",
+    forge: "../scripts/agents/forge-worker.mjs",
+    guardiao: "../scripts/agents/guardiao-worker.mjs",
   }[agent];
-  const args = childArgs ?? [fileURLToPath(new URL(worker, import.meta.url))];
+  const args = childArgs ?? (["forge", "guardiao"].includes(agent)
+    ? ["--require", fileURLToPath(new URL("./local-test-guard.cjs", import.meta.url)),
+      fileURLToPath(new URL(worker, import.meta.url))]
+    : [fileURLToPath(new URL(worker, import.meta.url))]);
   const durationLimit = maxDurationMs ?? limits.maxDurationMs;
   const outputLimit = maxOutputBytes ?? limits.maxOutputBytes;
   const id = randomUUID();
   const release = acquireLock(stateDir, id, agent, now);
   try {
     appendEvent(stateDir, { id, agent, state: "RUNNING", at: now().toISOString() });
-    const input = agent === "sherlock" ? latestSentinelaInput(stateDir) : null;
+    const input = agent === "sherlock" ? latestSentinelaInput(stateDir)
+      : ["forge", "guardiao"].includes(agent) ? phase3Input(stateDir, agent) : null;
     let output = "";
     let exceeded = false;
     let timedOut = false;
     const result = await new Promise((resolveResult) => {
       const child = spawn(childCommand, args, {
         cwd: root,
-        stdio: [agent === "sherlock" ? "pipe" : "ignore", "pipe", "ignore"],
+        stdio: [["sherlock", "forge", "guardiao"].includes(agent) ? "pipe" : "ignore", "pipe", "ignore"],
         windowsHide: true,
         env: agent === "sentinela" ? process.env : syntheticEnvironment(),
       });
-      if (agent === "sherlock") child.stdin.end(JSON.stringify(input));
+      if (["sherlock", "forge", "guardiao"].includes(agent)) child.stdin.end(JSON.stringify(input));
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill();
@@ -346,9 +438,10 @@ export async function runAtlas({
     else {
       try {
         const raw = JSON.parse(output);
-        report = agent === "sentinela"
-          ? validateChildReport(raw)
-          : normalizePhase2Report(agent, raw, input);
+        report = agent === "sentinela" ? validateChildReport(raw)
+          : ["forge", "guardiao"].includes(agent)
+            ? normalizePhase3Report(agent, raw, input)
+            : normalizePhase2Report(agent, raw, input);
         report.runId = id;
       } catch {
         report = safeFailure(id, "INVALID_AGENT_REPORT", now, agent);
