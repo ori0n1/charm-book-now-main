@@ -54,6 +54,7 @@ export async function runSentinela({
       officialRecordedVersion: reference.officialRecordedVersion,
       observedAt: reference.observedAt,
     },
+    observed: { activeVersion: null, bindings: null, bindingDiff: null, runtime: null, crons: null },
     checks: [],
     anomalies: [],
     recommendations: [],
@@ -65,14 +66,6 @@ export async function runSentinela({
   const addAnomaly = (code, severity, detail) => {
     report.anomalies.push({ code, severity, detail });
   };
-
-  if (reference.officialRecordedVersion !== reference.observedVersion) {
-    addAnomaly(
-      "OFFICIAL_RECORD_OUTDATED",
-      "warning",
-      "A versão registada na branch oficial difere da observação Cloudflare do manifesto.",
-    );
-  }
 
   try {
     const deployments = await reader.request("GET", `https://api.cloudflare.com${SCRIPT_PATH}/deployments`, { signal });
@@ -89,6 +82,12 @@ export async function runSentinela({
         "GET", `https://api.cloudflare.com${SCRIPT_PATH}/versions/${versionId}`, { signal },
       );
       if (versionResult.id !== versionId) throw new AgentPolicyError("INVALID_RESPONSE");
+      report.observed.activeVersion = versionId;
+      if (versionId === reference.observedVersion &&
+          reference.officialRecordedVersion !== reference.observedVersion) {
+        addAnomaly("OFFICIAL_RECORD_OUTDATED", "warning",
+          "A referência oficial difere da versão ativa observada pela Cloudflare.");
+      }
       const versionCode = classifyVersion(versionId, versionResult.metadata?.created_on, reference);
       if (versionCode) {
         addAnomaly(
@@ -101,6 +100,11 @@ export async function runSentinela({
       }
       const actualBindings = bindingKeys(versionResult.resources?.bindings ?? []);
       const expectedBindings = expectedBindingKeys(reference);
+      report.observed.bindings = actualBindings;
+      report.observed.bindingDiff = {
+        missing: expectedBindings.filter((item) => !actualBindings.includes(item)),
+        unexpected: actualBindings.filter((item) => !expectedBindings.includes(item)),
+      };
       if (!same(actualBindings, expectedBindings)) {
         report.checks.push({ name: "bindings", status: "FAILED", count: actualBindings.length });
         addAnomaly("BINDINGS_DIVERGENCE_CONFIRMED", "critical",
@@ -109,6 +113,7 @@ export async function runSentinela({
         report.checks.push({ name: "bindings", status: "PASS", count: actualBindings.length });
       }
       const runtime = runtimeShape(versionResult.resources?.script_runtime);
+      report.observed.runtime = runtime;
       if (!same(runtime, runtimeShape(reference.runtime))) {
         report.checks.push({ name: "runtime", status: "FAILED" });
         addAnomaly("RUNTIME_DIVERGENCE_CONFIRMED", "critical",
@@ -127,6 +132,7 @@ export async function runSentinela({
     }
     const schedules = await reader.request("GET", `https://api.cloudflare.com${SCRIPT_PATH}/schedules`, { signal });
     const crons = sorted((schedules.schedules ?? schedules).map((item) => item.cron));
+    report.observed.crons = crons;
     if (!same(crons, sorted(reference.crons))) {
       report.checks.push({ name: "crons", status: "FAILED", count: crons.length });
       addAnomaly("CRONS_DIVERGENCE_CONFIRMED", "critical",
@@ -179,6 +185,18 @@ export function formatSentinelaReport(report) {
     `Execução: ${report.observedAt}`,
     `Referência observada: ${report.reference.observedVersion}`,
     `Referência oficial: ${report.reference.officialRecordedVersion}`,
+    `Versão ativa confirmada: ${report.observed?.activeVersion ?? "indisponível"}`,
+    "",
+    "## Metadados observados (sem valores de bindings)",
+    "",
+    `Bindings por nome/tipo: ${report.observed?.bindings ? report.observed.bindings.length : "indisponíveis"}`,
+    ...(report.observed?.bindings?.map((item) => `- ${item}`) ?? []),
+    ...(report.observed?.bindingDiff?.missing?.length
+      ? [`Em falta: ${report.observed.bindingDiff.missing.join(", ")}`] : []),
+    ...(report.observed?.bindingDiff?.unexpected?.length
+      ? [`Adicionais: ${report.observed.bindingDiff.unexpected.join(", ")}`] : []),
+    `Runtime: ${report.observed?.runtime ? JSON.stringify(report.observed.runtime) : "indisponível"}`,
+    `Crons: ${report.observed?.crons ? report.observed.crons.join(", ") || "nenhum" : "indisponíveis"}`,
     "",
     "## Verificações",
     "",

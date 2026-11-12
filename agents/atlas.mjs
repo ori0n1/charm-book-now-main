@@ -190,7 +190,7 @@ function validateChildReport(report) {
     return item;
   };
   const descriptions = {
-    OFFICIAL_RECORD_OUTDATED: "A referência oficial difere do manifesto de leitura.",
+    OFFICIAL_RECORD_OUTDATED: "A referência oficial difere da versão ativa confirmada.",
     REFERENCE_OUTDATED: "A produção mudou após a observação do manifesto.",
     VERSION_DIVERGENCE_UNEXPLAINED: "A versão ativa difere sem origem comprovada.",
     TRAFFIC_NOT_SINGLE_100: "O tráfego não está concentrado numa única versão.",
@@ -232,11 +232,55 @@ function validateChildReport(report) {
       !Number.isInteger(usage.public) || usage.public < 0 || usage.public > 2) {
     throw new AtlasError("INVALID_AGENT_REPORT");
   }
+  const observedInput = report.observed;
+  const pairPattern = /^[A-Za-z0-9_.-]{1,128}:[A-Za-z0-9_]{1,60}$/;
+  const safePairs = (items) => {
+    if (!Array.isArray(items) || items.length > 200 ||
+        items.some((item) => typeof item !== "string" || !pairPattern.test(item)) ||
+        new Set(items).size !== items.length) throw new AtlasError("INVALID_AGENT_REPORT");
+    return [...items];
+  };
+  let observed = null;
+  if (observedInput !== undefined && observedInput !== null) {
+    if (!observedInput || typeof observedInput !== "object") throw new AtlasError("INVALID_AGENT_REPORT");
+    const activeVersion = observedInput.activeVersion;
+    if (activeVersion !== null && !idPattern.test(activeVersion)) throw new AtlasError("INVALID_AGENT_REPORT");
+    const runtime = observedInput.runtime;
+    if (runtime !== null && (!runtime ||
+        (runtime.compatibility_date !== null && !/^\d{4}-\d{2}-\d{2}$/.test(runtime.compatibility_date)) ||
+        !Array.isArray(runtime.compatibility_flags) || runtime.compatibility_flags.length > 20 ||
+        runtime.compatibility_flags.some((flag) => !/^[a-z0-9_]{1,50}$/.test(flag)) ||
+        (runtime.usage_model !== null && !/^[a-z_]{1,40}$/.test(runtime.usage_model)))) {
+      throw new AtlasError("INVALID_AGENT_REPORT");
+    }
+    const cronPattern = /^[A-Za-z0-9*/?,#@L -]{1,100}$/;
+    if (observedInput.crons !== null && (!Array.isArray(observedInput.crons) ||
+        observedInput.crons.length > 20 ||
+        observedInput.crons.some((cron) => typeof cron !== "string" || !cronPattern.test(cron)))) {
+      throw new AtlasError("INVALID_AGENT_REPORT");
+    }
+    const bindingDiff = observedInput.bindingDiff === null ? null : {
+      missing: safePairs(observedInput.bindingDiff?.missing),
+      unexpected: safePairs(observedInput.bindingDiff?.unexpected),
+    };
+    observed = {
+      activeVersion,
+      bindings: observedInput.bindings === null ? null : safePairs(observedInput.bindings),
+      bindingDiff,
+      runtime: runtime === null ? null : {
+        compatibility_date: runtime.compatibility_date,
+        compatibility_flags: [...runtime.compatibility_flags],
+        usage_model: runtime.usage_model,
+      },
+      crons: observedInput.crons === null ? null : [...observedInput.crons],
+    };
+  }
   return {
     agent: "sentinela",
     observedAt: report.observedAt,
     status: report.status,
     reference,
+    observed,
     checks: report.checks.map(safeCheck),
     anomalies,
     recommendations: anomalies.some((item) => item.code.includes("OUTDATED"))

@@ -80,6 +80,11 @@ test("Sentinela verifica metadados sintéticos e não expõe valores", async () 
   assert.deepEqual(report.checks.filter((check) => check.status === "PASS").map((check) => check.name),
     ["cloudflare_traffic", "bindings", "runtime", "script_settings", "crons", "public_endpoint", "public_endpoint"]);
   assert.equal(report.integrations.length, 5);
+  assert.equal(report.observed.activeVersion, reference.observedVersion);
+  assert.equal(report.observed.bindings.length,
+    reference.plainNames.length + reference.secretNames.length);
+  assert.deepEqual(report.observed.bindingDiff, { missing: [], unexpected: [] });
+  assert.deepEqual(report.observed.crons, [...reference.crons].sort());
   assert.deepEqual(report.usage, { cloudflare: 4, public: 2, maxCloudflareRequests: 4, maxPublicRequests: 2 });
   const output = JSON.stringify(report) + formatSentinelaReport(report);
   assert.doesNotMatch(output, /SYNTHETIC_SECRET_MUST_NOT_APPEAR|SYNTHETIC_OAUTH_TOKEN_MUST_NOT_APPEAR/);
@@ -95,6 +100,8 @@ test("falha de OAuth produz indisponibilidade explícita e mantém checks públi
   const report = await runSentinela({ reference, transport });
   assert.equal(report.status, "INDETERMINADO");
   assert.ok(report.anomalies.some((item) => item.code === "AUTH_UNAVAILABLE"));
+  assert.ok(!report.anomalies.some((item) => item.code === "OFFICIAL_RECORD_OUTDATED"));
+  assert.equal(report.observed.activeVersion, null);
   assert.equal(report.checks.filter((item) => item.name === "public_endpoint" && item.status === "PASS").length, 2);
 });
 
@@ -157,4 +164,19 @@ test("Atlas limita duração e recusa agentes não ativados", async (t) => {
   });
   assert.equal(result.status, "INDETERMINADO");
   assert.ok(result.report.anomalies.some((item) => item.code === "DURATION_EXCEEDED"));
+});
+
+test("Atlas recusa valores de bindings disfarçados como nomes", async (t) => {
+  const stateDir = tempState(t);
+  const injected = { ...childReport, observed: {
+    activeVersion: null,
+    bindings: ["SECRET_KEY:secret_text:VALUE_MUST_NOT_APPEAR"],
+    bindingDiff: { missing: [], unexpected: [] }, runtime: null, crons: null,
+  } };
+  const result = await runAtlas({ stateDir,
+    childArgs: ["-e", `process.stdout.write(JSON.stringify(${JSON.stringify(injected)}))`],
+  });
+  assert.equal(result.status, "INDETERMINADO");
+  assert.ok(result.report.anomalies.some((item) => item.code === "INVALID_AGENT_REPORT"));
+  assert.doesNotMatch(readFileSync(result.reportPath, "utf8"), /VALUE_MUST_NOT_APPEAR/);
 });
