@@ -26,6 +26,8 @@
     "test:supabase:guard": "node --test tests/staging-supabase-guard.test.mjs",
     "test:staging:webhook-lease": "node scripts/staging-webhook-lease-smoke.mjs",
     "agents:sentinela": "node scripts/agents/atlas.mjs run sentinela",
+    "agents:sherlock": "node scripts/agents/atlas.mjs run sherlock",
+    "agents:valida": "node scripts/agents/atlas.mjs run valida",
     "agents:status": "node scripts/agents/atlas.mjs status",
     "test:agents": "node --test tests/agents/*.test.mjs",
     "typecheck": "tsc --noEmit",

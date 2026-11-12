@@ -12,6 +12,8 @@ import { randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatSentinelaReport } from "./sentinela.mjs";
+import { diagnoseSentinela, formatSherlockReport } from "./sherlock.mjs";
+import { TEST_CASES, formatValidaReport, runValida, syntheticEnvironment } from "./valida.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const DEFAULT_STATE_DIR = join(root, ".bellza-agent-state");
@@ -23,6 +25,19 @@ export const AGENT_REGISTRY = Object.freeze({
     maxCloudflareRequests: 4,
     maxPublicRequests: 2,
     maxOutputBytes: 128_000,
+  }),
+  sherlock: Object.freeze({
+    responsibility: "Diagnóstico local de relatórios sanitizados da Sentinela",
+    permissions: ["local:sentinela-report:read", "local:report:write"],
+    maxDurationMs: 20_000,
+    maxOutputBytes: 128_000,
+  }),
+  valida: Object.freeze({
+    responsibility: "Testes locais e sintéticos sem rede ou credenciais de produção",
+    permissions: ["local:approved-tests:run", "local:report:write"],
+    maxDurationMs: 150_000,
+    maxOutputBytes: 128_000,
+    maxTests: TEST_CASES.length,
   }),
   diagnostico: Object.freeze({ status: "DISABLED" }),
   qualidade: Object.freeze({ status: "DISABLED" }),
@@ -38,7 +53,7 @@ export class AtlasError extends Error {
   }
 }
 
-function acquireLock(stateDir, id, now) {
+function acquireLock(stateDir, id, agent, now) {
   mkdirSync(stateDir, { recursive: true });
   const lockPath = join(stateDir, "atlas.lock");
   let fd;
@@ -49,7 +64,7 @@ function acquireLock(stateDir, id, now) {
     throw new AtlasError("LOCAL_STATE_UNAVAILABLE");
   }
   try {
-    writeFileSync(fd, JSON.stringify({ id, agent: "sentinela", pid: process.pid, startedAt: now().toISOString() }));
+    writeFileSync(fd, JSON.stringify({ id, agent, pid: process.pid, startedAt: now().toISOString() }));
   } finally {
     closeSync(fd);
   }
@@ -72,7 +87,25 @@ function appendEvent(stateDir, event) {
   writeFileSync(file, `${rows.slice(-200).join("\n")}\n`, { mode: 0o600 });
 }
 
-function safeFailure(id, code, now) {
+function safeFailure(id, code, now, agent = "sentinela") {
+  if (agent === "sherlock") {
+    return {
+      agent, runId: id, observedAt: now().toISOString(), status: "INDETERMINADO",
+      source: null, findings: [],
+      recommendations: ["A execução local não foi concluída; rever o estado antes de repetir."],
+      usage: { reportsRead: 0, historyEventsRead: 0 },
+      failureCode: code,
+    };
+  }
+  if (agent === "valida") {
+    return {
+      agent, runId: id, observedAt: now().toISOString(), status: "INDETERMINATE",
+      areas: [], tests: [],
+      recommendations: ["A execução local não foi concluída; nenhum teste com dados reais foi autorizado."],
+      usage: { testsRun: 0, maxTests: TEST_CASES.length },
+      failureCode: code,
+    };
+  }
   return {
     agent: "sentinela",
     runId: id,
@@ -189,37 +222,110 @@ function validateChildReport(report) {
   };
 }
 
+function latestSentinelaInput(stateDir) {
+  try {
+    const events = readFileSync(join(stateDir, "history.jsonl"), "utf8")
+      .trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const completed = events.filter((event) =>
+      event.agent === "sentinela" && event.state === "COMPLETED");
+    const latest = completed.at(-1);
+    if (!latest || !/^[0-9a-f-]{36}$/.test(latest.id)) return { sourceReport: null, recentEvents: [] };
+    const saved = JSON.parse(readFileSync(join(stateDir, "runs", `${latest.id}.json`), "utf8"));
+    const sourceReport = validateChildReport(saved);
+    sourceReport.runId = latest.id;
+    return { sourceReport, recentEvents: completed.slice(-20) };
+  } catch {
+    return { sourceReport: null, recentEvents: [] };
+  }
+}
+
+function normalizePhase2Report(agent, raw, input) {
+  if (!raw || raw.agent !== agent || !Number.isFinite(Date.parse(raw.observedAt))) {
+    throw new AtlasError("INVALID_AGENT_REPORT");
+  }
+  const now = () => new Date(raw.observedAt);
+  if (agent === "sherlock") {
+    const safe = diagnoseSentinela({ ...input, now });
+    if (raw.status !== safe.status) throw new AtlasError("INVALID_AGENT_REPORT");
+    return safe;
+  }
+  if (!Array.isArray(raw.tests) || raw.tests.length !== TEST_CASES.length) {
+    throw new AtlasError("INVALID_AGENT_REPORT");
+  }
+  const allowedStates = new Set(["PASS", "FAIL", "INDETERMINATE"]);
+  const allowedReasons = new Set([
+    null, "TEST_TIMEOUT", "TEST_RUNNER_UNAVAILABLE", "DEPENDENCY_UNAVAILABLE",
+    "NETWORK_ATTEMPT_BLOCKED", "SYNTHETIC_TEST_FAILED", "TEST_FILE_MISSING",
+  ]);
+  const results = new Map();
+  for (const item of raw.tests) {
+    if (!TEST_CASES.some((testCase) => testCase.file === item.file) ||
+        results.has(item.file) || !allowedStates.has(item.state) ||
+        !allowedReasons.has(item.reason) ||
+        !Number.isInteger(item.durationMs) || item.durationMs < 0 || item.durationMs > 150_000) {
+      throw new AtlasError("INVALID_AGENT_REPORT");
+    }
+    results.set(item.file, {
+      file: item.file, state: item.state, reason: item.reason, durationMs: item.durationMs,
+    });
+  }
+  const safe = runValida({
+    cases: TEST_CASES,
+    runCase: (testCase) => results.get(testCase.file),
+    now,
+  });
+  if (raw.status !== safe.status) throw new AtlasError("INVALID_AGENT_REPORT");
+  return safe;
+}
+
+function formatReport(agent, report) {
+  if (agent === "sherlock") return formatSherlockReport(report);
+  if (agent === "valida") return formatValidaReport(report);
+  return formatSentinelaReport(report);
+}
+
 export async function runAtlas({
   agent = "sentinela",
   stateDir = DEFAULT_STATE_DIR,
   now = () => new Date(),
   childCommand = process.execPath,
-  childArgs = [fileURLToPath(new URL("../scripts/agents/sentinela-worker.mjs", import.meta.url))],
-  maxDurationMs = AGENT_REGISTRY.sentinela.maxDurationMs,
-  maxOutputBytes = AGENT_REGISTRY.sentinela.maxOutputBytes,
+  childArgs,
+  maxDurationMs,
+  maxOutputBytes,
 } = {}) {
-  if (agent !== "sentinela") throw new AtlasError("AGENT_NOT_ENABLED");
+  if (!["sentinela", "sherlock", "valida"].includes(agent)) throw new AtlasError("AGENT_NOT_ENABLED");
+  const limits = AGENT_REGISTRY[agent];
+  const worker = {
+    sentinela: "../scripts/agents/sentinela-worker.mjs",
+    sherlock: "../scripts/agents/sherlock-worker.mjs",
+    valida: "../scripts/agents/valida-worker.mjs",
+  }[agent];
+  const args = childArgs ?? [fileURLToPath(new URL(worker, import.meta.url))];
+  const durationLimit = maxDurationMs ?? limits.maxDurationMs;
+  const outputLimit = maxOutputBytes ?? limits.maxOutputBytes;
   const id = randomUUID();
-  const release = acquireLock(stateDir, id, now);
+  const release = acquireLock(stateDir, id, agent, now);
   try {
     appendEvent(stateDir, { id, agent, state: "RUNNING", at: now().toISOString() });
+    const input = agent === "sherlock" ? latestSentinelaInput(stateDir) : null;
     let output = "";
     let exceeded = false;
     let timedOut = false;
     const result = await new Promise((resolveResult) => {
-      const child = spawn(childCommand, childArgs, {
+      const child = spawn(childCommand, args, {
         cwd: root,
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: [agent === "sherlock" ? "pipe" : "ignore", "pipe", "ignore"],
         windowsHide: true,
-        env: process.env,
+        env: agent === "sentinela" ? process.env : syntheticEnvironment(),
       });
+      if (agent === "sherlock") child.stdin.end(JSON.stringify(input));
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill();
-      }, maxDurationMs);
+      }, durationLimit);
       child.stdout.on("data", (chunk) => {
         output += chunk.toString("utf8");
-        if (Buffer.byteLength(output) > maxOutputBytes) {
+        if (Buffer.byteLength(output) > outputLimit) {
           exceeded = true;
           child.kill();
         }
@@ -234,26 +340,35 @@ export async function runAtlas({
       });
     });
     let report;
-    if (timedOut) report = safeFailure(id, "DURATION_EXCEEDED", now);
-    else if (exceeded) report = safeFailure(id, "OUTPUT_BUDGET_EXCEEDED", now);
-    else if (result.error || result.code !== 0) report = safeFailure(id, "AGENT_PROCESS_FAILED", now);
+    if (timedOut) report = safeFailure(id, "DURATION_EXCEEDED", now, agent);
+    else if (exceeded) report = safeFailure(id, "OUTPUT_BUDGET_EXCEEDED", now, agent);
+    else if (result.error || result.code !== 0) report = safeFailure(id, "AGENT_PROCESS_FAILED", now, agent);
     else {
       try {
-        report = validateChildReport(JSON.parse(output));
+        const raw = JSON.parse(output);
+        report = agent === "sentinela"
+          ? validateChildReport(raw)
+          : normalizePhase2Report(agent, raw, input);
         report.runId = id;
       } catch {
-        report = safeFailure(id, "INVALID_AGENT_REPORT", now);
+        report = safeFailure(id, "INVALID_AGENT_REPORT", now, agent);
       }
     }
     const runsDir = join(stateDir, "runs");
     mkdirSync(runsDir, { recursive: true });
     writeFileSync(join(runsDir, `${id}.json`), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-    writeFileSync(join(stateDir, "latest.md"), formatSentinelaReport(report), { mode: 0o600 });
+    const markdown = formatReport(agent, report);
+    writeFileSync(join(stateDir, "latest.md"), markdown, { mode: 0o600 });
+    writeFileSync(join(stateDir, `latest-${agent}.md`), markdown, { mode: 0o600 });
     appendEvent(stateDir, {
       id, agent, state: "COMPLETED", status: report.status,
-      anomalyCodes: report.anomalies.map((item) => item.code), at: now().toISOString(),
+      anomalyCodes: report.anomalies?.map((item) => item.code) ??
+        report.findings?.map((item) => item.code) ??
+        report.tests?.filter((item) => item.state !== "PASS").map((item) => item.reason) ?? [],
+      at: now().toISOString(),
     });
-    return { id, status: report.status, report, reportPath: join(stateDir, "latest.md") };
+    return { id, status: report.status, report,
+      reportPath: join(stateDir, agent === "sentinela" ? "latest.md" : `latest-${agent}.md`) };
   } finally {
     release();
   }

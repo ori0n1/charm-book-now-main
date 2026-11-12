@@ -20,8 +20,8 @@ secrets nem dados pessoais e não é partilhado automaticamente entre máquinas.
 
 ## Barreiras
 
-- Só o agente `sentinela` está ativo. As próximas funções são registos
-  desativados. O Atlas aceita apenas `run sentinela` e `status`.
+- Na fase 1 só a Sentinela estava ativa. A continuação local desta branch
+  acrescenta Sherlock e Valida, descritos em `docs/agents-phase2.md`.
 - Uma lock atómica impede duas execuções no mesmo checkout. Se o processo for
   interrompido abruptamente, a lock permanece e bloqueia novas execuções até
   inspeção humana; não existe desbloqueio automático.
