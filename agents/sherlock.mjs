@@ -66,6 +66,32 @@ const knownFindings = Object.freeze({
   },
 });
 
+export function diagnoseFunctional({ monitoring, syntheticProof = null,
+  now = () => new Date() } = {}) {
+  const report = {
+    agent: "sherlock", runId: null, observedAt: now().toISOString(),
+    status: "INDETERMINADO", source: monitoring?.runId ?? null,
+    findings: [],
+  };
+  if (!monitoring || monitoring.agent !== "sentinela" ||
+      !Array.isArray(monitoring.anomalies) ||
+      monitoring.mode !== "SYNTHETIC_SIMULATION") return report;
+  const proofValid = monitoring.anomalies.length === 1 &&
+    syntheticProof?.studioCode === monitoring.anomalies[0].studioCode &&
+    syntheticProof?.code === monitoring.anomalies[0].code &&
+    syntheticProof?.causeCode === "SYNTHETIC_CAPACITY_RULE_MISMATCH" &&
+    syntheticProof.code === "AGENDA_AVAILABILITY_MISMATCH";
+  report.findings = monitoring.anomalies.map((item) => ({
+    studioCode: item.studioCode, domain: item.domain, code: item.code,
+    evidence: { aggregateCount: item.evidence.aggregateCount },
+    causeStatus: proofValid ? "CONFIRMADA_EM_SIMULACAO" : "NAO_DETERMINADA",
+    causeCode: proofValid ? syntheticProof.causeCode : null,
+    affected: [item.domain],
+  }));
+  report.status = report.findings.length ? "DIAGNOSTICADO" : "SEM_ANOMALIAS";
+  return report;
+}
+
 const safeCheck = (check) => ({
   name: check.name,
   status: check.status,

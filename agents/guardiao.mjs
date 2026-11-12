@@ -1,5 +1,36 @@
 const ALLOWED_SCOPE = new Set(["agents/reference.json"]);
 
+export function reviewFunctional({ monitoring, diagnosis, proposal, validation,
+  now = () => new Date() } = {}) {
+  const report = {
+    agent: "guardiao", runId: null, observedAt: now().toISOString(),
+    status: "INDETERMINADO",
+    sources: { sentinela: monitoring?.runId ?? null,
+      sherlock: diagnosis?.runId ?? null, forge: proposal?.runId ?? null,
+      valida: validation?.runId ?? null },
+    checks: [], risks: ["NO_AUTHORIZED_FUNCTIONAL_RLS_READ",
+      "PRODUCTION_PARITY_NOT_VERIFIED"],
+    publicationAuthorized: false, deployAllowed: false,
+  };
+  const linked = diagnosis?.source === monitoring?.runId &&
+    proposal?.source === diagnosis?.runId &&
+    monitoring?.mode === "SYNTHETIC_SIMULATION";
+  const testsPassed = validation?.status === "APPROVED" &&
+    validation.tests?.length === 7 &&
+    validation.tests.every((item) => item.state === "PASS");
+  report.checks = [
+    { name: "evidence_chain", status: monitoring?.mode !== "SYNTHETIC_SIMULATION"
+      ? "UNKNOWN" : linked ? "PASS" : "FAIL" },
+    { name: "isolated_tests", status: testsPassed ? "PASS" :
+      validation?.status === "FAILED" ? "FAIL" : "UNKNOWN" },
+    { name: "proposal_not_applied", status:
+      proposal?.proposedPatch === null && proposal?.publicationAuthorized === false &&
+      proposal?.plan?.applied !== true ? "PASS" : "FAIL" },
+  ];
+  if (report.checks.some((item) => item.status === "FAIL")) report.status = "BLOQUEADO";
+  return report;
+}
+
 export function reviewProposal({ proposal, validation, diagnosis, monitoring, now = () => new Date() } = {}) {
   const report = {
     agent: "guardiao", observedAt: now().toISOString(), status: "INDETERMINADO",

@@ -653,3 +653,7 @@ export function atlasStatus(stateDir = DEFAULT_STATE_DIR) {
     : [];
   return { running, recent: events.slice(-10) };
 }
+
+// Shared local coordination for opt-in functional checks. Existing flows keep
+// their behavior and lock format.
+export { acquireLock as acquireAtlasLock, appendEvent as appendAtlasEvent };

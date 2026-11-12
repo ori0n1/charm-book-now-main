@@ -1,5 +1,31 @@
 const VERSION = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
+export function planFunctionalCorrection({ diagnosis, monitoring,
+  now = () => new Date() } = {}) {
+  const report = {
+    agent: "forge", runId: null, observedAt: now().toISOString(),
+    status: "BLOQUEADO", source: diagnosis?.runId ?? null,
+    plan: null, proposedPatch: null, publicationAuthorized: false,
+    recommendation: "Causa real não comprovada; não preparar alteração.",
+  };
+  const finding = diagnosis?.findings?.length === 1 ? diagnosis.findings[0] : null;
+  if (!finding || finding.causeStatus !== "CONFIRMADA_EM_SIMULACAO" ||
+      diagnosis.source !== monitoring?.runId ||
+      monitoring.mode !== "SYNTHETIC_SIMULATION" ||
+      finding.code !== "AGENDA_AVAILABILITY_MISMATCH" ||
+      finding.causeCode !== "SYNTHETIC_CAPACITY_RULE_MISMATCH") return report;
+  report.status = "PROPOSTA_SINTETICA";
+  report.plan = {
+    studioCode: finding.studioCode, domain: "agenda",
+    issueCode: finding.code, causeCode: finding.causeCode,
+    scope: "Rever apenas a regra de cálculo de disponibilidade demonstrada na fixture.",
+    prerequisites: ["Comprovar a causa com leitura RLS autorizada antes de localizar código real."],
+    applied: false,
+  };
+  report.recommendation = "Submeter a testes sintéticos e revisão; nenhuma correção aplicada.";
+  return report;
+}
+
 // A proposal is data for human review. This module never opens or edits a source file.
 export function planCorrection({ diagnosis, monitoring, now = () => new Date() } = {}) {
   const report = {

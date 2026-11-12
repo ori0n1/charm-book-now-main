@@ -8,6 +8,7 @@ import {
   createBudget,
 } from "./policy.mjs";
 import { createReadOnlyTransport } from "./transport.mjs";
+export { inspectFunctionalSnapshot } from "./functional-contract.mjs";
 
 const referencePath = fileURLToPath(new URL("./reference.json", import.meta.url));
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
