@@ -1,5 +1,29 @@
 const ALLOWED_SCOPE = new Set(["agents/reference.json"]);
 
+export function reviewPublic({ monitoring, diagnosis, proposal, validation,
+  now = () => new Date() } = {}) {
+  const linked = diagnosis?.source === monitoring?.runId &&
+    proposal?.source === diagnosis?.runId;
+  const noPatch = proposal?.proposedPatch === null &&
+    proposal?.plan?.applied !== true && proposal?.publicationAuthorized === false;
+  const testsPassed = validation?.status === "APPROVED";
+  return {
+    agent: "guardiao", observedAt: now().toISOString(),
+    sources: { sentinela: monitoring?.runId, sherlock: diagnosis?.runId,
+      forge: proposal?.runId, valida: validation?.runId },
+    status: !linked || !noPatch || validation?.status === "FAILED" ? "BLOQUEADO" :
+      "INDETERMINADO",
+    checks: [
+      { name: "evidence_chain", status: linked ? "PASS" : "FAIL" },
+      { name: "no_applied_patch", status: noPatch ? "PASS" : "FAIL" },
+      { name: "synthetic_tests", status: testsPassed ? "PASS" :
+        validation?.status === "FAILED" ? "FAIL" : "UNKNOWN" },
+    ],
+    risks: ["AGENDA_INTERACTIVITY_NOT_VERIFIED", "PRODUCTION_PARITY_NOT_VERIFIED"],
+    publicationAuthorized: false, deployAllowed: false,
+  };
+}
+
 export function reviewFunctional({ monitoring, diagnosis, proposal, validation,
   now = () => new Date() } = {}) {
   const report = {

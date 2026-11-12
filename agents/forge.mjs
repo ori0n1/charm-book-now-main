@@ -1,5 +1,20 @@
 const VERSION = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
+export function planPublicCorrection({ diagnosis, now = () => new Date() } = {}) {
+  if (diagnosis?.agent !== "sherlock" || !Array.isArray(diagnosis.findings))
+    throw new Error("PUBLIC_EVIDENCE_INVALID");
+  return {
+    agent: "forge", observedAt: now().toISOString(), source: diagnosis.runId,
+    status: diagnosis.findings.length ? "PROPOSTA_DE_INVESTIGACAO" : "SEM_PROPOSTA",
+    plan: diagnosis.findings.length ? {
+      scope: diagnosis.findings.map((item) => `${item.studioCode}:${item.code}`),
+      action: "Rever o recurso ou a rota pública apontada pela evidência; comprovar a causa antes de propor patch.",
+      applied: false,
+    } : null,
+    proposedPatch: null, publicationAuthorized: false,
+  };
+}
+
 export function planFunctionalCorrection({ diagnosis, monitoring,
   now = () => new Date() } = {}) {
   const report = {

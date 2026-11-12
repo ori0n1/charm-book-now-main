@@ -66,6 +66,21 @@ const knownFindings = Object.freeze({
   },
 });
 
+export function diagnosePublic({ monitoring, now = () => new Date() } = {}) {
+  if (monitoring?.agent !== "sentinela" || !Array.isArray(monitoring.anomalies))
+    throw new Error("PUBLIC_EVIDENCE_INVALID");
+  return {
+    agent: "sherlock", observedAt: now().toISOString(), source: monitoring.runId,
+    status: monitoring.anomalies.length ? "DIAGNOSTICADO" : "SEM_ANOMALIAS",
+    findings: monitoring.anomalies.map((item) => ({
+      studioCode: item.studioCode, code: item.code, scope: item.scope,
+      causeStatus: "NAO_DETERMINADA", affected: item.studioCode === "GLOBAL"
+        ? ["site-publico"] : ["pagina-publica-do-estudio", "interface-de-agendamento"],
+      evidence: item.evidence,
+    })),
+  };
+}
+
 export function diagnoseFunctional({ monitoring, syntheticProof = null,
   now = () => new Date() } = {}) {
   const report = {

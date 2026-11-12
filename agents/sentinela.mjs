@@ -9,6 +9,7 @@ import {
 } from "./policy.mjs";
 import { createReadOnlyTransport } from "./transport.mjs";
 export { inspectFunctionalSnapshot } from "./functional-contract.mjs";
+export { probePublicPages as runPublicSentinela, classifyPublicSnapshot } from "./public-probes.mjs";
 
 const referencePath = fileURLToPath(new URL("./reference.json", import.meta.url));
 const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
