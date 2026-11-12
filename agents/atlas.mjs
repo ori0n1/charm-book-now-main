@@ -18,6 +18,7 @@ import { formatForgeReport, planCorrection } from "./forge.mjs";
 import { formatGuardiaoReport, reviewProposal } from "./guardiao.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const activeFlows = new WeakSet();
 export const DEFAULT_STATE_DIR = join(root, ".bellza-agent-state");
 export const AGENT_REGISTRY = Object.freeze({
   sentinela: Object.freeze({
@@ -378,39 +379,76 @@ export async function runAtlas({
   childArgs,
   maxDurationMs,
   maxOutputBytes,
+  flow,
 } = {}) {
   if (!["sentinela", "sherlock", "valida", "forge", "guardiao"].includes(agent)) throw new AtlasError("AGENT_NOT_ENABLED");
+  if (flow) {
+    if (!activeFlows.has(flow) || flow.stateDir !== stateDir) throw new AtlasError("INVALID_FLOW_CONTEXT");
+    try {
+      const lock = JSON.parse(readFileSync(join(stateDir, "atlas.lock"), "utf8"));
+      if (lock.id !== flow.id || lock.agent !== "integrated-check") throw new Error("LOCK_MISMATCH");
+    } catch { throw new AtlasError("CONFLICTING_RUN_ACTIVE"); }
+  }
   const limits = AGENT_REGISTRY[agent];
+  const synthetic = flow?.mode === "synthetic";
   const worker = {
-    sentinela: "../scripts/agents/sentinela-worker.mjs",
+    sentinela: synthetic ? "../scripts/agents/synthetic-sentinela-worker.mjs" : "../scripts/agents/sentinela-worker.mjs",
     sherlock: "../scripts/agents/sherlock-worker.mjs",
-    valida: "../scripts/agents/valida-worker.mjs",
+    valida: synthetic ? "../scripts/agents/synthetic-valida-worker.mjs" : "../scripts/agents/valida-worker.mjs",
     forge: "../scripts/agents/forge-worker.mjs",
     guardiao: "../scripts/agents/guardiao-worker.mjs",
   }[agent];
-  const args = childArgs ?? (["forge", "guardiao"].includes(agent)
+  const args = childArgs ?? (["forge", "guardiao"].includes(agent) || synthetic
     ? ["--require", fileURLToPath(new URL("./local-test-guard.cjs", import.meta.url)),
       fileURLToPath(new URL(worker, import.meta.url))]
     : [fileURLToPath(new URL(worker, import.meta.url))]);
   const durationLimit = maxDurationMs ?? limits.maxDurationMs;
   const outputLimit = maxOutputBytes ?? limits.maxOutputBytes;
   const id = randomUUID();
-  const release = acquireLock(stateDir, id, agent, now);
+  const release = flow ? () => {} : acquireLock(stateDir, id, agent, now);
   try {
-    appendEvent(stateDir, { id, agent, state: "RUNNING", at: now().toISOString() });
-    const input = agent === "sherlock" ? latestSentinelaInput(stateDir)
+    const dependencies = flow ? ({
+      sentinela: [],
+      sherlock: [flow.reports.sentinela?.runId],
+      forge: [flow.reports.sherlock?.runId, flow.reports.sentinela?.runId],
+      valida: [flow.reports.forge?.runId],
+      guardiao: [flow.reports.forge?.runId, flow.reports.valida?.runId,
+        flow.reports.sherlock?.runId, flow.reports.sentinela?.runId],
+    })[agent].filter(Boolean) : [];
+    appendEvent(stateDir, { id, agent, state: "RUNNING", flowId: flow?.id ?? null,
+      dependencies, at: now().toISOString() });
+    const input = flow ? agent === "sherlock" ? {
+      sourceReport: flow.reports.sentinela ?? null, recentEvents: [],
+      syntheticProof: synthetic && flow.scenario !== "unknown-cause" &&
+        flow.scenario !== "auth-unavailable" ? {
+          kind: "SYNTHETIC_OFFICIAL_RECORD_PROOF",
+          sourceRunId: flow.reports.sentinela?.runId,
+          observedVersion: flow.reports.sentinela?.reference?.observedVersion,
+          officialRecordedVersion: flow.reports.sentinela?.reference?.officialRecordedVersion,
+        } : null,
+    } : agent === "forge" ? {
+      diagnosis: flow.reports.sherlock ?? null, monitoring: flow.reports.sentinela ?? null,
+    } : agent === "guardiao" ? {
+      proposal: flow.reports.forge ?? null, validation: flow.reports.valida ?? null,
+      diagnosis: flow.reports.sherlock ?? null, monitoring: flow.reports.sentinela ?? null,
+    } : null : agent === "sherlock" ? latestSentinelaInput(stateDir)
       : ["forge", "guardiao"].includes(agent) ? phase3Input(stateDir, agent) : null;
+    const stdinPayload = synthetic && ["sentinela", "valida"].includes(agent)
+      ? { scenario: flow.scenario, proposal: flow.reports.forge ?? null }
+      : input;
+    const hasInput = ["sherlock", "forge", "guardiao"].includes(agent) ||
+      (synthetic && ["sentinela", "valida"].includes(agent));
     let output = "";
     let exceeded = false;
     let timedOut = false;
     const result = await new Promise((resolveResult) => {
       const child = spawn(childCommand, args, {
         cwd: root,
-        stdio: [["sherlock", "forge", "guardiao"].includes(agent) ? "pipe" : "ignore", "pipe", "ignore"],
+        stdio: [hasInput ? "pipe" : "ignore", "pipe", "ignore"],
         windowsHide: true,
-        env: agent === "sentinela" ? process.env : syntheticEnvironment(),
+        env: agent === "sentinela" && !synthetic ? process.env : syntheticEnvironment(),
       });
-      if (["sherlock", "forge", "guardiao"].includes(agent)) child.stdin.end(JSON.stringify(input));
+      if (hasInput) child.stdin.end(JSON.stringify(stdinPayload));
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill();
@@ -447,14 +485,24 @@ export async function runAtlas({
         report = safeFailure(id, "INVALID_AGENT_REPORT", now, agent);
       }
     }
+    if (flow) {
+      report.flowId = flow.id;
+      report.dependencies = dependencies;
+      report.evidenceMode = synthetic ? "SYNTHETIC_SIMULATION" : "LIVE_READ_ONLY";
+      if (synthetic && agent === "sentinela" && !report.failureCode) report.syntheticScenario = true;
+      flow.reports[agent] = report;
+    }
     const runsDir = join(stateDir, "runs");
     mkdirSync(runsDir, { recursive: true });
     writeFileSync(join(runsDir, `${id}.json`), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
-    const markdown = formatReport(agent, report);
+    const markdown = flow && synthetic
+      ? `> SIMULAÇÃO LOCAL — não é evidência de produção. Fluxo ${flow.id}.\n\n${formatReport(agent, report)}`
+      : formatReport(agent, report);
     writeFileSync(join(stateDir, "latest.md"), markdown, { mode: 0o600 });
     writeFileSync(join(stateDir, `latest-${agent}.md`), markdown, { mode: 0o600 });
     appendEvent(stateDir, {
       id, agent, state: "COMPLETED", status: report.status,
+      flowId: flow?.id ?? null, dependencies,
       anomalyCodes: report.anomalies?.map((item) => item.code) ??
         report.findings?.map((item) => item.code) ??
         report.tests?.filter((item) => item.state !== "PASS").map((item) => item.reason) ?? [],
@@ -465,6 +513,83 @@ export async function runAtlas({
   } finally {
     release();
   }
+}
+
+export async function runIntegratedCheck({
+  mode = "live", scenario = "confirmed", stateDir = DEFAULT_STATE_DIR,
+  now = () => new Date(),
+} = {}) {
+  if (!["live", "synthetic"].includes(mode) ||
+      (mode === "synthetic" && !["confirmed", "unknown-cause", "test-failure", "auth-unavailable"].includes(scenario))) {
+    throw new AtlasError("INVALID_CHECK_MODE");
+  }
+  const id = randomUUID();
+  const release = acquireLock(stateDir, id, "integrated-check", now);
+  const flow = { id, stateDir, mode, scenario, reports: {} };
+  activeFlows.add(flow);
+  try {
+    appendEvent(stateDir, { id, agent: "atlas", state: "RUNNING", mode, at: now().toISOString() });
+    const steps = [];
+    for (const agent of ["sentinela", "sherlock", "forge", "valida", "guardiao"]) {
+      const result = await runAtlas({ agent, stateDir, now, flow });
+      steps.push({ agent, runId: result.id, status: result.status,
+        dependencies: result.report.dependencies });
+    }
+    const { sentinela, sherlock, forge, valida, guardiao } = flow.reports;
+    const nextSteps = sentinela.status === "INDETERMINADO"
+      ? ["Restabelecer leitura autorizada e repetir; nenhuma correção foi autorizada."]
+      : valida.status === "FAILED"
+        ? ["Investigar falhas nos testes sintéticos antes de rever a proposta."]
+        : forge.status !== "PROPOSTA"
+          ? ["Comprovar a causa antes de preparar uma proposta local."]
+          : guardiao.status === "APTO"
+            ? ["Revisão humana da proposta; comprovar paridade e rollback antes de qualquer pedido de publicação."]
+            : ["Reunir evidências e testes válidos antes de nova avaliação."];
+    const report = {
+      agent: "atlas", flowId: id, observedAt: now().toISOString(),
+      mode: mode === "synthetic" ? "SYNTHETIC_SIMULATION" : "LIVE_READ_ONLY",
+      scenario: mode === "synthetic" ? scenario : null,
+      status: guardiao.status, steps,
+      anomaly: sentinela.anomalies.map((item) => item.code),
+      cause: sherlock.findings.map((item) => ({ code: item.code, status: item.causeStatus })),
+      proposal: forge.proposedPatch,
+      tests: valida.status, opinion: guardiao.status,
+      publicationAuthorized: false, deployAllowed: false, nextSteps,
+    };
+    const flowsDir = join(stateDir, "flows");
+    mkdirSync(flowsDir, { recursive: true });
+    const reportPath = join(flowsDir, `${id}.md`);
+    const markdown = formatIntegratedCheck(report);
+    writeFileSync(join(flowsDir, `${id}.json`), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(reportPath, markdown, { mode: 0o600 });
+    writeFileSync(join(stateDir, "latest-check.md"), markdown, { mode: 0o600 });
+    writeFileSync(join(stateDir, "latest.md"), markdown, { mode: 0o600 });
+    appendEvent(stateDir, { id, agent: "atlas", state: "COMPLETED", status: report.status,
+      mode: report.mode, at: now().toISOString() });
+    return { id, status: report.status, report, reportPath };
+  } finally {
+    activeFlows.delete(flow);
+    release();
+  }
+}
+
+export function formatIntegratedCheck(report) {
+  return [
+    `# Atlas — ${report.status}`, "", `Fluxo: ${report.flowId}`,
+    `Modo: ${report.mode}${report.scenario ? ` (${report.scenario})` : ""}`,
+    report.mode === "SYNTHETIC_SIMULATION"
+      ? "SIMULAÇÃO LOCAL: versões e respostas da Sentinela são fixtures; a Valida executa contratos locais. Não representa produção."
+      : "Leituras remotas apenas pela Sentinela; nenhuma escrita remota.",
+    "", "## Resumo", "",
+    `- Anomalia: ${report.anomaly.join(", ") || "nenhuma observada"}.`,
+    `- Causa: ${report.cause.map((item) => `${item.code} ${item.status}`).join(", ") || "não determinada"}.`,
+    `- Proposta: ${report.proposal ? `${report.proposal.file}, não aplicada` : "nenhuma"}.`,
+    `- Testes: ${report.tests}.`, `- Parecer: ${report.opinion} (somente proposta local).`,
+    "", "## Execuções e dependências", "",
+    ...report.steps.map((item) => `- ${item.agent} ${item.runId}: ${item.status}; depende de ${item.dependencies.join(", ") || "nenhuma"}.`),
+    "", "## Próximos passos", "", ...report.nextSteps.map((item) => `- ${item}`),
+    "", "Publicação e escrita em produção: NÃO AUTORIZADAS.", "",
+  ].join("\n");
 }
 
 export function atlasStatus(stateDir = DEFAULT_STATE_DIR) {

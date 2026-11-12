@@ -29,6 +29,7 @@
     "agents:sherlock": "node scripts/agents/atlas.mjs run sherlock",
     "agents:valida": "node scripts/agents/atlas.mjs run valida",
     "agents:status": "node scripts/agents/atlas.mjs status",
+    "agents:check": "node scripts/agents/atlas.mjs check",
     "test:agents": "node --test tests/agents/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

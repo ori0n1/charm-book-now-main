@@ -10,6 +10,7 @@ try {
   process.stdout.write(JSON.stringify(diagnoseSentinela({
     sourceReport: payload.sourceReport,
     recentEvents: payload.recentEvents,
+    syntheticProof: payload.syntheticProof,
   })));
 } catch {
   process.exitCode = 1;

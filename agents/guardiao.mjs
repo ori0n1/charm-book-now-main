@@ -14,6 +14,10 @@ export function reviewProposal({ proposal, validation, diagnosis, monitoring, no
     report.risks.push("EVIDENCE_INCOMPLETE");
     return report;
   }
+  if (proposal.status === "INDETERMINADO") {
+    report.risks.push("EVIDENCE_INCOMPLETE");
+    return report;
+  }
   if (proposal.status !== "PROPOSTA" || !proposal.plan || !proposal.proposedPatch) {
     report.status = "BLOQUEADO";
     report.risks.push("NO_ACTIONABLE_PROPOSAL");

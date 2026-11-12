@@ -77,6 +77,7 @@ const safeCheck = (check) => ({
 export function diagnoseSentinela({
   sourceReport,
   recentEvents = [],
+  syntheticProof = null,
   now = () => new Date(),
 } = {}) {
   const report = {
@@ -108,10 +109,22 @@ export function diagnoseSentinela({
       .slice(0, 8);
     const priorOccurrences = relevantEvents.filter((event) =>
       event.id !== sourceReport.runId && event.anomalyCodes?.includes(anomaly.code)).length;
+    // A synthetic proof is accepted only for the fixed local rehearsal. It is
+    // never derived from a live Sentinela report or persisted as production evidence.
+    const provenInSimulation = sourceReport.syntheticScenario === true &&
+      anomaly.code === "OFFICIAL_RECORD_OUTDATED" &&
+      sourceReport.anomalies.length === 1 &&
+      sourceReport.checks.some((check) => check.name === "cloudflare_traffic" &&
+        check.status === "PASS" && check.version === sourceReport.reference?.observedVersion) &&
+      syntheticProof?.kind === "SYNTHETIC_OFFICIAL_RECORD_PROOF" &&
+      syntheticProof.sourceRunId === sourceReport.runId &&
+      syntheticProof.observedVersion === sourceReport.reference?.observedVersion &&
+      syntheticProof.officialRecordedVersion === sourceReport.reference?.officialRecordedVersion &&
+      syntheticProof.observedVersion !== syntheticProof.officialRecordedVersion;
     return {
       code: rule ? anomaly.code : "UNCLASSIFIED_ANOMALY",
       classification: anomaly.severity === "critical" ? "DIVERGENCIA_OBSERVADA" : "OBSERVACAO",
-      causeStatus: "NAO_DETERMINADA",
+      causeStatus: provenInSimulation ? "CONFIRMADA" : "NAO_DETERMINADA",
       evidence,
       basis: rule?.basis ?? "A anomalia não tem regra de diagnóstico nesta fase.",
       hypothesis: rule?.hypothesis ?? null,
