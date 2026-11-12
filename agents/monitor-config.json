@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "scheduleEnabled": false,
+  "plannedIntervalMinutes": 30,
+  "maxDurationMs": 120000,
+  "maxCloudflareRequests": 4,
+  "maxPublicRequests": 2,
+  "maxJournalEntries": 1440,
+  "maxAlertsPerRun": 12,
+  "externalNotifications": false,
+  "knownIssueCodes": ["OFFICIAL_RECORD_OUTDATED"]
+}

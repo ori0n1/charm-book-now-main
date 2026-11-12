@@ -30,6 +30,7 @@
     "agents:valida": "node scripts/agents/atlas.mjs run valida",
     "agents:status": "node scripts/agents/atlas.mjs status",
     "agents:check": "node scripts/agents/atlas.mjs check",
+    "agents:monitor": "node scripts/agents/monitor.mjs",
     "test:agents": "node --test tests/agents/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
