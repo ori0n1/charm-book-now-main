@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertPublicRequest, classifyPublicSnapshot,
+import { assertPublicRequest, classifyPublicSnapshot, parsePublicSitemap,
   probePublicPages } from "../../agents/public-probes.mjs";
 import { publicFixture } from "../../agents/public-fixtures.mjs";
 import { runPublicCheck } from "../../agents/public-flow.mjs";
@@ -22,13 +22,40 @@ test("barreira limita método, origem, páginas e assets descobertos", () => {
   for (const [method, url, known] of [
     ["POST", "https://bellza.pt/"], ["GET", asset],
     ["HEAD", "https://bellza.pt/s/studio27braga"],
-    ["GET", "https://bellza.pt/login"],
+    ["GET", "https://bellza.pt/api/create-checkout-session"],
     ["GET", "https://bellza.pt/s/studio27braga?book=1"],
     ["GET", "https://evil.example/s/studio27braga"],
     ["HEAD", "https://bellza.pt/assets/other.js", new Set(["/assets/index-FAKE.js"])],
   ]) assert.throws(() => assertPublicRequest(method, url, known),
     { message: "PUBLIC_OPERATION_DENIED" });
 });
+
+test("sitemap descobre somente páginas públicas permitidas", () => {
+  const parsed = parsePublicSitemap('<urlset>' +
+    '<loc>https://bellza.pt/s/novo-estudio</loc>' +
+    '<loc>https://bellza.pt/blog/artigo</loc>' +
+    '<loc>https://bellza.pt/api/create-checkout-session</loc>' +
+    '<loc>https://evil.example/s/estudio</loc>' +
+    '</urlset>');
+  assert.deepEqual(parsed.paths, ["/s/novo-estudio", "/blog/artigo"]);
+  assert.equal(parsed.rejected, 2);
+  assert.equal(assertPublicRequest("GET", "https://bellza.pt/s/novo-estudio",
+    new Set(), new Set(parsed.paths)), "page");
+  assert.throws(() => assertPublicRequest("GET", "https://bellza.pt/s/novo-estudio"),
+    { message: "PUBLIC_OPERATION_DENIED" });
+});
+
+test("sitemap indisponível não permite declarar cobertura pública completa", async () => isolated(async (stateDir) => {
+  const fixture = publicFixture("healthy");
+  const result = await runPublicCheck({ mode: "live", stateDir, validate: validation,
+    fetchImpl: (url, options) => new URL(url).pathname === "/sitemap.xml"
+      ? Promise.resolve(new Response("", { status: 503 })) : fixture(url, options) });
+  assert.equal(result.report.discoveryStatus, "SITEMAP_UNAVAILABLE");
+  assert.equal(result.report.coverageComplete, false);
+  assert.equal(result.report.status, "INDETERMINADO");
+  assert(result.report.pages.some((page) => page.path === "/s/capivarabarbearia"));
+  assert(result.report.pages.some((page) => page.path === "/s/studio27braga"));
+}));
 
 test("Sentinela usa só GET/HEAD, não guarda HTML e não declara agenda operacional", async () => {
   const seen = [];
@@ -37,7 +64,13 @@ test("Sentinela usa só GET/HEAD, não guarda HTML e não declara agenda operaci
     seen.push([options.method, new URL(url).pathname]);
     return fixture(url, options);
   } });
-  assert.equal(snapshot.requests, 6);
+  assert(snapshot.requests > snapshot.checkedPages);
+  assert(snapshot.requests <= 90);
+  assert.equal(snapshot.checkedPages, 17);
+  assert.equal(snapshot.expectedPages, 17);
+  assert.equal(snapshot.discoveryStatus, "OK");
+  assert(snapshot.pages.some((page) => page.path === "/s/outroestudio"));
+  assert(snapshot.pages.some((page) => page.path === "/blog/post-sintetico"));
   assert.equal(snapshot.agendaInteractivity, "NAO_VERIFICAVEL");
   assert(snapshot.pages.every((page) => page.complete));
   assert.deepEqual(classifyPublicSnapshot(snapshot), []);
@@ -69,7 +102,7 @@ test("falha de Studio 27 é isolada, deduplicada e recuperação é registada", 
 test("recurso JS ausente afeta ambos os estúdios sem provar causa", async () => isolated(async (stateDir) => {
   const result = await runPublicCheck({ mode: "synthetic", scenario: "resource-failure",
     stateDir, validate: validation });
-  assert.equal(result.report.anomalies.length, 2);
+  assert.equal(result.report.anomalies.length, 3);
   assert(result.report.anomalies.every((item) => item.code === "PUBLIC_RESOURCE_FAILED"));
   assert(result.report.anomalies.every((item) => item.scope === "MULTI_STUDIO"));
   assert.equal(result.report.proposalSummary, "plano de investigação não aplicado");

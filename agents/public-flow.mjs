@@ -10,7 +10,7 @@ import { reviewPublic } from "./guardiao.mjs";
 import { publicFixture } from "./public-fixtures.mjs";
 
 const MAX_HISTORY = 240;
-const issueKey = (issue) => `${issue.studioCode}:${issue.code}`;
+const issueKey = (issue) => `${issue.path}:${issue.code}`;
 const safeIssue = (issue) => ({ studioCode: issue.studioCode, path: issue.path,
   code: issue.code, severity: issue.severity, scope: issue.scope, evidence: issue.evidence });
 
@@ -22,7 +22,7 @@ function readState(stateDir) {
   catch { throw new Error("PUBLIC_STATE_INVALID"); }
   if (state?.schema !== 1 || !Array.isArray(state.issues) ||
       !Array.isArray(state.history) || !Array.isArray(state.alerts) ||
-      state.issues.length > 30 || state.history.length > MAX_HISTORY ||
+      state.issues.length > 65 || state.history.length > MAX_HISTORY ||
       state.alerts.length > MAX_HISTORY) throw new Error("PUBLIC_STATE_INVALID");
   return state;
 }
@@ -38,13 +38,14 @@ function compareIssues(previous, current, pages) {
   const incoming = new Map(current.map((item) => [issueKey(item), item]));
   const events = [];
   for (const issue of incoming.values()) if (!old.has(issueKey(issue)))
-    events.push({ kind: "NEW", studioCode: issue.studioCode, code: issue.code,
+    events.push({ kind: "NEW", studioCode: issue.studioCode, path: issue.path,
+      code: issue.code,
       severity: issue.severity });
   for (const issue of old.values()) {
     if (incoming.has(issueKey(issue))) continue;
-    if (pages.find((page) => page.studioCode === issue.studioCode)?.complete) {
+    if (pages.find((page) => page.path === issue.path)?.complete) {
       events.push({ kind: "RECOVERED", studioCode: issue.studioCode,
-        code: issue.code, severity: "info" });
+        path: issue.path, code: issue.code, severity: "info" });
     } else incoming.set(issueKey(issue), issue); // An incomplete read cannot prove recovery.
   }
   return { issues: [...incoming.values()], events };
@@ -59,16 +60,18 @@ export function formatPublicReport(report) {
   return [
     `# Atlas — monitorização pública ${report.status}`, "",
     `Fluxo: ${report.flowId}`, `Modo: ${report.mode}`, `Data: ${report.observedAt}`,
+    `Cobertura: ${report.checkedPages}/${report.expectedPages} páginas; sitemap ${report.discoveryStatus}; ${report.requests} pedidos GET/HEAD.`,
     "", "## Páginas e estúdios", "",
     ...report.pages.map((page) => `- ${page.studioCode} ${page.path}: ${page.status}` +
       ` (HTTP ${page.httpStatus ?? "indisponível"}; JS ${page.script}; CSS ${page.style}` +
-      `${page.studioCode === "GLOBAL" ? "" : `; rota JS ${page.routeScript}; interface ${page.bookingShell ? "estrutura presente" : "não comprovada"}`}).`),
+      `; rota JS ${page.routeScript}` +
+      `${page.path.startsWith("/s/") ? `; interface ${page.bookingShell ? "estrutura presente" : "não comprovada"}` : ""}).`),
     "", "## Anomalias e alertas", "",
     ...(report.anomalies.length ? report.anomalies.map((item) =>
-      `- ${item.studioCode}: ${item.code} [${item.severity}; ${item.scope}].`)
+      `- ${item.path}: ${item.code} [${item.severity}; ${item.scope}].`)
       : ["- Nenhuma falha nas páginas e recursos verificados."]),
     ...(report.events.length ? report.events.map((item) =>
-      `- ${item.kind}: ${item.studioCode} / ${item.code}.`) : ["- Nenhum alerta novo."]),
+      `- ${item.kind}: ${item.path} / ${item.code}.`) : ["- Nenhum alerta novo."]),
     "", "## Agentes", "",
     ...report.steps.map((item) => `- ${item.agent} ${item.status}; depende de ${item.dependencies.join(", ") || "nenhuma"}.`),
     `- Sherlock: ${report.causeSummary}.`,
@@ -97,6 +100,7 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
     const state = readState(stateDir);
     const snapshot = await runPublicSentinela({
       fetchImpl: mode === "synthetic" ? publicFixture(scenario) : fetchImpl ?? fetch, now,
+      delayMs: mode === "live" ? 200 : 0,
     });
     const monitoring = { agent: "sentinela", runId: randomUUID(),
       observedAt: snapshot.observedAt, status: snapshot.pages.every((item) => item.complete)
@@ -133,10 +137,18 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
       dependencies: [monitoring.runId, diagnosis.runId, proposal.runId,
         validation.runId], at: now().toISOString() });
     const comparison = compareIssues(state.issues, monitoring.anomalies, snapshot.pages);
+    const coverageComplete = snapshot.discoveryStatus === "OK" &&
+      snapshot.checkedPages === snapshot.expectedPages &&
+      snapshot.pages.every((page) => !["RESOURCE_UNKNOWN", "NETWORK_ERROR",
+        "HTML_READ_ERROR", "NOT_CHECKED_LIMIT"].includes(page.status));
     const status = monitoring.anomalies.length ? "ANOMALIAS" :
-      snapshot.pages.every((item) => item.complete) ? "PAGINAS_E_RECURSOS_OK" : "INDETERMINADO";
+      coverageComplete && snapshot.pages.every((item) => item.complete)
+        ? "PAGINAS_E_RECURSOS_OK" : "INDETERMINADO";
     const report = {
       flowId, observedAt: snapshot.observedAt, mode: monitoring.mode, status,
+      discoveryStatus: snapshot.discoveryStatus, sitemapUrls: snapshot.sitemapUrls,
+      expectedPages: snapshot.expectedPages, checkedPages: snapshot.checkedPages,
+      coverageComplete,
       pages: snapshot.pages, anomalies: monitoring.anomalies.map(safeIssue),
       events: comparison.events, requests: snapshot.requests,
       agendaInteractivity: snapshot.agendaInteractivity,

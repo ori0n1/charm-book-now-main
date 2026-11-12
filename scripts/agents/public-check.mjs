@@ -13,10 +13,10 @@ if (process.argv.length > 3 || (arg && !scenario) ||
     const report = result.report;
     process.stdout.write([
       `Atlas público: ${report.status} (${report.mode})`,
-      `Fluxo: ${result.id}; GET/HEAD: ${report.requests}`,
-      ...report.pages.map((page) => `- ${page.studioCode}: ${page.status} (HTTP ${page.httpStatus ?? "indisponível"})`),
+      `Fluxo: ${result.id}; cobertura: ${report.checkedPages}/${report.expectedPages}; sitemap: ${report.discoveryStatus}; GET/HEAD: ${report.requests}`,
+      ...report.pages.map((page) => `- ${page.path}: ${page.status} (HTTP ${page.httpStatus ?? "indisponível"})`),
       `Anomalias: ${report.anomalies.length}; alertas novos/recuperados: ${report.events.length}`,
-      ...report.events.map((item) => `- ${item.kind} ${item.severity}: ${item.studioCode} / ${item.code}`),
+      ...report.events.map((item) => `- ${item.kind} ${item.severity}: ${item.path} / ${item.code}`),
       `Sherlock: ${report.causeSummary}; Forge: ${report.proposalSummary}`,
       `Valida: ${report.tests}; Guardião: ${report.opinion}`,
       "Agenda interativa e reservas: NÃO VERIFICÁVEIS sem dados ou autenticação.",
