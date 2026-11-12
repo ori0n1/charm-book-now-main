@@ -1335,11 +1335,6 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           throw new Error("Não foi possível confirmar a reserva. Atualize a página e tente novamente.");
         }
       } else {
-        await dispatchPublicBookingSideEffects(result.appointment_id);
-        await finalizeClientBookingState({
-          appointmentId: result.appointment_id,
-          bookingRequestId: result.booking_request_id,
-        });
         setConfirmedPaymentStatus(
           result.payment_status === "pay_in_studio" ? "pay_in_studio" : "unknown",
         );
@@ -1348,6 +1343,11 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
           bookingRequestId: result.booking_request_id,
         });
         setConfirmed(true);
+        await dispatchPublicBookingSideEffects(result.appointment_id);
+        await finalizeClientBookingState({
+          appointmentId: result.appointment_id,
+          bookingRequestId: result.booking_request_id,
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Erro ao reservar.";
@@ -1849,11 +1849,11 @@ export function BookingExperience({ studioId }: { studioId?: string } = {}) {
               : studio.deposit_percent })}
           onConfirmed={async () => {
             const target = pendingPayment;
-            await finalizeClientBookingState(target);
             setConfirmedTarget(target);
             setPendingPayment(null);
             setConfirmedPaymentStatus("paid_online");
             setConfirmed(true);
+            await finalizeClientBookingState(target);
           }}
           onCancel={() => {
             setPendingPayment(null);
