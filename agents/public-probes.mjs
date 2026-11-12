@@ -101,7 +101,9 @@ export function parsePublicSitemap(xml) {
 }
 
 export async function probePublicPages({ fetchImpl = fetch, now = () => new Date(),
-  delayMs = 0 } = {}) {
+  delayMs = 0, maxDurationMs = MAX_DURATION_MS } = {}) {
+  if (!Number.isInteger(maxDurationMs) || maxDurationMs < 1 ||
+      maxDurationMs > MAX_DURATION_MS) throw new Error("PUBLIC_DURATION_UNSAFE");
   const discovered = new Set();
   const discoveredPages = new Set();
   const assetCache = new Map();
@@ -116,7 +118,7 @@ export async function probePublicPages({ fetchImpl = fetch, now = () => new Date
     const wait = Math.max(0, delayMs - (Date.now() - lastRequestAt));
     if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
     lastRequestAt = Date.now();
-    const remaining = MAX_DURATION_MS - (now().getTime() - started);
+    const remaining = maxDurationMs - (now().getTime() - started);
     if (remaining <= 0) throw new Error("PUBLIC_DURATION_EXCEEDED");
     requests++;
     return fetchImpl(url, {
@@ -152,7 +154,7 @@ export async function probePublicPages({ fetchImpl = fetch, now = () => new Date
       script: "UNKNOWN", style: "UNKNOWN", routeScript: "UNKNOWN",
       assetsChecked: 0, complete: false };
     pages.push(result);
-    if (requests >= MAX_REQUESTS || now().getTime() - started >= MAX_DURATION_MS) {
+    if (requests >= MAX_REQUESTS || now().getTime() - started >= maxDurationMs) {
       result.status = "NOT_CHECKED_LIMIT";
       continue;
     }

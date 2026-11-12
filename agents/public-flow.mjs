@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync,
+  writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_STATE_DIR, acquireAtlasLock, appendAtlasEvent } from "./atlas.mjs";
 import { runPublicSentinela, classifyPublicSnapshot } from "./sentinela.mjs";
@@ -31,6 +32,23 @@ function writeAtomic(path, content) {
   const tmp = `${path}.${randomUUID()}.tmp`;
   writeFileSync(tmp, content, { mode: 0o600 });
   renameSync(tmp, path);
+}
+
+function prunePublicReports(stateDir, removed, retained) {
+  const kept = new Set(retained.map((item) => item.flowId));
+  for (const entry of removed) {
+    const id = entry.flowId;
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id ?? "") ||
+        kept.has(id)) continue;
+    const base = join(stateDir, "public-runs", id);
+    try {
+      const report = JSON.parse(readFileSync(`${base}.json`, "utf8"));
+      if (report.flowId !== id || !["PUBLIC_READ_ONLY", "SYNTHETIC_SIMULATION"]
+        .includes(report.mode)) continue;
+      unlinkSync(`${base}.json`);
+      if (existsSync(`${base}.md`)) unlinkSync(`${base}.md`);
+    } catch { /* An uncertain local file remains for manual review. */ }
+  }
 }
 
 function compareIssues(previous, current, pages) {
@@ -87,7 +105,8 @@ export function formatPublicReport(report) {
 
 export async function runPublicCheck({ mode = "live", scenario = "healthy",
   stateDir = null,
-  fetchImpl, now = () => new Date(), validate = () => runValida() } = {}) {
+  fetchImpl, now = () => new Date(), validate = () => runValida(),
+  maxScanDurationMs = 150_000 } = {}) {
   if (!["live", "synthetic"].includes(mode) || (mode === "synthetic" &&
       !["healthy", "studio-failure", "resource-failure", "network-failure"].includes(scenario)))
     throw new Error("INVALID_PUBLIC_MODE");
@@ -101,6 +120,7 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
     const snapshot = await runPublicSentinela({
       fetchImpl: mode === "synthetic" ? publicFixture(scenario) : fetchImpl ?? fetch, now,
       delayMs: mode === "live" ? 200 : 0,
+      maxDurationMs: maxScanDurationMs,
     });
     const monitoring = { agent: "sentinela", runId: randomUUID(),
       observedAt: snapshot.observedAt, status: snapshot.pages.every((item) => item.complete)
@@ -161,14 +181,16 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
         step(opinion, [monitoring.runId, diagnosis.runId, proposal.runId,
           validation.runId])],
     };
+    const allHistory = [...state.history, { flowId, at: report.observedAt,
+      mode: report.mode, status, issueKeys: comparison.issues.map(issueKey) }];
     const next = { schema: 1, issues: comparison.issues.map(safeIssue),
-      history: [...state.history, { flowId, at: report.observedAt, mode: report.mode,
-        status, issueKeys: comparison.issues.map(issueKey) }].slice(-MAX_HISTORY),
+      history: allHistory.slice(-MAX_HISTORY),
       alerts: [...state.alerts, ...comparison.events.map((event) => ({
         flowId, at: report.observedAt, ...event }))].slice(-MAX_HISTORY) };
     const out = join(stateDir, "public-runs");
     mkdirSync(out, { recursive: true });
     writeAtomic(join(stateDir, "public-state.json"), `${JSON.stringify(next, null, 2)}\n`);
+    prunePublicReports(stateDir, allHistory.slice(0, -MAX_HISTORY), next.history);
     writeAtomic(join(out, `${flowId}.json`), `${JSON.stringify(report, null, 2)}\n`);
     writeAtomic(join(out, `${flowId}.md`), formatPublicReport(report));
     const reportPath = join(stateDir, "latest-public.md");

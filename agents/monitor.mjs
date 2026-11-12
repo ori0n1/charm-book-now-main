@@ -7,6 +7,8 @@ import { DEFAULT_STATE_DIR, runAtlas } from "./atlas.mjs";
 import { analyzeMonitorRun } from "./monitor-analysis.mjs";
 import { verifyNoninteractiveReadOnlyOAuth } from "./monitor-auth.mjs";
 import { syntheticMonitorReport } from "./monitor-fixtures.mjs";
+import { runPublicCheck } from "./public-flow.mjs";
+import { runApprovedTest, runValida } from "./valida.mjs";
 
 const configPath = fileURLToPath(new URL("./monitor-config.json", import.meta.url));
 export const MONITOR_CONFIG = Object.freeze(JSON.parse(readFileSync(configPath, "utf8")));
@@ -90,11 +92,15 @@ function blockedReport(authStatus, id, now) {
 
 export function formatMonitorReport(report) {
   return [
-    `# Monitorização Atlas — ${report.status}`, "",
+    `# Monitorização Atlas — ${report.overallStatus}`, "",
     `Execução: ${report.monitorId}`, `Sentinela: ${report.sentinelaRunId}`,
-    `Modo: ${report.mode}`, `Autenticação: ${report.authStatus}`,
+    `Modo: ${report.mode}`, `Autenticação Cloudflare: ${report.authStatus}`,
+    `Estado Cloudflare: ${report.status}`,
     `Versão observada: ${report.activeVersion ?? "indisponível"}`,
     `Bindings observados: ${report.bindingCount ?? "indisponíveis"}`,
+    `Páginas públicas: ${report.publicStatus} (${report.publicCheckedPages ?? 0}/${report.publicExpectedPages ?? "?"}; sitemap ${report.publicDiscoveryStatus}).`,
+    `Relatório público: ${report.publicReportPath ?? "indisponível"}`,
+    ...(report.publicFailureCode ? [`Limite público: ${report.publicFailureCode}`] : []),
     `Retenção: ${report.retentionSkipped ? `${report.retentionSkipped} ficheiros antigos requerem revisão local` : "histórico dentro do limite"}`,
     "", "## Alertas locais novos ou recuperados", "",
     ...(report.events.length ? report.events.map((item) =>
@@ -114,9 +120,13 @@ export async function runMonitorOnce({
   now = () => new Date(),
   authCheck = verifyNoninteractiveReadOnlyOAuth,
   collect,
+  includePublic = false,
+  publicScenario = "healthy",
+  publicCheck = runPublicCheck,
 } = {}) {
   if (!["live", "synthetic"].includes(mode)) throw new Error("INVALID_MONITOR_MODE");
   const monitorId = randomUUID();
+  const deadline = Date.now() + MONITOR_CONFIG.maxDurationMs;
   const release = acquireMonitorLock(stateDir, monitorId, now);
   try {
     const state = readState(stateDir);
@@ -136,27 +146,84 @@ export async function runMonitorOnce({
     }
     const reportWithId = { ...source.report, runId: source.id };
     const analysis = analyzeMonitorRun(reportWithId, state.last, MONITOR_CONFIG);
+    let publicResult = null;
+    let publicStatus = includePublic ? "INDETERMINADO" : "DESATIVADO";
+    let publicFailureCode = null;
+    if (includePublic) {
+      const scanBudget = Math.min(70_000, deadline - Date.now() - 20_000);
+      if (scanBudget < 5_000) publicFailureCode = "PUBLIC_TIME_BUDGET_EXHAUSTED";
+      else {
+        try {
+          publicResult = await publicCheck({
+            mode, scenario: publicScenario,
+            stateDir: join(stateDir, "public-integrated"),
+            maxScanDurationMs: scanBudget,
+            validate: () => runValida({ runCase: (testCase) => {
+              const remaining = deadline - Date.now();
+              if (remaining < 3_000) return { file: testCase.file,
+                state: "INDETERMINATE", reason: "MONITOR_TIME_BUDGET",
+                durationMs: 0 };
+              return runApprovedTest(testCase, {
+                timeoutMs: Math.min(2_500, remaining - 2_000),
+              });
+            } }),
+          });
+          publicStatus = publicResult.report.status;
+        } catch { publicFailureCode = "PUBLIC_CHECK_FAILED"; }
+      }
+    }
+    const endpointIssues = new Set(analysis.issues.filter((item) =>
+      item.domain.startsWith("public:") || item.domain.startsWith("public_read:"))
+      .map((item) => item.domain.split(":")[1]));
+    const publicEvents = (publicResult?.report?.events ?? []).filter((item) => {
+      if (!["/", "/login"].includes(item.path) ||
+          !["PUBLIC_PAGE_HTTP_ERROR", "PUBLIC_NETWORK_UNAVAILABLE"].includes(item.code))
+        return true;
+      if (item.kind === "NEW" && endpointIssues.has(item.path)) return false;
+      return !analysis.events.some((event) => event.kind === item.kind &&
+        event.evidence?.path === item.path);
+    });
+    const allEvents = [...analysis.events, ...publicEvents];
+    const combinedEvents = allEvents.slice(0, MONITOR_CONFIG.maxAlertsPerRun);
+    const publicAnomalies = publicResult?.report?.anomalies ?? [];
+    const publicSeverity = publicStatus === "ANOMALIAS"
+      ? publicAnomalies.some((item) => item.severity === "critical") ? "ALERTA" : "ATENCAO"
+      : publicStatus === "INDETERMINADO" ? "INDETERMINADO" : "OK";
+    const rank = { OK: 0, ATENCAO: 1, INDETERMINADO: 2, ALERTA: 3 };
+    const overallStatus = rank[publicSeverity] > rank[reportWithId.status]
+      ? publicSeverity : reportWithId.status;
     const summary = {
       monitorId, sentinelaRunId: source.id, observedAt: now().toISOString(),
       mode: mode === "synthetic" ? "SYNTHETIC_SIMULATION" : "LIVE_READ_ONLY",
       authStatus: auth.status, status: reportWithId.status,
+      overallStatus, publicStatus,
+      publicFailureCode,
+      publicRunId: publicResult?.id ?? null,
+      publicCheckedPages: publicResult?.report?.checkedPages ?? null,
+      publicExpectedPages: publicResult?.report?.expectedPages ?? null,
+      publicDiscoveryStatus: publicResult?.report?.discoveryStatus ?? "INDETERMINADO",
+      publicReportPath: publicResult?.reportPath ?? null,
       activeVersion: analysis.observation.activeVersion,
       bindingCount: analysis.observation.bindingCount,
-      events: analysis.events, omittedEvents: analysis.omittedEvents,
+      events: combinedEvents,
+      omittedEvents: analysis.omittedEvents + allEvents.length - combinedEvents.length,
       knownPending: analysis.knownPending, activeIssueCount: analysis.issues.length,
       externalNotifications: false,
     };
     const entry = { monitorId, sentinelaRunId: source.id, at: summary.observedAt,
-      mode: summary.mode, status: summary.status, issueKeys: analysis.issues.map((item) => item.key),
-      eventCodes: analysis.events.map((item) => `${item.kind}:${item.code}`) };
+      mode: summary.mode, status: summary.status, overallStatus,
+      publicRunId: summary.publicRunId, publicStatus,
+      issueKeys: analysis.issues.map((item) => item.key),
+      eventCodes: combinedEvents.map((item) => `${item.kind}:${item.code}`) };
     const journalAll = [...state.journal, entry];
     const removed = journalAll.slice(0, Math.max(0, journalAll.length - MONITOR_CONFIG.maxJournalEntries));
     const next = {
       schema: 1, last: analysis.nextSnapshot,
       journal: journalAll.slice(-MONITOR_CONFIG.maxJournalEntries),
-      alerts: [...state.alerts, ...analysis.events.map((item) => ({
+      alerts: [...state.alerts, ...combinedEvents.map((item) => ({
         monitorId, sentinelaRunId: source.id, at: summary.observedAt,
-        kind: item.kind, code: item.code, severity: item.severity, evidence: item.evidence,
+        kind: item.kind, code: item.code, severity: item.severity,
+        evidence: item.evidence ?? (item.path ? { path: item.path } : null),
       }))].slice(-MONITOR_CONFIG.maxJournalEntries),
     };
     atomicWrite(join(stateDir, "monitor-state.json"), `${JSON.stringify(next, null, 2)}\n`);
