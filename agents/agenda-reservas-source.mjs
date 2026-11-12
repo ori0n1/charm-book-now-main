@@ -10,11 +10,23 @@ const exactKeys = (value, expected) => value && typeof value === "object" &&
 
 // Presence checks only. This never opens a vault, certificate or config file.
 export function inspectLocalAgendaReservationAccess({
-  localAppData = process.env.LOCALAPPDATA, exists = existsSync,
+  localAppData = process.env.LOCALAPPDATA,
+  packageLocalAppData = process.env.USERPROFILE
+    ? join(process.env.USERPROFILE, "AppData", "Local", "Packages",
+      "OpenAI.Codex_2p2nqsd0c76g0", "LocalCache", "Local")
+    : null,
+  exists = existsSync,
 } = {}) {
   if (!localAppData) return { status: "BLOCKED_LOCAL_READ_CONFIG_MISSING" };
   const base = join(localAppData, "Bellza");
   if (!exists(join(base, "sql-catalog.json"))) {
+    // Diagnostic only: package-local files must never be copied or
+    // silently used by the current process as a credential source.
+    if (packageLocalAppData && packageLocalAppData !== localAppData &&
+        ["sql-catalog.json", "prod-supabase-ca.crt", "vault-unlock.clixml"]
+          .every((name) => exists(join(packageLocalAppData, "Bellza", name)))) {
+      return { status: "BLOCKED_PROFILE_ISOLATION" };
+    }
     return { status: "BLOCKED_LOCAL_READ_CONFIG_MISSING" };
   }
   if (!exists(join(base, "prod-supabase-ca.crt"))) {

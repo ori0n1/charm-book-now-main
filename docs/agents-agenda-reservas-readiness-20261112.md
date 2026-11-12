@@ -6,9 +6,21 @@ modificada. Nenhuma consulta funcional ao Supabase foi executada.
 
 ## Evidência de acesso
 
-- Em 12/11/2026, a verificação local de existência, também fora do
-  sandbox, não encontrou `sql-catalog.json`, a CA nem o ficheiro de
-  desbloqueio do vault no perfil Windows. Não abriu ou copiou credenciais.
+- A primeira verificação de 12/11/2026 procurou
+  `%LOCALAPPDATA%\Bellza` no perfil apresentado pelo sandbox e no
+  perfil Windows comum, sem encontrar os ficheiros. A investigação
+  direcionada posterior encontrou `sql-catalog.json`, a CA e
+  `vault-unlock.clixml` em
+  `AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Local\Bellza`.
+  Também encontrou ficheiros do registo e do armazenamento cifrado do
+  SecretStore nesse perfil empacotado. Nenhum conteúdo secreto foi
+  lido, copiado ou exposto.
+- O PowerShell do contexto atual, com e sem substituição temporária
+  de `LOCALAPPDATA` nesse processo, não reconheceu
+  `BellzaCatalogVault` como vault registado. A configuração antiga
+  contém a referência de projeto correta e um host com o formato do
+  pooler esperado, mas a sessão SQL, o certificado TLS e a role
+  efetiva não puderam ser verificados.
 - A última evidência técnica disponível em
   `docs/bellza-access.md` da branch candidata
   `agent/bugs/clientes-duplicados-seguros-20261107-005100` é de
@@ -54,9 +66,11 @@ npm.cmd run agents:functional-check -- --simulate=agenda-reservas
 npm.cmd run test:agents
 ```
 
-O primeiro comando produziu
+O primeiro comando produziu inicialmente
+`BLOCKED_LOCAL_READ_CONFIG_MISSING`; após localizar o perfil
+empacotado e atualizar o diagnóstico, produziu
 `PENDENTE_ACESSO_FUNCIONAL / BLOQUEADA`,
-`BLOCKED_LOCAL_READ_CONFIG_MISSING`, zero anomalias observadas
+`BLOCKED_PROFILE_ISOLATION`, zero anomalias observadas
 e zero alertas. Isso **não demonstra ausência de falhas reais**. O
 segundo comando, sem rede e com dados fictícios, produziu cinco
 anomalias no `STUDIO_27` e zero no `STUDIO_EXEMPLO`, com cinco
@@ -76,9 +90,14 @@ no agendamento.
 
 ## Próximo passo mínimo
 
-Por caminho oficial e **com autorização específica separada**,
-disponibilizar uma fonte agregada de leitura para agenda e reservas
-que comprove a role efetiva sem escrita nem `BYPASSRLS`, RLS por
-estúdio e ligação TLS verificada. Só depois implementar e testar o
-adaptador real contra essa fonte, com o conjunto de campos mínimos
-acima. Não ativar a leitura recorrente antes dessa comprovação.
+No perfil autorizado do SecretStore, confirmar por metadados se a
+entrada `Bellza-Supabase-Prod-CatalogReader` ainda existe, sem
+copiar o vault cifrado ou a credencial para este perfil. Mesmo que
+exista, a última evidência da role aponta para `NOLOGIN` e escrita
+herdada de `PUBLIC`: é necessária uma fonte efetivamente sem
+capacidade de escrita antes de a usar no agente. Qualquer correção de
+role, grants, credencial ou RLS em produção requer **autorização
+específica separada**, depois de rever o impacto. Só então validar
+TLS, role efetiva e isolamento por estúdio numa sessão permitida,
+integrar o adaptador e pedir autorização específica para leitura
+recorrente. A tarefa piloto não foi modificada.

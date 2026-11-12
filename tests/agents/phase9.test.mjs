@@ -46,7 +46,7 @@ async function isolated(run) {
 test("pré-requisitos locais apenas indicam bloqueio sem abrir ficheiros", () => {
   const base = "C:/ficticio/Local";
   assert.equal(inspectLocalAgendaReservationAccess({
-    localAppData: base, exists: () => false,
+    localAppData: base, packageLocalAppData: null, exists: () => false,
   }).status, "BLOCKED_LOCAL_READ_CONFIG_MISSING");
   assert.equal(inspectLocalAgendaReservationAccess({
     localAppData: base, exists: (path) => path.endsWith("sql-catalog.json"),
@@ -57,6 +57,22 @@ test("pré-requisitos locais apenas indicam bloqueio sem abrir ficheiros", () =>
   assert.equal(inspectLocalAgendaReservationAccess({
     localAppData: base, exists: () => true,
   }).status, "BLOCKED_EFFECTIVE_ROLE_UNVERIFIED");
+});
+
+test("perfil antigo detetado sem copiar CA, vault ou credenciais", () => {
+  const current = "C:/perfil/atual";
+  const legacy = "C:/perfil/antigo";
+  const inspected = [];
+  const result = inspectLocalAgendaReservationAccess({
+    localAppData: current, packageLocalAppData: legacy,
+    exists: (path) => {
+      inspected.push(path);
+      return path.replaceAll("\\", "/").startsWith(legacy);
+    },
+  });
+  assert.equal(result.status, "BLOCKED_PROFILE_ISOLATION");
+  assert.equal(inspected.length, 4);
+  assert.ok(inspected.every((path) => !path.includes("storefile")));
 });
 
 test("role NOLOGIN, BYPASSRLS, escrita e ausência de isolamento são rejeitados", async () => {
