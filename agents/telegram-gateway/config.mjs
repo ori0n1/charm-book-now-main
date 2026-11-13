@@ -6,7 +6,7 @@ export const BOT_KEYS = Object.freeze([
 ]);
 export const TOOLS = Object.freeze({
   atlas: ["monitor_status", "monitor_history", "public_status",
-    "task_overview", "task_monitor", "task_watch", "task_investigate",
+    "task_overview", "task_coordinate", "task_monitor", "task_watch", "task_investigate",
     "task_validate", "task_propose"],
   sentinela: ["monitor_status", "monitor_alerts", "public_status",
     "task_monitor", "task_watch"],

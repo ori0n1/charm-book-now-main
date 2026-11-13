@@ -85,6 +85,20 @@ export function createTelegramClient({ token, fetchImpl = fetch } = {}) {
         reply_markup: replyMarkup, disable_notification: true,
         protect_content: true }, 12_000);
     },
+    async sendOwnerDetails(chatId, text, replyMarkup) {
+      const buttons = replyMarkup?.inline_keyboard;
+      if (!Number.isSafeInteger(chatId) || chatId <= 0 ||
+          typeof text !== "string" || !text || text.length > 1200 ||
+          !Array.isArray(buttons) || buttons.length !== 1 ||
+          buttons[0]?.length !== 1 ||
+          buttons[0][0]?.text !== "Ver detalhes" ||
+          !/^v:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
+            buttons[0][0]?.callback_data ?? ""))
+        throw new Error("TELEGRAM_SEND_DENIED");
+      return call("sendMessage", { chat_id: chatId, text,
+        reply_markup: replyMarkup, disable_notification: true,
+        protect_content: true }, 12_000);
+    },
     async answerCallbackQuery(id, text) {
       if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id) ||
           typeof text !== "string" || text.length > 200)

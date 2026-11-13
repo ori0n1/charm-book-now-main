@@ -287,7 +287,7 @@ async function main() {
             try {
               const source = readIncidentSource(config.monitorStateDir);
               await coordinator.process(source, { notify: true });
-              taskManager?.recordMonitorEvents(source.events);
+              await taskManager?.recordMonitorEvents(source.events);
             } catch (error) {
               const code = /^INCIDENT_[A-Z0-9_]+$/.test(error?.message ?? "")
                 ? error.message : "INCIDENT_SCAN_UNAVAILABLE";

@@ -175,7 +175,12 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
       const result = await taskManager.callback({ botKey, data: query.data });
       mark();
       return { ...result, callbackId: query.id,
-        callbackText: conciseAnswer(result.reply).slice(0, 200), reply: null };
+        callbackText: conciseAnswer(result.reply).slice(0, 200),
+        detailMessage: result.detailMessage ? safeText(result.detailMessage) : null,
+        detailMessages: Array.isArray(result.detailMessages) ?
+          result.detailMessages.slice(0, 3).map(safeText) : [],
+        followupMessage: result.followupMessage ?
+          conciseAnswer(result.followupMessage) : null, reply: null };
     }
     if (!allowMessage(config, update)) {
       mark();
@@ -323,6 +328,9 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
             if (outcome.status === "APPROVAL_REQUIRED")
               await clients[botKey].sendOwnerApproval(config.ownerChatId,
                 outcome.reply, outcome.buttons);
+            else if (outcome.buttons)
+              await clients[botKey].sendOwnerDetails(config.ownerChatId,
+                outcome.reply, outcome.buttons);
             else await clients[botKey].sendOwnerMessage(config.ownerChatId,
               outcome.reply);
           }
@@ -332,6 +340,14 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
           try { await clients[botKey].answerCallbackQuery(
             outcome.callbackId, outcome.callbackText); }
           catch { /* Decision already persisted. Never repeat it. */ }
+        }
+        const followups = [outcome.detailMessage,
+          ...(outcome.detailMessages ?? []), outcome.followupMessage]
+          .filter(Boolean);
+        for (const message of followups) {
+          try { await clients[botKey].sendOwnerMessage(config.ownerChatId,
+            message); }
+          catch { /* Offset already saved: do not risk a duplicate message. */ }
         }
       }
       return updates.length;

@@ -160,10 +160,10 @@ test("acompanhamento associa evento novo do estúdio sem duplicar nem alertar", 
   const event = { monitorId: "00000000-0000-4000-8000-000000000023",
     kind: "NEW", code: "VISUAL_JS_ERROR", studioCode: "CAPIVARA",
     observedAt: "2026-11-13T12:30:00Z" };
-  assert.equal(f.manager.recordMonitorEvents([{ ...event,
-    studioCode: "STUDIO_27" }]).matched, 0);
-  assert.equal(f.manager.recordMonitorEvents([event]).matched, 1);
-  assert.equal(f.manager.recordMonitorEvents([event]).matched, 0);
+  assert.equal((await f.manager.recordMonitorEvents([{ ...event,
+    studioCode: "STUDIO_27" }])).matched, 0);
+  assert.equal((await f.manager.recordMonitorEvents([event])).matched, 1);
+  assert.equal((await f.manager.recordMonitorEvents([event])).matched, 0);
   assert.equal(f.manager.list()[0].evidence.codes[0], "VISUAL_JS_ERROR");
   assert.equal(f.manager.list()[0].evidence.monitorId, event.monitorId);
 });
