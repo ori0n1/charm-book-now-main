@@ -109,7 +109,7 @@ test("resposta portuguesa inclui origem e data do relatório, sem outro bot", as
         key === "atlas" ? "monitor_status" : "monitor_alerts",
       studio: /Capivara/i.test(message) ? "Capivara" : null, hours: 24 } }),
       answer: async ({ evidence }) => ({ text:
-        `Resultado ${evidence.status}; agenda ${evidence.agendaInteractivity ?? "sem prova"}.` }) }]));
+        `**Resultado ${evidence.status}; agenda ${evidence.agendaInteractivity ?? "sem prova"}.**` }) }]));
   const gateway = createGateway({ config, aiByBot,
     clients: { atlas: {}, sentinela: {} }, toolRunner: tools,
     now: () => new Date("2026-11-13T13:15:00Z") });
@@ -119,9 +119,11 @@ test("resposta portuguesa inclui origem e data do relatório, sem outro bot", as
   const capivara = await gateway.handleUpdate("atlas",
     update(1, "A página da Capivara está funcionando?"));
   assert.equal(capivara.tool, "public_status");
-  assert.match(capivara.reply, /última verificação que tenho/);
+  assert.match(capivara.reply, /Última verificação:/);
   assert.match(capivara.reply, /13\/11\/2026.*12:00/);
-  assert.match(capivara.reply, /dados estão desatualizados/);
+  assert.match(capivara.reply, /Portugal continental.*Dados desatualizados/);
+  assert.doesNotMatch(capivara.reply, /\*/);
+  assert.ok(capivara.reply.length < 450);
   assert.doesNotMatch(capivara.reply, /MONITOR_HISTORY/);
   assert.match(capivara.reply, /NAO_VERIFICAVEL/);
   const sentinela = await gateway.handleUpdate("sentinela",
@@ -131,6 +133,11 @@ test("resposta portuguesa inclui origem e data do relatório, sem outro bot", as
     item.studioCode === "STUDIO_27").httpFailures, 1);
   assert.equal(gateway.readState().bots.atlas.length, 1);
   assert.equal(gateway.readState().bots.sentinela.length, 1);
+  aiByBot.atlas.answer = async () => ({ text: `**${"detalhe ".repeat(100)}**` });
+  const long = await gateway.handleUpdate("atlas", update(2, "Resumo breve"));
+  assert.ok(long.reply.length < 450);
+  assert.doesNotMatch(long.reply, /\*/);
+  assert.match(long.reply, /Portugal continental.*Dados desatualizados/);
   assert.equal((await gateway.handleUpdate("sherlock",
     update(1, "Investiga"))).status, "BOT_DISABLED");
 });
@@ -194,7 +201,7 @@ test("IA não pode afirmar que a agenda funciona quando a interação não foi v
       from: { id: 7996549141, is_bot: false },
       chat: { id: 7996549141, type: "private" } } });
   assert.doesNotMatch(response.reply, /funciona normalmente/);
-  assert.match(response.reply, /última verificação que tenho/);
+  assert.match(response.reply, /Última verificação:/);
 });
 
 test("piloto descarta mensagens antigas antes da IA e preserva o offset", async () => {

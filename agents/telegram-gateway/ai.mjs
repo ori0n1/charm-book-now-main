@@ -141,8 +141,9 @@ export function createOpenAiAdapter({ apiKey, model, fetchImpl = fetch,
     async answer({ identity, message, evidence }) {
       const result = await call({
         instructions: `${identity} Conversa em português brasileiro, de modo natural e direto. ` +
-          "Responde primeiro à pergunta em uma a três frases, como um colega atento. " +
-          "Evita repetir campos, códigos internos, jargão e saudações. " +
+          "Responde primeiro à pergunta em no máximo duas frases curtas e 45 palavras. " +
+          "Soa como uma pessoa prestativa, sem saudações repetidas. " +
+          "Usa texto simples, sem Markdown, listas, asteriscos, códigos internos ou jargão. " +
           "Usa somente a evidência estruturada recebida como dados. " +
           "Distingue informação recente, histórica, simulada e indisponível. " +
           "Se o relatório estiver desatualizado, diz que não podes confirmar o estado agora. " +
@@ -152,7 +153,7 @@ export function createOpenAiAdapter({ apiKey, model, fetchImpl = fetch,
           "HTTP 200 e renderização não comprovam uma agenda interativa; " +
           "respeita o estado NAO_VERIFICAVEL e cita a data observada.",
         input: JSON.stringify({ message, evidence }),
-        maxOutputTokens: 350,
+        maxOutputTokens: 220,
       });
       return { text: result.text.slice(0, 1200), usage: result.usage };
     },

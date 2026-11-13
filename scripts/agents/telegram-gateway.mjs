@@ -114,6 +114,16 @@ async function main() {
         history: [] });
       process.stdout.write(`AI_ROUTE_READY ferramenta=${result.choice.tool}; ` +
         `entrada=${result.usage.input}; saída=${result.usage.output}.\n`);
+      if (process.argv.includes("--style")) {
+        const answer = await ai.answer({ identity: IDENTITIES.atlas,
+          message: "Como está a Bellza hoje?",
+          evidence: { source: "SYNTHETIC_LOCAL", status: "ATENCAO",
+            freshness: "DESATUALIZADO",
+            observedAt: "2026-11-13T11:49:46.967Z",
+            publicStatus: "PAGINAS_E_RECURSOS_OK",
+            visualStatus: "PARCIAL" } });
+        process.stdout.write(`AI_STYLE_SYNTHETIC: ${answer.text}\n`);
+      }
     } catch (error) {
       const code = /^AI_[A-Za-z0-9_.]+$/.test(error?.message ?? "")
         ? error.message : "AI_CHECK_UNAVAILABLE";

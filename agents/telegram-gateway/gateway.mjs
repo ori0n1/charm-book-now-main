@@ -13,6 +13,16 @@ const MAX_DAY_MESSAGES = 60;
 const sensitive = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:\+?\d[\s-]?){9,}\b|\bsk-[A-Za-z0-9_-]{12,}\b|\b\d{13,19}\b/i;
 const safeText = (value) => String(value ?? "")
   .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").slice(0, MAX_REPLY);
+function conciseAnswer(value) {
+  const text = safeText(value).replace(/[*`#]/g, "")
+    .replace(/^\s*[-•]\s*/gm, "").replace(/\s+/g, " ").trim();
+  if (text.length <= 320) return text;
+  const first = text.slice(0, 320);
+  const sentence = Math.max(first.lastIndexOf(". "), first.lastIndexOf("! "),
+    first.lastIndexOf("? "));
+  return sentence >= 100 ? first.slice(0, sentence + 1) :
+    `${first.slice(0, 317).trimEnd()}…`;
+}
 const day = (now) => now.toISOString().slice(0, 10);
 const minute = (now) => Math.floor(now.getTime() / 60_000);
 const emptyState = () => ({ schema: 1,
@@ -86,16 +96,16 @@ function contextEntry(tool, evidence, now) {
 function evidenceNote(evidence) {
   const time = Date.parse(evidence?.observedAt ?? "");
   const observed = Number.isFinite(time)
-    ? new Intl.DateTimeFormat("pt-BR", { timeZone: "Europe/London",
-      dateStyle: "short", timeStyle: "short" }).format(new Date(time)) +
-      " (horário de Londres)" : null;
+    ? new Intl.DateTimeFormat("pt-PT", { timeZone: "Europe/Lisbon",
+      day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit",
+      minute: "2-digit", hour12: false }).format(new Date(time)) : null;
   if (evidence?.source === "SYNTHETIC_LOCAL")
-    return "Esta informação vem de um teste sintético; não descreve a produção.";
+    return "Teste sintético; não descreve a produção.";
   if (evidence?.source === "INDISPONIVEL" || !observed)
-    return "Não tenho uma verificação confiável com data para confirmar o estado agora.";
+    return "Sem verificação atual com data confirmada.";
   if (evidence?.freshness === "DESATUALIZADO")
-    return `A última verificação que tenho é de ${observed}. Os dados estão desatualizados.`;
-  return `Usei o relatório da Sentinela de ${observed}.`;
+    return `Última verificação: ${observed} (Portugal continental). Dados desatualizados.`;
+  return `Verificado em ${observed} (Portugal continental).`;
 }
 export function prepareAlertBatch(events, sentIds = [], { enabled = false,
   ownerChatId } = {}) {
@@ -230,7 +240,7 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
     }
     let reply;
     try {
-      reserveAi(state, config, Buffer.byteLength(message + JSON.stringify(evidence)), 350);
+      reserveAi(state, config, Buffer.byteLength(message + JSON.stringify(evidence)), 220);
       saveState(stateDir, state);
       const answer = await ai.answer({ identity: IDENTITIES[botKey],
         message, evidence });
@@ -245,7 +255,7 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
     } catch {
       reply = "Resposta por IA indisponível agora. Consulte o relatório local.";
     }
-    reply = safeText(`${safeText(reply).slice(0, 900).trim()}\n\n` +
+    reply = safeText(`${conciseAnswer(reply)}\n\n` +
       evidenceNote(evidence));
     state.bots[botKey] = [...state.bots[botKey],
       contextEntry(choice.tool, evidence, time)].slice(-MAX_HISTORY);
