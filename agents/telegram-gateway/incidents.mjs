@@ -142,10 +142,24 @@ export function formatIncidentAlert(incident, event) {
     event.studioCode === "UNKNOWN" ? "não identificado" :
       event.studioCode.replaceAll("_", " ");
   const description = DESCRIPTIONS[event.code] ?? event.code;
-  return `${kind} na Bellza (${severity}). Estúdio: ${studio}. ` +
+  const base = `${kind} na Bellza (${severity}). Estúdio: ${studio}. ` +
     `${description}: ${evidenceSummary(event)}. ` +
     `${portugalTime(event.observedAt)} (Portugal continental). ` +
     `Incidente ${incident.id.slice(0, 8)}.`;
+  if (event.kind !== "NEW" && event.kind !== "CHANGED") return base;
+  const findings = incident.steps?.sherlock?.findings ?? [];
+  const proven = findings.length > 0 && findings.every((item) =>
+    item.causeStatus === "CONFIRMADA" ||
+    item.causeStatus === "CONFIRMADA_EM_SIMULACAO");
+  const cause = proven ? "Causa comprovada." : "Causa não comprovada.";
+  const tests = incident.steps?.valida?.status === "APPROVED"
+    ? "Testes locais aprovados." :
+    incident.steps?.valida?.status === "FAILED" ? "Testes locais falharam." :
+      "Testes locais inconclusivos ou dispensados.";
+  const proposal = incident.steps?.forge?.status === "PROPOSTA"
+    ? "Proposta não aplicada." : "Sem proposta aplicável.";
+  const summary = `${cause} ${tests} ${proposal}`;
+  return `${base} ${summary}`.length <= 320 ? `${base} ${summary}` : base;
 }
 function compactDiagnosis(report) {
   return { status: report?.status ?? "INDETERMINADO",
@@ -252,6 +266,11 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
         if (clock() - started >= maxRunMs) break;
         const event = normalizeIncidentEvent(raw);
         if (!event || state.processedEventIds.includes(event.id)) continue;
+        if ((event.kind === "NEW" || event.kind === "CHANGED") &&
+            event.severity === "info") {
+          state.processedEventIds.push(event.id);
+          continue;
+        }
         const open = state.incidents.find((item) => item.key === event.key &&
           item.state === "OPEN");
         if ((event.kind === "NEW" || event.kind === "CHANGED") &&

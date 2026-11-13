@@ -136,8 +136,18 @@ test("envio requer fonte real, faz bootstrap sem alerta antigo e deduplica", asy
   assert.equal(sent[0].chat, 12345);
   assert.match(sent[0].text, /STUDIO 27/);
   assert.match(sent[0].text, /Portugal continental/);
+  assert.match(sent[0].text, /Causa não comprovada/);
+  assert.match(sent[0].text, /Testes locais aprovados/);
+  assert.ok(sent[0].text.length <= 320);
   await coordinator.process(live([event(), newer], id(2)), { notify: true });
   assert.equal(sent.length, 1);
+});
+
+test("ocorrência informativa sem relevância não dispara alerta", async () => {
+  const coordinator = createIncidentCoordinator({ stateDir: stateDir(), runCase });
+  await coordinator.process(snapshot([event(id(71), "NEW", { severity: "info" })]));
+  assert.equal(coordinator.readState().incidents.length, 0);
+  assert.equal(coordinator.readState().outbox.length, 0);
 });
 
 test("falha ambígua no envio não é repetida automaticamente", async () => {
