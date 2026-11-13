@@ -287,8 +287,11 @@ test("gateway encaminha linguagem natural e callback privado sem envio real", as
       { username: `bellza_${key}_bot`, secretName: `telegram-${key}`,
         expectedBotId: key === "valida" ? 9065362375 : null,
         enabled: key !== "guardiao" }])) });
-  const aiByBot = { valida: { route: async () => ({ choice: {
-    tool: "task_validate", studio: null, hours: 24 } }),
+  const aiByBot = { valida: { route: async ({ tools }) => {
+    assert(tools.includes("task_validate"));
+    assert(!tools.includes("run_synthetic_tests"));
+    return { choice: { tool: "task_validate", studio: null, hours: 24 } };
+  },
     answer: async () => { throw new Error("ANSWER_NOT_NEEDED"); } } };
   let sent = null;
   const clients = { valida: { sendOwnerApproval: async (_, text, buttons) => {

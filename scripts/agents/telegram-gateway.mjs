@@ -124,10 +124,12 @@ async function main() {
       const apiKey = readSecret("openai-api");
       const ai = createOpenAiAdapter({ apiKey, model: config.ai.model });
       const typoForge = process.argv.includes("--forge-typo");
-      const bot = typoForge ? "forge" : "atlas";
+      const validaTask = process.argv.includes("--valida-task");
+      const bot = validaTask ? "valida" : typoForge ? "forge" : "atlas";
       const result = await ai.route({ identity: IDENTITIES[bot],
-        tools: TOOLS[bot],
-        message: typoForge
+        tools: validaTask ? TOOLS.valida.filter((name) =>
+          name !== "run_synthetic_tests") : TOOLS[bot],
+        message: validaTask ? "Valida, executa os testes sintéticos locais" : typoForge
           ? "Froge, preapra uma propoosta de investigacao sem aplicar corecoes"
           : "Como está a Bellza hoje? Qual foi a última verificação?",
         history: [] });

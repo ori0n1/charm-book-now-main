@@ -204,7 +204,8 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
     state.quota.minuteCount++;
     state.quota.messages++;
     const history = state.bots[botKey].slice(-5);
-    const allowedTools = taskManager ? TOOLS[botKey] :
+    const allowedTools = taskManager ? TOOLS[botKey].filter((name) =>
+      !(botKey === "valida" && name === "run_synthetic_tests")) :
       TOOLS[botKey].filter((name) => !name.startsWith("task_"));
     const ai = aiByBot[botKey];
     if (!ai || typeof ai.route !== "function" ||
