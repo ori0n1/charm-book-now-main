@@ -8,6 +8,8 @@ import { createOpenAiAdapter, checkOpenAiModel } from "../../agents/telegram-gat
 import { createTelegramClient } from "../../agents/telegram-gateway/telegram.mjs";
 import { createAgentTools } from "../../agents/telegram-gateway/tools.mjs";
 import { createGateway } from "../../agents/telegram-gateway/gateway.mjs";
+import { createIncidentCoordinator } from "../../agents/telegram-gateway/incidents.mjs";
+import { readIncidentSource } from "../../agents/telegram-gateway/incident-source.mjs";
 import { acquireSingleton, readSingleton } from "../../agents/telegram-gateway/singleton.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -15,9 +17,11 @@ const configPath = join(process.env.LOCALAPPDATA ?? "", "Bellza",
   "TelegramGateway", "config.json");
 const secretScript = join(scriptDir, "telegram-secrets.ps1");
 const mode = process.argv[2] ?? "status";
-const permitted = new Set(["serve", "pilot", "status", "stop", "auth-check", "ai-check"]);
+const monitorEvents = process.argv.includes("--monitor-events");
+const permitted = new Set(["serve", "pilot", "status", "stop", "auth-check",
+  "ai-check", "alert-test"]);
 if (!permitted.has(mode)) {
-  process.stderr.write("Modo inválido: serve, pilot, status, stop, auth-check ou ai-check.\n");
+  process.stderr.write("Modo inválido: serve, pilot, status, stop, auth-check, ai-check ou alert-test.\n");
   process.exitCode = 2;
 } else if (process.platform !== "win32" || !process.env.LOCALAPPDATA) {
   process.stderr.write("Gateway disponível apenas no Windows com perfil local.\n");
@@ -44,6 +48,15 @@ function processAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; }
   catch (error) { return error?.code === "EPERM"; }
+}
+function waitForNextScan(signal) {
+  return new Promise((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const finish = () => { clearTimeout(timer);
+      signal.removeEventListener("abort", finish); resolve(); };
+    const timer = setTimeout(finish, 5 * 60_000);
+    signal.addEventListener("abort", finish, { once: true });
+  });
 }
 
 async function main() {
@@ -136,10 +149,44 @@ async function main() {
     }
     return;
   }
+  if (mode === "alert-test") {
+    const at = new Intl.DateTimeFormat("pt-PT", { timeZone: "Europe/Lisbon",
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+    const message = `TESTE SINTÉTICO Bellza. Envio de alerta da Sentinela ` +
+      `para o chat privado autorizado. ${at} (Portugal continental). ` +
+      `Esta mensagem não indica uma falha real.`;
+    if (!process.argv.includes("--send-approved")) {
+      process.stdout.write(`PREVIEW_SEM_ENVIO: ${message}\n`);
+      return;
+    }
+    if (config.alertsEnabled !== true || !config.bots.sentinela.enabled) {
+      process.stderr.write("INCIDENT_ALERTS_NOT_AUTHORIZED\n");
+      process.exitCode = 2;
+      return;
+    }
+    try {
+      const client = createTelegramClient({ token: readSecret("telegram-sentinela") });
+      if (!botIdentityMatches(config.bots.sentinela, await client.getMe()))
+        throw new Error("TELEGRAM_IDENTITY_MISMATCH");
+      await client.sendOwnerMessage(config.ownerChatId, message);
+      process.stdout.write("SYNTHETIC_ALERT_SENT_TO_OWNER\n");
+    } catch {
+      process.stderr.write("SYNTHETIC_ALERT_SEND_UNAVAILABLE\n");
+      process.exitCode = 2;
+    }
+    return;
+  }
   // Validate all prerequisites before acquiring the singleton lock.
   let apiKey;
   const tokens = {};
   const enabledBots = BOT_KEYS.filter((key) => config.bots[key].enabled);
+  if (monitorEvents && (mode !== "serve" || config.alertsEnabled !== true ||
+      !config.bots.sentinela.enabled || config.bots.guardiao.enabled)) {
+    process.stderr.write("INCIDENT_ALERTS_NOT_AUTHORIZED\n");
+    process.exitCode = 2;
+    return;
+  }
   if (mode === "pilot" && enabledBots.join(",") !== "atlas,sentinela") {
     process.stderr.write("Piloto limitado a Atlas e Sentinela.\n");
     process.exitCode = 2;
@@ -193,10 +240,10 @@ async function main() {
       if (existsSync(stopPath)) controller.abort();
     }, 1000);
     process.stdout.write(`GATEWAY_READY ${enabledBots.join(",")}; ` +
-      `alertas automáticos desativados; ` +
+      `alertas automáticos ${monitorEvents ? "ativados" : "desativados"}; ` +
       `${mode === "pilot" ? "piloto até 10 minutos" : "manual"}.\n`);
     try {
-      await Promise.all(enabledBots.map(async (key) => {
+      const workers = enabledBots.map(async (key) => {
         let backoff = 1000;
         while (!controller.signal.aborted) {
           try {
@@ -212,7 +259,29 @@ async function main() {
             backoff = Math.min(backoff * 2, 30_000);
           }
         }
-      }));
+      });
+      if (monitorEvents) {
+        const coordinator = createIncidentCoordinator({
+          stateDir: join(config.stateDir, "incidents"),
+          ownerChatId: config.ownerChatId,
+          sendAlert: (chatId, message) =>
+            clients.sentinela.sendOwnerMessage(chatId, message),
+        });
+        workers.push((async () => {
+          while (!controller.signal.aborted) {
+            try {
+              await coordinator.process(readIncidentSource(config.monitorStateDir),
+                { notify: true });
+            } catch (error) {
+              const code = /^INCIDENT_[A-Z0-9_]+$/.test(error?.message ?? "")
+                ? error.message : "INCIDENT_SCAN_UNAVAILABLE";
+              process.stderr.write(`${code}\n`);
+            }
+            await waitForNextScan(controller.signal);
+          }
+        })());
+      }
+      await Promise.all(workers);
     } finally {
       clearInterval(stopPoll);
       if (pilotTimer) clearTimeout(pilotTimer);

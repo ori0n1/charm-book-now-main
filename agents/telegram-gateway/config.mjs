@@ -34,7 +34,7 @@ export function validateGatewayConfig(config) {
       config.ownerChatId !== config.ownerUserId ||
       !isAbsolute(config.stateDir ?? "") ||
       !isAbsolute(config.monitorStateDir ?? "") ||
-      config.alertsEnabled !== false ||
+      typeof config.alertsEnabled !== "boolean" ||
       !config.ai || !/^[A-Za-z0-9._-]{3,80}$/.test(config.ai.model ?? "") ||
       !Number.isInteger(config.ai.maxCallsPerDay) ||
       config.ai.maxCallsPerDay < 1 || config.ai.maxCallsPerDay > 200 ||

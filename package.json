@@ -32,6 +32,7 @@
     "agents:check": "node scripts/agents/atlas.mjs check",
     "agents:monitor": "node scripts/agents/monitor.mjs",
     "agents:functional-check": "node scripts/agents/functional-check.mjs",
+    "agents:incidents:simulate": "node scripts/agents/telegram-incidents.mjs",
     "test:agents": "node --test tests/agents/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
