@@ -247,23 +247,24 @@ test("Sherlock, Forge, Valida e Guardião reutilizam relatórios sintéticos exi
   const id = "00000000-0000-4000-8000-000000000010";
   const at = "2026-11-13T12:00:00Z";
   writeFileSync(join(monitorStateDir, "monitor-state.json"), JSON.stringify({
-    journal: [{ monitorId: id, sentinelaRunId: id, at,
+    journal: [{ monitorId: id, sentinelaRunId: id, publicRunId: id, at,
       overallStatus: "ATENCAO" }], alerts: [] }));
   writeFileSync(join(monitorStateDir, "runs", `${id}.json`), JSON.stringify({
-    agent: "sentinela", status: "ATENCAO", anomalies: [], observed: {} }));
+    agent: "sentinela", runId: id, status: "ATENCAO", anomalies: [],
+    checks: [], observed: {} }));
   writeFileSync(join(monitorStateDir, "public-integrated", "public-state.json"),
     JSON.stringify({ issues: [{ studioCode: "CAPIVARA",
       path: "/studios/capivara", code: "PUBLIC_JS_FAILURE",
       severity: "warning", evidence: { httpStatus: 200 } }],
-      alerts: [], history: [] }));
+      alerts: [], history: [{ flowId: id }] }));
   const tools = createAgentTools({ monitorStateDir, stateDir,
     now: () => new Date(at) });
   const diagnosis = tools.diagnose_anomaly({ studio: "Capivara" });
   assert.equal(diagnosis.status, "DIAGNOSTICADO");
   assert.equal(diagnosis.findings[0].causeStatus, "NAO_DETERMINADA");
   const proposal = tools.prepare_investigation();
-  assert.equal(proposal.status, "PROPOSTA_DE_INVESTIGACAO");
-  assert.equal(proposal.proposedPatch, null);
+  assert.equal(proposal.status, "BLOQUEADO");
+  assert.equal(proposal.reason, "CAUSE_NOT_PROVEN");
   assert.equal(proposal.applied, false);
   assert.equal(tools.review_proposal().status, "INDETERMINADO");
   const atlasLock = join(monitorStateDir, "atlas.lock");

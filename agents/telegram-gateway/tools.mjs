@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync,
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { diagnosePublic } from "../sherlock.mjs";
+import { diagnosePublic, diagnoseSentinela } from "../sherlock.mjs";
 import { planPublicCorrection } from "../forge.mjs";
 import { reviewPublic } from "../guardiao.mjs";
 import { runApprovedTest, runValida } from "../valida.mjs";
@@ -142,7 +142,8 @@ function studioFilter(studio) {
   return canonical;
 }
 function safeAnomaly(item) {
-  return { studioCode: item.studioCode ?? "GLOBAL",
+  return { studioCode: /^[A-Z0-9_]{2,40}$/.test(item.studioCode ?? "")
+    ? item.studioCode : "UNKNOWN",
     path: item.path ?? null, code: item.code, scope: item.scope ?? "PUBLIC_PAGE",
     severity: item.severity ?? "warning",
     evidence: { httpStatus: Number.isInteger(item.evidence?.httpStatus)
@@ -249,42 +250,123 @@ export function createAgentTools({ monitorStateDir, stateDir,
         visualObservedAt: data.visualReport?.observedAt ?? null };
     },
     diagnose_anomaly({ studio = null, taskId = null } = {}) {
-      const data = latest(monitorStateDir);
-      const active = [
-        ...(data.publicState?.issues ?? []),
-        ...(data.visualState?.issues ?? []),
-      ].filter((item) => typeof item.code === "string").map(safeAnomaly);
-      const historical = [
-        ...(data.publicState?.alerts ?? []),
-        ...(data.visualState?.alerts ?? []),
-      ].filter((item) => item.kind === "NEW" && typeof item.code === "string")
-        .slice(-20).map(safeAnomaly);
+      const consulted = [];
+      const unavailable = [];
+      const monitor = optionalJson(join(monitorStateDir, "monitor-state.json"));
+      const entry = Array.isArray(monitor?.journal) ? monitor.journal.at(-1) : null;
+      const validEntry = UUID.test(entry?.monitorId ?? "") &&
+        UUID.test(entry?.sentinelaRunId ?? "") &&
+        Number.isFinite(Date.parse(entry?.at ?? ""));
+      if (validEntry) consulted.push("MONITOR_JOURNAL");
+      else unavailable.push("MONITOR_JOURNAL");
+      const sentinela = validEntry ? optionalJson(runFile(
+        join(monitorStateDir, "runs"), entry.sentinelaRunId)) : null;
+      const currentReport = sentinela?.agent === "sentinela" &&
+        sentinela.runId === entry?.sentinelaRunId &&
+        Array.isArray(sentinela.anomalies) && Array.isArray(sentinela.checks)
+        ? sentinela : null;
+      if (currentReport) consulted.push("CURRENT_SENTINELA_REPORT");
+      else if (validEntry) unavailable.push("CURRENT_SENTINELA_REPORT");
+      let priorReport = null;
+      if (validEntry && !currentReport) {
+        for (const prior of monitor.journal.slice(-6, -1).reverse()) {
+          if (!UUID.test(prior?.sentinelaRunId ?? "")) continue;
+          const candidate = optionalJson(runFile(join(monitorStateDir, "runs"),
+            prior.sentinelaRunId));
+          if (candidate?.agent === "sentinela" &&
+              candidate.runId === prior.sentinelaRunId &&
+              Array.isArray(candidate.anomalies)) {
+            priorReport = candidate;
+            consulted.push("PRIOR_SENTINELA_REPORT");
+            break;
+          }
+        }
+      }
+      const publicRaw = optionalJson(join(monitorStateDir, "public-integrated",
+        "public-state.json"));
+      const visualRaw = optionalJson(join(monitorStateDir, "visual-prepared",
+        "visual-state.json"));
+      const publicState = validEntry && UUID.test(entry.publicRunId ?? "") &&
+        Array.isArray(publicRaw?.history) &&
+        publicRaw.history.at(-1)?.flowId === entry.publicRunId &&
+        Array.isArray(publicRaw.issues) ? publicRaw : null;
+      const visualState = validEntry && UUID.test(entry.visualRunId ?? "") &&
+        Array.isArray(visualRaw?.history) &&
+        visualRaw.history.at(-1)?.flowId === entry.visualRunId &&
+        Array.isArray(visualRaw.issues) ? visualRaw : null;
+      if (publicState) consulted.push("PUBLIC_STATE");
+      else unavailable.push("CURRENT_PUBLIC_STATE");
+      if (visualState) consulted.push("VISUAL_STATE");
+      else unavailable.push("CURRENT_VISUAL_STATE");
+      const incidentState = optionalJson(join(stateDir, "incidents",
+        "incident-state.json"));
+      if (Array.isArray(incidentState?.incidents))
+        consulted.push("ATLAS_INCIDENT_HISTORY");
+      else unavailable.push("ATLAS_INCIDENT_HISTORY");
       const filter = studioFilter(studio);
-      const activeSelected = active.filter((item) => !filter ||
-        item.studioCode === filter).slice(0, 5);
-      const selected = activeSelected.length ? activeSelected : historical
-        .filter((item) => !filter || item.studioCode === filter).slice(-1);
-      if (!selected.length) return { source: "INDISPONIVEL",
-        status: "SEM_EVIDENCIA", causeStatus: "NAO_DETERMINADA" };
-      const sourceRunIds = activeSelected.length
-        ? [data.publicReport?.flowId, data.visualReport?.flowId].filter(Boolean)
-        : [];
-      const monitoring = { agent: "sentinela", runId: randomUUID(),
-        anomalies: selected, sourceRunIds };
-      const diagnosis = diagnosePublic({ monitoring, now });
-      diagnosis.runId = randomUUID();
-      const stored = { monitoring, diagnosis,
-        source: activeSelected.length ? "ACTIVE_READ_ONLY" : "HISTORICAL",
-        at: now().toISOString() };
+      const active = [...(publicState?.issues ?? []),
+        ...(visualState?.issues ?? [])]
+        .filter((item) => /^[A-Z][A-Z0-9_]{2,79}$/.test(item?.code ?? ""))
+        .map(safeAnomaly).filter((item) => !filter ||
+          item.studioCode === filter).slice(0, 5);
+      const publicDiagnosis = diagnosePublic({ monitoring: {
+        agent: "sentinela", runId: randomUUID(), anomalies: active }, now });
+      let cloudFindings = [];
+      if (!filter && currentReport) {
+        const report = diagnoseSentinela({ sourceReport: currentReport, now });
+        cloudFindings = report.findings.map((item) => ({
+          studioCode: "GLOBAL", code: item.code,
+          causeStatus: item.causeStatus, affected: item.affected,
+          scope: "CLOUDFLARE" }));
+      } else if (!filter && validEntry) {
+        const fromJournal = (Array.isArray(entry.eventCodes)
+          ? entry.eventCodes : [])
+          .map((value) => /^(?:NEW|CHANGED|PERSISTENT):([A-Z][A-Z0-9_]{2,79})$/.exec(value))
+          .filter(Boolean).map((match) => match[1]);
+        const fromIncidents = (Array.isArray(incidentState?.incidents)
+          ? incidentState.incidents : [])
+          .filter((item) => item.state === "OPEN" &&
+            item.lastObservedMonitorId === entry.monitorId &&
+            /^[A-Z][A-Z0-9_]{2,79}$/.test(item.code ?? ""))
+          .map((item) => item.code);
+        cloudFindings = [...new Set([...fromJournal, ...fromIncidents])]
+          .slice(0, 5).map((code) => ({ studioCode: "GLOBAL", code,
+            causeStatus: "NAO_DETERMINADA",
+            affected: ["monitorizacao-cloudflare"], scope: "CLOUDFLARE" }));
+      }
+      const findings = [...cloudFindings, ...publicDiagnosis.findings].slice(0, 8);
+      const sourceRunIds = [currentReport?.runId,
+        active.length && publicState ? entry?.publicRunId : null,
+        active.length && visualState ? entry?.visualRunId : null]
+        .filter((id) => UUID.test(id ?? ""));
+      const status = !validEntry || !currentReport ||
+        entry.overallStatus === "INDETERMINADO" ? "INDETERMINADO" :
+        findings.length ? "DIAGNOSTICADO" : "SEM_ANOMALIAS";
+      const reason = !validEntry ? "MONITOR_JOURNAL_UNAVAILABLE" :
+        !currentReport ? "CURRENT_SENTINELA_REPORT_MISSING" :
+          entry.overallStatus === "INDETERMINADO" ?
+            "MONITOR_INDETERMINATE" : null;
+      const diagnosis = { agent: "sherlock", runId: randomUUID(),
+        observedAt: now().toISOString(), status, findings,
+        sourceObservedAt: validEntry ? entry.at : null,
+        sourceRunIds, sourcesConsulted: consulted,
+        sourcesUnavailable: unavailable, reason };
+      const stored = { diagnosis, source: validEntry ? "MONITOR_HISTORY" :
+        "INDISPONIVEL", at: now().toISOString() };
       writeArtifact(stateDir, "diagnosis.json", stored);
       if (UUID.test(taskId ?? "")) {
         writeArtifact(stateDir, `diagnosis-${taskId}.json`, stored);
         pruneTaskDiagnoses(stateDir);
       }
-      return { source: activeSelected.length ? "ACTIVE_READ_ONLY" : "HISTORICAL",
-        status: diagnosis.status, evidenceRunIds: sourceRunIds,
-        monitorId: data.entry.monitorId,
-        findings: diagnosis.findings.map((item) => ({
+      return { source: stored.source, status,
+        observedAt: validEntry ? entry.at : null,
+        monitorId: validEntry ? entry.monitorId : null,
+        evidenceRunIds: sourceRunIds,
+        sourcesConsulted: consulted, sourcesUnavailable: unavailable,
+        historicalCodes: (priorReport?.anomalies ?? [])
+          .map((item) => item.code).filter((code) =>
+            /^[A-Z][A-Z0-9_]{2,79}$/.test(code)).slice(0, 4),
+        reason, findings: diagnosis.findings.map((item) => ({
           studioCode: item.studioCode, code: item.code,
           affected: item.affected, causeStatus: item.causeStatus,
         })) };
@@ -320,13 +402,51 @@ export function createAgentTools({ monitorStateDir, stateDir,
           })), areas: report.areas };
       } finally { release(); }
     },
-    prepare_investigation({ dependencyId = null } = {}) {
+    prepare_investigation({ dependencyId = null, taskId = null } = {}) {
       const evidence = artifact(stateDir, UUID.test(dependencyId ?? "")
         ? `diagnosis-${dependencyId}.json` : "diagnosis.json");
-      if (!evidence || !Number.isFinite(Date.parse(evidence.at)) ||
+      if (!evidence) {
+        const incidents = dependencyId ? null : optionalJson(join(stateDir,
+          "incidents", "incident-state.json"));
+        const last = (Array.isArray(incidents?.incidents) ? incidents.incidents : [])
+          .filter((item) =>
+          item.state === "OPEN" && item.steps?.sherlock).at(-1);
+        return { source: last ? "INCIDENT_HISTORY" : "INDISPONIVEL",
+          status: "BLOQUEADO", applied: false,
+          findings: last ? [{ code: last.code,
+            causeStatus: "NAO_DETERMINADA" }] : [],
+          sourcesConsulted: last ? ["ATLAS_INCIDENT_HISTORY"] : [],
+          sourcesUnavailable: ["SHERLOCK_TASK_DIAGNOSIS"],
+          reason: "DIAGNOSIS_ARTIFACT_UNAVAILABLE" };
+      }
+      const consulted = ["SHERLOCK_TASK_DIAGNOSIS",
+        ...(Array.isArray(evidence.diagnosis?.sourcesConsulted)
+          ? evidence.diagnosis.sourcesConsulted : [])];
+      const unavailable = Array.isArray(evidence.diagnosis?.sourcesUnavailable)
+        ? evidence.diagnosis.sourcesUnavailable : [];
+      if (!Number.isFinite(Date.parse(evidence.at)) ||
           now().getTime() - Date.parse(evidence.at) > 24 * 60 * 60_000)
-        return { source: "INDISPONIVEL", status: "BLOQUEADO",
-          applied: false, reason: "DIAGNOSTICO_ATUAL_NECESSARIO" };
+        return { source: "SHERLOCK_TASK_DIAGNOSIS", status: "BLOQUEADO",
+          applied: false, sourcesConsulted: consulted,
+          sourcesUnavailable: [...unavailable, "FRESH_DIAGNOSIS"],
+          reason: "DIAGNOSIS_STALE" };
+      const findings = Array.isArray(evidence.diagnosis?.findings)
+        ? evidence.diagnosis.findings : [];
+      if (evidence.diagnosis?.status === "INDETERMINADO" ||
+          !findings.length || findings.some((item) =>
+            item.causeStatus !== "CONFIRMADA")) {
+        const result = { source: "SHERLOCK_TASK_DIAGNOSIS",
+          status: "BLOQUEADO", applied: false,
+          observedAt: evidence.diagnosis.sourceObservedAt ?? evidence.at,
+          findings: findings.map((item) => ({ code: item.code,
+            causeStatus: item.causeStatus })),
+          evidenceRunIds: evidence.diagnosis?.sourceRunIds ?? [],
+          sourcesConsulted: consulted, sourcesUnavailable: unavailable,
+          reason: "CAUSE_NOT_PROVEN" };
+        if (UUID.test(taskId ?? ""))
+          writeArtifact(stateDir, `proposal-${taskId}.json`, result);
+        return result;
+      }
       const proposal = planPublicCorrection({ diagnosis: evidence.diagnosis, now });
       proposal.runId = randomUUID();
       writeArtifact(stateDir, "proposal.json", { ...evidence, proposal,
@@ -334,6 +454,10 @@ export function createAgentTools({ monitorStateDir, stateDir,
       return { source: evidence.source, status: proposal.status,
         plan: proposal.plan?.action ?? null, scope: proposal.plan?.scope ?? [],
         proposedPatch: null, applied: false,
+        observedAt: evidence.diagnosis.sourceObservedAt ?? evidence.at,
+        findings: findings.map((item) => ({ code: item.code,
+          causeStatus: item.causeStatus })),
+        sourcesConsulted: consulted, sourcesUnavailable: unavailable,
         causeStatus: evidence.diagnosis.findings?.[0]?.causeStatus ??
           "NAO_DETERMINADA" };
     },

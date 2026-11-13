@@ -34,6 +34,28 @@ function portugalTime(value) {
     hour: "2-digit", minute: "2-digit", hour12: false })
     .format(new Date(value));
 }
+const SOURCE_LABELS = Object.freeze({
+  MONITOR_JOURNAL: "diário", CURRENT_SENTINELA_REPORT: "Sentinela atual",
+  PRIOR_SENTINELA_REPORT: "Sentinela anterior",
+  PUBLIC_STATE: "HTTP", CURRENT_PUBLIC_STATE: "HTTP atual",
+  VISUAL_STATE: "visual", CURRENT_VISUAL_STATE: "visual atual",
+  ATLAS_INCIDENT_HISTORY: "incidentes", SHERLOCK_TASK_DIAGNOSIS: "Sherlock",
+  FRESH_DIAGNOSIS: "diagnóstico recente",
+});
+const REASON_LABELS = Object.freeze({
+  CURRENT_SENTINELA_REPORT_MISSING: "relatório atual ausente",
+  MONITOR_JOURNAL_UNAVAILABLE: "diário indisponível",
+  MONITOR_INDETERMINATE: "monitor inconclusivo",
+  CAUSE_NOT_PROVEN: "causa não comprovada",
+  DIAGNOSIS_ARTIFACT_UNAVAILABLE: "diagnóstico indisponível",
+  DIAGNOSIS_STALE: "diagnóstico antigo",
+  PATCH_PROOF_REQUIRED: "prova para patch em falta",
+});
+function sources(values) {
+  const shown = values.slice(0, 4).map((value) =>
+    SOURCE_LABELS[value] ?? value).join(", ");
+  return shown + (values.length > 4 ? ` +${values.length - 4}` : "");
+}
 const initial = () => ({ schema: 1, tasks: [], approvals: [] });
 function load(dir) {
   const path = join(dir, "tasks-state.json");
@@ -79,6 +101,17 @@ function compactEvidence(result) {
     codeFiles: Array.isArray(result?.codeContext?.files) ?
       result.codeContext.files.slice(0, 4).map((x) => ({
         file: safe(x.file, 100), sha256: safe(x.sha256, 16) })) : [],
+    sourcesConsulted: Array.isArray(result?.sourcesConsulted) ?
+      result.sourcesConsulted.filter((x) => /^[A-Z_]{3,50}$/.test(x))
+        .slice(0, 6) : [],
+    sourcesUnavailable: Array.isArray(result?.sourcesUnavailable) ?
+      result.sourcesUnavailable.filter((x) => /^[A-Z_]{3,50}$/.test(x))
+        .slice(0, 6) : [],
+    reason: /^[A-Z_]{3,60}$/.test(result?.reason ?? "")
+      ? result.reason : null,
+    historicalCodes: Array.isArray(result?.historicalCodes) ?
+      result.historicalCodes.filter((x) => /^[A-Z0-9_]{3,80}$/.test(x))
+        .slice(0, 4) : [],
     patchProof: result?.patchProof?.sourceVerified === true &&
       UUID.test(result.patchProof.from ?? "") &&
       UUID.test(result.patchProof.to ?? "") &&
@@ -157,6 +190,14 @@ export function createTaskManager({ stateDir, toolRunner, now = () => new Date()
         new Promise((_, reject) => { timer = setTimeout(() =>
           reject(new Error("TASK_TIMEOUT")), DURATION_MS); }),
       ]).finally(() => clearTimeout(timer));
+      if (task.tool === "task_propose" && !task.patchProof &&
+          !["BLOQUEADO", "INDETERMINADO", "SEM_EVIDENCIA"].includes(result?.status)) {
+        result.status = "BLOQUEADO";
+        result.reason = state.tasks.find((item) =>
+          item.id === task.dependencyId)?.evidence?.causeStatus === "CONFIRMADA"
+          ? "PATCH_PROOF_REQUIRED" : "CAUSE_NOT_PROVEN";
+        result.applied = false;
+      }
       if (task.tool === "task_investigate" &&
           typeof toolRunner.inspect_code_context === "function") {
         result.codeContext = toolRunner.inspect_code_context({
@@ -168,6 +209,12 @@ export function createTaskManager({ stateDir, toolRunner, now = () => new Date()
           t.id === task.dependencyId)?.evidence?.monitorId &&
         evidence.monitorId !== state.tasks.find((t) =>
           t.id === task.dependencyId).evidence.monitorId;
+      if (sourceMismatch && !task.dependencyExplicit) {
+        task.dependencyId = null;
+        task.events = [...task.events, { at: timestamp(),
+          status: "EM_EXECUCAO", code: "AUTO_DEPENDENCY_STALE" }]
+          .slice(-MAX_EVENTS);
+      }
       // A timeout or failed tool may continue in its own process. No retry or
       // second operation is started without human review.
       task.evidence = evidence;
@@ -176,9 +223,9 @@ export function createTaskManager({ stateDir, toolRunner, now = () => new Date()
           "BLOQUEADO"].includes(evidence.status);
       const testsFailed = task.tool === "task_validate" &&
         evidence.status === "FAILED";
-      transition(task, sourceMismatch || unresolved ? "BLOQUEADA" :
+      transition(task, (sourceMismatch && task.dependencyExplicit) || unresolved ? "BLOQUEADA" :
         testsFailed ? "FALHOU" : "CONCLUIDA", timestamp(),
-      sourceMismatch ? "SOURCE_RUN_MISMATCH" : unresolved ?
+      (sourceMismatch && task.dependencyExplicit) ? "SOURCE_RUN_MISMATCH" : unresolved ?
         "EVIDENCE_INSUFFICIENT" : testsFailed ? "TESTS_FAILED" :
           "RESULT_RECORDED");
     } catch (error) {
@@ -191,9 +238,15 @@ export function createTaskManager({ stateDir, toolRunner, now = () => new Date()
   }
   function display(task) {
     const e = task.evidence;
-    return `Tarefa ${task.id}: ${task.status}. ${task.agent}. ` +
-      (e ? `Fonte ${e.source}; resultado ${e.status}` +
-        `${e.observedAt ? `; observado ${portugalTime(e.observedAt)} (Portugal)` : ""}.` :
+    return `Tarefa ${task.id}: ${task.agent} ${task.status}. ` +
+      (e ? `${!e.sourcesConsulted?.length ?
+        `Fonte ${e.source}; ${e.status}. ` : ""}` +
+        `${e.codes?.length ? `${e.codes.join(", ")}. ` : ""}` +
+        `${e.observedAt ? `${portugalTime(e.observedAt)} (Portugal). ` : ""}` +
+        `${e.sourcesConsulted?.length ? `Li: ${sources(e.sourcesConsulted)}. ` : ""}` +
+        `${e.sourcesUnavailable?.length ? `Falta: ${sources(e.sourcesUnavailable)}. ` : ""}` +
+        `${e.reason ? `${REASON_LABELS[e.reason] ?? e.reason}. ` : ""}` +
+        `${task.agent === "forge" ? "Sem patch." : ""}` :
         `Motivo ${task.events.at(-1)?.code ?? "PENDENTE"}.`);
   }
   async function request({ botKey, tool, message, studio = null,
@@ -229,11 +282,17 @@ export function createTaskManager({ stateDir, toolRunner, now = () => new Date()
     const task = { id: randomUUID(), source, tool,
       agent: ACTIONS[tool].agent, studio: studio ? safe(studio, 40) : null,
       hours, dependencyId: predecessor?.id ?? null,
+      dependencyExplicit: referenceId !== null,
       status: "PENDENTE", createdAt: timestamp(), updatedAt: timestamp(),
       events: [{ at: timestamp(), status: "PENDENTE", code: "CREATED" }],
       evidence: null,
       patchProof: tool === "task_propose" &&
-        predecessor?.evidence?.patchProof?.sourceVerified === true
+        predecessor?.agent === "sherlock" &&
+        predecessor.status === "CONCLUIDA" &&
+        predecessor.evidence?.causeStatus === "CONFIRMADA" &&
+        now().getTime() - Date.parse(predecessor.updatedAt) <=
+          24 * 60 * 60_000 &&
+        predecessor.evidence?.patchProof?.sourceVerified === true
         ? predecessor.evidence.patchProof : null };
     if (state.tasks.length >= MAX_TASKS) {
       const old = state.tasks.findIndex((t) => TERMINAL.has(t.status));
@@ -243,13 +302,11 @@ export function createTaskManager({ stateDir, toolRunner, now = () => new Date()
     }
     state.tasks.push(task);
     save(stateDir, state);
-    if (tool === "task_propose" &&
-        (!predecessor || predecessor.agent !== "sherlock" ||
-          predecessor.evidence?.causeStatus !== "CONFIRMADA" ||
-          predecessor.status !== "CONCLUIDA" ||
-          now().getTime() - Date.parse(predecessor.updatedAt) >
-            24 * 60 * 60_000)) {
-      transition(task, "BLOQUEADA", timestamp(), "CAUSE_NOT_PROVEN");
+    if ((referenceId && !predecessor) ||
+        (tool === "task_propose" && predecessor &&
+          predecessor.agent !== "sherlock")) {
+      transition(task, "BLOQUEADA", timestamp(), referenceId && !predecessor
+        ? "TASK_REFERENCE_NOT_FOUND" : "SHERLOCK_TASK_REQUIRED");
       save(stateDir, state);
       return { status: "HANDLED", task, reply: display(task) };
     }

@@ -65,7 +65,7 @@ test("Atlas regista tarefas persistentes e encaminha por agente", async () => {
     /sentinela CONCLUIDA/);
 });
 
-test("Sherlock não comprova causa inexistente; Forge não executa proposta", async () => {
+test("Sherlock não comprova causa inexistente; Forge avalia e bloqueia proposta", async () => {
   const f = fixture();
   const diagnostic = await f.request("sherlock", "task_investigate", 1,
     "Investiga a falha da Capivara");
@@ -74,9 +74,9 @@ test("Sherlock não comprova causa inexistente; Forge não executa proposta", as
     `Prepara proposta para ${diagnostic.task.id}`);
   assert.equal(proposal.task.status, "BLOQUEADA");
   assert.equal(proposal.task.dependencyId, diagnostic.task.id);
-  assert.deepEqual(f.calls, ["sherlock"]);
-  assert.equal(f.manager.read().tasks[1].events.at(-1).code,
-    "CAUSE_NOT_PROVEN");
+  assert.deepEqual(f.calls, ["sherlock", "forge"]);
+  assert.equal(proposal.task.evidence.reason, "CAUSE_NOT_PROVEN");
+  assert.equal(proposal.task.evidence.applied, false);
 });
 
 test("Valida só executa após botão autorizado; decisão é de uso único", async () => {
@@ -168,7 +168,7 @@ test("acompanhamento associa evento novo do estúdio sem duplicar nem alertar", 
   assert.equal(f.manager.list()[0].evidence.monitorId, event.monitorId);
 });
 
-test("o diagnóstico não mistura duas execuções da Sentinela", async () => {
+test("o diagnóstico solta dependência implícita quando há nova execução", async () => {
   const f = fixture();
   f.toolRunner.monitor_status = () => ({ source: "MONITOR_HISTORY",
     status: "ATENCAO", monitorId:
@@ -180,8 +180,10 @@ test("o diagnóstico não mistura duas execuções da Sentinela", async () => {
       causeStatus: "NAO_DETERMINADA" }] });
   await f.request("atlas", "task_monitor", 1);
   const diagnosis = await f.request("atlas", "task_investigate", 2);
-  assert.equal(diagnosis.task.status, "BLOQUEADA");
-  assert.equal(diagnosis.task.events.at(-1).code, "SOURCE_RUN_MISMATCH");
+  assert.equal(diagnosis.task.status, "CONCLUIDA");
+  assert.equal(diagnosis.task.dependencyId, null);
+  assert(diagnosis.task.events.some((item) =>
+    item.code === "AUTO_DEPENDENCY_STALE"));
 });
 
 test("Forge exige prova e aprovação para proposta de patch isolada", async () => {
@@ -271,7 +273,10 @@ test("Forge lê o diagnóstico da tarefa indicada, não o último de outro bot",
   const tools = createAgentTools({ stateDir: f.stateDir,
     monitorStateDir: join(root, "not-used"), now: f.now });
   const proposal = tools.prepare_investigation({ dependencyId: id });
-  assert.deepEqual(proposal.scope, ["CAPIVARA:PUBLIC_PAGE_HTTP_ERROR"]);
+  assert.deepEqual(proposal.findings.map((item) => item.code),
+    ["PUBLIC_PAGE_HTTP_ERROR"]);
+  assert.equal(proposal.status, "BLOQUEADO");
+  assert.equal(proposal.reason, "CAUSE_NOT_PROVEN");
   assert.equal(proposal.applied, false);
 });
 
