@@ -13,9 +13,9 @@ const TOOL_PURPOSE = Object.freeze({
 
 async function boundedJson(response) {
   const declared = Number(response.headers.get("content-length") ?? 0);
-  if (declared > MAX_RESPONSE_BYTES) throw new Error("AI_RESPONSE_INVALID");
+  if (declared > MAX_RESPONSE_BYTES) throw new Error("AI_BODY_TOO_LARGE");
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("AI_RESPONSE_INVALID");
+  if (!reader) throw new Error("AI_BODY_MISSING");
   const chunks = [];
   let length = 0;
   for (;;) {
@@ -24,13 +24,13 @@ async function boundedJson(response) {
     length += value.byteLength;
     if (length > MAX_RESPONSE_BYTES) {
       await reader.cancel();
-      throw new Error("AI_RESPONSE_INVALID");
+      throw new Error("AI_BODY_TOO_LARGE");
     }
     chunks.push(value);
   }
   const bytes = Buffer.concat(chunks, length);
   try { return JSON.parse(bytes.toString("utf8")); }
-  catch { throw new Error("AI_RESPONSE_INVALID"); }
+  catch { throw new Error("AI_BODY_INVALID"); }
 }
 
 function outputText(result) {
@@ -44,7 +44,7 @@ function outputText(result) {
     Array.isArray(item.content) ? item.content : [])
     .filter((part) => part.type === "output_text" && typeof part.text === "string")
     .map((part) => part.text).join("");
-  if (!text || text.length > 4000) throw new Error("AI_RESPONSE_INVALID");
+  if (!text || text.length > 4000) throw new Error("AI_OUTPUT_TEXT_INVALID");
   const usage = result.usage;
   if (!Number.isSafeInteger(usage?.input_tokens) ||
       !Number.isSafeInteger(usage?.output_tokens) ||
@@ -52,6 +52,25 @@ function outputText(result) {
     throw new Error("AI_USAGE_UNAVAILABLE");
   return { text, usage: { input: usage.input_tokens,
     output: usage.output_tokens } };
+}
+
+function firstJsonObject(text) {
+  if (!text.startsWith("{")) throw new Error("AI_ROUTE_JSON_INVALID");
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) return text.slice(0, index + 1);
+    if (depth < 0 || index > 1000) break;
+  }
+  throw new Error("AI_ROUTE_JSON_INVALID");
 }
 
 export function createOpenAiAdapter({ apiKey, model, fetchImpl = fetch,
@@ -103,10 +122,15 @@ export function createOpenAiAdapter({ apiKey, model, fetchImpl = fetch,
           tools.map((name) => ({ name, purpose: TOOL_PURPOSE[name] })) }),
         format, maxOutputTokens: 220,
       });
+      const raw = result.text.trim();
+      const fenced = raw.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+      const candidate = fenced ? fenced[1] : raw;
       let choice;
-      try { choice = JSON.parse(result.text); }
-      catch { throw new Error("AI_RESPONSE_INVALID"); }
-      if (!choice || !["none", ...tools].includes(choice.tool) ||
+      try { choice = JSON.parse(firstJsonObject(candidate)); }
+      catch { throw new Error("AI_ROUTE_JSON_INVALID"); }
+      if (!choice || Array.isArray(choice) ||
+          Object.keys(choice).sort().join(",") !== "hours,studio,tool" ||
+          !["none", ...tools].includes(choice.tool) ||
           (choice.studio !== null &&
             (typeof choice.studio !== "string" || choice.studio.length > 40)) ||
           (choice.hours !== null &&

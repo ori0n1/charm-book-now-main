@@ -184,6 +184,24 @@ test("adaptador OpenAI usa esquema estrito, store false e endpoint fixo", async 
   assert.equal(body.max_output_tokens, 220);
 });
 
+test("seleção da IA aceita primeiro JSON completo e rejeita parâmetros extras", async () => {
+  let output = '{"tool":"monitor_status","studio":null,"hours":24}' +
+    "\nExplicação adicional ignorada.";
+  const ai = createOpenAiAdapter({ apiKey: "synthetic-key", model: "gpt-6-luna",
+    fetchImpl: async () => new Response(JSON.stringify({ status: "completed",
+      output: [{ type: "message", content: [{ type: "output_text", text: output }] }],
+      usage: { input_tokens: 10, output_tokens: 20 } }), { status: 200 }) });
+  const args = { identity: "atlas", tools: TOOLS.atlas,
+    message: "estado", history: [] };
+  assert.equal((await ai.route(args)).choice.tool, "monitor_status");
+  output = '{"tool":"monitor_status","studio":null,"hours":24,"shell":"echo hi"}';
+  await assert.rejects(ai.route(args), /AI_TOOL_DENIED/);
+  output = '{"tool":"run_shell","studio":null,"hours":24}';
+  await assert.rejects(ai.route(args), /AI_TOOL_DENIED/);
+  output = '{"tool":"monitor_status","studio":null,"hours":24';
+  await assert.rejects(ai.route(args), /AI_ROUTE_JSON_INVALID/);
+});
+
 test("cliente Telegram só usa métodos fixos e relata falhas de rede", async () => {
   const requests = [];
   const client = createTelegramClient({ token: `123456:${"x".repeat(25)}`,

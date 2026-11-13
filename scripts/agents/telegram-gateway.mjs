@@ -109,7 +109,8 @@ async function main() {
       const apiKey = readSecret("openai-api");
       const ai = createOpenAiAdapter({ apiKey, model: config.ai.model });
       const result = await ai.route({ identity: IDENTITIES.atlas,
-        tools: TOOLS.atlas, message: "Como está o relatório de monitorização?",
+        tools: TOOLS.atlas,
+        message: "Como está a Bellza hoje? Qual foi a última verificação?",
         history: [] });
       process.stdout.write(`AI_ROUTE_READY ferramenta=${result.choice.tool}; ` +
         `entrada=${result.usage.input}; saída=${result.usage.output}.\n`);
