@@ -72,11 +72,11 @@ Cloudflare. Nenhuma captura, HTML, cookie, token ou mensagem de erro livre
 
 ## Ativação futura e reversão
 
-**Estado técnico: APTO para integração controlada; não ativado.** Antes de
-autorizar a troca da tarefa, confirmar que a worktree candidata está limpa,
-medir uma execução integrada real no mesmo contexto Windows com limite
-externo de três minutos, verificar o consumo total do Chromium, e guardar
-a configuração exata da tarefa e os estados locais. A ativação exigirá
+**Estado: NÃO APTO para ativação automática ainda; candidato técnico
+preparado.** Antes de autorizar a troca da tarefa, medir uma execução
+integrada real no mesmo contexto Windows com limite externo de três minutos,
+verificar o consumo total do Chromium, e guardar a configuração exata da
+tarefa e os estados locais. A ativação exigirá
 autorização específica para apontar a tarefa existente ao ponto de entrada
 preparado, sem criar segunda tarefa. A primeira execução deverá comprovar
 Cloudflare, HTTP, visual, alertas e ausência de concorrência.
