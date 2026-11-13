@@ -58,7 +58,7 @@ export function createTelegramClient({ token, fetchImpl = fetch } = {}) {
       if (!Number.isSafeInteger(offset) || offset < 0)
         throw new Error("TELEGRAM_OFFSET_INVALID");
       const updates = await call("getUpdates", { offset, limit: 10,
-        timeout: 20, allowed_updates: ["message"] }, 26_000, signal);
+        timeout: 20, allowed_updates: ["message", "callback_query"] }, 26_000, signal);
       if (!Array.isArray(updates) || updates.length > 10 ||
           updates.some((item) => !Number.isSafeInteger(item.update_id)))
         throw new Error("TELEGRAM_RESPONSE_INVALID");
@@ -70,6 +70,27 @@ export function createTelegramClient({ token, fetchImpl = fetch } = {}) {
         throw new Error("TELEGRAM_SEND_DENIED");
       return call("sendMessage", { chat_id: chatId, text,
         disable_notification: true, protect_content: true }, 12_000);
+    },
+    async sendOwnerApproval(chatId, text, replyMarkup) {
+      if (!Number.isSafeInteger(chatId) || chatId <= 0 ||
+          typeof text !== "string" || !text || text.length > 1200 ||
+          !Array.isArray(replyMarkup?.inline_keyboard) ||
+          replyMarkup.inline_keyboard.length !== 1 ||
+          replyMarkup.inline_keyboard[0].length !== 3 ||
+          replyMarkup.inline_keyboard[0].some((b) =>
+            !["Aprovar", "Rejeitar", "Ver detalhes"].includes(b.text) ||
+            !/^t:[0-9a-f-]{36}:[ARD]$/.test(b.callback_data ?? "")))
+        throw new Error("TELEGRAM_SEND_DENIED");
+      return call("sendMessage", { chat_id: chatId, text,
+        reply_markup: replyMarkup, disable_notification: true,
+        protect_content: true }, 12_000);
+    },
+    async answerCallbackQuery(id, text) {
+      if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id) ||
+          typeof text !== "string" || text.length > 200)
+        throw new Error("TELEGRAM_CALLBACK_DENIED");
+      return call("answerCallbackQuery", { callback_query_id: id,
+        text, show_alert: false }, 10_000);
     },
   });
 }

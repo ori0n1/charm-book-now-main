@@ -8,6 +8,7 @@ import { createOpenAiAdapter, checkOpenAiModel } from "../../agents/telegram-gat
 import { createTelegramClient } from "../../agents/telegram-gateway/telegram.mjs";
 import { createAgentTools } from "../../agents/telegram-gateway/tools.mjs";
 import { createGateway } from "../../agents/telegram-gateway/gateway.mjs";
+import { createTaskManager } from "../../agents/telegram-gateway/tasks.mjs";
 import { createIncidentCoordinator } from "../../agents/telegram-gateway/incidents.mjs";
 import { readIncidentSource } from "../../agents/telegram-gateway/incident-source.mjs";
 import { acquireSingleton, readSingleton } from "../../agents/telegram-gateway/singleton.mjs";
@@ -18,6 +19,7 @@ const configPath = join(process.env.LOCALAPPDATA ?? "", "Bellza",
 const secretScript = join(scriptDir, "telegram-secrets.ps1");
 const mode = process.argv[2] ?? "status";
 const monitorEvents = process.argv.includes("--monitor-events");
+const tasksEnabled = process.argv.includes("--tasks");
 const permitted = new Set(["serve", "pilot", "status", "stop", "auth-check",
   "ai-check", "alert-test"]);
 if (!permitted.has(mode)) {
@@ -187,6 +189,12 @@ async function main() {
     process.exitCode = 2;
     return;
   }
+  if (tasksEnabled && (!["serve", "pilot"].includes(mode) ||
+      config.bots.guardiao.enabled)) {
+    process.stderr.write("TASK_MODE_INVALID\n");
+    process.exitCode = 2;
+    return;
+  }
   if (mode === "pilot" && enabledBots.join(",") !== "atlas,sentinela") {
     process.stderr.write("Piloto limitado a Atlas e Sentinela.\n");
     process.exitCode = 2;
@@ -226,9 +234,13 @@ async function main() {
       createTelegramClient({ token: tokens[key] })]));
     apiKey = undefined;
     for (const key of BOT_KEYS) tokens[key] = undefined;
-    const gateway = createGateway({ config, aiByBot, clients,
-      toolRunner: createAgentTools({ monitorStateDir: config.monitorStateDir,
-        stateDir: config.stateDir }),
+    const toolRunner = createAgentTools({ monitorStateDir: config.monitorStateDir,
+      stateDir: config.stateDir });
+    const taskManager = tasksEnabled ? createTaskManager({
+      stateDir: join(config.stateDir, "tasks"), toolRunner }) : null;
+    taskManager?.recover();
+    const gateway = createGateway({ config, aiByBot, clients, toolRunner,
+      taskManager,
       minMessageUnix: Math.floor(Date.now() / 1000) });
     const controller = new AbortController();
     const stop = () => controller.abort();
@@ -241,6 +253,7 @@ async function main() {
     }, 1000);
     process.stdout.write(`GATEWAY_READY ${enabledBots.join(",")}; ` +
       `alertas automáticos ${monitorEvents ? "ativados" : "desativados"}; ` +
+      `tarefas ${tasksEnabled ? "ativadas" : "desativadas"}; ` +
       `${mode === "pilot" ? "piloto até 10 minutos" : "manual"}.\n`);
     try {
       const workers = enabledBots.map(async (key) => {
@@ -270,8 +283,9 @@ async function main() {
         workers.push((async () => {
           while (!controller.signal.aborted) {
             try {
-              await coordinator.process(readIncidentSource(config.monitorStateDir),
-                { notify: true });
+              const source = readIncidentSource(config.monitorStateDir);
+              await coordinator.process(source, { notify: true });
+              taskManager?.recordMonitorEvents(source.events);
             } catch (error) {
               const code = /^INCIDENT_[A-Z0-9_]+$/.test(error?.message ?? "")
                 ? error.message : "INCIDENT_SCAN_UNAVAILABLE";

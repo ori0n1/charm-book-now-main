@@ -1,15 +1,48 @@
-import { existsSync, mkdirSync, readFileSync, renameSync,
-  statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync,
+  statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { diagnosePublic } from "../sherlock.mjs";
 import { planPublicCorrection } from "../forge.mjs";
 import { reviewPublic } from "../guardiao.mjs";
 import { runApprovedTest, runValida } from "../valida.mjs";
 import { atlasStatus, acquireAtlasLock, appendAtlasEvent } from "../atlas.mjs";
+import { prepareReferencePatchWorkspace } from "./patch-worktree.mjs";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const MAX_JSON_BYTES = 1_000_000;
+const sourceRoot = fileURLToPath(new URL("../../", import.meta.url));
+const CODE_CONTEXT = Object.freeze({
+  agenda: ["src/hooks/use-agenda-view.ts", "src/lib/agenda-access.functions.ts"],
+  reservas: ["src/lib/booking.ts", "src/lib/public-booking.functions.ts"],
+  clientes: ["src/lib/client-duplicates.ts", "src/lib/client-profile-core.ts"],
+  notificacoes: ["src/lib/appointment-whatsapp-policy.ts"],
+  pagamentos: ["src/lib/payment-amount.ts", "src/lib/payments.functions.ts"],
+  publico: ["src/components/booking-experience.tsx", "src/routes/login.tsx"],
+});
+function codeContext(codes = []) {
+  const joined = codes.join(" ").toUpperCase();
+  const areas = Object.keys(CODE_CONTEXT).filter((name) => {
+    const patterns = {
+      agenda: /AGENDA|AVAILABILITY/, reservas: /BOOKING|RESERV/,
+      clientes: /CLIENT|DUPLICATE/, notificacoes: /WHATSAPP|NOTIF/,
+      pagamentos: /PAYMENT|STRIPE/, publico: /PUBLIC|VISUAL|RESOURCE|HTTP/,
+    };
+    return patterns[name].test(joined);
+  }).slice(0, 2);
+  return { source: "LOCAL_CODE", status: areas.length ? "REFERENCIAS" :
+    "SEM_MAPEAMENTO", causeStatus: "NAO_DETERMINADA",
+    files: areas.flatMap((area) => CODE_CONTEXT[area]).slice(0, 4)
+      .flatMap((file) => {
+        try {
+          const body = readFileSync(join(sourceRoot, file));
+          if (body.byteLength > 500_000) return [];
+          return [{ file, sha256: createHash("sha256").update(body)
+            .digest("hex").slice(0, 16) }];
+        } catch { return []; }
+      }) };
+}
 function readJson(path) {
   try {
     if (statSync(path).size > MAX_JSON_BYTES) throw new Error();
@@ -30,6 +63,19 @@ function writeArtifact(stateDir, name, value) {
   const temp = `${path}.${randomUUID()}.tmp`;
   writeFileSync(temp, `${JSON.stringify(value)}\n`, { mode: 0o600 });
   renameSync(temp, path);
+}
+function pruneTaskDiagnoses(stateDir) {
+  const dir = join(stateDir, "shared");
+  const files = readdirSync(dir).filter((name) =>
+    /^diagnosis-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.json$/.test(name));
+  if (files.length <= 200) return;
+  const ordered = files.map((name) => ({ name,
+    at: statSync(join(dir, name)).mtimeMs }))
+    .sort((a, b) => a.at - b.at);
+  for (const item of ordered.slice(0, files.length - 200)) {
+    try { unlinkSync(join(dir, item.name)); }
+    catch { /* Retention failure leaves evidence intact. */ }
+  }
 }
 function artifact(stateDir, name) {
   return optionalJson(join(stateDir, "shared", name));
@@ -68,6 +114,7 @@ function sourceSummary(data, monitorStateDir) {
   try { atlas = atlasStatus(monitorStateDir); }
   catch { atlas = { running: null }; }
   return { source: "MONITOR_HISTORY", observedAt: data.entry.at,
+    monitorId: data.entry.monitorId,
     freshness: freshness(data.entry.at),
     status: data.entry.overallStatus,
     overallStatus: data.entry.overallStatus,
@@ -201,7 +248,7 @@ export function createAgentTools({ monitorStateDir, stateDir,
         studios: studioSummary, pages: selectedPages,
         visualObservedAt: data.visualReport?.observedAt ?? null };
     },
-    diagnose_anomaly({ studio = null } = {}) {
+    diagnose_anomaly({ studio = null, taskId = null } = {}) {
       const data = latest(monitorStateDir);
       const active = [
         ...(data.publicState?.issues ?? []),
@@ -226,15 +273,31 @@ export function createAgentTools({ monitorStateDir, stateDir,
         anomalies: selected, sourceRunIds };
       const diagnosis = diagnosePublic({ monitoring, now });
       diagnosis.runId = randomUUID();
-      writeArtifact(stateDir, "diagnosis.json", { monitoring, diagnosis,
+      const stored = { monitoring, diagnosis,
         source: activeSelected.length ? "ACTIVE_READ_ONLY" : "HISTORICAL",
-        at: now().toISOString() });
+        at: now().toISOString() };
+      writeArtifact(stateDir, "diagnosis.json", stored);
+      if (UUID.test(taskId ?? "")) {
+        writeArtifact(stateDir, `diagnosis-${taskId}.json`, stored);
+        pruneTaskDiagnoses(stateDir);
+      }
       return { source: activeSelected.length ? "ACTIVE_READ_ONLY" : "HISTORICAL",
         status: diagnosis.status, evidenceRunIds: sourceRunIds,
+        monitorId: data.entry.monitorId,
         findings: diagnosis.findings.map((item) => ({
           studioCode: item.studioCode, code: item.code,
           affected: item.affected, causeStatus: item.causeStatus,
         })) };
+    },
+    inspect_code_context({ codes = [] } = {}) {
+      if (!Array.isArray(codes) || codes.length > 5 ||
+          codes.some((code) => !/^[A-Z0-9_]{3,80}$/.test(code)))
+        throw new Error("CODE_CONTEXT_DENIED");
+      return codeContext(codes);
+    },
+    prepare_patch_workspace({ taskId, proof } = {}) {
+      return prepareReferencePatchWorkspace({ repositoryRoot: sourceRoot,
+        parentDir: join(stateDir, "patch-worktrees"), taskId, proof });
     },
     run_synthetic_tests() {
       if (existsSync(join(monitorStateDir, "monitor.lock")) ||
@@ -257,8 +320,9 @@ export function createAgentTools({ monitorStateDir, stateDir,
           })), areas: report.areas };
       } finally { release(); }
     },
-    prepare_investigation() {
-      const evidence = artifact(stateDir, "diagnosis.json");
+    prepare_investigation({ dependencyId = null } = {}) {
+      const evidence = artifact(stateDir, UUID.test(dependencyId ?? "")
+        ? `diagnosis-${dependencyId}.json` : "diagnosis.json");
       if (!evidence || !Number.isFinite(Date.parse(evidence.at)) ||
           now().getTime() - Date.parse(evidence.at) > 24 * 60 * 60_000)
         return { source: "INDISPONIVEL", status: "BLOQUEADO",

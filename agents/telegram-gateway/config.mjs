@@ -5,11 +5,14 @@ export const BOT_KEYS = Object.freeze([
   "atlas", "sentinela", "sherlock", "valida", "forge", "guardiao",
 ]);
 export const TOOLS = Object.freeze({
-  atlas: ["monitor_status", "monitor_history", "public_status"],
-  sentinela: ["monitor_status", "monitor_alerts", "public_status"],
-  sherlock: ["diagnose_anomaly"],
-  valida: ["run_synthetic_tests"],
-  forge: ["prepare_investigation"],
+  atlas: ["monitor_status", "monitor_history", "public_status",
+    "task_overview", "task_monitor", "task_watch", "task_investigate",
+    "task_validate", "task_propose"],
+  sentinela: ["monitor_status", "monitor_alerts", "public_status",
+    "task_monitor", "task_watch"],
+  sherlock: ["diagnose_anomaly", "task_investigate"],
+  valida: ["run_synthetic_tests", "task_validate"],
+  forge: ["prepare_investigation", "task_propose"],
   guardiao: ["review_proposal"],
 });
 export const IDENTITIES = Object.freeze({

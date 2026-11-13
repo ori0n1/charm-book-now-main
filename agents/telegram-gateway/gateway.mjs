@@ -141,7 +141,7 @@ export function prepareAlertBatch(events, sentIds = [], { enabled = false,
 
 export function createGateway({ config, aiByBot, clients, toolRunner,
   now = () => new Date(), stateDir = config?.stateDir,
-  minMessageUnix = null } = {}) {
+  minMessageUnix = null, taskManager = null } = {}) {
   config = validateGatewayConfig(config);
   if (!stateDir || !aiByBot || !clients || !toolRunner)
     throw new Error("GATEWAY_DEPENDENCY_INVALID");
@@ -159,6 +159,24 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
       return { status: "DUPLICATE", reply: null };
     const mark = () => { state.offsets[botKey] = update.update_id + 1;
       saveState(stateDir, state); };
+    if (update.callback_query) {
+      const query = update.callback_query;
+      const ownBot = config.bots[botKey];
+      const authorized = query.from?.id === config.ownerUserId &&
+        !query.from?.is_bot && query.message?.chat?.type === "private" &&
+        query.message.chat.id === config.ownerChatId &&
+        (ownBot.expectedBotId ? query.message.from?.id === ownBot.expectedBotId :
+          query.message.from?.username?.toLowerCase() ===
+            ownBot.username.toLowerCase());
+      if (!authorized || !taskManager) {
+        mark();
+        return { status: "REJECTED", reply: null };
+      }
+      const result = await taskManager.callback({ botKey, data: query.data });
+      mark();
+      return { ...result, callbackId: query.id,
+        callbackText: conciseAnswer(result.reply).slice(0, 200), reply: null };
+    }
     if (!allowMessage(config, update)) {
       mark();
       return { status: "REJECTED", reply: null };
@@ -186,6 +204,8 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
     state.quota.minuteCount++;
     state.quota.messages++;
     const history = state.bots[botKey].slice(-5);
+    const allowedTools = taskManager ? TOOLS[botKey] :
+      TOOLS[botKey].filter((name) => !name.startsWith("task_"));
     const ai = aiByBot[botKey];
     if (!ai || typeof ai.route !== "function" ||
         typeof ai.answer !== "function") {
@@ -198,7 +218,8 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
       reserveAi(state, config, Buffer.byteLength(message + JSON.stringify(history)), 220);
       saveState(stateDir, state);
       route = await ai.route({ identity: IDENTITIES[botKey],
-        tools: TOOLS[botKey], message, history });
+        tools: allowedTools,
+        message, history });
     } catch (error) {
       const code = /^AI_[A-Za-z0-9_.]+$/.test(error?.message ?? "")
         ? error.message.slice(0, 100) : "AI_UNAVAILABLE";
@@ -213,7 +234,7 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
         : "A IA não concluiu esta consulta. Tente novamente; nenhum relatório foi interpretado." };
     }
     const choice = route?.choice;
-    if (!choice || !["none", ...TOOLS[botKey]].includes(choice.tool) ||
+    if (!choice || !["none", ...allowedTools].includes(choice.tool) ||
         (choice.studio !== null && choice.studio !== undefined &&
           (typeof choice.studio !== "string" ||
             !/^[\p{L}\p{N} _-]{1,40}$/u.test(choice.studio))) ||
@@ -228,6 +249,24 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
       mark();
       return { status: "NO_ALLOWED_TOOL", reply:
         "Este bot só pode consultar as ferramentas de leitura e testes locais autorizados." };
+    }
+    if (choice.tool.startsWith("task_")) {
+      let outcome;
+      try {
+        if (!taskManager) throw new Error("TASK_UNAVAILABLE");
+        outcome = await taskManager.request({ botKey, tool: choice.tool,
+          message, studio: choice.studio ?? null, hours: choice.hours ?? 24,
+          updateId: update.update_id });
+      } catch {
+        outcome = { status: "TASK_UNAVAILABLE",
+          reply: "A gestão de tarefas está indisponível. Nenhuma ação foi executada." };
+      }
+      state.bots[botKey] = [...state.bots[botKey],
+        { at: time.toISOString(), tool: choice.tool,
+          status: outcome.status, source: "LOCAL_TASK", codes: [] }]
+        .slice(-MAX_HISTORY);
+      mark();
+      return { ...outcome, reply: safeText(outcome.reply) };
     }
     let evidence;
     try {
@@ -277,9 +316,19 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
       for (const update of updates) {
         const outcome = await this.handleUpdate(botKey, update);
         if (outcome.reply && outcome.status !== "REJECTED") {
-          try { await clients[botKey].sendOwnerMessage(config.ownerChatId,
-            outcome.reply); }
+          try {
+            if (outcome.status === "APPROVAL_REQUIRED")
+              await clients[botKey].sendOwnerApproval(config.ownerChatId,
+                outcome.reply, outcome.buttons);
+            else await clients[botKey].sendOwnerMessage(config.ownerChatId,
+              outcome.reply);
+          }
           catch { /* Offset already saved: do not risk a duplicate reply. */ }
+        }
+        if (outcome.callbackId && outcome.callbackText) {
+          try { await clients[botKey].answerCallbackQuery(
+            outcome.callbackId, outcome.callbackText); }
+          catch { /* Decision already persisted. Never repeat it. */ }
         }
       }
       return updates.length;

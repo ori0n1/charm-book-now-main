@@ -211,7 +211,7 @@ test("cliente Telegram só usa métodos fixos e relata falhas de rede", async ()
   await client.getUpdates(0);
   assert.match(requests[0].url, /\/getUpdates$/);
   assert.deepEqual(JSON.parse(requests[0].options.body).allowed_updates,
-    ["message"]);
+    ["message", "callback_query"]);
   const offline = createTelegramClient({ token: `123456:${"x".repeat(25)}`,
     fetchImpl: async () => { throw new Error("offline secret"); } });
   await assert.rejects(offline.getUpdates(0), /TELEGRAM_NETWORK_UNAVAILABLE/);

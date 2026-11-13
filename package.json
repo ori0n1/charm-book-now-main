@@ -33,6 +33,8 @@
     "agents:monitor": "node scripts/agents/monitor.mjs",
     "agents:functional-check": "node scripts/agents/functional-check.mjs",
     "agents:incidents:simulate": "node scripts/agents/telegram-incidents.mjs",
+    "agents:tasks:simulate": "node scripts/agents/telegram-tasks-simulate.mjs",
+    "agents:tasks:status": "node scripts/agents/telegram-tasks.mjs status",
     "test:agents": "node --test tests/agents/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",

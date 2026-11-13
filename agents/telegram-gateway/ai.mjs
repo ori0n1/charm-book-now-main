@@ -9,6 +9,12 @@ const TOOL_PURPOSE = Object.freeze({
   run_synthetic_tests: "Executar somente os sete testes locais sintéticos autorizados.",
   prepare_investigation: "Preparar plano de investigação sem patch aplicado.",
   review_proposal: "Parecer técnico sem autorização de publicação.",
+  task_overview: "Ver tarefas operacionais e respetivos estados e IDs.",
+  task_monitor: "Criar tarefa de leitura do último relatório da Sentinela.",
+  task_watch: "Criar tarefa de consulta de alertas existentes; sem novo agendamento.",
+  task_investigate: "Criar tarefa de diagnóstico com evidências públicas disponíveis.",
+  task_validate: "Solicitar aprovação para executar testes sintéticos locais.",
+  task_propose: "Criar proposta não aplicada; exige causa confirmada em tarefa Sherlock.",
 });
 
 async function boundedJson(response) {
