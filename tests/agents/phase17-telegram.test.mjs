@@ -96,6 +96,7 @@ test("falha de IA e resposta insegura não vazam secrets nem simulam publicaçã
   const failed = await f.gateway.handleUpdate("atlas", update(1));
   assert.equal(failed.status, "AI_UNAVAILABLE");
   assert.doesNotMatch(failed.reply, /SECRET/);
+  assert.equal(f.gateway.readState().bots.atlas.at(-1).status, "AI_UNAVAILABLE");
   f.aiByBot.atlas.route = async () => ({ choice: { tool: "monitor_status",
     studio: null, hours: 24 } });
   f.aiByBot.atlas.answer = async () => ({ text: "Deploy concluído." });
@@ -124,6 +125,7 @@ test("orçamento de IA interrompe novas consultas sem ferramenta adicional", asy
   assert.match(first.reply, /IA indisponível/);
   const second = await f.gateway.handleUpdate("atlas", update(2));
   assert.equal(second.status, "AI_BUDGET_EXCEEDED");
+  assert.match(second.reply, /limite local/);
   assert.equal(f.calls.length, 1);
 });
 
@@ -205,7 +207,7 @@ test("erro da API de IA é genérico e não expõe resposta remota", async () =>
   const ai = createOpenAiAdapter({ apiKey: "synthetic-key", model: "gpt-6-luna",
     fetchImpl: async () => new Response("sensitive remote error", { status: 401 }) });
   await assert.rejects(ai.route({ identity: "atlas", tools: TOOLS.atlas,
-    message: "estado", history: [] }), /AI_UNAVAILABLE/);
+    message: "estado", history: [] }), /AI_HTTP_401_UNKNOWN_NONE/);
 });
 
 test("lock de processo impede duas instâncias e só o dono remove", () => {

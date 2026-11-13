@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BOT_KEYS, botIdentityMatches,
+import { BOT_KEYS, IDENTITIES, TOOLS, botIdentityMatches,
   loadGatewayConfig } from "../../agents/telegram-gateway/config.mjs";
 import { createOpenAiAdapter, checkOpenAiModel } from "../../agents/telegram-gateway/ai.mjs";
 import { createTelegramClient } from "../../agents/telegram-gateway/telegram.mjs";
@@ -15,9 +15,9 @@ const configPath = join(process.env.LOCALAPPDATA ?? "", "Bellza",
   "TelegramGateway", "config.json");
 const secretScript = join(scriptDir, "telegram-secrets.ps1");
 const mode = process.argv[2] ?? "status";
-const permitted = new Set(["serve", "pilot", "status", "stop", "auth-check"]);
+const permitted = new Set(["serve", "pilot", "status", "stop", "auth-check", "ai-check"]);
 if (!permitted.has(mode)) {
-  process.stderr.write("Modo inválido: serve, pilot, status, stop ou auth-check.\n");
+  process.stderr.write("Modo inválido: serve, pilot, status, stop, auth-check ou ai-check.\n");
   process.exitCode = 2;
 } else if (process.platform !== "win32" || !process.env.LOCALAPPDATA) {
   process.stderr.write("Gateway disponível apenas no Windows com perfil local.\n");
@@ -102,6 +102,23 @@ async function main() {
       process.stdout.write(`openai: ${code}\n`);
     }
     if (!allReady) process.exitCode = 2;
+    return;
+  }
+  if (mode === "ai-check") {
+    try {
+      const apiKey = readSecret("openai-api");
+      const ai = createOpenAiAdapter({ apiKey, model: config.ai.model });
+      const result = await ai.route({ identity: IDENTITIES.atlas,
+        tools: TOOLS.atlas, message: "Como está o relatório de monitorização?",
+        history: [] });
+      process.stdout.write(`AI_ROUTE_READY ferramenta=${result.choice.tool}; ` +
+        `entrada=${result.usage.input}; saída=${result.usage.output}.\n`);
+    } catch (error) {
+      const code = /^AI_[A-Za-z0-9_.]+$/.test(error?.message ?? "")
+        ? error.message : "AI_CHECK_UNAVAILABLE";
+      process.stdout.write(`${code}\n`);
+      process.exitCode = 2;
+    }
     return;
   }
   // Validate all prerequisites before acquiring the singleton lock.

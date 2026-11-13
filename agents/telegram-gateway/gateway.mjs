@@ -175,10 +175,17 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
       route = await ai.route({ identity: IDENTITIES[botKey],
         tools: TOOLS[botKey], message, history });
     } catch (error) {
+      const code = /^AI_[A-Za-z0-9_.]+$/.test(error?.message ?? "")
+        ? error.message.slice(0, 100) : "AI_UNAVAILABLE";
+      state.bots[botKey] = [...state.bots[botKey],
+        { at: time.toISOString(), tool: "ai_route", status: code,
+          source: "OPENAI_API", codes: [] }].slice(-MAX_HISTORY);
       mark();
       return { status: error?.message === "AI_BUDGET_EXCEEDED"
         ? "AI_BUDGET_EXCEEDED" : "AI_UNAVAILABLE",
-      reply: "A IA está indisponível ou atingiu o limite configurado." };
+      reply: error?.message === "AI_BUDGET_EXCEEDED"
+        ? "O limite local de uso da IA foi atingido. Tente amanhã."
+        : "A IA não concluiu esta consulta. Tente novamente; nenhum relatório foi interpretado." };
     }
     const choice = route?.choice;
     if (!choice || !["none", ...TOOLS[botKey]].includes(choice.tool) ||

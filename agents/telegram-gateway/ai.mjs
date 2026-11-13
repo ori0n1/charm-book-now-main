@@ -34,8 +34,12 @@ async function boundedJson(response) {
 }
 
 function outputText(result) {
-  if (result?.status !== "completed" || !Array.isArray(result.output))
-    throw new Error("AI_RESPONSE_INVALID");
+  if (result?.status !== "completed" || !Array.isArray(result.output)) {
+    const reason = String(result?.incomplete_details?.reason ?? "UNKNOWN")
+      .replace(/[^A-Za-z0-9_]/g, "").slice(0, 32);
+    throw new Error(`AI_RESPONSE_${String(result?.status ?? "INVALID")
+      .replace(/[^A-Za-z0-9_]/g, "").slice(0, 24)}_${reason}`);
+  }
   const text = result.output.flatMap((item) => item.type === "message" &&
     Array.isArray(item.content) ? item.content : [])
     .filter((part) => part.type === "output_text" && typeof part.text === "string")
@@ -71,8 +75,12 @@ export function createOpenAiAdapter({ apiKey, model, fetchImpl = fetch,
       });
     } catch { throw new Error("AI_UNAVAILABLE"); }
     if (!response.ok) {
-      await response.body?.cancel?.().catch(() => {});
-      throw new Error("AI_UNAVAILABLE");
+      const errorBody = await boundedJson(response).catch(() => null);
+      const code = String(errorBody?.error?.code ?? errorBody?.error?.type ??
+        "UNKNOWN").replace(/[^A-Za-z0-9_]/g, "").slice(0, 40);
+      const param = String(errorBody?.error?.param ?? "NONE")
+        .replace(/[^A-Za-z0-9_.]/g, "").slice(0, 60);
+      throw new Error(`AI_HTTP_${response.status}_${code}_${param}`);
     }
     return outputText(await boundedJson(response));
   }

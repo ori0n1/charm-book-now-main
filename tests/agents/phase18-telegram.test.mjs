@@ -157,6 +157,18 @@ test("getMe e consulta OpenAI autenticam sem enviar mensagem ou gerar resposta",
   assert.equal(request.url, "https://api.openai.com/v1/models/gpt-6-luna");
 });
 
+test("erro OpenAI expõe só estado, código e parâmetro seguros", async () => {
+  const ai = createOpenAiAdapter({ apiKey: "synthetic-key", model: "gpt-6-luna",
+    fetchImpl: async () => new Response(JSON.stringify({ error: {
+      message: "private request text", type: "invalid_request_error",
+      code: "invalid_json_schema", param: "text.format.schema" } }),
+    { status: 400 }) });
+  await assert.rejects(ai.route({ identity: "atlas",
+    tools: ["monitor_status"], message: "texto privado", history: [] }),
+  (error) => error.message ===
+    "AI_HTTP_400_invalid_json_schema_text.format.schema");
+});
+
 test("IA não pode afirmar que a agenda funciona quando a interação não foi verificada", async () => {
   const monitorStateDir = syntheticReports();
   const stateDir = join(root, "gateway-unsafe-answer");
