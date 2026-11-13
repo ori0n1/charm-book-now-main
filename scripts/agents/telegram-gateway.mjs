@@ -1,0 +1,128 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, writeFileSync, unlinkSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { BOT_KEYS, loadGatewayConfig } from "../../agents/telegram-gateway/config.mjs";
+import { createOpenAiAdapter } from "../../agents/telegram-gateway/ai.mjs";
+import { createTelegramClient } from "../../agents/telegram-gateway/telegram.mjs";
+import { createAgentTools } from "../../agents/telegram-gateway/tools.mjs";
+import { createGateway } from "../../agents/telegram-gateway/gateway.mjs";
+import { acquireSingleton, readSingleton } from "../../agents/telegram-gateway/singleton.mjs";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const configPath = join(process.env.LOCALAPPDATA ?? "", "Bellza",
+  "TelegramGateway", "config.json");
+const secretScript = join(scriptDir, "telegram-secrets.ps1");
+const mode = process.argv[2] ?? "status";
+const permitted = new Set(["serve", "status", "stop"]);
+if (!permitted.has(mode)) {
+  process.stderr.write("Modo inválido: serve, status ou stop.\n");
+  process.exitCode = 2;
+} else if (process.platform !== "win32" || !process.env.LOCALAPPDATA) {
+  process.stderr.write("Gateway disponível apenas no Windows com perfil local.\n");
+  process.exitCode = 2;
+} else {
+  await main();
+}
+
+function readSecret(name) {
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive",
+    "-File", secretScript, "-Mode", "read",
+    "-Name", name], { encoding: "utf8", windowsHide: true,
+    timeout: 10_000, maxBuffer: 4096 });
+  if (result.status !== 0 || !result.stdout?.trim())
+    throw new Error("SECRET_UNAVAILABLE");
+  return result.stdout.trim();
+}
+
+function processAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return error?.code === "EPERM"; }
+}
+
+async function main() {
+  let config;
+  try { config = loadGatewayConfig(resolve(configPath)); }
+  catch {
+    process.stdout.write("CONFIG_INDISPONIVEL: configure config.json no perfil local.\n");
+    process.exitCode = 2;
+    return;
+  }
+  const stopPath = join(config.stateDir, "gateway.stop");
+  if (mode === "status") {
+    const current = readSingleton(config.stateDir);
+    process.stdout.write(current && processAlive(current.pid)
+      ? `EM_EXECUCAO PID ${current.pid}\n` : "PARADO\n");
+    return;
+  }
+  if (mode === "stop") {
+    const current = readSingleton(config.stateDir);
+    if (!current || !processAlive(current.pid)) {
+      process.stdout.write("PARADO\n");
+      return;
+    }
+    writeFileSync(stopPath, `${current.pid}\n`, { mode: 0o600 });
+    process.stdout.write("PARAGEM_SOLICITADA\n");
+    return;
+  }
+  // Validate all prerequisites before acquiring the singleton lock.
+  let apiKey;
+  const tokens = {};
+  const enabledBots = BOT_KEYS.filter((key) => config.bots[key].enabled);
+  try {
+    apiKey = readSecret("openai-api");
+    for (const key of enabledBots) tokens[key] = readSecret(`telegram-${key}`);
+  } catch {
+    process.stderr.write("Credenciais DPAPI ausentes ou ilegíveis neste perfil.\n");
+    process.exitCode = 2;
+    return;
+  }
+  let release;
+  try { release = acquireSingleton(config.stateDir); }
+  catch {
+    process.stderr.write("Gateway já bloqueado; confirme o processo antes de limpar um lock órfão.\n");
+    process.exitCode = 2;
+    return;
+  }
+  try {
+    const aiByBot = Object.fromEntries(enabledBots.map((key) => [key,
+      createOpenAiAdapter({ apiKey, model: config.ai.model })]));
+    const clients = Object.fromEntries(enabledBots.map((key) => [key,
+      createTelegramClient({ token: tokens[key] })]));
+    apiKey = undefined;
+    for (const key of BOT_KEYS) tokens[key] = undefined;
+    const gateway = createGateway({ config, aiByBot, clients,
+      toolRunner: createAgentTools({ monitorStateDir: config.monitorStateDir,
+        stateDir: config.stateDir }) });
+    const controller = new AbortController();
+    const stop = () => controller.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    const stopPoll = setInterval(() => {
+      if (existsSync(stopPath)) controller.abort();
+    }, 1000);
+    process.stdout.write(`GATEWAY_READY ${enabledBots.join(",")}; alertas automáticos desativados.\n`);
+    await Promise.all(enabledBots.map(async (key) => {
+      let backoff = 1000;
+      while (!controller.signal.aborted) {
+        try {
+          await gateway.pollOnce(key, controller.signal);
+          backoff = 1000;
+        } catch (error) {
+          if (controller.signal.aborted) break;
+          const code = ["TELEGRAM_AUTH_UNAVAILABLE", "TELEGRAM_WEBHOOK_CONFLICT"]
+            .includes(error?.message) ? error.message : "POLL_UNAVAILABLE";
+          process.stderr.write(`${key}: ${code}\n`);
+          if (code !== "POLL_UNAVAILABLE") { controller.abort(); break; }
+          await new Promise((done) => setTimeout(done, backoff));
+          backoff = Math.min(backoff * 2, 30_000);
+        }
+      }
+    }));
+    clearInterval(stopPoll);
+  } finally {
+    release();
+    try { unlinkSync(stopPath); } catch { /* No stop request. */ }
+  }
+}

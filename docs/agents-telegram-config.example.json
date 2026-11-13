@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "ownerUserId": 0,
+  "ownerChatId": 0,
+  "stateDir": "C:\\Users\\silas\\AppData\\Local\\Bellza\\TelegramGateway\\state",
+  "monitorStateDir": "C:\\Users\\silas\\OneDrive\\Desktop\\charm-book-now-main\\charm-book-now-main.worktrees\\agents-full-audit-correction-deploy-bellza\\public-visual-phase15-20261113\\.bellza-agent-state",
+  "alertsEnabled": false,
+  "ai": {
+    "model": "gpt-6-luna",
+    "maxCallsPerDay": 60,
+    "maxTokensPerDay": 50000,
+    "maxDailyUsd": 0.25,
+    "inputUsdPerMillion": 0.10,
+    "outputUsdPerMillion": 0.50
+  },
+  "bots": {
+    "atlas": { "username": "bellza_atlas_bot", "secretName": "telegram-atlas", "enabled": true },
+    "sentinela": { "username": "bellza_sentinela_bot", "secretName": "telegram-sentinela", "enabled": true },
+    "sherlock": { "username": "bellza_sherlock_bot", "secretName": "telegram-sherlock", "enabled": false },
+    "valida": { "username": "bellza_valida_bot", "secretName": "telegram-valida", "enabled": false },
+    "forge": { "username": "bellza_forge_bot", "secretName": "telegram-forge", "enabled": false },
+    "guardiao": { "username": "bellza_guardiao_bot", "secretName": "telegram-guardiao", "enabled": false }
+  }
+}
