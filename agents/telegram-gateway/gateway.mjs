@@ -115,10 +115,14 @@ export function prepareAlertBatch(events, sentIds = [], { enabled = false,
 }
 
 export function createGateway({ config, aiByBot, clients, toolRunner,
-  now = () => new Date(), stateDir = config?.stateDir } = {}) {
+  now = () => new Date(), stateDir = config?.stateDir,
+  minMessageUnix = null } = {}) {
   config = validateGatewayConfig(config);
   if (!stateDir || !aiByBot || !clients || !toolRunner)
     throw new Error("GATEWAY_DEPENDENCY_INVALID");
+  if (minMessageUnix !== null &&
+      (!Number.isSafeInteger(minMessageUnix) || minMessageUnix <= 0))
+    throw new Error("GATEWAY_PILOT_INVALID");
   let queue = Promise.resolve();
   async function processUpdate(botKey, update) {
     if (!BOT_KEYS.includes(botKey) || !Number.isSafeInteger(update?.update_id))
@@ -133,6 +137,12 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
     if (!allowMessage(config, update)) {
       mark();
       return { status: "REJECTED", reply: null };
+    }
+    if (minMessageUnix !== null &&
+        (!Number.isSafeInteger(update.message.date) ||
+          update.message.date < minMessageUnix)) {
+      mark();
+      return { status: "HISTORICAL_IGNORED", reply: null };
     }
     const message = update.message.text.trim();
     if (!message || message.length > MAX_MESSAGE || sensitive.test(message)) {

@@ -182,3 +182,29 @@ test("IA não pode afirmar que a agenda funciona quando a interação não foi v
   assert.doesNotMatch(response.reply, /funciona normalmente/);
   assert.match(response.reply, /MONITOR_HISTORY/);
 });
+
+test("piloto descarta mensagens antigas antes da IA e preserva o offset", async () => {
+  const monitorStateDir = syntheticReports();
+  const stateDir = join(root, "gateway-pilot-cutoff");
+  const config = validateGatewayConfig({ schema: 1,
+    ownerUserId: 7996549141, ownerChatId: 7996549141,
+    monitorStateDir, stateDir, alertsEnabled: false,
+    ai: { model: "gpt-6-luna", maxCallsPerDay: 20,
+      maxTokensPerDay: 20000, maxDailyUsd: 0.25,
+      inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.5 },
+    bots: Object.fromEntries(BOT_KEYS.map((key) => [key, {
+      username: `bellza_${key}_bot`, secretName: `telegram-${key}`,
+      enabled: key === "atlas" || key === "sentinela" }])) });
+  let calls = 0;
+  const gateway = createGateway({ config, clients: {}, toolRunner: {},
+    aiByBot: { atlas: { route: async () => { calls++; return { choice: {
+      tool: "none", studio: null, hours: 24 } }; }, answer: async () => ({}) } },
+    minMessageUnix: 1_763_039_200 });
+  const old = await gateway.handleUpdate("atlas", { update_id: 1,
+    message: { date: 1_763_039_199, text: "mensagem antiga",
+      from: { id: 7996549141, is_bot: false },
+      chat: { id: 7996549141, type: "private" } } });
+  assert.equal(old.status, "HISTORICAL_IGNORED");
+  assert.equal(calls, 0);
+  assert.equal(gateway.readState().offsets.atlas, 2);
+});

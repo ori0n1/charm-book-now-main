@@ -15,9 +15,9 @@ const configPath = join(process.env.LOCALAPPDATA ?? "", "Bellza",
   "TelegramGateway", "config.json");
 const secretScript = join(scriptDir, "telegram-secrets.ps1");
 const mode = process.argv[2] ?? "status";
-const permitted = new Set(["serve", "status", "stop", "auth-check"]);
+const permitted = new Set(["serve", "pilot", "status", "stop", "auth-check"]);
 if (!permitted.has(mode)) {
-  process.stderr.write("Modo inválido: serve, status, stop ou auth-check.\n");
+  process.stderr.write("Modo inválido: serve, pilot, status, stop ou auth-check.\n");
   process.exitCode = 2;
 } else if (process.platform !== "win32" || !process.env.LOCALAPPDATA) {
   process.stderr.write("Gateway disponível apenas no Windows com perfil local.\n");
@@ -108,6 +108,11 @@ async function main() {
   let apiKey;
   const tokens = {};
   const enabledBots = BOT_KEYS.filter((key) => config.bots[key].enabled);
+  if (mode === "pilot" && enabledBots.join(",") !== "atlas,sentinela") {
+    process.stderr.write("Piloto limitado a Atlas e Sentinela.\n");
+    process.exitCode = 2;
+    return;
+  }
   try {
     apiKey = readSecret("openai-api");
     for (const key of enabledBots) tokens[key] = readSecret(`telegram-${key}`);
@@ -144,33 +149,42 @@ async function main() {
     for (const key of BOT_KEYS) tokens[key] = undefined;
     const gateway = createGateway({ config, aiByBot, clients,
       toolRunner: createAgentTools({ monitorStateDir: config.monitorStateDir,
-        stateDir: config.stateDir }) });
+        stateDir: config.stateDir }),
+      minMessageUnix: mode === "pilot" ? Math.floor(Date.now() / 1000) : null });
     const controller = new AbortController();
     const stop = () => controller.abort();
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
+    const pilotTimer = mode === "pilot"
+      ? setTimeout(stop, 10 * 60_000) : null;
     const stopPoll = setInterval(() => {
       if (existsSync(stopPath)) controller.abort();
     }, 1000);
-    process.stdout.write(`GATEWAY_READY ${enabledBots.join(",")}; alertas automáticos desativados.\n`);
-    await Promise.all(enabledBots.map(async (key) => {
-      let backoff = 1000;
-      while (!controller.signal.aborted) {
-        try {
-          await gateway.pollOnce(key, controller.signal);
-          backoff = 1000;
-        } catch (error) {
-          if (controller.signal.aborted) break;
-          const code = ["TELEGRAM_AUTH_UNAVAILABLE", "TELEGRAM_WEBHOOK_CONFLICT"]
-            .includes(error?.message) ? error.message : "POLL_UNAVAILABLE";
-          process.stderr.write(`${key}: ${code}\n`);
-          if (code !== "POLL_UNAVAILABLE") { controller.abort(); break; }
-          await new Promise((done) => setTimeout(done, backoff));
-          backoff = Math.min(backoff * 2, 30_000);
+    process.stdout.write(`GATEWAY_READY ${enabledBots.join(",")}; ` +
+      `alertas automáticos desativados; ` +
+      `${mode === "pilot" ? "piloto até 10 minutos" : "manual"}.\n`);
+    try {
+      await Promise.all(enabledBots.map(async (key) => {
+        let backoff = 1000;
+        while (!controller.signal.aborted) {
+          try {
+            await gateway.pollOnce(key, controller.signal);
+            backoff = 1000;
+          } catch (error) {
+            if (controller.signal.aborted) break;
+            const code = ["TELEGRAM_AUTH_UNAVAILABLE", "TELEGRAM_WEBHOOK_CONFLICT"]
+              .includes(error?.message) ? error.message : "POLL_UNAVAILABLE";
+            process.stderr.write(`${key}: ${code}\n`);
+            if (code !== "POLL_UNAVAILABLE") { controller.abort(); break; }
+            await new Promise((done) => setTimeout(done, backoff));
+            backoff = Math.min(backoff * 2, 30_000);
+          }
         }
-      }
-    }));
-    clearInterval(stopPoll);
+      }));
+    } finally {
+      clearInterval(stopPoll);
+      if (pilotTimer) clearTimeout(pilotTimer);
+    }
   } finally {
     release();
     try { unlinkSync(stopPath); } catch { /* No stop request. */ }
