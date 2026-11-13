@@ -1,8 +1,12 @@
 param(
-  [Parameter(Mandatory=$true)][ValidateSet('set','read','status','verify','selftest','set-all','gui')][string]$Mode,
+  [Parameter(Mandatory=$true)][ValidateSet('set','read','status','verify','selftest','set-all','gui','gui-remaining')][string]$Mode,
   [ValidatePattern('^(telegram-(atlas|sentinela|sherlock|valida|forge|guardiao)|openai-api)$')][string]$Name
 )
 $ErrorActionPreference = 'Stop'
+trap {
+  [Console]::Out.WriteLine("GUI_FATAL:$($_.Exception.GetType().Name):L$($_.InvocationInfo.ScriptLineNumber)")
+  exit 1
+}
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
 function Protect-LocalFile([string]$FilePath) {
   $acl = Get-Acl -LiteralPath $FilePath
@@ -68,13 +72,15 @@ if ($Mode -eq 'selftest') {
   exit 0
 }
 $directory = Join-Path $env:LOCALAPPDATA 'Bellza\TelegramGateway\secrets'
-if ($Mode -eq 'gui') {
+if ($Mode -eq 'gui' -or $Mode -eq 'gui-remaining') {
   if (-not [System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') -or
       -not [System.Reflection.Assembly]::LoadWithPartialName('System.Drawing')) {
     throw 'WINDOWS_FORMS_UNAVAILABLE'
   }
   $form = [System.Windows.Forms.Form]::new()
-  $form.Text = 'Bellza - credenciais Atlas, Sentinela e OpenAI'
+  $remaining = $Mode -eq 'gui-remaining'
+  $form.Text = if ($remaining) { 'Bellza - Sherlock, Valida e Forge' }
+    else { 'Bellza - credenciais Atlas, Sentinela e OpenAI' }
   $form.ClientSize = [System.Drawing.Size]::new(560, 288)
   $form.StartPosition = 'CenterScreen'
   $form.FormBorderStyle = 'FixedDialog'
@@ -82,15 +88,25 @@ if ($Mode -eq 'gui') {
   $form.MinimizeBox = $false
   $form.TopMost = $true
   $intro = [System.Windows.Forms.Label]::new()
-  $intro.Text = 'Cole cada valor no campo correspondente. Os caracteres ficam ocultos.'
+  $intro.Text = if ($remaining) {
+    'Cole o token COMPLETO do BotFather (numero:codigo), nao apenas o ID. Os caracteres ficam ocultos.'
+  } else { 'Cole cada valor no campo correspondente. Os caracteres ficam ocultos.' }
   $intro.Location = [System.Drawing.Point]::new(20, 18)
   $intro.Size = [System.Drawing.Size]::new(520, 35)
   $form.Controls.Add($intro)
-  $items = @(
-    @{ Name = 'telegram-atlas'; Label = 'Token Telegram Atlas' },
-    @{ Name = 'telegram-sentinela'; Label = 'Token Telegram Sentinela' },
-    @{ Name = 'openai-api'; Label = 'Chave OpenAI API' }
-  )
+  $items = if ($remaining) {
+    @(
+      @{ Name = 'telegram-sherlock'; Label = 'Token Telegram Sherlock' },
+      @{ Name = 'telegram-valida'; Label = 'Token Telegram Valida' },
+      @{ Name = 'telegram-forge'; Label = 'Token Telegram Forge' }
+    )
+  } else {
+    @(
+      @{ Name = 'telegram-atlas'; Label = 'Token Telegram Atlas' },
+      @{ Name = 'telegram-sentinela'; Label = 'Token Telegram Sentinela' },
+      @{ Name = 'openai-api'; Label = 'Chave OpenAI API' }
+    )
+  }
   $boxes = @{}
   for ($index = 0; $index -lt $items.Count; $index++) {
     $item = $items[$index]
@@ -139,13 +155,29 @@ if ($Mode -eq 'gui') {
         $box.Enabled = $false
         $plain = $null
       }
-      [System.Windows.Forms.MessageBox]::Show('Atlas, Sentinela e OpenAI guardados no perfil Windows.',
+      $savedMessage = if ($remaining) { 'Sherlock, Valida e Forge guardados no perfil Windows.' }
+        else { 'Atlas, Sentinela e OpenAI guardados no perfil Windows.' }
+      [System.Windows.Forms.MessageBox]::Show($savedMessage,
         'Bellza', 'OK', 'Information') | Out-Null
       $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
       $form.Close()
     } catch {
+      $errorCode = if ($_.Exception.Message -eq 'EMPTY_VALUE' -or
+          $_.Exception.Message -eq 'TELEGRAM_TOKEN_FORMAT_INVALID') {
+        $_.Exception.Message
+      } else {
+        "$($_.Exception.GetType().Name):L$($_.InvocationInfo.ScriptLineNumber)"
+      }
+      [Console]::Out.WriteLine("GUI_ERROR:${currentName}:$errorCode")
+      $reason = switch ($_.Exception.Message) {
+        'EMPTY_VALUE' { 'Preencha os tres campos antes de guardar.' }
+        'TELEGRAM_TOKEN_FORMAT_INVALID' {
+          'Use o token completo recebido do BotFather: numeros, dois-pontos e codigo. O ID do bot sozinho nao serve.'
+        }
+        default { 'Falha local ao guardar. Execute o autoteste DPAPI ou informe apenas o codigo do erro.' }
+      }
       [System.Windows.Forms.MessageBox]::Show(
-        "Nao foi possivel guardar $currentName. Verifique se o campo esta completo e tente novamente.",
+        "Nao foi possivel guardar $currentName. $reason",
         'Bellza', 'OK', 'Error') | Out-Null
     }
   })

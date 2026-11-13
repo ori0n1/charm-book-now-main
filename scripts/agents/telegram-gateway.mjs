@@ -108,9 +108,13 @@ async function main() {
     try {
       const apiKey = readSecret("openai-api");
       const ai = createOpenAiAdapter({ apiKey, model: config.ai.model });
-      const result = await ai.route({ identity: IDENTITIES.atlas,
-        tools: TOOLS.atlas,
-        message: "Como está a Bellza hoje? Qual foi a última verificação?",
+      const typoForge = process.argv.includes("--forge-typo");
+      const bot = typoForge ? "forge" : "atlas";
+      const result = await ai.route({ identity: IDENTITIES[bot],
+        tools: TOOLS[bot],
+        message: typoForge
+          ? "Froge, preapra uma propoosta de investigacao sem aplicar corecoes"
+          : "Como está a Bellza hoje? Qual foi a última verificação?",
         history: [] });
       process.stdout.write(`AI_ROUTE_READY ferramenta=${result.choice.tool}; ` +
         `entrada=${result.usage.input}; saída=${result.usage.output}.\n`);
@@ -178,7 +182,7 @@ async function main() {
     const gateway = createGateway({ config, aiByBot, clients,
       toolRunner: createAgentTools({ monitorStateDir: config.monitorStateDir,
         stateDir: config.stateDir }),
-      minMessageUnix: mode === "pilot" ? Math.floor(Date.now() / 1000) : null });
+      minMessageUnix: Math.floor(Date.now() / 1000) });
     const controller = new AbortController();
     const stop = () => controller.abort();
     process.once("SIGINT", stop);
