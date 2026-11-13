@@ -30,7 +30,10 @@ function readSecret(name) {
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive",
     "-File", secretScript, "-Mode", "read",
     "-Name", name], { encoding: "utf8", windowsHide: true,
-    timeout: 10_000, maxBuffer: 4096 });
+    timeout: 10_000, maxBuffer: 4096,
+    env: { ...process.env, PSModulePath: join(
+      process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\WINDOWS",
+      "System32", "WindowsPowerShell", "v1.0", "Modules") } });
   if (result.status === 2) throw new Error("CREDENTIAL_MISSING");
   if (result.status !== 0 || !result.stdout?.trim())
     throw new Error("SECRET_UNAVAILABLE");
