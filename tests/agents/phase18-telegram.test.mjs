@@ -102,7 +102,7 @@ test("resposta portuguesa inclui origem e data do relatório, sem outro bot", as
       expectedBotId: key === "atlas" ? 9159297873 :
         key === "sentinela" ? 9294057980 : null }])) });
   const tools = createAgentTools({ monitorStateDir, stateDir,
-    now: () => new Date("2026-11-13T12:15:00Z") });
+    now: () => new Date("2026-11-13T13:15:00Z") });
   const aiByBot = Object.fromEntries(["atlas", "sentinela"].map((key) =>
     [key, { route: async ({ message }) => ({ choice: {
       tool: /Capivara|estúdios/i.test(message) ? "public_status" :
@@ -112,15 +112,17 @@ test("resposta portuguesa inclui origem e data do relatório, sem outro bot", as
         `Resultado ${evidence.status}; agenda ${evidence.agendaInteractivity ?? "sem prova"}.` }) }]));
   const gateway = createGateway({ config, aiByBot,
     clients: { atlas: {}, sentinela: {} }, toolRunner: tools,
-    now: () => new Date("2026-11-13T12:15:00Z") });
+    now: () => new Date("2026-11-13T13:15:00Z") });
   const update = (id, text) => ({ update_id: id, message: {
     text, from: { id: 7996549141, is_bot: false },
     chat: { id: 7996549141, type: "private" } } });
   const capivara = await gateway.handleUpdate("atlas",
     update(1, "A página da Capivara está funcionando?"));
   assert.equal(capivara.tool, "public_status");
-  assert.match(capivara.reply, /MONITOR_HISTORY/);
-  assert.match(capivara.reply, /2026-11-13T12:00:00Z/);
+  assert.match(capivara.reply, /última verificação que tenho/);
+  assert.match(capivara.reply, /13\/11\/2026.*12:00/);
+  assert.match(capivara.reply, /dados estão desatualizados/);
+  assert.doesNotMatch(capivara.reply, /MONITOR_HISTORY/);
   assert.match(capivara.reply, /NAO_VERIFICAVEL/);
   const sentinela = await gateway.handleUpdate("sentinela",
     update(1, "Quais estúdios apresentaram falhas?"));
@@ -192,7 +194,7 @@ test("IA não pode afirmar que a agenda funciona quando a interação não foi v
       from: { id: 7996549141, is_bot: false },
       chat: { id: 7996549141, type: "private" } } });
   assert.doesNotMatch(response.reply, /funciona normalmente/);
-  assert.match(response.reply, /MONITOR_HISTORY/);
+  assert.match(response.reply, /última verificação que tenho/);
 });
 
 test("piloto descarta mensagens antigas antes da IA e preserva o offset", async () => {

@@ -11,7 +11,8 @@ const MAX_REPLY = 1200;
 const MAX_MINUTE = 6;
 const MAX_DAY_MESSAGES = 60;
 const sensitive = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:\+?\d[\s-]?){9,}\b|\bsk-[A-Za-z0-9_-]{12,}\b|\b\d{13,19}\b/i;
-const safeText = (value) => String(value ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, MAX_REPLY);
+const safeText = (value) => String(value ?? "")
+  .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ").slice(0, MAX_REPLY);
 const day = (now) => now.toISOString().slice(0, 10);
 const minute = (now) => Math.floor(now.getTime() / 60_000);
 const emptyState = () => ({ schema: 1,
@@ -81,6 +82,20 @@ function contextEntry(tool, evidence, now) {
     codes: Array.isArray(evidence?.findings) ? evidence.findings
       .map((item) => item.code).filter((code) => typeof code === "string")
       .slice(0, 4) : [] };
+}
+function evidenceNote(evidence) {
+  const time = Date.parse(evidence?.observedAt ?? "");
+  const observed = Number.isFinite(time)
+    ? new Intl.DateTimeFormat("pt-BR", { timeZone: "Europe/London",
+      dateStyle: "short", timeStyle: "short" }).format(new Date(time)) +
+      " (horário de Londres)" : null;
+  if (evidence?.source === "SYNTHETIC_LOCAL")
+    return "Esta informação vem de um teste sintético; não descreve a produção.";
+  if (evidence?.source === "INDISPONIVEL" || !observed)
+    return "Não tenho uma verificação confiável com data para confirmar o estado agora.";
+  if (evidence?.freshness === "DESATUALIZADO")
+    return `A última verificação que tenho é de ${observed}. Os dados estão desatualizados.`;
+  return `Usei o relatório da Sentinela de ${observed}.`;
 }
 export function prepareAlertBatch(events, sentIds = [], { enabled = false,
   ownerChatId } = {}) {
@@ -228,14 +243,10 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
             /(?:página|site|estúdio).{0,45}(?:funciona|operacional|normal)/i.test(reply)))
         throw new Error("ANSWER_UNSAFE");
     } catch {
-      reply = `Resultado ${evidence.status ?? "INDETERMINADO"}; ` +
-        `fonte ${evidence.source ?? "INDISPONIVEL"}. ` +
-        "Resposta por IA indisponível; consulte o relatório local.";
+      reply = "Resposta por IA indisponível agora. Consulte o relatório local.";
     }
-    const provenance = `Fonte ${evidence.source ?? "INDISPONIVEL"}; ` +
-      `verificação ${evidence.observedAt ?? "sem data"}; ` +
-      `${evidence.freshness ?? "atualidade não confirmada"}. `;
-    reply = safeText(provenance + reply);
+    reply = safeText(`${safeText(reply).slice(0, 900).trim()}\n\n` +
+      evidenceNote(evidence));
     state.bots[botKey] = [...state.bots[botKey],
       contextEntry(choice.tool, evidence, time)].slice(-MAX_HISTORY);
     mark();
