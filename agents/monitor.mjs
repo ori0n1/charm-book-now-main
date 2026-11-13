@@ -8,6 +8,7 @@ import { analyzeMonitorRun } from "./monitor-analysis.mjs";
 import { verifyNoninteractiveReadOnlyOAuth } from "./monitor-auth.mjs";
 import { syntheticMonitorReport } from "./monitor-fixtures.mjs";
 import { runPublicCheck } from "./public-flow.mjs";
+import { runVisualCheck } from "./visual-flow.mjs";
 import { runApprovedTest, runValida } from "./valida.mjs";
 
 const configPath = fileURLToPath(new URL("./monitor-config.json", import.meta.url));
@@ -100,6 +101,10 @@ export function formatMonitorReport(report) {
     `Bindings observados: ${report.bindingCount ?? "indisponíveis"}`,
     `Páginas públicas: ${report.publicStatus} (${report.publicCheckedPages ?? 0}/${report.publicExpectedPages ?? "?"}; sitemap ${report.publicDiscoveryStatus}).`,
     `Relatório público: ${report.publicReportPath ?? "indisponível"}`,
+    ...(report.visualStatus !== "DESATIVADO" ? [
+      `Visual: ${report.visualStatus}; ${report.visualObservedPages ?? 0} vistas; relatório ${report.visualReportPath ?? "indisponível"}.`,
+      ...(report.visualFailureCode ? [`Limite visual: ${report.visualFailureCode}`] : []),
+    ] : []),
     ...(report.publicFailureCode ? [`Limite público: ${report.publicFailureCode}`] : []),
     `Retenção: ${report.retentionSkipped ? `${report.retentionSkipped} ficheiros antigos requerem revisão local` : "histórico dentro do limite"}`,
     "", "## Alertas locais novos ou recuperados", "",
@@ -123,6 +128,8 @@ export async function runMonitorOnce({
   includePublic = false,
   publicScenario = "healthy",
   publicCheck = runPublicCheck,
+  includeVisual = false,
+  visualCheck = runVisualCheck,
 } = {}) {
   if (!["live", "synthetic"].includes(mode)) throw new Error("INVALID_MONITOR_MODE");
   const monitorId = randomUUID();
@@ -172,6 +179,32 @@ export async function runMonitorOnce({
         } catch { publicFailureCode = "PUBLIC_CHECK_FAILED"; }
       }
     }
+    let visualResult = null;
+    let visualStatus = includeVisual ? "INDETERMINADO" : "DESATIVADO";
+    let visualFailureCode = null;
+    if (includeVisual) {
+      const scanBudget = Math.min(60_000, deadline - Date.now() - 20_000);
+      if (scanBudget < 15_000) visualFailureCode = "VISUAL_TIME_BUDGET_EXHAUSTED";
+      else {
+        try {
+          visualResult = await visualCheck({ mode,
+            scenario: "healthy",
+            stateDir: join(stateDir, "visual-prepared"),
+            maxScanDurationMs: scanBudget,
+            validate: () => runValida({ runCase: (testCase) => {
+              const remaining = deadline - Date.now();
+              if (remaining < 3_000) return { file: testCase.file,
+                state: "INDETERMINATE", reason: "MONITOR_TIME_BUDGET",
+                durationMs: 0 };
+              return runApprovedTest(testCase, {
+                timeoutMs: Math.min(2_500, remaining - 2_000),
+              });
+            } }),
+          });
+          visualStatus = visualResult.report.status;
+        } catch { visualFailureCode = "VISUAL_CHECK_FAILED"; }
+      }
+    }
     const endpointIssues = new Set(analysis.issues.filter((item) =>
       item.domain.startsWith("public:") || item.domain.startsWith("public_read:"))
       .map((item) => item.domain.split(":")[1]));
@@ -183,15 +216,26 @@ export async function runMonitorOnce({
       return !analysis.events.some((event) => event.kind === item.kind &&
         event.evidence?.path === item.path);
     });
-    const allEvents = [...analysis.events, ...publicEvents];
+    const publicFailedPaths = new Set((publicResult?.report?.anomalies ?? [])
+      .filter((item) => item.code === "PUBLIC_PAGE_HTTP_ERROR" ||
+        item.code === "PUBLIC_NETWORK_UNAVAILABLE").map((item) => item.path));
+    const visualEvents = (visualResult?.report?.events ?? []).filter((item) =>
+      !(item.code === "VISUAL_PAGE_UNAVAILABLE" &&
+        (publicFailedPaths.has(item.path) || endpointIssues.has(item.path))));
+    const allEvents = [...analysis.events, ...publicEvents, ...visualEvents];
     const combinedEvents = allEvents.slice(0, MONITOR_CONFIG.maxAlertsPerRun);
     const publicAnomalies = publicResult?.report?.anomalies ?? [];
     const publicSeverity = publicStatus === "ANOMALIAS"
       ? publicAnomalies.some((item) => item.severity === "critical") ? "ALERTA" : "ATENCAO"
       : publicStatus === "INDETERMINADO" ? "INDETERMINADO" : "OK";
     const rank = { OK: 0, ATENCAO: 1, INDETERMINADO: 2, ALERTA: 3 };
-    const overallStatus = rank[publicSeverity] > rank[reportWithId.status]
+    const baseStatus = rank[publicSeverity] > rank[reportWithId.status]
       ? publicSeverity : reportWithId.status;
+    const visualSeverity = visualStatus === "FALHAS_OBSERVADAS" ? "ALERTA" :
+      visualStatus === "INDETERMINADO" ? "INDETERMINADO" :
+        visualStatus === "PARCIAL" ? "ATENCAO" : "OK";
+    const overallStatus = rank[visualSeverity] > rank[baseStatus]
+      ? visualSeverity : baseStatus;
     const summary = {
       monitorId, sentinelaRunId: source.id, observedAt: now().toISOString(),
       mode: mode === "synthetic" ? "SYNTHETIC_SIMULATION" : "LIVE_READ_ONLY",
@@ -203,6 +247,11 @@ export async function runMonitorOnce({
       publicExpectedPages: publicResult?.report?.expectedPages ?? null,
       publicDiscoveryStatus: publicResult?.report?.discoveryStatus ?? "INDETERMINADO",
       publicReportPath: publicResult?.reportPath ?? null,
+      visualStatus, visualFailureCode,
+      visualRunId: visualResult?.id ?? null,
+      visualObservedPages: visualResult?.report?.pages?.filter((item) =>
+        item.status === "OBSERVED").length ?? null,
+      visualReportPath: visualResult?.reportPath ?? null,
       activeVersion: analysis.observation.activeVersion,
       bindingCount: analysis.observation.bindingCount,
       events: combinedEvents,
@@ -213,6 +262,7 @@ export async function runMonitorOnce({
     const entry = { monitorId, sentinelaRunId: source.id, at: summary.observedAt,
       mode: summary.mode, status: summary.status, overallStatus,
       publicRunId: summary.publicRunId, publicStatus,
+      visualRunId: summary.visualRunId, visualStatus,
       issueKeys: analysis.issues.map((item) => item.key),
       eventCodes: combinedEvents.map((item) => `${item.kind}:${item.code}`) };
     const journalAll = [...state.journal, entry];

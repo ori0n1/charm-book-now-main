@@ -17,14 +17,22 @@ const safeIssue = (issue) => ({ studioCode: issue.studioCode, path: issue.path,
 
 function readState(stateDir) {
   const path = join(stateDir, "public-state.json");
-  if (!existsSync(path)) return { schema: 1, issues: [], history: [], alerts: [] };
+  if (!existsSync(path)) return { schema: 1, issues: [], history: [], alerts: [],
+    sitemapCache: null, sitemapFailureStreak: 0 };
   let state;
   try { state = JSON.parse(readFileSync(path, "utf8")); }
   catch { throw new Error("PUBLIC_STATE_INVALID"); }
   if (state?.schema !== 1 || !Array.isArray(state.issues) ||
       !Array.isArray(state.history) || !Array.isArray(state.alerts) ||
       state.issues.length > 65 || state.history.length > MAX_HISTORY ||
-      state.alerts.length > MAX_HISTORY) throw new Error("PUBLIC_STATE_INVALID");
+      state.alerts.length > MAX_HISTORY ||
+      !Number.isSafeInteger(state.sitemapFailureStreak ?? 0) ||
+      (state.sitemapFailureStreak ?? 0) < 0 ||
+      (state.sitemapCache !== undefined && state.sitemapCache !== null &&
+        (!Array.isArray(state.sitemapCache.paths) ||
+          state.sitemapCache.paths.length > 60 ||
+          typeof state.sitemapCache.observedAt !== "string")))
+    throw new Error("PUBLIC_STATE_INVALID");
   return state;
 }
 
@@ -79,6 +87,9 @@ export function formatPublicReport(report) {
     `# Atlas — monitorização pública ${report.status}`, "",
     `Fluxo: ${report.flowId}`, `Modo: ${report.mode}`, `Data: ${report.observedAt}`,
     `Cobertura: ${report.checkedPages}/${report.expectedPages} páginas; sitemap ${report.discoveryStatus}; ${report.requests} pedidos GET/HEAD.`,
+    `Sitemap: ${report.discoveryFailure ?? "sem falha"}${report.sitemapHttpStatus ? ` HTTP ${report.sitemapHttpStatus}` : ""}; última lista válida: ${report.sitemapLastValidAt ?? "indisponível"}.`,
+    ...(report.discoveryStatus === "FALLBACK_STALE" ?
+      ["Lista de URLs em fallback DESATUALIZADA; páginas fora da lista não foram verificadas."] : []),
     "", "## Páginas e estúdios", "",
     ...report.pages.map((page) => `- ${page.studioCode} ${page.path}: ${page.status}` +
       ` (HTTP ${page.httpStatus ?? "indisponível"}; JS ${page.script}; CSS ${page.style}` +
@@ -121,6 +132,7 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
       fetchImpl: mode === "synthetic" ? publicFixture(scenario) : fetchImpl ?? fetch, now,
       delayMs: mode === "live" ? 200 : 0,
       maxDurationMs: maxScanDurationMs,
+      cachedSitemap: state.sitemapCache ?? null,
     });
     const monitoring = { agent: "sentinela", runId: randomUUID(),
       observedAt: snapshot.observedAt, status: snapshot.pages.every((item) => item.complete)
@@ -157,6 +169,22 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
       dependencies: [monitoring.runId, diagnosis.runId, proposal.runId,
         validation.runId], at: now().toISOString() });
     const comparison = compareIssues(state.issues, monitoring.anomalies, snapshot.pages);
+    const previousFailures = state.sitemapFailureStreak ?? 0;
+    const failureStreak = snapshot.discoveryFailure ? Math.min(1_000_000,
+      previousFailures + 1) : 0;
+    const discoveryEvents = [];
+    if (failureStreak === 2) discoveryEvents.push({ kind: "NEW",
+      studioCode: "GLOBAL", path: "/sitemap.xml",
+      code: "PUBLIC_SITEMAP_UNAVAILABLE", severity: "warning" });
+    if (!snapshot.discoveryFailure && previousFailures >= 2)
+      discoveryEvents.push({ kind: "RECOVERED", studioCode: "GLOBAL",
+        path: "/sitemap.xml", code: "PUBLIC_SITEMAP_UNAVAILABLE",
+        severity: "info" });
+    if (snapshot.discoveryStatus === "CHANGED")
+      discoveryEvents.push({ kind: "CHANGED", studioCode: "GLOBAL",
+        path: "/sitemap.xml", code: "PUBLIC_SITEMAP_CHANGED",
+        severity: "info" });
+    const events = [...comparison.events, ...discoveryEvents];
     const coverageComplete = snapshot.discoveryStatus === "OK" &&
       snapshot.checkedPages === snapshot.expectedPages &&
       snapshot.pages.every((page) => !["RESOURCE_UNKNOWN", "NETWORK_ERROR",
@@ -167,10 +195,14 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
     const report = {
       flowId, observedAt: snapshot.observedAt, mode: monitoring.mode, status,
       discoveryStatus: snapshot.discoveryStatus, sitemapUrls: snapshot.sitemapUrls,
+      discoveryFailure: snapshot.discoveryFailure ?? null,
+      sitemapHttpStatus: snapshot.sitemapHttpStatus ?? null,
+      sitemapLastValidAt: snapshot.sitemapSnapshot?.observedAt ??
+        state.sitemapCache?.observedAt ?? null,
       expectedPages: snapshot.expectedPages, checkedPages: snapshot.checkedPages,
       coverageComplete,
       pages: snapshot.pages, anomalies: monitoring.anomalies.map(safeIssue),
-      events: comparison.events, requests: snapshot.requests,
+      events, requests: snapshot.requests,
       agendaInteractivity: snapshot.agendaInteractivity,
       causeSummary: diagnosis.findings.length ? "causa não determinada; evidência pública limitada" : "nenhuma falha observada",
       proposalSummary: proposal.plan ? "plano de investigação não aplicado" : "nenhuma proposta",
@@ -184,8 +216,10 @@ export async function runPublicCheck({ mode = "live", scenario = "healthy",
     const allHistory = [...state.history, { flowId, at: report.observedAt,
       mode: report.mode, status, issueKeys: comparison.issues.map(issueKey) }];
     const next = { schema: 1, issues: comparison.issues.map(safeIssue),
+      sitemapCache: snapshot.sitemapSnapshot ?? state.sitemapCache ?? null,
+      sitemapFailureStreak: failureStreak,
       history: allHistory.slice(-MAX_HISTORY),
-      alerts: [...state.alerts, ...comparison.events.map((event) => ({
+      alerts: [...state.alerts, ...events.map((event) => ({
         flowId, at: report.observedAt, ...event }))].slice(-MAX_HISTORY) };
     const out = join(stateDir, "public-runs");
     mkdirSync(out, { recursive: true });

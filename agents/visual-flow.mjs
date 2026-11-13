@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync,
+  writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_STATE_DIR, acquireAtlasLock, appendAtlasEvent } from "./atlas.mjs";
 import { scanVisualPages } from "./visual-probes.mjs";
@@ -14,14 +15,24 @@ const MAX_HISTORY = 60;
 
 function readState(stateDir) {
   const path = join(stateDir, "visual-state.json");
-  if (!existsSync(path)) return { schema: 1, issues: [], history: [], alerts: [] };
+  if (!existsSync(path)) return { schema: 1, issues: [], history: [], alerts: [],
+    rotationCycle: 0, sitemapFailureStreak: 0, sitemapCache: null };
   let state;
   try { state = JSON.parse(readFileSync(path, "utf8")); }
   catch { throw new Error("VISUAL_STATE_INVALID"); }
   if (state?.schema !== 1 || !Array.isArray(state.issues) ||
       !Array.isArray(state.history) || !Array.isArray(state.alerts) ||
       state.issues.length > 100 || state.history.length > MAX_HISTORY ||
-      state.alerts.length > MAX_HISTORY) throw new Error("VISUAL_STATE_INVALID");
+      state.alerts.length > MAX_HISTORY ||
+      !Number.isSafeInteger(state.rotationCycle ?? 0) ||
+      (state.rotationCycle ?? 0) < 0 ||
+      !Number.isSafeInteger(state.sitemapFailureStreak ?? 0) ||
+      (state.sitemapFailureStreak ?? 0) < 0 ||
+      (state.sitemapCache !== undefined && state.sitemapCache !== null &&
+        (!Array.isArray(state.sitemapCache.paths) ||
+          state.sitemapCache.paths.length > 60 ||
+          typeof state.sitemapCache.observedAt !== "string")))
+    throw new Error("VISUAL_STATE_INVALID");
   return state;
 }
 
@@ -29,6 +40,23 @@ function save(path, value) {
   const temp = `${path}.${randomUUID()}.tmp`;
   writeFileSync(temp, value, { mode: 0o600 });
   renameSync(temp, path);
+}
+
+function pruneReports(stateDir, removed, retained) {
+  const keep = new Set(retained.map((item) => item.flowId));
+  for (const item of removed) {
+    const id = item.flowId;
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id ?? "") ||
+        keep.has(id)) continue;
+    const base = join(stateDir, "visual-runs", id);
+    try {
+      const report = JSON.parse(readFileSync(`${base}.json`, "utf8"));
+      if (report.flowId !== id || !["PUBLIC_VISUAL_READ_ONLY",
+        "SYNTHETIC_SIMULATION"].includes(report.mode)) continue;
+      unlinkSync(`${base}.json`);
+      if (existsSync(`${base}.md`)) unlinkSync(`${base}.md`);
+    } catch { /* Estado incerto: preservar para revisão local. */ }
+  }
 }
 
 function compare(previous, current, pages) {
@@ -55,6 +83,9 @@ export function formatVisualReport(report) {
     `# Atlas — verificação visual ${report.status}`, "",
     `Fluxo: ${report.flowId}`, `Modo: ${report.mode}`,
     `Cobertura: ${report.pages.length} renderizações de ${report.selectedCount} páginas; ${report.discoveredCount} páginas públicas enumeradas.`,
+    `Sitemap: ${report.sitemapStatus}${report.sitemapFailure ? ` (${report.sitemapFailure}${report.sitemapHttpStatus ? ` HTTP ${report.sitemapHttpStatus}` : ""})` : ""}; última lista válida: ${report.sitemapLastValidAt ?? "indisponível"}.`,
+    `Amostra rotativa: ciclo ${report.rotationCycle}; páginas fora deste ciclo não foram verificadas visualmente.`,
+    `Duração: ${report.elapsedMs ?? "indisponível"} ms; pico RSS do processo Node: ${report.peakNodeRssBytes ?? "indisponível"} bytes (Chromium não incluído).`,
     `Pedidos permitidos: ${report.requests}. Capturas mantidas somente em memória.`,
     "", "## Páginas", "",
     ...report.pages.map((item) => `- ${item.path} ${item.viewport}: ${item.status}; HTTP ${item.httpStatus ?? "indisponível"}; ` +
@@ -80,7 +111,7 @@ export function formatVisualReport(report) {
 
 export async function runVisualCheck({ mode = "live", scenario = "healthy",
   stateDir = null, now = () => new Date(), scan = scanVisualPages,
-  validate = () => runValida() } = {}) {
+  validate = () => runValida(), maxScanDurationMs = 110_000 } = {}) {
   if (!["live", "synthetic"].includes(mode)) throw new Error("INVALID_VISUAL_MODE");
   const flowId = randomUUID();
   stateDir ??= join(DEFAULT_STATE_DIR, mode === "live" ? "visual-manual" : "visual-simulated");
@@ -89,7 +120,9 @@ export async function runVisualCheck({ mode = "live", scenario = "healthy",
     mkdirSync(stateDir, { recursive: true });
     const state = readState(stateDir);
     const fixture = mode === "synthetic" ? visualFixture(scenario) : {};
-    const scanResult = await scan(fixture);
+    const cycle = state.rotationCycle ?? 0;
+    const scanResult = await scan({ ...fixture, cachedSitemap: state.sitemapCache ?? null,
+      cycle, maxDurationMs: maxScanDurationMs });
     const pages = scanResult.pages ?? [];
     const issues = pages.flatMap((page) => page.issues ?? []);
     const sentinela = { agent: "sentinela", runId: randomUUID(),
@@ -121,7 +154,23 @@ export async function runVisualCheck({ mode = "live", scenario = "healthy",
     ]) appendAtlasEvent(stateDir, { id, agent, flowId, dependencies,
       state: "COMPLETED", status, at: now().toISOString() });
     const comparison = compare(state.issues, issues, pages);
+    const previousFailures = state.sitemapFailureStreak ?? 0;
+    const failureStreak = scanResult.sitemapFailure ? Math.min(1_000_000,
+      previousFailures + 1) : 0;
+    const discoveryEvents = [];
+    if (failureStreak === 2) discoveryEvents.push({ kind: "NEW",
+      path: "/sitemap.xml", studioCode: "GLOBAL",
+      code: "VISUAL_SITEMAP_UNAVAILABLE", severity: "warning" });
+    if (!scanResult.sitemapFailure && previousFailures >= 2)
+      discoveryEvents.push({ kind: "RECOVERED", path: "/sitemap.xml",
+        studioCode: "GLOBAL", code: "VISUAL_SITEMAP_UNAVAILABLE",
+        severity: "info" });
+    if (scanResult.sitemapStatus === "CHANGED")
+      discoveryEvents.push({ kind: "CHANGED", path: "/sitemap.xml",
+        studioCode: "GLOBAL", code: "VISUAL_SITEMAP_CHANGED", severity: "info" });
+    const events = [...comparison.events, ...discoveryEvents];
     const partial = scanResult.status !== "OBSERVED" ||
+      !["OK", "CHANGED"].includes(scanResult.sitemapStatus ?? "UNKNOWN") ||
       pages.some((page) => page.status !== "OBSERVED" ||
         page.coverage === "AGENDA_NAO_VERIFICAVEL");
     const status = issues.length ? "FALHAS_OBSERVADAS" :
@@ -130,21 +179,34 @@ export async function runVisualCheck({ mode = "live", scenario = "healthy",
       mode: sentinela.mode, status, sentinelaRunId: sentinela.runId,
       pages, selectedCount: scanResult.selectedCount ?? 0,
       discoveredCount: scanResult.discoveredCount ?? 0,
-      requests: scanResult.requests ?? 0, issues, events: comparison.events,
+      requests: scanResult.requests ?? 0, issues, events,
+      sitemapStatus: scanResult.sitemapStatus ?? "UNKNOWN",
+      sitemapFailure: scanResult.sitemapFailure ?? null,
+      sitemapHttpStatus: scanResult.sitemapHttpStatus ?? null,
+      sitemapLastValidAt: scanResult.sitemapSnapshot?.observedAt ??
+        state.sitemapCache?.observedAt ?? null,
+      rotationCycle: cycle, elapsedMs: scanResult.elapsedMs ?? null,
+      peakNodeRssBytes: scanResult.peakNodeRssBytes ?? null,
       sherlockStatus: diagnosis.status,
       causeStatus: diagnosis.findings.length ? "NAO_DETERMINADA" : "SEM_ANOMALIAS",
       forgeStatus: proposal.status,
       validaStatus: validation.status, guardiaoStatus: opinion.status,
       publicationAuthorized: false, remoteWrites: false,
       recurringEnabled: false };
+    const historyAll = [...state.history, { flowId, at: report.observedAt,
+      status, issueKeys: comparison.issues.map(key) }];
     const next = { schema: 1, issues: comparison.issues,
-      history: [...state.history, { flowId, at: report.observedAt,
-        status, issueKeys: comparison.issues.map(key) }].slice(-MAX_HISTORY),
-      alerts: [...state.alerts, ...comparison.events.map((item) => ({
+      rotationCycle: scanResult.status === "OBSERVED" ||
+        scanResult.status === "PARTIAL_LIMIT" ? cycle + 1 : cycle,
+      sitemapFailureStreak: failureStreak,
+      sitemapCache: scanResult.sitemapSnapshot ?? state.sitemapCache ?? null,
+      history: historyAll.slice(-MAX_HISTORY),
+      alerts: [...state.alerts, ...events.map((item) => ({
         flowId, at: report.observedAt, ...item }))].slice(-MAX_HISTORY) };
     const reportsDir = join(stateDir, "visual-runs");
     mkdirSync(reportsDir, { recursive: true });
     save(join(stateDir, "visual-state.json"), `${JSON.stringify(next, null, 2)}\n`);
+    pruneReports(stateDir, historyAll.slice(0, -MAX_HISTORY), next.history);
     save(join(reportsDir, `${flowId}.json`), `${JSON.stringify(report, null, 2)}\n`);
     save(join(reportsDir, `${flowId}.md`), formatVisualReport(report));
     const reportPath = join(stateDir, "latest-visual.md");

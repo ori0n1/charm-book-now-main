@@ -100,8 +100,22 @@ export function parsePublicSitemap(xml) {
   return { paths: [...paths], rejected };
 }
 
+function validCachedPaths(cache) {
+  if (!cache || !Array.isArray(cache.paths) || cache.paths.length < 1 ||
+      cache.paths.length > MAX_PAGES ||
+      !Number.isFinite(Date.parse(cache.observedAt))) return null;
+  const xml = `<urlset>${cache.paths.map((path) =>
+    `<url><loc>${ORIGIN}${path}</loc></url>`).join("")}</urlset>`;
+  try {
+    const parsed = parsePublicSitemap(xml);
+    return parsed.rejected === 0 && parsed.paths.length === cache.paths.length
+      ? parsed.paths : null;
+  } catch { return null; }
+}
+
 export async function probePublicPages({ fetchImpl = fetch, now = () => new Date(),
-  delayMs = 0, maxDurationMs = MAX_DURATION_MS } = {}) {
+  delayMs = 0, maxDurationMs = MAX_DURATION_MS,
+  cachedSitemap = null } = {}) {
   if (!Number.isInteger(maxDurationMs) || maxDurationMs < 1 ||
       maxDurationMs > MAX_DURATION_MS) throw new Error("PUBLIC_DURATION_UNSAFE");
   const discovered = new Set();
@@ -128,19 +142,43 @@ export async function probePublicPages({ fetchImpl = fetch, now = () => new Date
     });
   }
   let discoveryStatus = "OK";
+  let discoveryFailure = null;
+  let sitemapHttpStatus = null;
+  let sitemapSnapshot = null;
   let sitemapUrls = 0;
+  const priorPaths = validCachedPaths(cachedSitemap);
   try {
     const sitemap = await request("GET", "/sitemap.xml");
     if (!sitemap.ok || !/\bxml\b/i.test(sitemap.headers.get("content-type") ?? "")) {
-      discoveryStatus = "SITEMAP_UNAVAILABLE";
+      discoveryFailure = sitemap.ok ? "INVALID_CONTENT_TYPE" : "HTTP_ERROR";
+      if (!sitemap.ok) sitemapHttpStatus = sitemap.status;
       await sitemap.body?.cancel?.();
     } else {
       const parsed = parsePublicSitemap(await boundedText(sitemap));
-      sitemapUrls = parsed.paths.length;
-      if (parsed.rejected) discoveryStatus = "SITEMAP_UNSAFE_URLS_REJECTED";
-      for (const path of parsed.paths) if (DYNAMIC_PAGE.test(path)) discoveredPages.add(path);
+      if (parsed.rejected) discoveryFailure = "INVALID_SITEMAP";
+      else {
+        sitemapUrls = parsed.paths.length;
+        sitemapSnapshot = { paths: parsed.paths, observedAt: now().toISOString() };
+        if (priorPaths && (priorPaths.length !== parsed.paths.length ||
+            priorPaths.some((path) => !parsed.paths.includes(path))))
+          discoveryStatus = "CHANGED";
+        for (const path of parsed.paths) if (DYNAMIC_PAGE.test(path))
+          discoveredPages.add(path);
+      }
     }
-  } catch { discoveryStatus = "SITEMAP_UNAVAILABLE"; }
+  } catch (error) { discoveryFailure = error?.name === "TimeoutError" ||
+    error?.name === "AbortError" ? "NETWORK_TIMEOUT" :
+    error?.message === "PUBLIC_SITEMAP_INVALID" ||
+      error?.message === "PUBLIC_RESPONSE_TOO_LARGE" ? "INVALID_SITEMAP" :
+        "NETWORK_ERROR"; }
+  if (discoveryFailure) {
+    discoveryStatus = priorPaths ? "FALLBACK_STALE" : "SITEMAP_UNAVAILABLE";
+    if (priorPaths) {
+      sitemapUrls = priorPaths.length;
+      for (const path of priorPaths) if (DYNAMIC_PAGE.test(path))
+        discoveredPages.add(path);
+    }
+  }
   const known = new Map(PUBLIC_PAGES.map((page) => [page.path, page]));
   for (const path of discoveredPages) if (!known.has(path)) {
     known.set(path, { studioCode: path.startsWith("/s/")
@@ -220,7 +258,8 @@ export async function probePublicPages({ fetchImpl = fetch, now = () => new Date
   if (pages.some((page) => page.status === "NOT_CHECKED_LIMIT") &&
       discoveryStatus === "OK") discoveryStatus = "REQUEST_OR_DURATION_LIMIT";
   return { observedAt: now().toISOString(), pages, requests,
-    discoveryStatus, sitemapUrls, expectedPages: known.size,
+    discoveryStatus, discoveryFailure, sitemapHttpStatus, sitemapSnapshot,
+    sitemapUrls, expectedPages: known.size,
     checkedPages: pages.filter((page) => page.status !== "NOT_CHECKED_LIMIT").length,
     agendaInteractivity: "NAO_VERIFICAVEL", reservations: "NAO_VERIFICAVEL" };
 }

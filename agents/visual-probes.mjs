@@ -4,22 +4,27 @@ import { PUBLIC_PAGES, parsePublicSitemap } from "./public-probes.mjs";
 
 const ORIGIN = "https://bellza.pt";
 const ASSET = /^\/assets\/[A-Za-z0-9_.-]+\.(?:js|css|svg|png|jpe?g|webp|avif|woff2?)$/;
-const PRIORITY = ["/", "/login", "/signup", "/forgot-password", "/blog",
-  "/contacto", "/s/capivarabarbearia", "/s/studio27braga"];
+const PRIORITY = ["/", "/login", "/s/capivarabarbearia", "/s/studio27braga"];
 const MOBILE = new Set(["/", "/login", "/s/capivarabarbearia", "/s/studio27braga"]);
 const VIEWPORTS = Object.freeze({ desktop: { width: 1366, height: 768 },
   mobile: { width: 390, height: 844 } });
-const MAX_REQUESTS = 350;
+const MAX_REQUESTS = 150;
 const MAX_DURATION_MS = 110_000;
 
-export function chooseVisualTargets(sitemapXml) {
+export function chooseVisualTargets(sitemapXml, cycle = 0) {
+  if (!Number.isSafeInteger(cycle) || cycle < 0) throw new Error("VISUAL_CYCLE_INVALID");
   const discovered = parsePublicSitemap(sitemapXml);
   const known = new Map(PUBLIC_PAGES.map((item) => [item.path, item]));
   for (const path of discovered.paths) if (!known.has(path)) {
     known.set(path, { path, studioCode: path.startsWith("/s/")
       ? `STUDIO:${path.slice(3)}` : "GLOBAL" });
   }
-  return { targets: PRIORITY.map((path) => known.get(path)).filter(Boolean),
+  const rotating = [...known.values()].filter((item) => !PRIORITY.includes(item.path));
+  const offset = (cycle * 4) % Math.max(1, rotating.length);
+  const extras = Array.from({ length: Math.min(4, rotating.length) },
+    (_, index) => rotating[(offset + index) % rotating.length]);
+  return { targets: [...PRIORITY.map((path) => known.get(path)).filter(Boolean), ...extras],
+    paths: discovered.paths,
     discoveredCount: known.size, sitemapUrls: discovered.paths.length,
     rejectedUrls: discovered.rejected };
 }
@@ -83,16 +88,27 @@ export function classifyVisualObservation(observation) {
 }
 
 async function readSitemap(fetchImpl) {
-  const response = await fetchImpl(`${ORIGIN}/sitemap.xml`, {
+  let response;
+  try { response = await fetchImpl(`${ORIGIN}/sitemap.xml`, {
     method: "GET", credentials: "omit", redirect: "manual", cache: "no-store",
     signal: AbortSignal.timeout(7_000),
-  });
-  if (response.status !== 200 || !/xml/i.test(response.headers.get("content-type") ?? ""))
-    throw new Error("VISUAL_SITEMAP_UNAVAILABLE");
+  }); } catch (error) { return { failure: error?.name === "TimeoutError" ||
+    error?.name === "AbortError" ? "NETWORK_TIMEOUT" : "NETWORK_ERROR" }; }
+  if (response.status !== 200) {
+    await response.body?.cancel?.();
+    return { failure: "HTTP_ERROR", httpStatus: response.status };
+  }
+  if (!/xml/i.test(response.headers.get("content-type") ?? "")) {
+    await response.body?.cancel?.();
+    return { failure: "INVALID_CONTENT_TYPE" };
+  }
   const declared = Number(response.headers.get("content-length") ?? 0);
-  if (declared > 64_000) throw new Error("VISUAL_SITEMAP_TOO_LARGE");
+  if (declared > 64_000) {
+    await response.body?.cancel?.();
+    return { failure: "SITEMAP_TOO_LARGE" };
+  }
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("VISUAL_SITEMAP_UNAVAILABLE");
+  if (!reader) return { failure: "NETWORK_ERROR" };
   const chunks = [];
   let bytes = 0;
   try {
@@ -100,11 +116,24 @@ async function readSitemap(fetchImpl) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > 64_000) throw new Error("VISUAL_SITEMAP_TOO_LARGE");
+      if (bytes > 64_000) return { failure: "SITEMAP_TOO_LARGE" };
       chunks.push(value);
     }
-  } finally { await reader.cancel().catch(() => {}); }
-  return Buffer.concat(chunks).toString("utf8");
+  } catch (error) { return { failure: error?.name === "TimeoutError" ||
+    error?.name === "AbortError" ? "NETWORK_TIMEOUT" : "NETWORK_ERROR" }; }
+  finally { await reader.cancel().catch(() => {}); }
+  return { xml: Buffer.concat(chunks).toString("utf8") };
+}
+
+function cachedXml(cache) {
+  if (!cache || !Array.isArray(cache.paths) || cache.paths.length < 1 ||
+      cache.paths.length > 60 || !Number.isFinite(Date.parse(cache.observedAt))) return null;
+  const xml = `<urlset>${cache.paths.map((path) =>
+    `<url><loc>${ORIGIN}${path}</loc></url>`).join("")}</urlset>`;
+  try {
+    const parsed = parsePublicSitemap(xml);
+    return parsed.rejected === 0 && parsed.paths.length === cache.paths.length ? xml : null;
+  } catch { return null; }
 }
 
 export async function inspectVisualPage(page, target, viewport, counters) {
@@ -205,24 +234,64 @@ export async function inspectVisualPage(page, target, viewport, counters) {
 }
 
 export async function scanVisualPages({ fetchImpl = fetch,
-  browserLauncher = () => chromium.launch({ headless: true }),
-  routeResponder = null, targets = null, now = () => new Date() } = {}) {
+  browserLauncher = () => chromium.launch({ headless: true, timeout: 10_000 }),
+  routeResponder = null, targets = null, now = () => new Date(),
+  cachedSitemap = null, cycle = 0, maxDurationMs = MAX_DURATION_MS } = {}) {
+  if (!Number.isInteger(maxDurationMs) || maxDurationMs < 1 ||
+      maxDurationMs > MAX_DURATION_MS) throw new Error("VISUAL_DURATION_UNSAFE");
+  const started = performance.now();
+  const wallDeadline = Date.now() + maxDurationMs;
+  let peakNodeRssBytes = process.memoryUsage().rss;
+  const sampleMemory = () => { peakNodeRssBytes = Math.max(peakNodeRssBytes,
+    process.memoryUsage().rss); };
+  const memoryTimer = setInterval(sampleMemory, 250);
+  memoryTimer.unref();
+  try {
+  const sitemap = await readSitemap(fetchImpl);
+  const priorXml = cachedXml(cachedSitemap);
   let selection;
-  try { selection = chooseVisualTargets(await readSitemap(fetchImpl)); }
-  catch { return { status: "DISCOVERY_UNAVAILABLE", pages: [],
-    discoveredCount: 0, requests: 1, sitemapStatus: "UNAVAILABLE" }; }
-  if (selection.rejectedUrls) return { status: "DISCOVERY_UNSAFE", pages: [],
-    discoveredCount: selection.discoveredCount, requests: 1,
-    sitemapStatus: "UNSAFE_URLS_REJECTED" };
+  let sitemapFailure = sitemap.failure ?? null;
+  const sitemapHttpStatus = sitemap.httpStatus ?? null;
+  let sitemapStatus = "OK";
+  try {
+    selection = chooseVisualTargets(sitemap.xml ?? priorXml, cycle);
+    if (selection.rejectedUrls) throw new Error("VISUAL_SITEMAP_UNSAFE");
+    if (sitemap.failure) sitemapStatus = "FALLBACK_STALE";
+    else if (priorXml) {
+      const before = chooseVisualTargets(priorXml, cycle);
+      if (before.paths.length !== selection.paths.length ||
+          before.paths.some((path) => !selection.paths.includes(path)))
+        sitemapStatus = "CHANGED";
+    }
+  } catch {
+    sitemapFailure ??= "INVALID_SITEMAP";
+    sitemapStatus = priorXml ? "FALLBACK_STALE" : "NO_VALID_BASELINE";
+    if (priorXml) selection = chooseVisualTargets(priorXml, cycle);
+    else return { status: "DISCOVERY_UNAVAILABLE", pages: [],
+      discoveredCount: 0, selectedCount: 0, requests: 1,
+      sitemapStatus, sitemapFailure, sitemapHttpStatus,
+      elapsedMs: Math.round(performance.now() - started),
+      peakNodeRssBytes };
+  }
+  const sitemapSnapshot = sitemapStatus === "OK" || sitemapStatus === "CHANGED"
+    ? { paths: selection.paths, observedAt: now().toISOString() } : null;
   const selected = targets ?? selection.targets;
   if (!Array.isArray(selected) || selected.length > 8 ||
       selected.some((item) => !selection.targets.some((known) => known.path === item.path)))
     throw new Error("VISUAL_TARGETS_UNSAFE");
   const counters = { requests: 1, paths: new Set(selected.map((item) => item.path)),
-    deadline: Date.now() + MAX_DURATION_MS, limitReached: false, routeResponder,
+    deadline: wallDeadline, limitReached: false, routeResponder,
     assetCache: new Map(), cacheBytes: 0 };
   const pages = [];
-  const browser = await browserLauncher();
+  let browser;
+  try { browser = await browserLauncher(); }
+  catch { return { status: "BROWSER_UNAVAILABLE", pages: [],
+    discoveredCount: selection.discoveredCount, selectedCount: selected.length,
+    requests: counters.requests, sitemapStatus, sitemapFailure, sitemapHttpStatus,
+    sitemapSnapshot, elapsedMs: Math.round(performance.now() - started),
+    peakNodeRssBytes: process.memoryUsage().rss }; }
+  const closeTimer = setTimeout(() => { counters.limitReached = true;
+    browser.close().catch(() => {}); }, Math.max(1, wallDeadline - Date.now()));
   try {
     for (const viewport of ["desktop", "mobile"]) {
       const context = await browser.newContext({ viewport: VIEWPORTS[viewport],
@@ -239,13 +308,28 @@ export async function scanVisualPages({ fetchImpl = fetch,
           }
           const page = await context.newPage();
           try { pages.push(await inspectVisualPage(page, target, viewport, counters)); }
+          catch { pages.push({ path: target.path, studioCode: target.studioCode,
+            viewport, status: "NOT_VERIFIABLE_LIMIT", coverage: "NOT_VERIFIABLE",
+            issues: [] }); counters.limitReached = true; }
           finally { await page.close(); }
         }
       } finally { await context.close(); }
     }
-  } finally { await browser.close(); }
+  } catch { counters.limitReached = true;
+  } finally { clearTimeout(closeTimer); await browser.close().catch(() => {}); }
+  for (const viewport of ["desktop", "mobile"]) for (const target of selected) {
+    if (viewport === "mobile" && !MOBILE.has(target.path)) continue;
+    if (!pages.some((item) => item.viewport === viewport && item.path === target.path))
+      pages.push({ path: target.path, studioCode: target.studioCode,
+        viewport, status: "NOT_VERIFIABLE_LIMIT", coverage: "NOT_VERIFIABLE",
+        issues: [] });
+  }
+  sampleMemory();
   return { status: counters.limitReached ? "PARTIAL_LIMIT" : "OBSERVED",
     observedAt: now().toISOString(), pages,
     discoveredCount: selection.discoveredCount, selectedCount: selected.length,
-    requests: counters.requests, sitemapStatus: "OK" };
+    requests: counters.requests, sitemapStatus, sitemapFailure, sitemapHttpStatus,
+    sitemapSnapshot,
+    elapsedMs: Math.round(performance.now() - started), peakNodeRssBytes };
+  } finally { clearInterval(memoryTimer); }
 }
