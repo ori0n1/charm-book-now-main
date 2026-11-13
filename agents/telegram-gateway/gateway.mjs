@@ -123,6 +123,8 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
   async function processUpdate(botKey, update) {
     if (!BOT_KEYS.includes(botKey) || !Number.isSafeInteger(update?.update_id))
       throw new Error("GATEWAY_UPDATE_INVALID");
+    if (!config.bots[botKey].enabled)
+      return { status: "BOT_DISABLED", reply: null };
     const state = loadState(stateDir);
     if (update.update_id < state.offsets[botKey])
       return { status: "DUPLICATE", reply: null };
@@ -202,13 +204,21 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
         message, evidence });
       reply = safeText(answer?.text);
       if (!reply || sensitive.test(reply) ||
-          /(?:publiquei|publicamos|deploy (?:feito|conclu[ií]do)|patch aplicado|corre[cç][aã]o aplicada)/i.test(reply))
+          /(?:publiquei|publicamos|deploy (?:feito|conclu[ií]do)|patch aplicado|corre[cç][aã]o aplicada)/i.test(reply) ||
+          (evidence.agendaInteractivity === "NAO_VERIFICAVEL" &&
+            /agenda.{0,45}(?:funciona|operacional|dispon[ií]vel|normal)/i.test(reply)) ||
+          (evidence.status === "NAO_VERIFICAVEL" &&
+            /(?:página|site|estúdio).{0,45}(?:funciona|operacional|normal)/i.test(reply)))
         throw new Error("ANSWER_UNSAFE");
     } catch {
       reply = `Resultado ${evidence.status ?? "INDETERMINADO"}; ` +
         `fonte ${evidence.source ?? "INDISPONIVEL"}. ` +
         "Resposta por IA indisponível; consulte o relatório local.";
     }
+    const provenance = `Fonte ${evidence.source ?? "INDISPONIVEL"}; ` +
+      `verificação ${evidence.observedAt ?? "sem data"}; ` +
+      `${evidence.freshness ?? "atualidade não confirmada"}. `;
+    reply = safeText(provenance + reply);
     state.bots[botKey] = [...state.bots[botKey],
       contextEntry(choice.tool, evidence, time)].slice(-MAX_HISTORY);
     mark();
@@ -222,7 +232,8 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
       return result;
     },
     async pollOnce(botKey, signal) {
-      if (!BOT_KEYS.includes(botKey)) throw new Error("GATEWAY_BOT_INVALID");
+      if (!BOT_KEYS.includes(botKey) || !config.bots[botKey].enabled)
+        throw new Error("GATEWAY_BOT_INVALID");
       const offset = loadState(stateDir).offsets[botKey];
       const updates = await clients[botKey].getUpdates(offset, signal);
       for (const update of updates) {

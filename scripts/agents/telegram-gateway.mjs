@@ -2,8 +2,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BOT_KEYS, loadGatewayConfig } from "../../agents/telegram-gateway/config.mjs";
-import { createOpenAiAdapter } from "../../agents/telegram-gateway/ai.mjs";
+import { BOT_KEYS, botIdentityMatches,
+  loadGatewayConfig } from "../../agents/telegram-gateway/config.mjs";
+import { createOpenAiAdapter, checkOpenAiModel } from "../../agents/telegram-gateway/ai.mjs";
 import { createTelegramClient } from "../../agents/telegram-gateway/telegram.mjs";
 import { createAgentTools } from "../../agents/telegram-gateway/tools.mjs";
 import { createGateway } from "../../agents/telegram-gateway/gateway.mjs";
@@ -14,9 +15,9 @@ const configPath = join(process.env.LOCALAPPDATA ?? "", "Bellza",
   "TelegramGateway", "config.json");
 const secretScript = join(scriptDir, "telegram-secrets.ps1");
 const mode = process.argv[2] ?? "status";
-const permitted = new Set(["serve", "status", "stop"]);
+const permitted = new Set(["serve", "status", "stop", "auth-check"]);
 if (!permitted.has(mode)) {
-  process.stderr.write("Modo inválido: serve, status ou stop.\n");
+  process.stderr.write("Modo inválido: serve, status, stop ou auth-check.\n");
   process.exitCode = 2;
 } else if (process.platform !== "win32" || !process.env.LOCALAPPDATA) {
   process.stderr.write("Gateway disponível apenas no Windows com perfil local.\n");
@@ -30,6 +31,7 @@ function readSecret(name) {
     "-File", secretScript, "-Mode", "read",
     "-Name", name], { encoding: "utf8", windowsHide: true,
     timeout: 10_000, maxBuffer: 4096 });
+  if (result.status === 2) throw new Error("CREDENTIAL_MISSING");
   if (result.status !== 0 || !result.stdout?.trim())
     throw new Error("SECRET_UNAVAILABLE");
   return result.stdout.trim();
@@ -66,6 +68,39 @@ async function main() {
     process.stdout.write("PARAGEM_SOLICITADA\n");
     return;
   }
+  if (mode === "auth-check") {
+    let allReady = true;
+    for (const key of BOT_KEYS.filter((item) => config.bots[item].enabled)) {
+      try {
+        const token = readSecret(`telegram-${key}`);
+        const me = await createTelegramClient({ token }).getMe();
+        if (!botIdentityMatches(config.bots[key], me))
+          throw new Error("TELEGRAM_IDENTITY_MISMATCH");
+        process.stdout.write(`${key}: READY @${me.username}\n`);
+      } catch (error) {
+        allReady = false;
+        const code = ["CREDENTIAL_MISSING", "SECRET_UNAVAILABLE",
+          "TELEGRAM_IDENTITY_MISMATCH", "TELEGRAM_AUTH_UNAVAILABLE",
+          "TELEGRAM_NETWORK_UNAVAILABLE"].includes(error?.message)
+          ? error.message : "API_UNAVAILABLE";
+        process.stdout.write(`${key}: ${code}\n`);
+      }
+    }
+    try {
+      const key = readSecret("openai-api");
+      await checkOpenAiModel({ apiKey: key, model: config.ai.model });
+      process.stdout.write(`openai: READY ${config.ai.model}\n`);
+    } catch (error) {
+      allReady = false;
+      const code = ["CREDENTIAL_MISSING", "SECRET_UNAVAILABLE",
+        "AI_AUTH_UNAVAILABLE", "AI_NETWORK_UNAVAILABLE",
+        "AI_MODEL_UNAVAILABLE"].includes(error?.message)
+        ? error.message : "API_UNAVAILABLE";
+      process.stdout.write(`openai: ${code}\n`);
+    }
+    if (!allReady) process.exitCode = 2;
+    return;
+  }
   // Validate all prerequisites before acquiring the singleton lock.
   let apiKey;
   const tokens = {};
@@ -75,6 +110,18 @@ async function main() {
     for (const key of enabledBots) tokens[key] = readSecret(`telegram-${key}`);
   } catch {
     process.stderr.write("Credenciais DPAPI ausentes ou ilegíveis neste perfil.\n");
+    process.exitCode = 2;
+    return;
+  }
+  try {
+    for (const key of enabledBots) {
+      const me = await createTelegramClient({ token: tokens[key] }).getMe();
+      if (!botIdentityMatches(config.bots[key], me))
+        throw new Error("TELEGRAM_IDENTITY_MISMATCH");
+    }
+    await checkOpenAiModel({ apiKey, model: config.ai.model });
+  } catch {
+    process.stderr.write("Autenticação ou identidade de bot indisponível.\n");
     process.exitCode = 2;
     return;
   }

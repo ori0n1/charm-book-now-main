@@ -50,13 +50,17 @@ function latest(monitorStateDir) {
     "public-state.json"));
   const visualState = optionalJson(join(monitorStateDir, "visual-prepared",
     "visual-state.json"));
-  const publicId = publicState?.history?.at(-1)?.flowId;
-  const visualId = visualState?.history?.at(-1)?.flowId;
+  const publicId = entry.publicRunId;
+  const visualId = entry.visualRunId;
   const publicReport = UUID.test(publicId ?? "") ? optionalJson(runFile(
     join(monitorStateDir, "public-integrated", "public-runs"), publicId)) : null;
   const visualReport = UUID.test(visualId ?? "") ? optionalJson(runFile(
     join(monitorStateDir, "visual-prepared", "visual-runs"), visualId)) : null;
-  return { monitor, entry, sentinela, publicState, visualState,
+  return { monitor, entry, sentinela,
+    publicState: publicState?.history?.at(-1)?.flowId === publicId
+      ? publicState : null,
+    visualState: visualState?.history?.at(-1)?.flowId === visualId
+      ? visualState : null,
     publicReport, visualReport };
 }
 function sourceSummary(data, monitorStateDir) {
@@ -109,7 +113,8 @@ export function createAgentTools({ monitorStateDir, stateDir,
       const data = latest(monitorStateDir);
       const cutoff = now().getTime() - (hours ?? 24) * 60 * 60_000;
       return { source: "HISTORY", windowHours: hours ?? 24,
-        status: "HISTORICO",
+        status: "HISTORICO", observedAt: data.entry.at,
+        freshness: freshness(data.entry.at, now()),
         runs: data.monitor.journal.filter((item) =>
           Date.parse(item.at) >= cutoff).slice(-48).map((item) => ({
             id: item.monitorId, at: item.at, status: item.overallStatus,
@@ -123,10 +128,78 @@ export function createAgentTools({ monitorStateDir, stateDir,
     monitor_alerts() {
       const data = latest(monitorStateDir);
       return { source: "HISTORY", status: "HISTORICO",
+        observedAt: data.entry.at, freshness: freshness(data.entry.at, now()),
         alerts: data.monitor.alerts.slice(-20)
         .map((item) => ({ id: `${item.monitorId}:${item.kind}:${item.code}`,
           at: item.at, kind: item.kind, code: item.code,
           severity: item.severity })) };
+    },
+    public_status({ studio = null } = {}) {
+      const data = latest(monitorStateDir);
+      const report = data.publicReport;
+      if (!report || !Array.isArray(report.pages))
+        return { source: "INDISPONIVEL", status: "NAO_VERIFICAVEL",
+          observedAt: data.entry.at, freshness: freshness(data.entry.at, now()),
+          reason: "RELATORIO_PUBLICO_DESTA_EXECUCAO_INDISPONIVEL" };
+      const filter = studioFilter(studio);
+      const pages = report.pages.filter((item) =>
+        item && typeof item.studioCode === "string" &&
+        typeof item.path === "string" && (!filter ||
+          item.studioCode === filter));
+      const visual = Array.isArray(data.visualReport?.pages)
+        ? data.visualReport.pages : [];
+      const codes = [...new Set(pages.map((item) => item.studioCode))];
+      const studioSummary = codes.filter((code) => code !== "GLOBAL")
+        .slice(0, 50).map((code) => {
+          const own = pages.filter((item) => item.studioCode === code);
+          const views = visual.filter((item) => item.studioCode === code);
+          return { studioCode: code, httpPages: own.length,
+            httpFailures: own.filter((item) => !item.complete ||
+              item.status !== "PAGE_AND_ASSETS_OK").length,
+            visualViews: views.length,
+            visualFailures: views.filter((item) =>
+              (item.jsErrors?.length ?? 0) > 0 ||
+              (item.assetFailures?.length ?? 0) > 0 ||
+              item.status !== "OBSERVED").length };
+        });
+      const selectedPages = filter ? pages.slice(0, 12).map((item) => ({
+        studioCode: item.studioCode, path: item.path,
+        httpStatus: item.httpStatus ?? null, status: item.status,
+        complete: item.complete === true,
+        visual: visual.filter((view) => view.path === item.path)
+          .map((view) => ({ viewport: view.viewport,
+            status: view.status, coverage: view.coverage,
+            jsErrorCount: view.jsErrors?.length ?? 0,
+            assetFailureCount: view.assetFailures?.length ?? 0 })),
+      })) : [];
+      const globalPages = pages.filter((item) => item.studioCode === "GLOBAL");
+      const selectedVisual = filter ? visual.filter((item) =>
+        item.studioCode === filter) : [];
+      const visualFailures = selectedVisual.filter((item) =>
+        (item.jsErrors?.length ?? 0) > 0 ||
+        (item.assetFailures?.length ?? 0) > 0 ||
+        item.status !== "OBSERVED").length;
+      const httpFailures = pages.filter((item) => !item.complete ||
+        item.status !== "PAGE_AND_ASSETS_OK").length;
+      return { source: "MONITOR_HISTORY",
+        status: filter ? !pages.length ? "NAO_VERIFICAVEL" :
+          httpFailures ? "FALHA_PUBLICA" :
+            visualFailures ? "FALHA_VISUAL" :
+            "PAGINAS_E_RECURSOS_OK" : report.status,
+        overallStatus: report.status,
+        observedAt: report.observedAt, freshness: freshness(report.observedAt, now()),
+        httpCoverage: `${report.checkedPages}/${report.expectedPages}`,
+        coverageComplete: report.coverageComplete === true,
+        agendaInteractivity: report.agendaInteractivity ?? "NAO_VERIFICAVEL",
+        studioRequested: filter, studioFound: !filter || pages.length > 0,
+        visualCoverage: filter ? !selectedVisual.length ? "NAO_VERIFICADA" :
+          visualFailures ? "FALHA_VISUAL" : "OBSERVADA" :
+          data.visualReport ? "AMOSTRA" : "NAO_VERIFICADA",
+        global: { httpPages: globalPages.length,
+          httpFailures: globalPages.filter((item) => !item.complete ||
+            item.status !== "PAGE_AND_ASSETS_OK").length },
+        studios: studioSummary, pages: selectedPages,
+        visualObservedAt: data.visualReport?.observedAt ?? null };
     },
     diagnose_anomaly({ studio = null } = {}) {
       const data = latest(monitorStateDir);

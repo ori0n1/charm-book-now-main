@@ -5,8 +5,8 @@ export const BOT_KEYS = Object.freeze([
   "atlas", "sentinela", "sherlock", "valida", "forge", "guardiao",
 ]);
 export const TOOLS = Object.freeze({
-  atlas: ["monitor_status", "monitor_history"],
-  sentinela: ["monitor_status", "monitor_alerts"],
+  atlas: ["monitor_status", "monitor_history", "public_status"],
+  sentinela: ["monitor_status", "monitor_alerts", "public_status"],
   sherlock: ["diagnose_anomaly"],
   valida: ["run_synthetic_tests"],
   forge: ["prepare_investigation"],
@@ -21,6 +21,13 @@ export const IDENTITIES = Object.freeze({
   guardiao: "Segurança Bellza: dá parecer técnico; nunca autoriza publicação.",
 });
 const positiveId = (value) => Number.isSafeInteger(value) && value > 0;
+
+export function botIdentityMatches(bot, me) {
+  if (!bot || !me) return false;
+  return bot.expectedBotId ? me.id === bot.expectedBotId :
+    typeof me.username === "string" &&
+    me.username.toLowerCase() === bot.username?.toLowerCase();
+}
 
 export function validateGatewayConfig(config) {
   if (!config || config.schema !== 1 || !positiveId(config.ownerUserId) ||
@@ -45,7 +52,9 @@ export function validateGatewayConfig(config) {
     const bot = config.bots[key];
     if (!bot || !/^[A-Za-z0-9_]{5,32}$/.test(bot.username ?? "") ||
         bot.secretName !== `telegram-${key}` ||
-        typeof bot.enabled !== "boolean")
+        typeof bot.enabled !== "boolean" ||
+        (bot.expectedBotId !== null && bot.expectedBotId !== undefined &&
+          !positiveId(bot.expectedBotId)))
       throw new Error("GATEWAY_CONFIG_INVALID");
   }
   if (!BOT_KEYS.some((key) => config.bots[key].enabled))

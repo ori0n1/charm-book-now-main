@@ -46,6 +46,14 @@ export function createTelegramClient({ token, fetchImpl = fetch } = {}) {
     return resultJson(response);
   }
   return Object.freeze({
+    async getMe() {
+      const me = await call("getMe", {}, 10_000);
+      if (!me || me.is_bot !== true ||
+          !Number.isSafeInteger(me.id) ||
+          !/^[A-Za-z0-9_]{5,32}$/.test(me.username ?? ""))
+        throw new Error("TELEGRAM_IDENTITY_INVALID");
+      return { id: me.id, username: me.username };
+    },
     async getUpdates(offset, signal) {
       if (!Number.isSafeInteger(offset) || offset < 0)
         throw new Error("TELEGRAM_OFFSET_INVALID");
