@@ -35,6 +35,8 @@
     "agents:incidents:simulate": "node scripts/agents/telegram-incidents.mjs",
     "agents:tasks:simulate": "node scripts/agents/telegram-tasks-simulate.mjs",
     "agents:tasks:status": "node scripts/agents/telegram-tasks.mjs status",
+    "agents:private-api:simulate": "node scripts/agents/private-api-simulate.mjs",
+    "test:agents:private-api": "node --test tests/agents/private-api.test.mjs",
     "test:agents": "node --test tests/agents/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
