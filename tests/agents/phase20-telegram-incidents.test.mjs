@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createIncidentCoordinator, formatIncidentAlert,
-  normalizeIncidentEvent } from "../../agents/telegram-gateway/incidents.mjs";
+  normalizeIncidentEvent, readIncidentDetails } from "../../agents/telegram-gateway/incidents.mjs";
 import { readIncidentSource } from "../../agents/telegram-gateway/incident-source.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "bellza-phase20-"));
@@ -41,7 +41,10 @@ test("Atlas encadeia Sentinela, Sherlock, Valida e Forge por incidente", async (
   assert.equal(incident.steps.valida.tests.length, 2);
   assert.equal(incident.steps.forge.status, "BLOCKED_CAUSE_UNDETERMINED");
   assert.equal(incident.steps.forge.applied, false);
-  assert.equal(incident.steps.guardiao.status, "DISABLED");
+  assert.equal(incident.steps.guardiao.status, "INDETERMINADO");
+  assert.equal(incident.steps.guardiao.publicationAuthorized, false);
+  assert.equal(incident.steps.guardiao.checks.find((item) =>
+    item.name === "rollback").status, "UNKNOWN");
   assert.deepEqual(incident.steps.sherlock.dependencies, [id(1)]);
   assert.equal(state.outbox[0].status, "READY");
 });
@@ -57,13 +60,14 @@ test("evento repetido não cria novo incidente; recuperação não nasce de leit
   await coordinator.process(snapshot([event(id(3), "RECOVERED", {
     observedAt: "2026-11-13T11:00:00Z" })]));
   assert.equal(coordinator.readState().incidents[0].state, "RECOVERED");
-  assert.equal(coordinator.readState().outbox.length, 2);
+  assert.equal(coordinator.readState().outbox.length, 0);
   await coordinator.process(snapshot([event(id(3), "RECOVERED", {
     observedAt: "2026-11-13T11:00:00Z" })]));
-  assert.equal(coordinator.readState().outbox.length, 2);
+  assert.equal(coordinator.readState().outbox.length, 0);
   await coordinator.process(snapshot([event(id(4), "NEW", {
     observedAt: "2026-11-13T12:00:00Z" })]));
-  assert.equal(coordinator.readState().incidents.length, 2);
+  assert.equal(coordinator.readState().incidents.length, 1);
+  assert.equal(coordinator.readState().incidents[0].oscillations, 1);
 });
 
 test("indisponibilidade persistente exige nova observação ativa após 30 minutos", async () => {
@@ -90,6 +94,16 @@ test("falha do Sherlock não bloqueia Valida e nunca libera Forge", async () => 
   assert.equal(steps.valida.status, "APPROVED");
   assert.equal(steps.forge.status, "BLOCKED_CAUSE_UNDETERMINED");
   assert.doesNotMatch(JSON.stringify(coordinator.readState()), /synthetic secret error/);
+});
+
+test("Guardião bloqueia proposta quando teste local falha", async () => {
+  const coordinator = createIncidentCoordinator({ stateDir: stateDir(),
+    runCase: (testCase) => ({ file: testCase.file, state: "FAIL",
+      reason: "synthetic", durationMs: 1 }) });
+  await coordinator.process(snapshot([event(id(74))]));
+  const guardiao = coordinator.readState().incidents[0].steps.guardiao;
+  assert.equal(guardiao.status, "BLOQUEADO");
+  assert.equal(guardiao.deployAllowed, false);
 });
 
 test("causa comprovada só em simulação produz proposta não aplicada", async () => {
@@ -136,9 +150,9 @@ test("envio requer fonte real, faz bootstrap sem alerta antigo e deduplica", asy
   assert.equal(sent[0].chat, 12345);
   assert.match(sent[0].text, /STUDIO 27/);
   assert.match(sent[0].text, /Portugal continental/);
-  assert.match(sent[0].text, /Causa não comprovada/);
-  assert.match(sent[0].text, /Testes locais aprovados/);
-  assert.ok(sent[0].text.length <= 320);
+  assert.match(sent[0].text, /Atlas abriu investigação/);
+  assert.ok(sent[0].text.length >= 150 && sent[0].text.length <= 300);
+  assert.doesNotMatch(sent[0].text, /Incidente [0-9a-f]{8}|\*/);
   await coordinator.process(live([event(), newer], id(2)), { notify: true });
   assert.equal(sent.length, 1);
 });
@@ -205,6 +219,86 @@ test("alerta usa Portugal e evidência mínima sem URL ou dados pessoais", () =>
   assert.match(text, /13\/06\/2026, 13:00 \(Portugal continental\)/);
   assert.match(text, /HTTP 503/);
   assert.doesNotMatch(text, /private@example.com|SHOULD_NOT_APPEAR/);
+});
+
+test("oscilação Cloudflare é agrupada; recuperação só após aviso enviado", async () => {
+  const sent = [];
+  const coordinator = createIncidentCoordinator({ stateDir: stateDir(),
+    ownerChatId: 12345, sendAlert: async (_chat, text) => sent.push(text),
+    runCase });
+  const cloud = (monitorId, kind, observedAt) => event(monitorId, kind, {
+    code: "AUTH_UNAVAILABLE", studioCode: "GLOBAL", path: null,
+    severity: kind === "RECOVERED" ? "info" : "warning",
+    evidence: { source: "cloudflare" }, observedAt });
+  const live = (events, monitorId, observedAt, active = []) => ({
+    mode: "LIVE_READ_ONLY", events, active,
+    latest: { monitorId, observedAt },
+  });
+  await coordinator.process(live([], id(80), at), { notify: true });
+  await coordinator.process(live([cloud(id(81), "NEW", at)], id(81), at),
+    { notify: true });
+  assert.equal(sent.length, 0);
+  await coordinator.process(live([cloud(id(82), "RECOVERED",
+    "2026-11-13T10:20:00Z")], id(82), "2026-11-13T10:20:00Z"),
+  { notify: true });
+  assert.equal(sent.length, 0);
+  await coordinator.process(live([cloud(id(83), "NEW",
+    "2026-11-13T10:40:00Z")], id(83), "2026-11-13T10:40:00Z"),
+  { notify: true });
+  assert.equal(coordinator.readState().incidents.length, 1);
+  assert.equal(coordinator.readState().incidents[0].oscillations, 1);
+  assert.equal(sent.length, 0);
+  const later = "2026-11-13T11:15:00Z";
+  await coordinator.process(live([], id(84), later,
+    [cloud(id(84), "NEW", later)]), { notify: true });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /estado da produção permanece inconclusivo/i);
+  assert.doesNotMatch(sent[0], /saudável/i);
+  assert.ok(sent[0].length >= 150 && sent[0].length <= 300);
+  await coordinator.process(live([cloud(id(85), "RECOVERED",
+    "2026-11-13T11:30:00Z")], id(85), "2026-11-13T11:30:00Z"),
+  { notify: true });
+  assert.equal(sent.length, 2);
+  assert.match(sent[1], /leitura do monitor foi recuperada/i);
+  assert.ok(sent[1].length >= 150 && sent[1].length <= 300);
+  assert.equal(coordinator.readState().incidents[0].environment,
+    "PRODUCTION_OBSERVATION_SOURCE_UNVERIFIED");
+});
+
+test("falha visual de pedido não comprova defeito da aplicação", async () => {
+  const dir = stateDir();
+  const coordinator = createIncidentCoordinator({ stateDir: dir, runCase });
+  await coordinator.process(snapshot([event(id(90), "NEW", {
+    code: "VISUAL_REQUEST_FAILED", path: "/s/studio27braga",
+    studioCode: "STUDIO_27", evidence: { source: "visual" },
+  })]));
+  const state = coordinator.readState();
+  assert.equal(state.outbox.length, 0);
+  assert.equal(state.incidents[0].steps.sherlock.findings[0].causeStatus,
+    "NAO_DETERMINADA");
+  assert.equal(state.incidents[0].steps.forge.applied, false);
+  assert.equal(state.incidents[0].environment, "SYNTHETIC_SIMULATION");
+  const details = readIncidentDetails(dir, state.incidents[0].id);
+  assert.match(details, /VISUAL_REQUEST_FAILED/);
+  assert.match(details, /Origem do código de produção: não comprovada/);
+});
+
+test("limite horário reduz avisos comuns sem suprimir falhas críticas", async () => {
+  const sent = [];
+  const coordinator = createIncidentCoordinator({ stateDir: stateDir(),
+    ownerChatId: 12345, sendAlert: async (_chat, text) => sent.push(text),
+    runCase });
+  const live = (events, monitorId) => ({ mode: "LIVE_READ_ONLY",
+    events, active: [], latest: { monitorId, observedAt: at } });
+  await coordinator.process(live([], id(100)), { notify: true });
+  for (let n = 101; n <= 105; n++) {
+    await coordinator.process(live([event(id(n), "NEW", {
+      path: `/s/fixture-${n}`, severity: n === 105 ? "critical" : "warning",
+    })], id(n)), { notify: true });
+  }
+  assert.equal(sent.length, 4);
+  assert.equal(coordinator.readState().outbox.filter((item) =>
+    item.status === "SUPPRESSED_RATE_LIMIT").length, 1);
 });
 
 test("adaptador local rejeita histórico simulado e enriquece estúdio público", () => {

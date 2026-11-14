@@ -4,6 +4,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync,
 import { join } from "node:path";
 import { diagnosePublic, diagnoseSentinela } from "../sherlock.mjs";
 import { planCorrection } from "../forge.mjs";
+import { reviewIncidentEvidence } from "../guardiao.mjs";
 import { TEST_CASES, runApprovedTest, runValida } from "../valida.mjs";
 
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -19,6 +20,12 @@ const ACCESS_CODES = new Set(["AUTH_UNAVAILABLE", "AUTH_REJECTED",
   "AGENT_PROCESS_FAILED", "PUBLIC_ENDPOINT_READ_BLOCKED"]);
 const CLOUD_ACCESS_CODES = new Set([...ACCESS_CODES].filter((code) =>
   code !== "PUBLIC_ENDPOINT_READ_BLOCKED"));
+const MONITOR_CODES = new Set([...ACCESS_CODES,
+  "VISUAL_REQUEST_FAILED", "VISUAL_CHECK_FAILED",
+  "VISUAL_SITEMAP_UNAVAILABLE"]);
+const STABILIZE_MS = 30 * 60_000;
+const FLAP_WINDOW_MS = 2 * 60 * 60_000;
+const MAX_WARNING_NEW_PER_HOUR = 3;
 const DESCRIPTIONS = Object.freeze({
   PUBLIC_PAGE_HTTP_ERROR: "página pública com erro HTTP",
   PUBLIC_NETWORK_UNAVAILABLE: "página pública sem resposta de rede",
@@ -36,6 +43,7 @@ const DESCRIPTIONS = Object.freeze({
   CLOUDFLARE_ENDPOINT_NOT_FOUND: "endpoint Cloudflare não encontrado",
   CLOUDFLARE_API_UNAVAILABLE: "API Cloudflare indisponível",
   NETWORK_UNAVAILABLE: "rede de monitorização indisponível",
+  VISUAL_REQUEST_FAILED: "leitura visual incompleta",
 });
 const MAX_STATE_BYTES = 2_000_000;
 const MAX_EVENTS = 2000;
@@ -138,37 +146,49 @@ function evidenceSummary(event) {
   return parts.join(", ");
 }
 export function formatIncidentAlert(incident, event) {
-  const kind = ACCESS_CODES.has(event.code)
-    ? { NEW: "Leitura indisponível", CHANGED: "Mudança na leitura",
-      RECOVERED: "Leitura recuperada",
-      PERSISTENT: "Leitura continua indisponível" }[event.kind]
-    : { NEW: "Nova falha", CHANGED: "Alteração inesperada",
-      RECOVERED: "Recuperação confirmada",
-      PERSISTENT: "Falha persistente" }[event.kind];
-  const severity = { critical: "crítica", warning: "atenção",
-    info: "informação" }[event.severity];
+  const monitor = MONITOR_CODES.has(event.code);
   const studio = event.studioCode === "GLOBAL" ? "aplicação" :
     event.studioCode === "UNKNOWN" ? "não identificado" :
       event.studioCode.replaceAll("_", " ");
-  const description = DESCRIPTIONS[event.code] ?? event.code;
-  const base = `${kind} na Bellza (${severity}). Estúdio: ${studio}. ` +
-    `${description}: ${evidenceSummary(event)}. ` +
-    `${portugalTime(event.observedAt)} (Portugal continental). ` +
-    `Incidente ${incident.id.slice(0, 8)}.`;
-  if (event.kind !== "NEW" && event.kind !== "CHANGED") return base;
-  const findings = incident.steps?.sherlock?.findings ?? [];
-  const proven = findings.length > 0 && findings.every((item) =>
-    item.causeStatus === "CONFIRMADA" ||
-    item.causeStatus === "CONFIRMADA_EM_SIMULACAO");
-  const cause = proven ? "Causa comprovada." : "Causa não comprovada.";
-  const tests = incident.steps?.valida?.status === "APPROVED"
-    ? "Testes locais aprovados." :
-    incident.steps?.valida?.status === "FAILED" ? "Testes locais falharam." :
-      "Testes locais inconclusivos ou dispensados.";
-  const proposal = incident.steps?.forge?.status === "PROPOSTA"
-    ? "Proposta não aplicada." : "Sem proposta aplicável.";
-  const summary = `${cause} ${tests} ${proposal}`;
-  return `${base} ${summary}`.length <= 320 ? `${base} ${summary}` : base;
+  const description = DESCRIPTIONS[event.code] ?? "anomalia em verificação";
+  const when = `${portugalTime(event.observedAt)} (Portugal continental)`;
+  if (event.kind === "RECOVERED") return monitor
+    ? `A leitura do monitor foi recuperada para ${studio} em ${when}. A Sentinela voltou a recolher evidências; a recuperação da aplicação não foi inferida. Ver detalhes no botão.`
+    : `A falha comunicada em ${studio} deixou de ser observada em ${when}. A Sentinela confirmou a recuperação na verificação pública. Ver detalhes no botão.`;
+  const publicPage = /^(PUBLIC_|VISUAL_)/.test(event.code);
+  const impact = monitor ? "O estado da produção permanece inconclusivo."
+    : publicPage
+      ? "Há impacto observado na página pública; outras funções não foram confirmadas."
+      : "O impacto na produção ainda não foi comprovado.";
+  const action = monitor ? "Atlas e Sherlock analisam a leitura; nenhuma alteração foi feita."
+    : "Atlas abriu investigação; não houve alteração na produção.";
+  const lead = event.kind === "PERSISTENT" ? "A falha persiste" :
+    event.kind === "CHANGED" ? "Houve uma alteração" : "A Sentinela detetou";
+  const severity = event.severity === "critical" ? "crítica" : "moderada";
+  const full = `${lead} em ${studio} (gravidade ${severity}): ` +
+    `${description} (${evidenceSummary(event)}). ` +
+    `${impact} ${action} ${when}. Ver detalhes no botão.`;
+  return full.length <= 300 ? full :
+    `${lead} em ${studio} (gravidade ${severity}): ${description}. ${impact} ` +
+    `Atlas acompanha; sem alterações. ${when}. Ver detalhes no botão.`;
+}
+export function readIncidentDetails(stateDir, id) {
+  if (!UUID.test(id ?? "")) return null;
+  const state = readState(stateDir);
+  const incident = state.incidents.find((item) => item.id === id);
+  if (!incident) return null;
+  const evidence = state.outbox.findLast((item) =>
+    item.incidentId === id)?.event?.evidence;
+  return `Incidente ${id}\nEstado: ${incident.state}; estúdio: ${incident.studioCode}. ` +
+    `Código: ${incident.code}; gravidade: ${incident.severity}. ` +
+    `Primeira observação: ${portugalTime(incident.openedAt)} (Portugal continental). ` +
+    `Última observação: ${portugalTime(incident.updatedAt)}. ` +
+    `Evidência: ${evidence ? evidenceSummary({ evidence }) : "não disponível"}. ` +
+    `Sherlock: ${incident.steps?.sherlock?.status ?? "indisponível"}; ` +
+    `Valida: ${incident.steps?.valida?.status ?? "indisponível"}; ` +
+    `Forge: ${incident.steps?.forge?.status ?? "indisponível"}; ` +
+    `Guardião: ${incident.steps?.guardiao?.status ?? "indisponível"}. ` +
+    `Origem do código de produção: não comprovada. Nenhuma alteração remota autorizada.`;
 }
 function compactDiagnosis(report) {
   return { status: report?.status ?? "INDETERMINADO",
@@ -189,6 +209,10 @@ function compactDiagnosis(report) {
     })) };
 }
 function diagnoseEvent(event, report, syntheticProof, now) {
+  if (MONITOR_CODES.has(event.code))
+    return { status: "INDETERMINADO", source: event.monitorId, findings: [{
+      code: event.code, causeStatus: "NAO_DETERMINADA", affected: [],
+      evidence: [{ name: "monitor_read", status: "BLOCKED" }] }] };
   if (event.evidence.source === "public" || event.evidence.source === "visual" ||
       event.evidence.source === "functional") {
     return diagnosePublic({ monitoring: { agent: "sentinela", runId: event.monitorId,
@@ -224,7 +248,7 @@ function compactProposal(report) {
     applied: false, publicationAuthorized: false };
 }
 function addOutbox(state, incident, event) {
-  const id = `${incident.id}:${event.kind}`;
+  const id = `${incident.id}:${event.kind}:${incident.cycle ?? 0}`;
   if (state.outbox.some((item) => item.id === id)) return;
   while (state.outbox.length >= MAX_OUTBOX) {
     const sent = state.outbox.findIndex((item) => item.status === "SENT");
@@ -233,6 +257,7 @@ function addOutbox(state, incident, event) {
   }
   if (state.outbox.length >= MAX_OUTBOX) throw new Error("INCIDENT_OUTBOX_FULL");
   state.outbox.push({ id, incidentId: incident.id, kind: event.kind,
+    cycle: incident.cycle ?? 0,
     status: "READY", at: event.observedAt,
     event: { monitorId: event.monitorId, kind: event.kind, code: event.code,
       severity: event.severity, studioCode: event.studioCode,
@@ -282,8 +307,13 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
         }
         const open = state.incidents.find((item) => item.key === event.key &&
           item.state === "OPEN");
+        const recent = !open && event.kind === "NEW" &&
+          state.incidents.findLast((item) => item.key === event.key &&
+            item.state === "RECOVERED" &&
+            Date.parse(event.observedAt) >= Date.parse(item.updatedAt) &&
+            Date.parse(event.observedAt) - Date.parse(item.updatedAt) < FLAP_WINDOW_MS);
         if ((event.kind === "NEW" || event.kind === "CHANGED") &&
-            !open && newIncidents >= maxIncidentsPerRun) break;
+            !open && !recent && newIncidents >= maxIncidentsPerRun) break;
         if (event.kind === "RECOVERED" && !open) {
           state.processedEventIds.push(event.id);
           continue;
@@ -292,7 +322,17 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
           state.processedEventIds.push(event.id);
           continue;
         }
-        let incident = open;
+        let incident = open ?? recent;
+        if (recent) {
+          recent.state = "OPEN";
+          recent.openedAt = event.observedAt;
+          recent.observations = 1;
+          recent.lastObservedMonitorId = event.monitorId;
+          recent.persistentQueued = false;
+          recent.cycle = (recent.cycle ?? 0) + 1;
+          recent.oscillations = (recent.oscillations ?? 0) + 1;
+          recent.code = event.code;
+        }
         if (!incident) {
           if (state.incidents.filter((item) => item.state === "OPEN").length >= 50)
             throw new Error("INCIDENT_CAP_REACHED");
@@ -300,11 +340,15 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
             code: event.code, studioCode: event.studioCode,
             severity: event.severity, openedAt: event.observedAt,
             updatedAt: event.observedAt, lastObservedMonitorId: event.monitorId,
-            observations: 1, persistentQueued: false, events: [],
+            observations: 1, persistentQueued: false, cycle: 0,
+            oscillations: 0, events: [],
+            environment: snapshot.mode === "LIVE_READ_ONLY"
+              ? "PRODUCTION_OBSERVATION_SOURCE_UNVERIFIED"
+              : "SYNTHETIC_SIMULATION",
             steps: { sentinela: { status: "OBSERVED", runId: event.sourceRunId },
               atlas: { status: "REGISTERED", dependencies: [event.monitorId] },
               sherlock: { status: "PENDING" }, valida: { status: "PENDING" },
-              forge: { status: "PENDING" }, guardiao: { status: "DISABLED" } } };
+              forge: { status: "PENDING" }, guardiao: { status: "PENDING" } } };
           state.incidents.push(incident);
           newIncidents++;
           const sourceReport = typeof snapshot.reportFor === "function"
@@ -350,14 +394,38 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
             }
           } else incident.steps.forge = { status: "BLOCKED_CAUSE_UNDETERMINED",
             applied: false, dependencies: [incident.id] };
+          incident.steps.guardiao = { ...reviewIncidentEvidence({
+            diagnosis: incident.steps.sherlock,
+            proposal: incident.steps.forge,
+            validation: incident.steps.valida,
+            environment: incident.environment }),
+          dependencies: [incident.id] };
         }
-        if (event.kind === "RECOVERED") incident.state = "RECOVERED";
+        if (event.kind === "RECOVERED") {
+          incident.state = "RECOVERED";
+          const communicated = incident.notifiedCycle ===
+            (incident.cycle ?? 0) || state.outbox.some((item) =>
+            item.incidentId === incident.id && item.status === "SENT" &&
+            (item.cycle ?? 0) === (incident.cycle ?? 0) &&
+            item.kind !== "RECOVERED");
+          // A recovery is meaningful only after the owner was informed.
+          state.outbox = state.outbox.filter((item) =>
+            item.incidentId !== incident.id || item.status !== "READY" ||
+            (item.cycle ?? 0) !== (incident.cycle ?? 0));
+          incident.recoveryNotifiable = communicated;
+        }
         if (event.kind === "PERSISTENT") incident.persistentQueued = true;
         incident.updatedAt = event.observedAt;
         incident.events.push({ id: event.id, kind: event.kind,
           monitorId: event.monitorId, at: event.observedAt });
         incident.events = incident.events.slice(-20);
-        if (!open || event.kind === "RECOVERED" || event.kind === "PERSISTENT")
+        const stabilized = event.severity === "critical" ||
+          !MONITOR_CODES.has(event.code) || event.kind === "PERSISTENT";
+        if ((event.kind === "RECOVERED" && incident.recoveryNotifiable) ||
+            (event.kind === "PERSISTENT") ||
+            ((event.kind === "NEW" || event.kind === "CHANGED") &&
+              !open && !recent && stabilized) ||
+            (recent && event.severity === "critical"))
           addOutbox(state, incident, event);
         state.processedEventIds = [...state.processedEventIds, event.id]
           .slice(-MAX_EVENTS);
@@ -383,7 +451,7 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
           incident.observations++;
           incident.lastObservedMonitorId = latestId;
           if (incident.observations < 2 || incident.persistentQueued ||
-              Date.parse(latestAt) - Date.parse(incident.openedAt) < 30 * 60_000)
+              Date.parse(latestAt) - Date.parse(incident.openedAt) < STABILIZE_MS)
             continue;
           const observation = active.get(incident.key);
           const event = normalizeIncidentEvent({ monitorId: latestId,
@@ -411,6 +479,25 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
       if (notify) for (const item of state.outbox.filter((entry) =>
         entry.status === "READY").slice(0, 5)) {
         if (clock() - started >= maxRunMs) break;
+        const current = state.incidents.find((entry) =>
+          entry.id === item.incidentId);
+        if (current?.state !== "OPEN" && item.kind !== "RECOVERED") {
+          item.status = "SUPPRESSED_STALE";
+          saveState(stateDir, state);
+          continue;
+        }
+        if (item.event.severity !== "critical" &&
+            ["NEW", "CHANGED"].includes(item.kind) &&
+            state.outbox.filter((prior) => prior.status === "SENT" &&
+              prior.event.severity !== "critical" &&
+              ["NEW", "CHANGED"].includes(prior.kind) &&
+              Number.isFinite(Date.parse(prior.sentAt ?? "")) &&
+              clock() - Date.parse(prior.sentAt) < 60 * 60_000).length >=
+              MAX_WARNING_NEW_PER_HOUR) {
+          item.status = "SUPPRESSED_RATE_LIMIT";
+          saveState(stateDir, state);
+          continue;
+        }
         // Telegram has no idempotency key. An uncertain send is never retried
         // automatically; this prevents duplicate owner notifications.
         item.status = "SENDING";
@@ -419,10 +506,16 @@ export function createIncidentCoordinator({ stateDir, ownerChatId = null,
           const incident = state.incidents.find((entry) =>
             entry.id === item.incidentId && UUID.test(entry.id));
           const event = normalizeIncidentEvent(item.event);
-          if (!incident || !event || item.id !== `${incident.id}:${event.kind}`)
+          if (!incident || !event || ![
+            `${incident.id}:${event.kind}:${item.cycle ?? 0}`,
+            `${incident.id}:${event.kind}`].includes(item.id))
             throw new Error("INCIDENT_OUTBOX_INVALID");
-          await sendAlert(ownerChatId, formatIncidentAlert(incident, event));
+          await sendAlert(ownerChatId, formatIncidentAlert(incident, event),
+            incident.id);
           item.status = "SENT";
+          item.sentAt = new Date(clock()).toISOString();
+          if (item.kind !== "RECOVERED")
+            incident.notifiedCycle = item.cycle ?? 0;
           sent++;
         } catch { item.status = "UNKNOWN"; }
         saveState(stateDir, state);

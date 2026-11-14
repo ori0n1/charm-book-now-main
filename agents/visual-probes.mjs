@@ -75,7 +75,11 @@ export function classifyVisualObservation(observation) {
   if (observation.dom?.horizontalOverflow)
     add("VISUAL_HORIZONTAL_OVERFLOW", "warning");
   if (observation.requestFailures > 0)
-    add("VISUAL_REQUEST_FAILED", "warning", { count: observation.requestFailures });
+    issues.push({ studioCode: observation.studioCode, path: observation.path,
+      viewport: observation.viewport, code: "VISUAL_REQUEST_FAILED",
+      severity: "warning", scope: "MONITOR_COVERAGE",
+      evidence: { count: observation.requestFailures,
+        monitorFetchFailures: observation.monitorFetchFailures ?? 0 } });
   for (const asset of observation.assetFailures.slice(0, 4))
     add("VISUAL_ASSET_FAILED", "critical", { assetType: asset.type,
       httpStatus: asset.httpStatus });
@@ -139,9 +143,11 @@ function cachedXml(cache) {
 export async function inspectVisualPage(page, target, viewport, counters) {
   const observation = { path: target.path, studioCode: target.studioCode,
     viewport, httpStatus: null, dom: null, jsErrors: [], assetFailures: [],
-    blockedRequests: 0, requestFailures: 0, screenshotBytes: 0,
+    blockedRequests: 0, requestFailures: 0, monitorFetchFailures: 0,
+    screenshotBytes: 0,
     status: "NOT_VERIFIABLE" };
   const allowed = new WeakSet();
+  const monitorFailed = new WeakSet();
   const onPageError = (error) => observation.jsErrors.push(safeError(error));
   const onResponse = (response) => {
     const request = response.request();
@@ -151,7 +157,10 @@ export async function inspectVisualPage(page, target, viewport, counters) {
       httpStatus: response.status() });
   };
   const onRequestFailed = (request) => {
-    if (allowed.has(request)) observation.requestFailures++;
+    if (allowed.has(request)) {
+      observation.requestFailures++;
+      if (monitorFailed.has(request)) observation.monitorFetchFailures++;
+    }
   };
   page.on("pageerror", onPageError);
   page.on("response", onResponse);
@@ -189,7 +198,10 @@ export async function inspectVisualPage(page, target, viewport, counters) {
           counters.cacheBytes += body.byteLength;
         }
         await route.fulfill(value);
-      } catch { await route.abort("failed").catch(() => {}); }
+      } catch {
+        monitorFailed.add(request);
+        await route.abort("failed").catch(() => {});
+      }
       return;
     }
     await route.continue();

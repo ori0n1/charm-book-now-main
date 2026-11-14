@@ -16,6 +16,8 @@ const safeProof = () => ({
   roleName: "bellza_agent_reader",
   canLogin: true, superuser: false, bypassRls: false,
   canWrite: false, securityDefinerWrite: false,
+  publicInheritedWrite: false, minimumColumnsOnly: true,
+  tlsHostnameAndCaVerified: true,
   rlsEffective: true, studioIsolationVerified: true,
   transactionReadOnly: true, roleMemberships: 0,
 });
@@ -79,6 +81,8 @@ test("role NOLOGIN, BYPASSRLS, escrita e ausência de isolamento são rejeitados
   for (const change of [
     { canLogin: false }, { superuser: true }, { bypassRls: true },
     { canWrite: true }, { securityDefinerWrite: true },
+    { publicInheritedWrite: true }, { minimumColumnsOnly: false },
+    { tlsHostnameAndCaVerified: false },
     { rlsEffective: false }, { studioIsolationVerified: false },
     { transactionReadOnly: false }, { roleMemberships: 1 },
     { projectRef: "qflwsdrgdkkcxjnbxmis" }, { roleName: "service_role" },

@@ -169,11 +169,15 @@ export async function runVisualCheck({ mode = "live", scenario = "healthy",
       discoveryEvents.push({ kind: "CHANGED", path: "/sitemap.xml",
         studioCode: "GLOBAL", code: "VISUAL_SITEMAP_CHANGED", severity: "info" });
     const events = [...comparison.events, ...discoveryEvents];
-    const partial = scanResult.status !== "OBSERVED" ||
+    const monitorCoverageIncomplete = issues.some((issue) =>
+      issue.scope === "MONITOR_COVERAGE");
+    const applicationIssues = issues.some((issue) =>
+      issue.scope !== "MONITOR_COVERAGE");
+    const partial = monitorCoverageIncomplete || scanResult.status !== "OBSERVED" ||
       !["OK", "CHANGED"].includes(scanResult.sitemapStatus ?? "UNKNOWN") ||
       pages.some((page) => page.status !== "OBSERVED" ||
         page.coverage === "AGENDA_NAO_VERIFICAVEL");
-    const status = issues.length ? "FALHAS_OBSERVADAS" :
+    const status = applicationIssues ? "FALHAS_OBSERVADAS" :
       partial ? "PARCIAL" : "SEM_FALHAS_OBSERVADAS";
     const report = { flowId, observedAt: now().toISOString(),
       mode: sentinela.mode, status, sentinelaRunId: sentinela.runId,

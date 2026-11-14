@@ -141,7 +141,8 @@ export function prepareAlertBatch(events, sentIds = [], { enabled = false,
 
 export function createGateway({ config, aiByBot, clients, toolRunner,
   now = () => new Date(), stateDir = config?.stateDir,
-  minMessageUnix = null, taskManager = null } = {}) {
+  minMessageUnix = null, taskManager = null,
+  incidentDetails = null } = {}) {
   config = validateGatewayConfig(config);
   if (!stateDir || !aiByBot || !clients || !toolRunner)
     throw new Error("GATEWAY_DEPENDENCY_INVALID");
@@ -168,7 +169,21 @@ export function createGateway({ config, aiByBot, clients, toolRunner,
         (ownBot.expectedBotId ? query.message.from?.id === ownBot.expectedBotId :
           query.message.from?.username?.toLowerCase() ===
             ownBot.username.toLowerCase());
-      if (!authorized || !taskManager) {
+      if (!authorized) {
+        mark();
+        return { status: "REJECTED", reply: null };
+      }
+      if (botKey === "sentinela" && /^i:[0-9a-f-]{36}$/.test(query.data ?? "")) {
+        let detail = null;
+        try { detail = incidentDetails?.(query.data.slice(2)); }
+        catch { /* An unavailable local history cannot authorize another tool. */ }
+        mark();
+        return { status: detail ? "DETAILS" : "DETAILS_UNAVAILABLE",
+          callbackId: query.id, callbackText: detail
+            ? "Detalhes enviados." : "Detalhes indisponíveis.",
+          detailMessage: detail ? safeText(detail) : null, reply: null };
+      }
+      if (!taskManager) {
         mark();
         return { status: "REJECTED", reply: null };
       }

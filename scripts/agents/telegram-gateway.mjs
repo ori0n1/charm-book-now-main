@@ -9,7 +9,7 @@ import { createTelegramClient } from "../../agents/telegram-gateway/telegram.mjs
 import { createAgentTools } from "../../agents/telegram-gateway/tools.mjs";
 import { createGateway } from "../../agents/telegram-gateway/gateway.mjs";
 import { createTaskManager } from "../../agents/telegram-gateway/tasks.mjs";
-import { createIncidentCoordinator } from "../../agents/telegram-gateway/incidents.mjs";
+import { createIncidentCoordinator, readIncidentDetails } from "../../agents/telegram-gateway/incidents.mjs";
 import { readIncidentSource } from "../../agents/telegram-gateway/incident-source.mjs";
 import { acquireSingleton, readSingleton } from "../../agents/telegram-gateway/singleton.mjs";
 
@@ -243,6 +243,8 @@ async function main() {
     taskManager?.recover();
     const gateway = createGateway({ config, aiByBot, clients, toolRunner,
       taskManager,
+      incidentDetails: (id) => readIncidentDetails(join(config.stateDir,
+        "incidents"), id),
       minMessageUnix: Math.floor(Date.now() / 1000) });
     const controller = new AbortController();
     const stop = () => controller.abort();
@@ -279,8 +281,8 @@ async function main() {
         const coordinator = createIncidentCoordinator({
           stateDir: join(config.stateDir, "incidents"),
           ownerChatId: config.ownerChatId,
-          sendAlert: (chatId, message) =>
-            clients.sentinela.sendOwnerMessage(chatId, message),
+          sendAlert: (chatId, message, incidentId) =>
+            clients.sentinela.sendOwnerIncident(chatId, message, incidentId),
         });
         workers.push((async () => {
           while (!controller.signal.aborted) {

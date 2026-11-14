@@ -54,4 +54,47 @@ WHERE n.nspname NOT LIKE 'pg_%'
   AND c.relname ~* '(agenda|appoint|reserv|book|studio)'
 ORDER BY n.nspname, c.relname, p.polname;
 
+-- Objetos concretos com escrita efetiva: necessários para propor ACL mínima.
+-- Não revogar PUBLIC sem confirmar consumidores da aplicação.
+SELECT n.nspname AS schema_name, c.relname AS object_name,
+       c.relkind AS object_kind,
+       has_table_privilege('bellza_catalog_reader', c.oid, 'INSERT') AS can_insert,
+       has_table_privilege('bellza_catalog_reader', c.oid, 'UPDATE') AS can_update,
+       has_table_privilege('bellza_catalog_reader', c.oid, 'DELETE') AS can_delete,
+       has_table_privilege('bellza_catalog_reader', c.oid, 'TRUNCATE') AS can_truncate
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r', 'p', 'v', 'f')
+  AND n.nspname NOT LIKE 'pg_%'
+  AND n.nspname <> 'information_schema'
+  AND has_schema_privilege('bellza_catalog_reader', n.oid, 'USAGE')
+  AND (has_table_privilege('bellza_catalog_reader', c.oid, 'INSERT')
+    OR has_table_privilege('bellza_catalog_reader', c.oid, 'UPDATE')
+    OR has_table_privilege('bellza_catalog_reader', c.oid, 'DELETE')
+    OR has_table_privilege('bellza_catalog_reader', c.oid, 'TRUNCATE'))
+ORDER BY n.nspname, c.relname;
+
+SELECT n.nspname AS schema_name, c.relname AS sequence_name,
+       has_sequence_privilege('bellza_catalog_reader', c.oid, 'USAGE') AS can_use,
+       has_sequence_privilege('bellza_catalog_reader', c.oid, 'UPDATE') AS can_update
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind = 'S'
+  AND n.nspname NOT LIKE 'pg_%'
+  AND has_schema_privilege('bellza_catalog_reader', n.oid, 'USAGE')
+  AND (has_sequence_privilege('bellza_catalog_reader', c.oid, 'USAGE')
+    OR has_sequence_privilege('bellza_catalog_reader', c.oid, 'UPDATE'))
+ORDER BY n.nspname, c.relname;
+
+SELECT n.nspname AS schema_name, p.proname AS routine_name,
+       pg_catalog.pg_get_function_identity_arguments(p.oid) AS arguments
+FROM pg_catalog.pg_proc p
+JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+WHERE p.prosecdef
+  AND n.nspname NOT LIKE 'pg_%'
+  AND has_schema_privilege('bellza_catalog_reader', n.oid, 'USAGE')
+  AND has_function_privilege('bellza_catalog_reader', p.oid, 'EXECUTE')
+ORDER BY n.nspname, p.proname
+LIMIT 100;
+
 ROLLBACK;

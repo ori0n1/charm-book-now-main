@@ -343,4 +343,40 @@ test("cliente Telegram limita botões e responde callbacks pelo método fixo", a
   await assert.rejects(client.sendOwnerApproval(12345, "x", {
     inline_keyboard: [[{ text: "Deploy", callback_data: "deploy" }]] }),
   /TELEGRAM_SEND_DENIED/);
+  await client.sendOwnerIncident(12345, "Falha sintética", id);
+  assert.equal(calls.at(-1).body.reply_markup.inline_keyboard[0][0]
+    .callback_data, `i:${id}`);
+  await assert.rejects(client.sendOwnerIncident(12345, "x", "invalid"),
+    /TELEGRAM_SEND_DENIED/);
+});
+
+test("detalhes do incidente só chegam ao proprietário no bot Sentinela", async () => {
+  const incidentId = "00000000-0000-4000-8000-000000000099";
+  const config = validateGatewayConfig({ schema: 1, ownerUserId: 12345,
+    ownerChatId: 12345, stateDir: join(root, `incident-details-${++count}`),
+    monitorStateDir: join(root, "monitor"), alertsEnabled: false,
+    ai: { model: "gpt-6-luna", maxCallsPerDay: 12,
+      maxTokensPerDay: 10000, maxDailyUsd: 0.25,
+      inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.5 },
+    bots: Object.fromEntries(BOT_KEYS.map((key) => [key,
+      { username: `bellza_${key}_bot`, secretName: `telegram-${key}`,
+        expectedBotId: key === "sentinela" ? 9294057980 : null,
+        enabled: key !== "guardiao" }])) });
+  const gateway = createGateway({ config, aiByBot: { sentinela: {} },
+    clients: {}, toolRunner: {},
+    incidentDetails: (id) => id === incidentId ? "Evidência local sintética" : null });
+  const query = { update_id: 1, callback_query: { id: "detail1",
+    data: `i:${incidentId}`, from: { id: 999, is_bot: false },
+    message: { from: { id: 9294057980 },
+      chat: { id: 12345, type: "private" } } } };
+  assert.equal((await gateway.handleUpdate("sentinela", query)).status,
+    "REJECTED");
+  query.update_id = 2;
+  query.callback_query.from.id = 12345;
+  const allowed = await gateway.handleUpdate("sentinela", query);
+  assert.equal(allowed.status, "DETAILS");
+  assert.equal(allowed.detailMessage, "Evidência local sintética");
+  query.update_id = 3;
+  assert.equal((await gateway.handleUpdate("atlas", query)).status,
+    "REJECTED");
 });

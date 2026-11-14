@@ -1,0 +1,26 @@
+-- PROPOSTA NÃO EXECUTÁVEL. Exige revisão humana dos resultados de
+-- supabase-reader-review.sql no projeto pwmdzpvnatrvfpgcvnzg.
+-- Os nomes de relações, funções, consumidores e ACL atuais ainda não
+-- foram comprovados. Nenhum comando abaixo deve ser executado como está.
+
+-- Dentro de transação e após registar a ACL atual de cada objeto:
+-- REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE <schema>.<object>
+--   FROM PUBLIC;
+-- REVOKE USAGE, UPDATE ON SEQUENCE <schema>.<sequence> FROM PUBLIC;
+-- REVOKE EXECUTE ON FUNCTION <schema>.<routine>(<identity_arguments>)
+--   FROM PUBLIC;
+-- GRANT <permissões originais necessárias> ON <objetos confirmados>
+--   TO <roles da aplicação confirmadas>;
+-- GRANT USAGE ON SCHEMA <schema mínimo> TO <leitor autorizado>;
+-- GRANT SELECT (<colunas mínimas>) ON TABLE <relação com RLS efetiva>
+--   TO <leitor autorizado>;
+-- Somente após provar zero escrita efetiva, ausência de BYPASSRLS e
+-- isolamento: ALTER ROLE <leitor autorizado> LOGIN;
+
+-- Reversão, somente com autorização específica e ACL capturada:
+-- ALTER ROLE <leitor autorizado> NOLOGIN;
+-- REVOKE SELECT (<colunas mínimas>) ON TABLE <relação> FROM <leitor>;
+-- REVOKE USAGE ON SCHEMA <schema> FROM <leitor>;
+-- Restaurar exatamente os GRANTs anteriores a PUBLIC e às roles da
+-- aplicação, objeto por objeto, de acordo com o snapshot de ACL.
+-- Não usar rollback genérico que amplie privilégios além do snapshot.

@@ -43,8 +43,11 @@ export function inspectLocalAgendaReservationAccess({
 export function assessAgendaReservationReadProof(proof) {
   if (!proof || proof.projectRef !== PROJECT_REF ||
       proof.transactionReadOnly !== true || proof.canLogin !== true ||
+      proof.tlsHostnameAndCaVerified !== true ||
       proof.superuser !== false || proof.bypassRls !== false ||
       proof.canWrite !== false || proof.securityDefinerWrite !== false ||
+      proof.publicInheritedWrite !== false ||
+      proof.minimumColumnsOnly !== true ||
       proof.rlsEffective !== true || proof.studioIsolationVerified !== true ||
       proof.roleMemberships !== 0 ||
       !/^[a-z][a-z0-9_]{2,62}$/.test(proof.roleName ?? "") ||

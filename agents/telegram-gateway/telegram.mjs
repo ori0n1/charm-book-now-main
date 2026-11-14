@@ -99,6 +99,16 @@ export function createTelegramClient({ token, fetchImpl = fetch } = {}) {
         reply_markup: replyMarkup, disable_notification: true,
         protect_content: true }, 12_000);
     },
+    async sendOwnerIncident(chatId, text, incidentId) {
+      if (!Number.isSafeInteger(chatId) || chatId <= 0 ||
+          typeof text !== "string" || !text || text.length > 320 ||
+          !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
+            incidentId ?? "")) throw new Error("TELEGRAM_SEND_DENIED");
+      return call("sendMessage", { chat_id: chatId, text,
+        reply_markup: { inline_keyboard: [[{ text: "Ver detalhes",
+          callback_data: `i:${incidentId}` }]] },
+        disable_notification: true, protect_content: true }, 12_000);
+    },
     async answerCallbackQuery(id, text) {
       if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id) ||
           typeof text !== "string" || text.length > 200)

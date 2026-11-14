@@ -1,5 +1,31 @@
 const ALLOWED_SCOPE = new Set(["agents/reference.json"]);
 
+// Internal incident review. It cannot authorize a patch or publication.
+export function reviewIncidentEvidence({ diagnosis, proposal, validation,
+  environment } = {}) {
+  const causeProven = diagnosis?.findings?.length > 0 &&
+    diagnosis.findings.every((item) => item.causeStatus === "CONFIRMADA");
+  const proposalSafe = proposal?.applied === false &&
+    (proposal?.status !== "PROPOSTA" ||
+      proposal.publicationAuthorized === false);
+  const testsFailed = validation?.status === "FAILED";
+  const blocked = !proposalSafe || testsFailed ||
+    (proposal?.status === "PROPOSTA" && !causeProven);
+  return {
+    status: blocked ? "BLOQUEADO" : "INDETERMINADO",
+    checks: [
+      { name: "cause", status: causeProven ? "PASS" : "UNKNOWN" },
+      { name: "local_tests", status: testsFailed ? "FAIL" :
+        validation?.status === "APPROVED" ? "PASS" : "UNKNOWN" },
+      { name: "proposal_not_applied", status: proposalSafe ? "PASS" : "FAIL" },
+      { name: "production_source", status: environment ===
+        "PRODUCTION_SOURCE_VERIFIED" ? "PASS" : "UNKNOWN" },
+      { name: "rollback", status: "UNKNOWN" },
+    ],
+    publicationAuthorized: false, deployAllowed: false,
+  };
+}
+
 // Internal technical review only. A valid opinion never grants publication.
 export function reviewLocalCorrection({ monitoring, diagnosis, proposal,
   patch, validation, active, rollback, now = () => new Date() } = {}) {
