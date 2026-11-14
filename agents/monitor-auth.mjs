@@ -58,11 +58,14 @@ export function verifyNoninteractiveReadOnlyOAuth({
 } = {}) {
   const before = inspect();
   if (before.status !== "READ_ONLY_SCOPES") return { status: before.status };
-  if (!whoami()) return { status: "AUTH_UNAVAILABLE" };
+  const needsRefresh = Date.parse(before.expiration) <=
+    now().getTime() + 5 * 60_000;
+  if (!whoami()) return { status: needsRefresh ?
+    "AUTH_REFRESH_UNAVAILABLE" : "AUTH_CHECK_UNAVAILABLE" };
   const after = inspect();
   if (after.status !== "READ_ONLY_SCOPES") return { status: after.status };
   if (Date.parse(after.expiration) <= now().getTime() + 5 * 60_000) {
-    return { status: "AUTH_UNAVAILABLE" };
+    return { status: "AUTH_EXPIRED" };
   }
   return { status: "READY", authSource: "WRANGLER_OAUTH_READ_ONLY" };
 }

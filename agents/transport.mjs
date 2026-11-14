@@ -50,6 +50,12 @@ export function createReadOnlyTransport({
     if (response.status === 401 || response.status === 403) {
       throw new AgentPolicyError("AUTH_REJECTED");
     }
+    if (response.status === 429)
+      throw new AgentPolicyError("CLOUDFLARE_RATE_LIMITED");
+    if (response.status === 404)
+      throw new AgentPolicyError("CLOUDFLARE_ENDPOINT_NOT_FOUND");
+    if (response.status >= 500)
+      throw new AgentPolicyError("CLOUDFLARE_API_UNAVAILABLE");
     if (!response.ok) throw new AgentPolicyError("CLOUDFLARE_READ_FAILED");
     const declaredLength = Number(response.headers.get("content-length") ?? 0);
     if (declaredLength > MAX_RESPONSE_BYTES) throw new AgentPolicyError("RESPONSE_TOO_LARGE");

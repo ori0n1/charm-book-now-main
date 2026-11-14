@@ -24,6 +24,30 @@ const knownFindings = Object.freeze({
     hypothesis: "A sessão OAuth pode ter expirado ou não ter a permissão necessária.",
     basis: "A API rejeitou a leitura autorizada.",
   },
+  AUTH_REFRESH_UNAVAILABLE: {
+    affected: ["monitorizacao-cloudflare"], hypothesis: null,
+    basis: "A renovação OAuth não terminou; a causa da falha ainda não foi identificada.",
+  },
+  AUTH_CHECK_UNAVAILABLE: {
+    affected: ["monitorizacao-cloudflare"], hypothesis: null,
+    basis: "A verificação OAuth falhou antes da consulta Cloudflare.",
+  },
+  AUTH_EXPIRED: {
+    affected: ["monitorizacao-cloudflare"], hypothesis: null,
+    basis: "A validade da sessão continuou insuficiente após a tentativa de renovação.",
+  },
+  CLOUDFLARE_RATE_LIMITED: {
+    affected: ["monitorizacao-cloudflare"], hypothesis: null,
+    basis: "A API respondeu HTTP 429; a aplicação não foi verificada.",
+  },
+  CLOUDFLARE_ENDPOINT_NOT_FOUND: {
+    affected: ["monitorizacao-cloudflare"], hypothesis: null,
+    basis: "A API respondeu HTTP 404; a rota ou configuração requer verificação.",
+  },
+  CLOUDFLARE_API_UNAVAILABLE: {
+    affected: ["monitorizacao-cloudflare"], hypothesis: null,
+    basis: "A API respondeu com erro de servidor; a aplicação não foi verificada.",
+  },
   NETWORK_UNAVAILABLE: {
     affected: ["monitorizacao-cloudflare", "monitorizacao-publica"],
     hypothesis: "A rede ou o sandbox local pode ter bloqueado a consulta.",

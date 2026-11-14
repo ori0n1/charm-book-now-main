@@ -12,7 +12,10 @@ const STUDIO = /^[A-Z0-9_]{2,40}$/;
 const KINDS = new Set(["NEW", "CHANGED", "RECOVERED", "PERSISTENT"]);
 const SEVERITIES = new Set(["critical", "warning", "info"]);
 const ACCESS_CODES = new Set(["AUTH_UNAVAILABLE", "AUTH_REJECTED",
-  "NETWORK_UNAVAILABLE", "AUTH_SCOPE_UNSAFE", "CLOUDFLARE_READ_FAILED",
+  "AUTH_REFRESH_UNAVAILABLE", "AUTH_CHECK_UNAVAILABLE", "AUTH_EXPIRED",
+  "NETWORK_UNAVAILABLE", "AUTH_SCOPE_UNSAFE", "CLOUDFLARE_RATE_LIMITED",
+  "CLOUDFLARE_ENDPOINT_NOT_FOUND", "CLOUDFLARE_API_UNAVAILABLE",
+  "CLOUDFLARE_READ_FAILED",
   "AGENT_PROCESS_FAILED", "PUBLIC_ENDPOINT_READ_BLOCKED"]);
 const CLOUD_ACCESS_CODES = new Set([...ACCESS_CODES].filter((code) =>
   code !== "PUBLIC_ENDPOINT_READ_BLOCKED"));
@@ -26,6 +29,12 @@ const DESCRIPTIONS = Object.freeze({
   PUBLIC_ENDPOINT_READ_BLOCKED: "leitura do endpoint público bloqueada",
   AUTH_UNAVAILABLE: "acesso Cloudflare indisponível",
   AUTH_REJECTED: "leitura Cloudflare rejeitada",
+  AUTH_REFRESH_UNAVAILABLE: "renovação OAuth não concluída",
+  AUTH_CHECK_UNAVAILABLE: "verificação OAuth não concluída",
+  AUTH_EXPIRED: "sessão OAuth expirada após tentativa de renovação",
+  CLOUDFLARE_RATE_LIMITED: "limite de pedidos Cloudflare",
+  CLOUDFLARE_ENDPOINT_NOT_FOUND: "endpoint Cloudflare não encontrado",
+  CLOUDFLARE_API_UNAVAILABLE: "API Cloudflare indisponível",
   NETWORK_UNAVAILABLE: "rede de monitorização indisponível",
 });
 const MAX_STATE_BYTES = 2_000_000;

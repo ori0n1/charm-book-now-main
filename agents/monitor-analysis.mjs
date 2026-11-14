@@ -97,7 +97,10 @@ function currentIssues(report) {
   for (const item of report.anomalies) {
     if (["PUBLIC_ENDPOINT_UNAVAILABLE", "PUBLIC_ENDPOINT_READ_BLOCKED"].includes(item.code)) continue;
     const blocked = ["AUTH_UNAVAILABLE", "AUTH_REJECTED", "NETWORK_UNAVAILABLE",
-      "AUTH_SCOPE_UNSAFE", "CLOUDFLARE_READ_FAILED", "AGENT_PROCESS_FAILED"].includes(item.code);
+      "AUTH_SCOPE_UNSAFE", "AUTH_REFRESH_UNAVAILABLE", "AUTH_CHECK_UNAVAILABLE",
+      "AUTH_EXPIRED", "CLOUDFLARE_RATE_LIMITED",
+      "CLOUDFLARE_ENDPOINT_NOT_FOUND", "CLOUDFLARE_API_UNAVAILABLE",
+      "CLOUDFLARE_READ_FAILED", "AGENT_PROCESS_FAILED"].includes(item.code);
     const key = blocked ? "CLOUDFLARE_READ_BLOCKED" : item.code;
     const evidence = item.code === "BINDINGS_DIVERGENCE_CONFIRMED" ? report.bindingDiff
       : item.code === "RUNTIME_DIVERGENCE_CONFIRMED" ? report.runtime
