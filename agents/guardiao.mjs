@@ -1,5 +1,51 @@
 const ALLOWED_SCOPE = new Set(["agents/reference.json"]);
 
+// Internal technical review only. A valid opinion never grants publication.
+export function reviewLocalCorrection({ monitoring, diagnosis, proposal,
+  patch, validation, active, rollback, now = () => new Date() } = {}) {
+  const chain = monitoring?.runId === diagnosis?.source?.runId &&
+    diagnosis?.runId === proposal?.source &&
+    diagnosis?.findings?.length === 1 &&
+    diagnosis.findings[0].causeStatus === "CONFIRMADA" &&
+    diagnosis.findings[0].code === "OFFICIAL_RECORD_OUTDATED";
+  const scope = proposal?.status === "PROPOSTA" &&
+    proposal?.plan?.scope?.length === 1 &&
+    proposal.plan.scope[0] === "agents/reference.json" &&
+    patch?.status === "LOCAL_PATCH_PREPARED" &&
+    patch.file === "agents/reference.json" &&
+    patch.appliedLocally === true && patch.remoteWrites === false &&
+    patch.publicationAuthorized === false;
+  const tests = validation?.status === "APPROVED" &&
+    Array.isArray(validation.tests) && validation.tests.length > 0 &&
+    validation.tests.every((item) => item.state === "PASS");
+  const compare = active?.version === monitoring?.reference?.observedVersion &&
+    active?.source === "CLOUDFLARE_OAUTH_READ_ONLY" &&
+    active?.candidateBaseVerified === true &&
+    active?.bindingsMatch === true && active?.runtimeMatch === true &&
+    active?.cronsMatch === true && active?.protectedFeaturesReviewed === true;
+  const rollbackReady = rollback?.validated === true &&
+    rollback.version === active?.version;
+  const checks = [
+    { name: "evidence_chain", status: chain ? "PASS" : "FAIL" },
+    { name: "isolated_patch_scope", status: scope ? "PASS" : "FAIL" },
+    { name: "directed_local_tests", status: tests ? "PASS" :
+      validation?.status === "FAILED" ? "FAIL" : "UNKNOWN" },
+    { name: "active_candidate_comparison", status: compare ? "PASS" : "UNKNOWN" },
+    { name: "rollback_plan", status: rollbackReady ? "PASS" : "UNKNOWN" },
+  ];
+  const failed = checks.some((item) => item.status === "FAIL");
+  const unknown = checks.some((item) => item.status === "UNKNOWN");
+  return {
+    agent: "guardiao", observedAt: now().toISOString(),
+    status: failed ? "BLOQUEADO" : unknown ? "INDETERMINADO" : "APTO",
+    scope: "LOCAL_PROPOSAL_ONLY",
+    checks, risks: checks.filter((item) => item.status !== "PASS")
+      .map((item) => item.name.toUpperCase()),
+    publicationAuthorized: false, deployAllowed: false,
+    canaryAllowed: false, promotionAllowed: false,
+  };
+}
+
 export function reviewPublic({ monitoring, diagnosis, proposal, validation,
   now = () => new Date() } = {}) {
   const linked = diagnosis?.source === monitoring?.runId &&

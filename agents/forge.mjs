@@ -1,4 +1,5 @@
 const VERSION = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
+export { prepareLocalReferencePatch } from "./local-reference-patch.mjs";
 
 export function planPublicCorrection({ diagnosis, now = () => new Date() } = {}) {
   if (diagnosis?.agent !== "sherlock" || !Array.isArray(diagnosis.findings))

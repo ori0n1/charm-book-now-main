@@ -13,9 +13,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatSentinelaReport } from "./sentinela.mjs";
 import { diagnoseSentinela, formatSherlockReport } from "./sherlock.mjs";
-import { TEST_CASES, formatValidaReport, runValida, syntheticEnvironment } from "./valida.mjs";
-import { formatForgeReport, planCorrection } from "./forge.mjs";
-import { formatGuardiaoReport, reviewProposal } from "./guardiao.mjs";
+import { TEST_CASES, formatValidaReport, runValida,
+  runReferenceRegression, syntheticEnvironment } from "./valida.mjs";
+import { formatForgeReport, planCorrection,
+  prepareLocalReferencePatch } from "./forge.mjs";
+import { formatGuardiaoReport, reviewProposal,
+  reviewLocalCorrection } from "./guardiao.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const activeFlows = new WeakSet();
@@ -621,6 +624,66 @@ export async function runIntegratedCheck({
     activeFlows.delete(flow);
     release();
   }
+}
+
+// Manual internal flow. The Telegram gateway does not call this function.
+// Only the fixed, proof-bound reference recipe can write a local worktree.
+export function runLocalCorrectionFlow({ monitoring, diagnosis, proof,
+  repositoryRoot, parentDir, stateDir = DEFAULT_STATE_DIR,
+  active, rollback, now = () => new Date(),
+  prepare = prepareLocalReferencePatch,
+  validate = runReferenceRegression } = {}) {
+  const id = randomUUID();
+  const release = acquireLock(stateDir, id, "local-correction", now);
+  try {
+    appendEvent(stateDir, { id, agent: "atlas", state: "RUNNING",
+      at: now().toISOString(), mode: "LOCAL_ONLY" });
+    const proposal = { ...planCorrection({ diagnosis, monitoring, now }),
+      runId: randomUUID() };
+    let patch = null;
+    let validation = null;
+    if (proposal.status === "PROPOSTA" && proof) {
+      try {
+        patch = prepare({ repositoryRoot, parentDir, taskId: id,
+          proof, diagnosis, proposal });
+        validation = validate({ workspace: patch.workspace });
+      } catch (error) {
+        patch = { status: "BLOCKED",
+          reason: /^[A-Z_]{3,60}$/.test(error?.message ?? "")
+            ? error.message : "LOCAL_PATCH_UNAVAILABLE" };
+      }
+    }
+    const review = reviewLocalCorrection({ monitoring, diagnosis, proposal,
+      patch, validation, active, rollback, now });
+    const report = {
+      agent: "atlas", flowId: id, mode: "LOCAL_ONLY",
+      status: review.status,
+      steps: [
+        { agent: "sherlock", runId: diagnosis?.runId ?? null },
+        { agent: "forge", runId: proposal.runId,
+          status: proposal.status },
+        { agent: "valida", status: validation?.status ?? "NOT_RUN" },
+        { agent: "guardiao", status: review.status },
+      ],
+      patch: patch?.status === "LOCAL_PATCH_PREPARED" ? {
+        status: patch.status, file: patch.file, workspace: patch.workspace,
+        sourceCommit: patch.sourceCommit,
+        beforeSha256: patch.beforeSha256,
+        afterSha256: patch.afterSha256,
+        appliedLocally: true, remoteWrites: false,
+      } : { status: patch?.status ?? "NOT_PREPARED",
+        reason: patch?.reason ?? "PROOF_OR_CAUSE_REQUIRED" },
+      tests: validation?.status ?? "NOT_RUN",
+      review, publicationAuthorized: false, deployAllowed: false,
+    };
+    const dir = join(stateDir, "flows");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${id}.json`),
+      JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
+    appendEvent(stateDir, { id, agent: "atlas", state: "COMPLETED",
+      status: report.status, at: now().toISOString(), mode: "LOCAL_ONLY" });
+    return report;
+  } finally { release(); }
 }
 
 export function formatIntegratedCheck(report) {

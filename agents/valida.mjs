@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -61,6 +61,53 @@ export function runApprovedTest(testCase, { timeoutMs = 15_000 } = {}) {
     return { file: testCase.file, state: "FAIL", reason: "NETWORK_ATTEMPT_BLOCKED", durationMs };
   }
   return { file: testCase.file, state: "FAIL", reason: "SYNTHETIC_TEST_FAILED", durationMs };
+}
+
+// Fixed data contracts: never executes test code from the patch worktree.
+export function runReferenceRegression({ workspace } = {}) {
+  if (typeof workspace !== "string" || !existsSync(join(workspace,
+    "agents", "reference.json")))
+    return { status: "INDETERMINATE", tests: [],
+      reason: "DIRECTED_TEST_UNAVAILABLE" };
+  const git = (args) => spawnSync("git", ["-C", workspace, ...args],
+    { shell: false, encoding: "utf8", windowsHide: true,
+      timeout: 10_000, maxBuffer: 128_000 });
+  const original = git(["show", "HEAD:agents/reference.json"]);
+  const changed = git(["diff", "--name-only"]);
+  if (original.status !== 0 || changed.status !== 0)
+    return { agent: "valida", status: "INDETERMINATE", tests: [],
+      reason: "GIT_EVIDENCE_UNAVAILABLE" };
+  let before, after;
+  try {
+    before = JSON.parse(original.stdout);
+    after = JSON.parse(readFileSync(join(workspace, "agents",
+      "reference.json"), "utf8"));
+  } catch {
+    return { agent: "valida", status: "FAILED",
+      tests: [{ file: "agents/reference.json",
+        state: "FAIL" }], reason: "INVALID_REFERENCE_JSON" };
+  }
+  const keys = Object.keys(before).sort();
+  const sameShape = JSON.stringify(keys) ===
+    JSON.stringify(Object.keys(after).sort());
+  const preserved = sameShape && keys.every((key) =>
+    key === "officialRecordedVersion" ||
+    JSON.stringify(before[key]) === JSON.stringify(after[key]));
+  const scoped = changed.stdout.trim().replaceAll("\r", "") ===
+    "agents/reference.json";
+  const reconciled = typeof after.observedVersion === "string" &&
+    after.officialRecordedVersion === after.observedVersion &&
+    before.officialRecordedVersion !== after.officialRecordedVersion;
+  const tests = [
+    { file: "agents/reference.json:shape", state: preserved ? "PASS" : "FAIL" },
+    { file: "agents/reference.json:scope", state: scoped ? "PASS" : "FAIL" },
+    { file: "agents/reference.json:version", state: reconciled ? "PASS" : "FAIL" },
+  ];
+  return { agent: "valida",
+    status: tests.every((item) => item.state === "PASS")
+      ? "APPROVED" : "FAILED",
+    tests, reason: tests.every((item) => item.state === "PASS")
+      ? null : "REFERENCE_REGRESSION_FAILED" };
 }
 
 export function runValida({ cases = TEST_CASES, runCase = runApprovedTest, now = () => new Date() } = {}) {
