@@ -109,6 +109,53 @@ test("estudio nao autorizado e linhas cruzadas falham fechado", async () => {
   await assert.rejects(crossed.source.read({ studioCode: A, domain: "agenda" }), /STUDIO_DENIED/);
 });
 
+test("duas identidades sinteticas permanecem isoladas por estudio", async () => {
+  const otherUser = "44444444-4444-4444-8444-444444444444";
+  const profiles = [
+    { userId: USER_ID, studioId: A_ID, studioCode: A },
+    { userId: otherUser, studioId: B_ID, studioCode: B },
+  ];
+  for (const profile of profiles) {
+    const token = jwt("authenticated", profile.userId);
+    const calls = [];
+    const fetchImpl = async (href, options) => {
+      const url = new URL(href);
+      calls.push(url.pathname);
+      if (options.method !== "GET") throw new Error("write attempted");
+      if (url.pathname === "/auth/v1/user") {
+        return Response.json({ id: profile.userId, role: "authenticated" });
+      }
+      if (url.pathname === "/rest/v1/user_roles") {
+        return Response.json(url.searchParams.get("studio_id") === `eq.${profile.studioId}`
+          ? [{ user_id: profile.userId, studio_id: profile.studioId, role: "studio_owner" }]
+          : []);
+      }
+      if (url.pathname === "/rest/v1/studios") {
+        return Response.json([{ id: profile.studioId, is_active: true }]);
+      }
+      if (url.pathname === "/rest/v1/appointments") {
+        return Response.json([{ studio_id: profile.studioId, status: "confirmed",
+          starts_at: new Date(NOW).toISOString() }]);
+      }
+      throw new Error("unexpected path");
+    };
+    const source = createPreparedPostgrestSource({
+      publishableKey: "sb_publishable_synthetic_only",
+      studioIds: new Map([[A, A_ID], [B, B_ID]]),
+      proof: proof(), now: () => NOW, fetchImpl,
+      sessionProvider: async () => ({ accessToken: token, expiresAt: NOW + 60_000 }),
+    });
+    assert.equal((await source.read({ studioCode: profile.studioCode,
+      domain: "agenda" })).coverage, "PARTIAL");
+    const beforeCross = calls.filter((item) => item === "/rest/v1/appointments").length;
+    const otherStudio = profile.studioCode === A ? B : A;
+    await assert.rejects(source.read({ studioCode: otherStudio, domain: "agenda" }),
+      /STUDIO_DENIED/);
+    assert.equal(calls.filter((item) => item === "/rest/v1/appointments").length,
+      beforeCross);
+  }
+});
+
 test("sem membership ou estudio ativo a leitura e bloqueada", async () => {
   for (const responses of [
     { "/rest/v1/user_roles": [] },

@@ -71,6 +71,14 @@ manual supervisionado; nao deve ser copiada para o gateway ou para rotina
 automatica: o JWT desse utilizador pode permitir outras operacoes fora deste
 adaptador. Ainda nao ha identidade automatica de menor privilegio aprovada.
 
+O teste local usa duas identidades sinteticas em estudios distintos e verifica
+que a consulta cruzada e bloqueada antes do GET de agenda. Isso comprova apenas
+o comportamento do adaptador com fixtures. A revisao direcionada de metadados
+esta preparada em `docs/private-agent-rls-review.sql` (cinco consultas SELECT,
+nao executadas). RLS, grants, funcoes de politica e eventual hook da Data API
+continuam sem comprovacao na instancia ativa. Nenhuma leitura funcional real
+foi autorizada nesta etapa.
+
 ## Ligacao futura, sujeita a autorizacao especifica
 
 1. Rever na sessao administrativa ja autorizada os grants e politicas SELECT
