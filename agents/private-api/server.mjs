@@ -64,6 +64,9 @@ export function createPrivateApiServer({ clients, source, now = () => Date.now()
         }),
       ]);
       const safe = validateResult(result, { studioCode, domain });
+      if (safe.source !== "SYNTHETIC_FIXTURE") {
+        throw new Error("PRIVATE_API_SOURCE_MISMATCH");
+      }
       respond(res, 200, "OK", safe);
     } catch (error) {
       fail(503, error?.message === "SOURCE_TIMEOUT" ? "SOURCE_TIMEOUT" : "SOURCE_UNAVAILABLE");

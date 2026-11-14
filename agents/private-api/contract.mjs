@@ -15,18 +15,27 @@ export function validateResult(value, { studioCode, domain } = {}) {
   if (!STUDIO_CODE.test(studioCode ?? "") || !Object.hasOwn(DOMAINS, domain ?? "") ||
       !exact(value, ["studioCode", "domain", "source", "observedAt", "windowMinutes", "coverage", "metrics"]) ||
       value.studioCode !== studioCode || value.domain !== domain ||
-      value.source !== "SYNTHETIC_FIXTURE" ||
+      !["SYNTHETIC_FIXTURE", "RLS_AGGREGATE_READ"].includes(value.source) ||
       !Number.isFinite(Date.parse(value.observedAt)) ||
       value.windowMinutes !== 30 ||
-      !["OBSERVED", "NOT_VERIFIABLE"].includes(value.coverage)) {
+      !["OBSERVED", "PARTIAL", "NOT_VERIFIABLE"].includes(value.coverage)) {
     throw new Error("PRIVATE_API_UNSAFE_RESULT");
   }
   if (value.coverage === "NOT_VERIFIABLE") {
     if (value.metrics !== null) throw new Error("PRIVATE_API_UNSAFE_RESULT");
-  } else if (!exact(value.metrics, DOMAINS[domain]) ||
-      Object.values(value.metrics).some((count) =>
-        !Number.isSafeInteger(count) || count < 0 || count > 1000)) {
-    throw new Error("PRIVATE_API_UNSAFE_RESULT");
+  } else {
+    if (!exact(value.metrics, DOMAINS[domain]) ||
+        Object.values(value.metrics).some((count) =>
+          count !== null && (!Number.isSafeInteger(count) || count < 0 || count > 1000))) {
+      throw new Error("PRIVATE_API_UNSAFE_RESULT");
+    }
+    const counts = Object.values(value.metrics);
+    if (value.coverage === "OBSERVED" && counts.some((count) => count === null) ||
+        value.coverage === "PARTIAL" &&
+          (counts.every((count) => count === null) ||
+           counts.every((count) => count !== null))) {
+      throw new Error("PRIVATE_API_UNSAFE_RESULT");
+    }
   }
   return value;
 }

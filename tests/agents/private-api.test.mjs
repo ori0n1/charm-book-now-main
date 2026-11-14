@@ -130,6 +130,7 @@ test("resultado cruzado ou com dados pessoais falha fechado", async () => {
   for (const mutate of [
     (value) => ({ ...value, studioCode: B }),
     (value) => ({ ...value, clientPhone: "synthetic" }),
+    (value) => ({ ...value, source: "RLS_AGGREGATE_READ" }),
   ]) {
     const fixture = createSyntheticSource();
     const env = await setup({ source: { kind: "SYNTHETIC_ONLY",
