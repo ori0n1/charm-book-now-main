@@ -1,81 +1,45 @@
-# Identidades QA Bellza — registo e proposta
+# Identidades QA Bellza
 
-Estado: preparação local em 2026-11-16. Projeto Supabase de produção: `pwmdzpvnatrvfpgcvnzg`. Este ficheiro não contém credenciais e não autoriza escrita ou testes em produção.
+Projeto Supabase de produção: `pwmdzpvnatrvfpgcvnzg`. Registo técnico de 2026-11-16, sem senhas, tokens ou sessões. As contas e os estúdios QA são permanentes, mas este registo não autoriza testes funcionais nem escrita adicional.
 
-## QA A — existente, preservar
+## QA A — existente e preservado
 
-Estúdio ativo `bellza-qa-e2663064`, ID `e2663064-7774-41c5-95cb-e5e6afc4fab4`. As três contas abaixo estão confirmadas no Supabase Auth, não estão bloqueadas, já tiveram autenticação anterior e não possuem `saas_owner`. Nenhum vínculo ou dado existente deve ser alterado.
+Estúdio ativo `bellza-qa-e2663064`, ID `e2663064-7774-41c5-95cb-e5e6afc4fab4`.
 
-| Conta (ID não secreto) | Papel | Finalidade |
+| Conta Auth (ID não secreto) | Papel | Finalidade |
 | --- | --- | --- |
 | `96a5a309-154e-41f5-ad52-f2c52bd3bed1` | `manager` | QA de gestão |
 | `9aef1eae-90b1-4ae7-9c5f-aee93abfb212` | `staff` | QA profissional |
 | `ec3128b3-a366-4358-afb6-cabd41b68e79` | `studio_owner` | QA de proprietário e futura prova RLS |
 
-Sessões atuais das contas QA **não verificadas**. Autenticação anterior não prova que uma sessão esteja disponível agora.
+As três contas estavam confirmadas, não bloqueadas e sem `saas_owner` na revisão inicial. Após a criação de QA B, os três vínculos acima continuavam presentes. Sessões atuais de QA A não foram verificadas.
 
-## QA B — proposta, não criado
+## QA B — criado e inativo
 
-| Campo | Valor proposto |
+| Campo | Estado comprovado |
 | --- | --- |
 | Conta Auth | `qa-owner-b-20261116@bellza.invalid` |
-| Nome de apresentação | `Bellza QA B` |
-| ID da conta | Gerado pelo Supabase Auth; registar após criação |
-| Estúdio | `Bellza QA B`, slug `bellza-qa-b` |
-| ID do estúdio | `2cc1683e-ab91-4488-a702-6a8feb60f379` |
-| Papel | `studio_owner` somente neste estúdio; nunca `saas_owner` |
-| Estado inicial | Estúdio inativo; conta permanente, sem sessão automática |
-| Finalidade | Testes QA isolados de RLS, agenda e reservas; notificações e pagamentos apenas com simulação ou ambiente seguro autorizado |
+| ID da conta | `900acc24-5759-4571-a5d9-01588406f84d` |
+| Autenticação | Conta confirmada, não bloqueada; criada pela interface oficial do Supabase Auth sem convite por email |
+| Perfil | Uma linha criada pelo gatilho de Auth |
+| Estúdio | `Bellza QA B`, slug `bellza-qa-b`, ID `2cc1683e-ab91-4488-a702-6a8feb60f379` |
+| Estado do estúdio | `is_active=false`, `plan_tier='free'`, `subscription_status='canceled'`, `trial_ends_at='2000-01-01T00:00:00Z'` |
+| Papel | Um único vínculo `studio_owner` com QA B; nenhum outro vínculo da conta |
+| WhatsApp | Um entitlement `inactive`; zero claims de trial |
+| Finalidade | Testes QA futuros de RLS, agenda e reservas com autorização específica |
 
-Em 2026-11-16, não havia colisão para o email, nome, slug ou ID propostos. Reconfirmar imediatamente antes da criação. O domínio `.invalid` segue o padrão das três contas QA existentes e não recebe email: a senha única deve ser definida pelo proprietário e guardada num gestor seguro sob seu controlo. Sem senha, JWT, refresh token ou sessão no Git, relatórios, Telegram ou gateway.
+O proprietário definiu a senha diretamente no formulário do navegador e informou que a guardou. A Codex não recebeu, leu nem armazenou a senha. Não colocar senha, JWT, refresh token ou sessão no Git, logs, Telegram ou gateway.
 
-O estúdio `teste` **não foi selecionado**: tinha um vínculo de utilizador sem marcador QA. As contagens consultadas de clientes, appointments, booking requests, payment intents, subscriptions, logs de notificações, notificações de estúdio, staff e services foram zero, mas isso não comprova uso exclusivo em QA.
+A conta Auth foi criada pelo formulário `Create new user` do Dashboard, com confirmação automática e indicação na interface de que não seria enviado email. O estúdio e o vínculo foram criados numa única transação SQL especificamente autorizada, com pré-condições de identidade, ausência de conflitos e papel, mais verificações transacionais do estado inativo e do entitlement. A transação terminou sem erro. Uma consulta posterior, somente de contagens e estados, confirmou: Auth=1, perfil=1, estúdio inativo=1, vínculo `studio_owner`=1, vínculos totais da conta=1, entitlement inativo=1, claims de trial=0, vínculos QA A preservados=3.
 
-### Objetos e efeitos da criação proposta
+O estúdio `teste` não foi usado porque tinha um vínculo com utilizador sem marcador QA. Studio 27, Capivara e demais estúdios reais não foram alterados. Não foram consultadas agenda nem reservas nesta criação.
 
-1. Criar **uma** conta por Supabase Auth Admin, pelo método oficial de criação de utilizador, com o email acima, senha única e nome `Bellza QA B`, sem convite por email. Não inserir diretamente em `auth.users`. Auth cria seus registos internos; o gatilho ativo `on_auth_user_created` cria **uma** linha em `public.profiles`, sem telefone.
-2. Numa transação administrativa especificamente aprovada, criar **uma** linha em `public.studios` com o ID, nome e slug acima, `is_active=false`, `plan_tier='free'`, `subscription_status='canceled'` e `trial_ends_at='2000-01-01T00:00:00Z'`. O gatilho ativo cria **uma** linha em `public.whatsapp_studio_entitlements`: a definição ativa devolve `inactive` para um trial terminado. Não definir campos `trial_identity_*`.
-3. Na mesma transação, criar **uma** linha em `public.user_roles` para o ID Auth recém-criado, o ID de QA B e `role='studio_owner'`. O gatilho `claim_whatsapp_trial_for_owner` só faz claims com entitlement `trial`; portanto, não deve criar linhas em `public.whatsapp_trial_identity_claims`. Confirmar isso antes de concluir a operação.
-4. Não criar clientes, staff, serviços, reservas, pagamentos, subscrições, mensagens, contactos nem dados de estúdios reais. Nenhuma função de criação acima mostrou chamada externa na revisão da definição; isto não substitui a verificação imediatamente após a criação.
+## Reutilização e limites
 
-Método previsto: usar a sessão administrativa legítima no Supabase Dashboard. A conta deve ser criada pela função oficial de Supabase Auth Admin, sem convite ou email de confirmação e sem inserir em `auth.users` por SQL. O proprietário introduz e guarda a senha única sem a transmitir à Codex. A transação de `studios`/`user_roles` exige capacidade administrativa de escrita no SQL Editor, mas **não** exige GRANT, nova role ou alteração de RLS. Não fornecer `service_role` a agentes ou ao gateway. A [documentação oficial de Auth Admin](https://supabase.com/docs/reference/javascript/auth-admin-createuser) descreve `createUser` e `email_confirm`; confirmar a opção equivalente no Dashboard antes de qualquer envio.
+As duas identidades `studio_owner` para uma futura prova RLS são QA A `ec3128b3-a366-4358-afb6-cabd41b68e79` e QA B `900acc24-5759-4571-a5d9-01588406f84d`. Devem autenticar-se legitimamente em sessões separadas, sob controlo do proprietário; nenhuma sessão pessoal pode ser guardada no gateway automático.
 
-O SQL de dados para os itens 2–3 só poderá ser finalizado com o ID devolvido por Auth e executado após aprovação específica. A criação da conta e a transação de dados são **duas escritas distintas** no projeto de produção; nenhuma está autorizada por este registo. Pré-condições: reconfirmar ausência de colisões e não executar se a UI apenas oferecer convite por email.
+QA B permanece inativo. A implementação local revista sugere que a RLS funcional exige estúdio ativo, mas a correspondência exata com o Worker em produção não foi revista nesta operação. A ativação de QA B, qualquer criação de dados sintéticos e os GETs reais de agenda e reservas exigem análise e autorização específicas. Sem esses testes, o isolamento RLS real entre QA A e QA B continua **não comprovado**.
 
-```sql
--- PROPOSTA: NÃO EXECUTAR. Substituir <UUID_AUTH_QA_B> após criação oficial em Auth.
-BEGIN;
-INSERT INTO public.studios
-  (id, slug, name, is_active, plan_tier, subscription_status, trial_ends_at)
-VALUES
-  ('2cc1683e-ab91-4488-a702-6a8feb60f379', 'bellza-qa-b',
-   'Bellza QA B', false, 'free', 'canceled', '2000-01-01T00:00:00Z');
-INSERT INTO public.user_roles (user_id, studio_id, role)
-VALUES ('<UUID_AUTH_QA_B>', '2cc1683e-ab91-4488-a702-6a8feb60f379',
-        'studio_owner');
-DO $qa$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.whatsapp_studio_entitlements
-    WHERE studio_id = '2cc1683e-ab91-4488-a702-6a8feb60f379'
-      AND status = 'inactive'
-  ) OR EXISTS (
-    SELECT 1 FROM public.whatsapp_trial_identity_claims
-    WHERE studio_id = '2cc1683e-ab91-4488-a702-6a8feb60f379'
-  ) THEN
-    RAISE EXCEPTION 'qa_b_whatsapp_isolation_failed';
-  END IF;
-END
-$qa$;
-COMMIT;
-```
+Plano de teste futuro, sujeito a autorização: selecionar apenas `studio_id`, estado e horário em `appointments` e `booking_payment_requests` numa janela de 30 minutos, primeiro para estúdio próprio e depois cruzado. Registar apenas contagens e decisões de acesso, sem dados pessoais. Sem linhas adequadas, classificar o isolamento da tabela como **INDETERMINADO**. Não ativar a API privada automaticamente.
 
-O bloco inclui uma asserção transacional que aborta a criação do estúdio/vínculo se o WhatsApp não estiver inativo ou houver claims de trial. Ainda falta substituir o marcador do ID Auth e reconfirmar os gatilhos/constraints antes de qualquer execução. A senha e o ID Auth não serão colocados neste ficheiro.
-
-### Visibilidade, reversão e ativação futura
-
-Na implementação local revista, `is_active=true` torna o estúdio enumerável no sitemap público; a Sentinela descobre páginas públicas a partir dessa lista. A correspondência com o Worker ativo não foi revista nesta etapa. Por prudência, a proposta mantém QA B inativo. As políticas RLS ativas exigem estúdio ativo para o acesso funcional; o teste real entre QA A e QA B exigirá autorização posterior para ativar QA B e para executar os GETs. O estado `free/canceled` pode limitar testes de funcionalidades pagas; qualquer mudança de plano exigirá análise e autorização próprias. Uma conta permanente não concede aos agentes automáticos credencial de escrita ou sessão pessoal.
-
-Se a transação de estúdio/vínculo falhar, `ROLLBACK` preserva QA A; a conta Auth recém-criada permanece sem estúdio até decisão específica. Após criação concluída, **não eliminar automaticamente** conta ou estúdio: suspender uso e pedir autorização para qualquer desativação ou remoção, verificando previamente dados dependentes. Não tocar em Studio 27, Capivara ou demais estúdios.
-
-Para a futura prova RLS, usar a conta `studio_owner` QA A acima e QA B por login legítimo, em sessões separadas. Consultar primeiro apenas identidade e vínculo; depois, mediante autorização própria, GETs de `appointments` (`studio_id,status,starts_at`, próximos 30 minutos) e `booking_payment_requests` (`studio_id,status,created_at`, últimos 30 minutos), para estúdio próprio e cruzado. Guardar apenas contagens e decisões de acesso. Se não houver linhas próprias na janela, marcar o isolamento da tabela **INDETERMINADO**. Não ativar a API privada nem armazenar sessões no gateway.
+Para reversão ou suspensão, verificar antes dependências da conta e do estúdio. Não apagar nem desativar automaticamente estas identidades permanentes. Qualquer alteração posterior de Auth, estúdio, papéis, dados ou políticas requer autorização específica.
