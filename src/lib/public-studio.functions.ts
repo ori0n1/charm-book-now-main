@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { isExcludedQaStudio } from "@/lib/qa-public-visibility";
 
 export type PublicStudioSeo = {
   id: string;
@@ -27,6 +28,7 @@ export const getPublicStudioSeo = createServerFn({ method: "GET" })
     z.object({ slug: z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9-]*$/) }).parse(input),
   )
   .handler(async ({ data }): Promise<PublicStudioSeo | null> => {
+    if (isExcludedQaStudio({ slug: data.slug })) return null;
     const client = getPublicSupabaseClient();
     const { data: studio, error } = await (client as any)
       .from("public_studios")
@@ -39,7 +41,7 @@ export const getPublicStudioSeo = createServerFn({ method: "GET" })
       console.error("public_studio_seo_query_failed", error.message);
       throw new Error("Não foi possível carregar o estúdio.");
     }
-    if (!studio) return null;
+    if (!studio || isExcludedQaStudio(studio)) return null;
 
     return {
       id: String(studio.id),

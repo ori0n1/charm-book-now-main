@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { BLOG_BASE_URL, blogArticles, escapeXml } from "@/lib/blog";
+import { isExcludedQaStudio } from "@/lib/qa-public-visibility";
 
 type SitemapUrl = {
   loc: string;
@@ -26,7 +27,7 @@ async function getPublicStudioUrls(): Promise<SitemapUrl[]> {
     const supabase = getAdminClient();
     const { data, error } = await supabase
       .from("studios")
-      .select("slug,updated_at")
+      .select("id,slug,updated_at")
       .eq("is_active", true)
       .not("slug", "is", null)
       .order("updated_at", { ascending: false })
@@ -38,6 +39,7 @@ async function getPublicStudioUrls(): Promise<SitemapUrl[]> {
     }
 
     return data
+      .filter((studio) => !isExcludedQaStudio(studio))
       .map((studio) => ({
         loc: `/s/${String(studio.slug).trim().toLowerCase()}`,
         changefreq: "weekly" as const,

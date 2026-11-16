@@ -14,6 +14,7 @@ import { assertJointBookingCreationEnabled } from "@/lib/joint-booking-creation.
 import { getRequest } from "@tanstack/react-start/server";
 import { createRequestSupabaseClient, setPrivateAuthResponseHeaders } from "@/integrations/supabase/server-client";
 import { calculateDepositCharge, readDepositRule, readDepositSnapshot } from "@/lib/deposit-rule";
+import { isExcludedQaStudio } from "@/lib/qa-public-visibility";
 
 async function requirePublicBookingUser() {
   const request = getRequest();
@@ -84,6 +85,7 @@ const PublicJointBookingInput = z.object({
 export const createProtectedPublicJointBooking = createServerFn({ method: "POST" })
   .inputValidator((input) => PublicJointBookingInput.parse(input))
   .handler(async ({ data }) => {
+    if (isExcludedQaStudio({ slug: data.studioSlug })) throw new Error(translateBookingError("studio_not_available"));
     const verifiedUser = await requirePublicBookingUser();
     assertJointBookingCreationEnabled();
     const admin = getAdminClient() as any;
@@ -171,6 +173,7 @@ export const createProtectedPublicJointBooking = createServerFn({ method: "POST"
 export const getProtectedPublicBookingQuote = createServerFn({ method: "POST" })
   .inputValidator((input) => PublicBookingQuoteInput.parse(input))
   .handler(async ({ data }) => {
+    if (isExcludedQaStudio({ slug: data.studioSlug })) throw new Error(translateBookingError("studio_not_available"));
     const fingerprintHash = await sha256Hex(getRequestFingerprint());
     await rateLimitOrThrow({
       key: `public-booking-quote:ip:${fingerprintHash}`,
@@ -198,6 +201,7 @@ export const getProtectedPublicBookingQuote = createServerFn({ method: "POST" })
 export const createProtectedPublicBooking = createServerFn({ method: "POST" })
   .inputValidator((input) => PublicBookingInput.parse(input))
   .handler(async ({ data }) => {
+    if (isExcludedQaStudio({ slug: data.studioSlug })) throw new Error(translateBookingError("studio_not_available"));
     const verifiedUser = await requirePublicBookingUser();
     const admin = getAdminClient() as any;
     const phone = data.clientPhone.replace(/\D/g, "");

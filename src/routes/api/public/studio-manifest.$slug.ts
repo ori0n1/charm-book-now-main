@@ -1,12 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { BELLZA_APP_ICON_SVG } from "@/lib/brand-assets";
+import { isExcludedQaStudio } from "@/lib/qa-public-visibility";
 
 export const Route = createFileRoute("/api/public/studio-manifest/$slug")({
   server: {
     handlers: {
       GET: async ({ request, params }) => {
         const { slug } = params;
+        if (isExcludedQaStudio({ slug })) {
+          return Response.json({ error: "not_found" }, { status: 404 });
+        }
         try {
           const supabase = getAdminClient();
           const { data } = await supabase

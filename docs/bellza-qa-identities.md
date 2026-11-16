@@ -44,9 +44,19 @@ QA B permanece inativo. A implementação local revista sugere que a RLS funcion
 
 ### Decisão sobre ativação em 2026-11-16
 
-A autorização atual condiciona a ativação de QA B à ausência de publicação pública ou outros efeitos fora do escopo. **QA B não foi ativado.** A leitura administrativa confirmou `is_active=false` para QA B e `true` para QA A. No código local, `src/routes/sitemap[.]xml.ts` inclui todos os estúdios ativos em `/sitemap.xml`, e `src/lib/public-studio.functions.ts` e `src/routes/api/public/studio-manifest.$slug.ts` disponibilizam dados públicos de estúdios ativos. Não foi comprovado que a versão ativa em produção elimine este efeito. Assim, mudar `is_active` pode tornar QA B enumerável e acessível publicamente. A próxima decisão exige aprovação específica para essa exposição ou uma solução técnica isolada, cuja alteração dependeria de autorização própria.
+A autorização atual condiciona a ativação de QA B à ausência de publicação pública ou outros efeitos fora do escopo. **QA B não foi ativado.** A leitura administrativa confirmou `is_active=false` para QA B e `true` para QA A. A análise de código local identificou os caminhos de sitemap, página e manifesto; a verificação da exposição na versão ativa encontra-se na secção seguinte.
 
-Na instância de produção, há seis triggers não internos em `public.studios`: um `AFTER INSERT` de entitlement WhatsApp, três `BEFORE UPDATE` de proteção de colunas/plataforma e atualização de `updated_at` (incluindo duas chamadas a `set_updated_at`), e um `AFTER UPDATE OF` apenas de colunas de plano/subscrição. Só foram lidas definições de triggers; o corpo das funções de UPDATE não foi revisto nesta etapa, pois a exposição pública já bloqueia a escrita. Nenhuma atualização de estúdio foi executada.
+Na instância de produção, há seis triggers não internos em `public.studios`. As definições e os corpos relevantes para `is_active` foram revistos; o resultado encontra-se na secção seguinte. Nenhuma atualização de estúdio foi executada.
+
+### Proteção pública proposta em 2026-11-16 — ainda não publicada
+
+Uma sessão anónima no navegador confirmou que `/sitemap.xml` enumera QA A e que `/s/bellza-qa-e2663064` abre a página pública. QA B devolve 404 enquanto inativo. A revisão de metadados de produção confirmou que `public.public_studios` admite `SELECT` de `anon` e usa `private.catalog_public_studios()`, que inclui estúdios ativos com `public_page`, sem excluir QA. `public.studio_has_entitlement` concede `public_page` também a estúdios ativos gratuitos. Assim, mudar apenas `is_active` de QA B expô-lo-ia na origem pública.
+
+O candidato local exclui explicitamente QA A e QA B do sitemap, página de estúdio, manifesto e entradas de reserva pública. Outras cinco funções `private.catalog_public_*` expõem serviços, equipa, categorias, relações e ofertas de estúdios ativos. Todas as seis são `STABLE SECURITY DEFINER`, e as seis vistas correspondentes permitem `SELECT` a `anon`. `docs/qa-public-catalog-proposal.sql` prepara a exclusão nas seis funções, preservando os restantes estúdios; **não foi executado**. A versão publicada da aplicação não foi alterada. A ativação de QA B exige aprovação separada para a correção da base e da aplicação, validação dos pontos públicos restantes e, depois, aprovação específica para mudar apenas `is_active` de QA B. Estes bloqueios não afetam os fluxos administrativos QA autenticados.
+
+Os corpos dos triggers de `studios.is_active` foram lidos: a proteção de campos de plano não modifica o estado; a proteção de campos da plataforma impede essa mudança por `anon` e `authenticated`; os dois triggers de `set_updated_at` atualizam o timestamp. O trigger de entitlement WhatsApp é apenas de INSERT; o de evento de plano só reage a colunas de plano/subscrição. Não foi observada cobrança, notificação ou trial nesses corpos para um UPDATE exclusivo de `is_active`. Nenhum UPDATE foi executado.
+
+Reversão da proposta local: descartar o commit candidato. Se a correção vier a ser publicada, uma reversão da função exigiria autorização própria e recolocaria QA A na vista pública; primeiro seria necessário desativar QA A com autorização ou manter proteção equivalente. Reverter só a aplicação também reexporia QA A. QA B permanece inativo até confirmação em produção de todos os filtros.
 
 ### Autenticação local preparada
 
