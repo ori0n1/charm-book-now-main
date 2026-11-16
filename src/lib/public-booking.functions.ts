@@ -115,7 +115,9 @@ export const createProtectedPublicJointBooking = createServerFn({ method: "POST"
       studioMode = fallback.data ? { id: fallback.data.id, booking_flow_mode: "online" } : null;
       studioModeError = fallback.error;
     }
-    if (studioModeError || !studioMode) throw new Error(translateBookingError("studio_not_available"));
+    if (studioModeError || !studioMode || isExcludedQaStudio(studioMode)) {
+      throw new Error(translateBookingError("studio_not_available"));
+    }
     const { data: whatsappEntitled, error: entitlementError } = await admin.rpc(
       "studio_has_entitlement", { _studio_id: studioMode.id, _feature: "whatsapp" },
     );
@@ -187,6 +189,9 @@ export const getProtectedPublicBookingQuote = createServerFn({ method: "POST" })
     });
     if (error) throw new Error(translateBookingError(error.message));
     const quote = validateBookingQuote(rawQuote) as BookingQuote;
+    if (isExcludedQaStudio({ id: quote.studio_id })) {
+      throw new Error(translateBookingError("studio_not_available"));
+    }
     const { data: studio, error: studioError } = await admin.from("studios")
       .select("deposit_percent,studio_policy_settings,payment_policy")
       .eq("id", quote.studio_id).eq("is_active", true).single();
@@ -241,7 +246,9 @@ export const createProtectedPublicBooking = createServerFn({ method: "POST" })
         : null;
       studioModeError = fallbackStudio.error;
     }
-    if (studioModeError || !studioMode) throw new Error(translateBookingError("studio_not_available"));
+    if (studioModeError || !studioMode || isExcludedQaStudio(studioMode)) {
+      throw new Error(translateBookingError("studio_not_available"));
+    }
     const { data: whatsappEntitled, error: entitlementError } = await admin.rpc(
       "studio_has_entitlement",
       {

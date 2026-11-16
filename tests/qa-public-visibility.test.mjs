@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { isExcludedQaStudio } from "../src/lib/qa-public-visibility.ts";
 
@@ -16,4 +17,18 @@ test("only the two permanent QA identities are hidden from public discovery", ()
     { slug: "bellza-qa-b-outro" },
     {},
   ]) assert.equal(isExcludedQaStudio(studio), false);
+});
+
+test("catalog migration and rollback use the same six verified definitions and QA IDs", () => {
+  const migration = readFileSync(new URL("../docs/qa-public-catalog-proposal.sql", import.meta.url), "utf8");
+  const rollback = readFileSync(new URL("../docs/qa-public-catalog-rollback-proposal.sql", import.meta.url), "utf8");
+  const baseline = (sql) => JSON.parse(sql.match(/baseline jsonb := '(\{[\s\S]*?\})'::jsonb;/)?.[1] ?? "null");
+  const expected = baseline(migration);
+  assert.equal(Object.keys(expected).length, 6);
+  assert.deepEqual(baseline(rollback), expected);
+  for (const id of ["e2663064-7774-41c5-95cb-e5e6afc4fab4", "2cc1683e-ab91-4488-a702-6a8feb60f379"]) {
+    assert.equal(migration.includes(id), true);
+    assert.equal(rollback.includes(id), true);
+  }
+  assert.match(rollback, /rollback would expose an active QA studio/);
 });

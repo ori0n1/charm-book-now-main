@@ -15,12 +15,12 @@ export const Route = createFileRoute("/api/public/studio-manifest/$slug")({
           const supabase = getAdminClient();
           const { data } = await supabase
             .from("studios")
-            .select("name, logo_url, brand_color, updated_at")
+            .select("id, name, logo_url, brand_color, updated_at")
             .eq("slug", slug)
             .eq("is_active", true)
             .maybeSingle();
 
-          if (!data) {
+          if (!data || isExcludedQaStudio(data)) {
             return Response.json({ error: "not_found" }, { status: 404 });
           }
 
