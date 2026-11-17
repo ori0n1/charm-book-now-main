@@ -7,9 +7,10 @@ import {
   rateLimitOrThrow,
 } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
-import { addCurrentAccountDisplayPhones, readAccountPreferredPhone } from "@/lib/account-booking-phone";
+import { addCurrentAccountDisplayPhones, prepareAgendaDisplayPhones, readAccountPreferredPhone } from "@/lib/account-booking-phone";
 
 const StudioInput = z.object({ studioId: z.string().uuid() });
+const AgendaDisplayPhonesInput = StudioInput.extend({ clientIds: z.array(z.string().uuid()).min(1).max(20) });
 const AgendaCatalogInput = StudioInput.extend({ staffId: z.string().uuid().nullable() });
 const ResolveAttendanceInput = StudioInput.extend({
   appointmentIds: z.array(z.string().uuid()).min(1).max(100),
@@ -379,6 +380,35 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
       messageLogs,
       scheduleEvents,
     };
+  });
+
+export const getProtectedAgendaDisplayPhones = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => AgendaDisplayPhonesInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const admin = getAdminClient() as any;
+    const userId = String((context as any).userId ?? "");
+    await assertStudioAccess(admin, userId, data.studioId);
+    await resolveStudioRole(admin, userId, data.studioId);
+    await rateLimitOrThrow({
+      key: `agenda-display-phones:${data.studioId}:${userId}`,
+      limit: 60,
+      windowMs: 60_000,
+    });
+
+    const { data: clients, error } = await admin.from("clients")
+      .select("id,phone,auth_user_id")
+      .eq("studio_id", data.studioId)
+      .in("id", data.clientIds);
+    if (error) throw error;
+    const appointments = (clients ?? []).map((client: any) => ({ clients: client }));
+    const withPhones = await addCurrentAccountDisplayPhones(appointments, async (id) => {
+      const { data: auth, error: authError } = await admin.auth.admin.getUserById(id);
+      if (authError?.status === 404) return "";
+      if (authError) throw authError;
+      return readAccountPreferredPhone(auth?.user?.user_metadata);
+    });
+    return Object.fromEntries(withPhones.map((row: any) => [row.clients.id, row.clients.display_phone]));
   });
 
 export const resolveProtectedAppointmentAttendance = createServerFn({ method: "POST" })
@@ -823,21 +853,20 @@ async function loadAgendaAppointments(admin: any, studioId: string) {
     appointments.push(...(data ?? []));
     if ((data ?? []).length < pageSize) break;
   }
-  // The account's chosen phone can change without changing the studio client row.
   // Keep the stored phone for booking, payment and WhatsApp consent decisions.
-  return addCurrentAccountDisplayPhones(appointments, async (id) => {
-    const { data, error } = await admin.auth.admin.getUserById(id);
-    if (error?.status === 404) return "";
-    if (error) throw error;
-    return readAccountPreferredPhone(data?.user?.user_metadata);
-  });
+  // Current account display phones are loaded separately so the agenda stays
+  // within the Worker's per-invocation subrequest limit.
+  return prepareAgendaDisplayPhones(appointments);
 }
 
 async function loadAppointmentRows(query: () => any, appointmentIds: string[]) {
   if (appointmentIds.length === 0) return [];
   const rows: any[] = [];
-  for (let index = 0; index < appointmentIds.length; index += 100) {
-    const ids = appointmentIds.slice(index, index + 100);
+  // Keep each PostgREST URL modest while leaving headroom under the
+  // Worker's per-invocation subrequest limit for studios with many bookings.
+  const batchSize = 150;
+  for (let index = 0; index < appointmentIds.length; index += batchSize) {
+    const ids = appointmentIds.slice(index, index + batchSize);
     for (let offset = 0; ; offset += 1000) {
       const { data, error } = await query().in("appointment_id", ids).range(offset, offset + 999);
       if (error) throw error;

@@ -112,6 +112,21 @@ export function chooseAccountBookingContactRecipient(input: {
 }
 
 /** The agenda displays the account preference without changing booking or consent data. */
+export function prepareAgendaDisplayPhones<T extends {
+  clients?: { phone?: string | null; auth_user_id?: string | null } | null;
+}>(appointments: T[]): T[] {
+  return appointments.map((row) => {
+    if (!row.clients) return row;
+    const client = { ...row.clients };
+    delete client.auth_user_id;
+    return { ...row, clients: {
+      ...client,
+      display_phone: client.phone,
+    } } as T;
+  });
+}
+
+/** The agenda displays the account preference without changing booking or consent data. */
 export async function addCurrentAccountDisplayPhones<T extends {
   clients?: { phone?: string | null; auth_user_id?: string | null } | null;
 }>(

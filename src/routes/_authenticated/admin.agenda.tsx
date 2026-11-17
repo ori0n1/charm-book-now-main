@@ -105,6 +105,7 @@ import {
 } from "@/lib/in-person-mbway.functions";
 import {
   getProtectedAgendaData,
+  getProtectedAgendaDisplayPhones,
   getProtectedAgendaCatalog,
   resolveProtectedJointServiceState,
   rescheduleProtectedJointService,
@@ -317,6 +318,7 @@ function AgendaPage() {
   const { color: agendaColor } = useAgendaColor(studio?.id);
   const resendWhatsApp = useServerFn(sendAppointmentConfirmationForAppointment);
   const loadProtectedAgenda = useServerFn(getProtectedAgendaData);
+  const loadDisplayPhones = useServerFn(getProtectedAgendaDisplayPhones);
   const resolveAttendance = useServerFn(resolveProtectedAppointmentAttendance);
   const correctAttendance = useServerFn(correctProtectedAppointmentAttendance);
   const correctOwnerAction = useServerFn(correctProtectedOwnerAppointmentAction);
@@ -410,6 +412,7 @@ function AgendaPage() {
   const prependScrollWidthRef = useRef<number | null>(null);
   const dateRangeLoadingRef = useRef(false);
   const agendaLoadSequenceRef = useRef(0);
+  const displayPhoneCacheRef = useRef(new Map<string, { phone: string; expiresAt: number }>());
   const selectedDateScrollPendingRef = useRef(true);
   const followsTodayRef = useRef(true);
   const lastObservedLocalDayRef = useRef(selectedDate);
@@ -590,7 +593,14 @@ function AgendaPage() {
     try {
       const payload = await loadProtectedAgenda({ data: { studioId: studio.id } });
       if (sequence !== agendaLoadSequenceRef.current) return;
-      setAppts(sortAppointmentsChronologically((payload.appointments ?? []) as unknown as Appt[]));
+      const nextAppts = sortAppointmentsChronologically((payload.appointments ?? []) as unknown as Appt[]);
+      const cachedAppts = nextAppts.map((appointment) => {
+        const cached = appointment.clients && displayPhoneCacheRef.current.get(`${studio.id}:${appointment.clients.id}`);
+        return cached && appointment.clients
+          ? { ...appointment, clients: { ...appointment.clients, display_phone: cached.phone || appointment.clients.phone } }
+          : appointment;
+      });
+      setAppts(cachedAppts);
       setAgendaStaff((payload.staff ?? []) as StudioStaff[]);
       setStaffAvailability((payload.availability ?? []) as StaffAvailabilityRow[]);
       setAttendanceGraceMinutes(
@@ -602,6 +612,37 @@ function AgendaPage() {
       setMessageLogs((payload.messageLogs ?? []) as MessageLog[]);
       setWhatsappAvailable(Boolean(payload.communicationSettings?.whatsappAvailable));
       setScheduleEvents((payload.scheduleEvents ?? []) as ScheduleEventRow[]);
+      void (async () => {
+        const currentTime = Date.now();
+        const clientIds = [...new Set([...nextAppts]
+          .sort((a, b) => Math.abs(Date.parse(a.starts_at) - currentTime) - Math.abs(Date.parse(b.starts_at) - currentTime))
+          .map((appointment) => appointment.clients?.id)
+          .filter((id): id is string => Boolean(id)))];
+        for (let offset = 0; offset < clientIds.length; offset += 20) {
+          if (sequence !== agendaLoadSequenceRef.current) return;
+          const now = Date.now();
+          const batch = clientIds.slice(offset, offset + 20).filter((id) =>
+            (displayPhoneCacheRef.current.get(`${studio.id}:${id}`)?.expiresAt ?? 0) <= now);
+          if (batch.length === 0) continue;
+          let phones: Record<string, string>;
+          try {
+            phones = await loadDisplayPhones({ data: { studioId: studio.id, clientIds: batch } });
+          } catch (error) {
+            console.warn("[agenda] display phone load failed", error);
+            return;
+          }
+          if (sequence !== agendaLoadSequenceRef.current) return;
+          const expiresAt = Date.now() + 120_000;
+          for (const id of batch) {
+            displayPhoneCacheRef.current.set(`${studio.id}:${id}`, { phone: phones[id] ?? "", expiresAt });
+          }
+          setAppts((current) => current.map((appointment) => {
+            const client = appointment.clients;
+            if (!client || !batch.includes(client.id)) return appointment;
+            return { ...appointment, clients: { ...client, display_phone: phones[client.id] || client.phone } };
+          }));
+        }
+      })();
     } catch (error) {
       console.error("[agenda] protected load failed", error);
       if (sequence === agendaLoadSequenceRef.current && !options?.silent) toast.error("Não foi possível carregar a agenda.");

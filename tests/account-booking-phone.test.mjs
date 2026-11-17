@@ -4,8 +4,17 @@ import {
   addCurrentAccountDisplayPhones,
   isUsableAccountPhone,
   normalizeAccountBookingPhone,
+  prepareAgendaDisplayPhones,
   readAccountPreferredPhone,
 } from "../src/lib/account-booking-phone.ts";
+
+test("initial agenda load keeps the stored phone without exposing account identifiers", () => {
+  const original = [{ clients: { phone: "+351 911 000 000", auth_user_id: "synthetic-account" } }];
+  const displayed = prepareAgendaDisplayPhones(original);
+  assert.equal(displayed[0].clients.display_phone, "+351 911 000 000");
+  assert.equal("auth_user_id" in displayed[0].clients, false);
+  assert.equal(original[0].clients.auth_user_id, "synthetic-account");
+});
 
 test("agenda uses the current account phone for old reservations without changing the stored contact", async () => {
   const old = "+351 911 000 000";
