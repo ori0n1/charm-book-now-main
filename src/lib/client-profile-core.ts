@@ -52,6 +52,18 @@ async function requireStudioOwner(db: ProfileDatabase, userId: string, studioId:
   if (error || !owner) throw new Response("studio_owner_required", { status: 403 });
 }
 
+export async function getClientProfilePermissions(db: ProfileDatabase, userId: string, studioId: string) {
+  const { data: member, error } = await db
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId)
+    .eq("studio_id", studioId)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return { canEdit: Boolean(member), canRemove: member?.role === "studio_owner" };
+}
+
 export async function archiveClientForOwner(
   db: ProfileDatabase,
   userId: string,
@@ -101,12 +113,13 @@ export async function unifyEmptyClientForOwner(db: ProfileDatabase, userId: stri
   return { unified: true };
 }
 
-export async function updateClientProfileForOwner(
+export async function updateClientProfileForMember(
   db: ProfileDatabase,
   userId: string,
   data: ClientProfileInput,
 ) {
-  await requireStudioOwner(db, userId, data.studioId);
+  const { canEdit } = await getClientProfilePermissions(db, userId, data.studioId);
+  if (!canEdit) throw new Response("studio_member_required", { status: 403 });
 
   const { data: client, error } = await db
     .from("clients")

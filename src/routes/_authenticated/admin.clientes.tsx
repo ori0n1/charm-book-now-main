@@ -278,7 +278,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
     enabled: !!studio?.id,
     queryFn: () => getEditPermission({ data: { studioId: studio!.id } }),
   });
-  const canRemove = ownerPermission.data?.canEdit === true;
+  const canRemove = ownerPermission.data?.canRemove === true;
   const duplicateGroups = useMemo(() => groupDuplicateClients(clients), [clients]);
   const duplicateIds = useMemo(() => new Set(duplicateGroups.flatMap((group) => group.clients.map((client) => client.id))), [duplicateGroups]);
   const dependencyChecks = useQuery({
@@ -1398,6 +1398,7 @@ function ClientDetails({
     retry: 2,
   });
   const canEdit = editPermission.data?.canEdit === true;
+  const canRemove = editPermission.data?.canRemove === true;
   const [profileOpen, setProfileOpen] = useState(false);
   const [name, setName] = useState(client.name);
   const [phone, setPhone] = useState(client.phone);
@@ -1421,7 +1422,7 @@ function ClientDetails({
   const archiveConfirmationValid = archiveConfirmation.trim().toUpperCase() === "EXCLUIR";
   const removalInspection = useQuery({
     queryKey: ["client-removal-inspection", studioId, client.id],
-    enabled: canEdit && archiveOpen,
+    enabled: canRemove && archiveOpen,
     queryFn: () => inspectProfile({ data: { studioId, clientId: client.id } }),
   });
   const financialVisible = useContext(ClientFinancialVisible);
@@ -1468,7 +1469,7 @@ function ClientDetails({
   }
 
   async function archiveClient() {
-    if (!canEdit || !archiveConfirmationValid || archiveSaving) return;
+    if (!canRemove || !archiveConfirmationValid || archiveSaving) return;
     setArchiveSaving(true);
     setArchiveError("");
     try {
@@ -1585,7 +1586,7 @@ function ClientDetails({
       </div>}
       {activeTab === "history" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold">Resumo das marcações</h3><button type="button" onClick={() => setShowAppointmentDetails((open) => !open)} className="flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs">{showAppointmentDetails ? "Ocultar" : "Ver detalhes"}<ChevronDown className={`h-3.5 w-3.5 ${showAppointmentDetails ? "rotate-180" : ""}`} /></button></div><div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">{mainAppointmentMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} />)}</div>{showAppointmentDetails && <div className="mt-4 grid grid-cols-3 gap-3 border-t pt-3">{visibleSecondaryMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />)}</div>}</div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><ContextGroup title="Relacionamento" items={relationshipDetails} /><p className="mt-3 text-xs text-slate-500">Último serviço: {client.lastService}</p></div>{explainedTotal !== client.totalAppointments && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Existem estados antigos sem categoria clara. O total mantém todas as marcações reais deste cliente.</p>}{faltasWarning && <p className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.</p>}</div>}
       {activeTab === "preferences" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold"><Heart className="h-5 w-5 text-violet-600" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div>{birthdayToday && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><p className="text-sm font-semibold">Hoje é aniversário deste cliente. Mensagem de aniversário pendente.</p><a href={birthdayWhatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar agora</a></div>}{automationEvents.length > 0 && <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="text-sm font-bold">Automações do cliente</h3>{automationEvents.map((event) => <p key={event} className="mt-2 text-sm text-slate-600">{event}</p>)}</div>}</div>}
-      {canEdit && <div className="min-w-0 rounded-3xl border border-rose-200 bg-rose-50/80 p-4">
+      {canRemove && <div className="min-w-0 rounded-3xl border border-rose-200 bg-rose-50/80 p-4">
         <button type="button" onClick={() => { setArchiveOpen((open) => !open); setArchiveError(""); setArchiveConfirmation(""); }} className="flex w-full min-w-0 items-center gap-3 whitespace-normal text-left">
           <Trash2 className="h-5 w-5 shrink-0 text-rose-600" />
           <span className="min-w-0 flex-1 whitespace-normal"><strong className="block break-words text-sm text-rose-700 [overflow-wrap:anywhere]">Excluir cliente do estúdio</strong><span className="block break-words text-xs leading-relaxed text-slate-600 [overflow-wrap:anywhere]">A ficha será excluída; reservas e histórico financeiro serão preservados.</span></span>
