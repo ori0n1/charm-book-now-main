@@ -1,4 +1,11 @@
-# Base oficial da produção Bellza — 2026-11-11
+# Base oficial da produção Bellza — 2026-11-18
+
+## Produção ativa — edição da ficha por profissionais do estúdio
+
+- Worker `tanstack-start-app`: deployment `5b85fdfc-45d2-4d3a-aaaa-8547df154036`, versão `18b08ffe-4029-4d9d-abee-b43bb7edbce2` ativa a 100% desde 2026-11-18 12:09 UTC. Fonte funcional publicada: commit `4ad7a61449f00d06ce8a36410b2b4148aed0ff5c`. Versão anterior `8c6aecbb-465d-45c8-b50f-15f9bea4024a` preservada para rollback somente após autorização específica.
+- Qualquer membro do estúdio pode editar nome, telefone, email, nascimento e notas da ficha. A remoção continua reservada ao proprietário. O servidor confirma a associação ao mesmo estúdio e a ficha ativa antes de aplicar a atualização. Nenhuma migração ou escrita em dados reais foi feita nesta publicação.
+- Artefato: 467 ficheiros, SHA-256 da árvore `d78a547b1061fd9d7ab059894e747cb21cd4e81540199b74e4f686975fb9ee93` (linhas ordenadas `caminho em minúsculas:SHA-256`, LF sem LF final, excluindo configuração gerada e `.wrangler`); entrada `dist/server/index.js` `7b7107e2963886a0af367d6cf8016e6ac5ef4f5d21b8871695dc9f01436e4323`; configuração de upload `640c7b8596ac7ab47bbdb8d539f21c86309629893a2194dfa2b6cb8ce8693e28`.
+- Verificação: 7 testes sintéticos direcionados, typecheck, lint e build passaram. A Cloudflare confirmou os 230 módulos JS byte a byte, 53 bindings incluindo 24 secrets por nome, runtime, dois crons e 45 rotas. `/`, `/login` e `/s/studio27braga` responderam HTTP 200; `/admin/clientes` sem sessão redirecionou com HTTP 307; o asset publicado da página de clientes coincidiu com o build. Não havia sessão autenticada de profissional para executar a edição em produção sem tocar dados reais.
 
 ## Produção ativa — reserva pública com identidade autenticada
 
