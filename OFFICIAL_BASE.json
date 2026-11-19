@@ -2,9 +2,23 @@
   "schema": 2,
   "worker": "tanstack-start-app",
   "cloudflareAccountId": "5c4cb61495df81feda4da7d1098e098e",
-  "deploymentId": "5b85fdfc-45d2-4d3a-aaaa-8547df154036",
-  "cloudflareVersionId": "18b08ffe-4029-4d9d-abee-b43bb7edbce2",
-  "sourceCommit": "4ad7a61449f00d06ce8a36410b2b4148aed0ff5c",
+  "deploymentId": "e38cb420-db42-495c-b86a-f97553a82d75",
+  "cloudflareVersionId": "dbce9473-991e-4294-8606-ceb0c78356e0",
+  "sourceCommit": "5598aa40c72099c1b839d4042aa3532889acd090",
+  "activeRecovery": {
+    "checkedOn": "2026-11-19",
+    "publishedAt": "2026-11-19T09:25:06.519Z",
+    "trafficPercent": 100,
+    "sourceCommit": "5598aa40c72099c1b839d4042aa3532889acd090",
+    "workerMultipartSha256": "10000233d69e652dd2ba1c443e0452e472edaf2e7e41d0bf8801ad478186bb2e",
+    "workerModules": 230,
+    "clientAssets": 223,
+    "rebuildComparison": "All Worker modules and client assets matched after normalizing Vite content hashes and the local absolute path in the TanStack route manifest. No functional module difference remained.",
+    "bindings": 53,
+    "secretNames": 24,
+    "databaseMigrations": 0,
+    "productionWrites": 0
+  },
   "clientProfileStaffEditRelease": {
     "publishedOn": "2026-11-18",
     "trafficPercent": 100,
@@ -356,7 +370,9 @@
     "additionalPlainNames": [
       "ARARA_CANARY_PROBE_SHA256",
       "GOOGLE_PLACES_ENABLED",
-      "JOINT_BOOKING_CREATE_ENABLED"
+      "JOINT_BOOKING_CREATE_ENABLED",
+      "SENDDM_SMART_REMINDER_TEMPLATE_ID",
+      "SENDDM_SMART_REMINDER_TEMPLATE_NAME"
     ],
     "additionalPlainNamesAbsentFromLocalWranglerConfig": true
   },
