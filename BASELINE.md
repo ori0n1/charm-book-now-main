@@ -1,6 +1,14 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-19
 
-## Produção ativa — blog original e SEO público
+## Produção ativa — fidelidade para proprietária, gestoras e profissionais
+
+- Cloudflare OAuth confirmou o deployment `af253956-ccaa-44c3-8fbd-84a43f5be559`, versão `be47026f-6ad3-4f81-b85b-22d5e3c0d69a` a 100% do tráfego; a anterior `e5bb73f6-a486-4236-99cc-996b4ec09666` permanece a 0%. Fonte de produto publicada: commit `e89ad1894446ef57dcedf41b5d14251a12c0c60a`.
+- Só três ficheiros funcionais mudaram: guarda do editor de promoções, página de fidelidade e navegação do painel. A proprietária, gestoras e profissionais podem gerir regras e recompensas do próprio estúdio; resgate e ajustes manuais de saldo mantêm permissões anteriores. Textos da página foram revistos para português e pluralização de garimpos.
+- Artefacto: 467 ficheiros, SHA-256 da árvore `692c319d697516ac3ce81bfb2471ed27f8311b158e4ac79bd0984ff707072c55`; entrada `dist/server/index.js` SHA-256 `efff9e26059a9236fcf02aa25a82f9b554d98f95c2886aa58f5a664aa93e2b6c`. O Worker preserva 230 módulos e 45 caminhos de rotas; o cliente tem 223 ficheiros. O manifesto de upload mantém SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`.
+- Configuração: 53 bindings (29 variáveis e 24 secrets por nome e tipo), dois crons, domínios e runtime iguais à versão anterior. Não houve migração, alteração de dados, reserva, pagamento ou envio de notificação. O build, TypeScript, 17 testes de contrato e dry-run passaram.
+- Smoke com candidata a 0% e override: início, login, Studio 27 e Capivara responderam 200; fidelidade e agenda sem sessão redirecionaram para login; o asset de fidelidade coincidiu byte a byte com o candidato. Após 100%, os mesmos endpoints passaram, o painel de fidelidade autenticado mostrou os textos novos e a agenda autenticada carregou. As sessões QA de gestora e profissional não estavam disponíveis neste perfil; o acesso desses papéis foi revisto no código, mas não testado em sessão live.
+
+## Produção anterior — blog original e SEO público
 
 - Cloudflare OAuth confirmou o deployment `c5e88f6c-22d3-4595-932c-bdc5d9e1a608`, versão `e5bb73f6-a486-4236-99cc-996b4ec09666` a 100% do tráfego. A fonte de produto publicada é o commit `23fa6d465d8a0835808090fa62af1ea589a12e83`; o commit seguinte de sincronização altera somente metadados da base e o guarda de versão do build, sem alterar o código funcional do Worker.
 - Artefacto aprovado: 467 ficheiros, SHA-256 da árvore `8ce00eb66c8b124608542dcccbaabe87294fbc3638994f8b2417445763df3aaf`; configuração de upload SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`. A Cloudflare devolveu 231 módulos, incluindo `_headers`, idênticos byte a byte ao build. Os módulos de notificações financeiras de servidor e navegador continuaram iguais aos da versão anterior após normalização dos hashes; o asset financeiro servido ao navegador coincidiu byte a byte com o build.
