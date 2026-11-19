@@ -104,12 +104,12 @@ async function assertLoyaltySummaryReader(sb: ReturnType<typeof getAdminClient>,
   if (error || !data?.role) throw new Response("loyalty_summary_forbidden", { status: 403 });
 }
 
-async function assertLoyaltyOwner(sb: ReturnType<typeof getAdminClient>, userId: string, studioId: string) {
+async function assertLoyaltyRedeemer(sb: ReturnType<typeof getAdminClient>, userId: string, studioId: string) {
   await assertStudioAccess(sb, userId, studioId, { entitlement: "loyalty" });
   const { data, error } = await sb.from("user_roles").select("role")
     .eq("user_id", userId).eq("studio_id", studioId)
-    .eq("role", "studio_owner").limit(1).maybeSingle();
-  if (error || !data?.role) throw new Response("loyalty_owner_required", { status: 403 });
+    .in("role", ["studio_owner", "manager"]).limit(1).maybeSingle();
+  if (error || !data?.role) throw new Response("loyalty_redeemer_required", { status: 403 });
 }
 
 export async function loadCustomerLoyaltySummaryForClient(options: {
@@ -364,7 +364,7 @@ export const redeemCustomerLoyaltyReward = createServerFn({ method: "POST" })
   .inputValidator((input) => RedemptionInput.extend({ appointmentId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertLoyaltyOwner(sb, (context as any).userId, data.studioId);
+    await assertLoyaltyRedeemer(sb, (context as any).userId, data.studioId);
     const { data: reward, error } = await (sb as any).rpc("redeem_customer_loyalty_discount", {
       p_studio_id: data.studioId, p_code: data.code, p_appointment_id: data.appointmentId,
       p_actor_id: (context as any).userId,

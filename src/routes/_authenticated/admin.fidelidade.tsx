@@ -44,7 +44,7 @@ function AdminLoyaltyPage() {
   const canManageLedger = Boolean(studio && studios.some((membership) =>
     membership.id === studio.id && ["saas_owner", "studio_owner", "manager"].includes(membership.role)));
   const canRedeemReward = Boolean(studio && studios.some((membership) =>
-    membership.id === studio.id && membership.role === "studio_owner"));
+    membership.id === studio.id && ["studio_owner", "manager"].includes(membership.role)));
   const loadSummary = useServerFn(getCustomerLoyaltyAdminSummary);
   const saveSettings = useServerFn(updateCustomerLoyaltySettings);
   const lookupReward = useServerFn(lookupCustomerLoyaltyReward);
