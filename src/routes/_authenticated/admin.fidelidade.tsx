@@ -40,6 +40,10 @@ export const Route = createFileRoute("/_authenticated/admin/fidelidade")({
 function AdminLoyaltyPage() {
   const { studio, studios, loading: studioLoading, error: studioError, refetch: refetchStudio } = useCurrentStudio();
   const canConfigurePromotions = Boolean(studio && studios.some((membership) =>
+    membership.id === studio.id && ["studio_owner", "manager", "staff"].includes(membership.role)));
+  const canManageLedger = Boolean(studio && studios.some((membership) =>
+    membership.id === studio.id && ["saas_owner", "studio_owner", "manager"].includes(membership.role)));
+  const canRedeemReward = Boolean(studio && studios.some((membership) =>
     membership.id === studio.id && membership.role === "studio_owner"));
   const loadSummary = useServerFn(getCustomerLoyaltyAdminSummary);
   const saveSettings = useServerFn(updateCustomerLoyaltySettings);
@@ -84,7 +88,7 @@ function AdminLoyaltyPage() {
     setLoadError(null);
     const timeout = window.setTimeout(() => {
       if (!alive) return;
-      setLoadError("A consulta demorou demasiado. Tenta novamente.");
+      setLoadError("A consulta demorou demasiado. Tente novamente.");
       setLoading(false);
       alive = false;
     }, 20000);
@@ -98,7 +102,7 @@ function AdminLoyaltyPage() {
       .catch((error) => {
         if (!alive) return;
         console.error("[customer-loyalty] admin_load_failed", error);
-        setLoadError("Não foi possível carregar a Fidelidade. Tenta novamente.");
+        setLoadError("Não foi possível carregar a fidelidade. Tente novamente.");
       })
       .finally(() => {
         window.clearTimeout(timeout);
@@ -118,7 +122,7 @@ function AdminLoyaltyPage() {
   async function save() {
     if (!studio?.id || !draft) return;
     if (draft.serviceStampsEnabled && draft.eligibleServiceIds !== null && draft.eligibleServiceIds.length === 0) {
-      toast.error("Escolhe pelo menos um serviço ou seleciona Todos os serviços.");
+      toast.error("Escolha pelo menos um serviço ou selecione Todos os serviços.");
       return;
     }
     setSaving(true);
@@ -135,7 +139,7 @@ function AdminLoyaltyPage() {
       toast.success("Fidelidade atualizada.");
     } catch (error) {
       console.error("[customer-loyalty] admin_save_failed", error);
-      toast.error("Não foi possível confirmar a gravação. Tenta novamente; as regras não serão duplicadas.");
+      toast.error("Não foi possível confirmar a gravação. Tente novamente; as regras não serão duplicadas.");
     } finally {
       setSaving(false);
     }
@@ -229,10 +233,10 @@ function AdminLoyaltyPage() {
       setSummary(await loadSummary({ data: { studioId: studio.id } }) as CustomerLoyaltyAdminSummary);
       setClients(await findClients({ data: { studioId: studio.id, query: clientQuery } }));
       setStampNote("");
-      toast.success("Ajuste de carimbos registado.");
+      toast.success("Ajuste de garimpos registado.");
     } catch (error) {
       console.error("[customer-loyalty] stamp_adjustment_failed", error);
-      toast.error("Não foi possível ajustar os carimbos. Confere o saldo e tenta novamente.");
+      toast.error("Não foi possível ajustar os garimpos. Confirme o saldo e tente novamente.");
     } finally { setManagementBusy(false); }
   }
 
@@ -281,7 +285,7 @@ function AdminLoyaltyPage() {
               Fidelidade
             </h1>
             <p className="mt-0.5 hidden max-w-2xl text-sm leading-snug text-muted-foreground sm:block">
-              Carimbos, benefícios e indicações deste estúdio.
+              Garimpos, benefícios e indicações deste estúdio.
             </p>
           </div>
           {canConfigurePromotions && <Button
@@ -302,17 +306,17 @@ function AdminLoyaltyPage() {
         </div>
       </section>
 
-      <Button type="button" variant="outline" onClick={() => setValidationOpen((value) => !value)} className="w-full sm:w-auto">
+      {canManageLedger && <Button type="button" variant="outline" onClick={() => setValidationOpen((value) => !value)} className="w-full sm:w-auto">
         <Camera className="mr-2 size-4" /> Validar benefício
-      </Button>
-      {validationOpen && <section className="space-y-3 rounded-2xl border border-border bg-card p-3">
+      </Button>}
+      {canManageLedger && validationOpen && <section className="space-y-3 rounded-2xl border border-border bg-card p-3">
         <video ref={videoRef} playsInline muted className="mx-auto max-h-56 w-full rounded-xl bg-black" />
         <Button type="button" variant="outline" onClick={startScanner}>Abrir câmara</Button>
         <div className="flex gap-2"><Input aria-label="Código do benefício" placeholder="Código do benefício" value={code} onChange={(event) => { setCode(event.target.value.toUpperCase()); setFoundReward(null); }} />
           <Button type="button" disabled={validating || code.trim().length < 8} onClick={checkCode}>Verificar</Button></div>
         {foundReward && <div className="rounded-xl bg-muted/50 p-3 text-sm">
           <p className="font-bold">{foundReward.clientName}</p>
-          <p>{foundReward.stampsRequired} garimpos por {foundReward.type === "percent" ? `${foundReward.value}%` : `${foundReward.value} €`} de desconto</p>
+          <p>{formatGarimpos(foundReward.stampsRequired)} por {foundReward.type === "percent" ? `${foundReward.value}%` : `${foundReward.value} €`} de desconto</p>
           <p className="text-xs text-muted-foreground">{foundReward.movedToNext
             ? "A visita atual já tem pagamento ou desconto. O benefício mantém-se para a próxima visita elegível."
             : foundReward.applyWhen === "current" ? "Na visita que conquistou a recompensa" : "Na próxima visita elegível"}</p>
@@ -320,7 +324,7 @@ function AdminLoyaltyPage() {
             ? <p className="mt-2 text-xs">Reserva elegível: {new Date(foundReward.appointment.startsAt).toLocaleString("pt-PT")} · {foundReward.appointment.price.toFixed(2)} € antes do desconto.</p>
             : <p className="mt-2 text-xs">Sem reserva elegível por liquidar. O desconto só pode ser aplicado antes de qualquer sinal ou pagamento.</p>)}
           <p className="font-semibold">{foundReward.status === "used" ? "Utilizado" : foundReward.status === "available" ? "Disponível" : "Indisponível"}</p>
-          {foundReward.status === "available" && <div className="mt-2 flex gap-2"><Button type="button" disabled={validating || !foundReward.appointment || !canConfigurePromotions} onClick={confirmUse}>Aplicar desconto</Button><Button type="button" variant="outline" disabled={validating} onClick={() => { setFoundReward(null); setCode(""); }}>Cancelar</Button></div>}
+          {foundReward.status === "available" && <div className="mt-2 flex gap-2"><Button type="button" disabled={validating || !foundReward.appointment || !canRedeemReward} onClick={confirmUse}>Aplicar desconto</Button><Button type="button" variant="outline" disabled={validating} onClick={() => { setFoundReward(null); setCode(""); }}>Cancelar</Button></div>}
         </div>}
       </section>}
 
@@ -330,15 +334,15 @@ function AdminLoyaltyPage() {
         </button>
         {stampsOpen && <SettingsCard
           title="Como ganhar garimpos"
-          description="Escolha as regras que quer oferecer às clientes."
+          description="Escolha como as clientes ganham garimpos."
           icon={<Stamp className="size-4" />}
         >
           <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <p className="text-sm font-extrabold">{draft.enabled ? "Fidelidade ativa" : "Fidelidade pausada"}</p>
               <p className="text-xs leading-snug text-muted-foreground">{draft.enabled
-                ? "As regras ligadas atribuem garimpos após guardar."
-                : "Pode preparar as regras abaixo. Enquanto estiver pausada, não são atribuídos novos garimpos."}</p>
+                ? "As regras ativas atribuem garimpos depois de guardar."
+                : "Pode preparar as regras abaixo. Enquanto o programa estiver pausado, as clientes não ganham garimpos."}</p>
             </div>
             <Button type="button" variant={draft.enabled ? "outline" : "default"} className="w-full shrink-0 sm:w-auto"
               onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>
@@ -353,14 +357,14 @@ function AdminLoyaltyPage() {
               onChange={(bookingStampsEnabled) => setDraft({ ...draft, bookingStampsEnabled })}
             />
             <ToggleRow
-              title="Garimpos por serviço"
-              description="Cada serviço elegível concluído recebe garimpos."
+              title="Garimpos por serviços"
+              description="A cliente ganha garimpos por cada serviço elegível concluído."
               checked={draft.serviceStampsEnabled}
               onChange={(serviceStampsEnabled) => setDraft({ ...draft, serviceStampsEnabled })}
             />
             <ToggleRow
-              title="Garimpo por indicação"
-              description="Conta quando a indicada conclui a reserva."
+              title="Garimpos por indicação"
+              description="A cliente ganha garimpos quando a pessoa indicada conclui uma visita."
               checked={draft.referralStampsEnabled}
               onChange={(referralStampsEnabled) => setDraft({ ...draft, referralStampsEnabled })}
             />
@@ -389,20 +393,20 @@ function AdminLoyaltyPage() {
               </label>)}
             </div>}
             {draft.bookingStampsEnabled && <ToggleRow title="Acumular visita e serviços"
-              description="Desligado por padrão: a mesma visita só recebe garimpos pela regra de visitas."
+              description="Por predefinição, a cliente recebe garimpos apenas pela visita."
               checked={draft.allowVisitServiceStacking}
               onChange={(allowVisitServiceStacking) => setDraft({ ...draft, allowVisitServiceStacking })} />}
             <div role="status" className="rounded-xl bg-amber-500/10 p-3 text-sm">
               {draft.bookingStampsEnabled && !draft.allowVisitServiceStacking
-                ? "As visitas têm prioridade. Desative os garimpos por visita ou autorize a acumulação para contar serviços."
-                : `Cada serviço elegível concluído dá ${draft.stampsPerCompletedService} garimpos. ${draft.eligibleServiceIds === null ? "Todos os serviços contam." : `${draft.eligibleServiceIds.length} serviços escolhidos contam.`}`}
+                ? "As visitas têm prioridade. Desative a regra de visitas ou autorize a acumulação para contar também os serviços."
+                : `A cliente ganha ${formatGarimpos(draft.stampsPerCompletedService)} por serviço elegível concluído. ${draft.eligibleServiceIds === null ? "Todos os serviços contam." : `${draft.eligibleServiceIds.length} ${draft.eligibleServiceIds.length === 1 ? "serviço escolhido conta" : "serviços escolhidos contam"}.`}`}
             </div>
           </div>}
 
           {draft.bookingStampsEnabled && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))]">
             <div className="space-y-2">
               <NumberField
-                label="Visitas concluídas necessárias"
+                label="Visitas necessárias para ganhar garimpos"
                 value={draft.visitsRequiredForStamps}
                 min={1}
                 onChange={(visitsRequiredForStamps) => setDraft({ ...draft, visitsRequiredForStamps })}
@@ -427,9 +431,9 @@ function AdminLoyaltyPage() {
           <div role="status" className="rounded-xl bg-amber-500/10 p-3 text-sm leading-relaxed">
             {!draft.enabled ? "Prévia das regras: a fidelidade está pausada. " : null}
             {draft.bookingStampsEnabled
-              ? `A cada ${draft.visitsRequiredForStamps} ${draft.visitsRequiredForStamps === 1 ? "visita concluída" : "visitas concluídas"}, a cliente recebe ${draft.stampsPerCompletedBooking} garimpos. Uma reserva com vários serviços conta como uma visita.`
+              ? `A cada ${draft.visitsRequiredForStamps} ${draft.visitsRequiredForStamps === 1 ? "visita concluída" : "visitas concluídas"}, a cliente recebe ${formatGarimpos(draft.stampsPerCompletedBooking)}. Uma reserva com vários serviços conta como uma visita.`
               : "Garimpos por visitas desligados. Os benefícios já conquistados mantêm-se."}
-            {draft.visitRuleStartedAt && <span className="mt-1 block text-xs text-muted-foreground">Ao alterar a meta, os garimpos ou reativar o programa, a contagem de visitas recomeça após guardar. Os garimpos anteriores mantêm-se.</span>}
+            {draft.visitRuleStartedAt && <span className="mt-1 block text-xs text-muted-foreground">Se alterar a meta, a quantidade de garimpos ou reativar o programa, a contagem de visitas recomeça depois de guardar. Os garimpos anteriores mantêm-se.</span>}
           </div>
         </SettingsCard>}
 
@@ -451,20 +455,20 @@ function AdminLoyaltyPage() {
               </SelectContent></Select></div>
             <div className="flex items-center gap-1">
               <Button type="button" className="min-w-0 flex-1" variant={rule.enabled ? "default" : "outline"} onClick={() => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, enabled: !item.enabled } : item) })}>{rule.enabled ? "Ativa" : "Inativa"}</Button>
-              <Button type="button" variant="ghost" size="icon" disabled={saving} title="Excluir recompensa" aria-label={`Excluir recompensa ${index + 1}`} onClick={() => {
-                if (!window.confirm("Excluir esta recompensa? Os benefícios já conquistados mantêm-se. A remoção será aplicada ao guardar.")) return;
+              <Button type="button" variant="ghost" size="icon" disabled={saving} title="Eliminar recompensa" aria-label={`Eliminar recompensa ${index + 1}`} onClick={() => {
+                if (!window.confirm("Eliminar esta recompensa? Os benefícios já conquistados mantêm-se. A remoção será aplicada ao guardar.")) return;
                 setDraft((current) => current && { ...current, rewardRules: current.rewardRules.filter((item) => item.id !== rule.id) });
-                toast.info("Recompensa removida. Carrega em Guardar para aplicar.");
+                toast.info("Recompensa removida. Selecione Guardar para aplicar.");
               }}><Trash2 className="size-4" /></Button>
             </div>
           </div>)}
           <Button type="button" variant="outline" disabled={draft.rewardRules.length >= 12} onClick={() => setDraft({ ...draft, rewardRules: [...draft.rewardRules, { id: crypto.randomUUID(), name: `Programa ${draft.rewardRules.length + 1}`, stampsRequired: 5, type: "fixed", value: 5, enabled: true, startedAt: null, applyWhen: "next" }] })}>
             <Plus className="mr-2 size-4" /> Adicionar recompensa
           </Button>
-          <p role="status" className="rounded-xl bg-amber-500/10 p-3 text-sm">{draft.rewardRules.filter((rule) => rule.enabled).map((rule) => `${rule.stampsRequired} garimpos = ${rule.value}${rule.type === "percent" ? "%" : " €"} de desconto ${rule.applyWhen === "current" ? "nesta visita" : "na próxima visita"}.`).join(" ") || "Ative uma recompensa para mostrar a pré-visualização."}</p>
-          <p className="text-xs text-muted-foreground">Novas regras contam apenas garimpos acumulados após guardar. Benefícios já conquistados mantêm-se. O desconto só é aplicado antes de qualquer sinal ou pagamento.</p>
+          <p role="status" className="rounded-xl bg-amber-500/10 p-3 text-sm">{draft.rewardRules.filter((rule) => rule.enabled).map((rule) => `${formatGarimpos(rule.stampsRequired)} = ${rule.value}${rule.type === "percent" ? "%" : " €"} de desconto ${rule.applyWhen === "current" ? "nesta visita" : "na próxima visita"}.`).join(" ") || "Ative uma recompensa para mostrar a pré-visualização."}</p>
+          <p className="text-xs text-muted-foreground">As novas regras consideram apenas os garimpos ganhos depois de guardar. Os benefícios já conquistados mantêm-se. O desconto só pode ser aplicado antes de qualquer sinal ou pagamento.</p>
         </SettingsCard>}
-      </section> : <p className="rounded-xl bg-muted/60 p-3 text-sm text-muted-foreground">Só a proprietária pode configurar as promoções de fidelidade.</p>}
+      </section> : <p className="rounded-xl bg-muted/60 p-3 text-sm text-muted-foreground">Não tem permissão para gerir as promoções deste estúdio.</p>}
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <button
@@ -475,7 +479,7 @@ function AdminLoyaltyPage() {
           <div className="min-w-0">
             <p className="text-sm font-black text-foreground">Níveis e clientes</p>
             <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              Ajustes avançados e clientes com mais carimbos.
+              Níveis de fidelidade e clientes com mais garimpos.
             </p>
           </div>
           <ChevronDown className={cn("size-4 shrink-0 transition", detailsOpen && "rotate-180")} />
@@ -510,7 +514,7 @@ function AdminLoyaltyPage() {
                       type="number"
                       min={0}
                       value={level.threshold}
-                      aria-label={`Carimbos do nível ${index + 1}`}
+                      aria-label={`Garimpos do nível ${index + 1}`}
                       onChange={(event) =>
                         setDraft({
                           ...draft,
@@ -535,7 +539,7 @@ function AdminLoyaltyPage() {
               </div>
               {(summary?.topClients ?? []).length === 0 ? (
                 <div className="rounded-2xl bg-muted/50 px-4 py-4 text-sm text-muted-foreground">
-                  Ainda não existem carimbos ou indicações concluídas.
+                  Ainda não existem garimpos ou indicações concluídas.
                 </div>
               ) : (
                 <div className="overflow-hidden rounded-2xl border border-border">
@@ -546,7 +550,7 @@ function AdminLoyaltyPage() {
                     >
                       <p className="min-w-0 break-words font-bold text-foreground">{client.name}</p>
                       <p className="text-xs font-semibold text-muted-foreground sm:text-right">
-                        {client.stamps} carimbos · {client.completedReferrals} indicações · {client.availableRewards} benefícios
+                        {formatGarimpos(client.stamps)} · {client.completedReferrals} {client.completedReferrals === 1 ? "indicação" : "indicações"} · {client.availableRewards} {client.availableRewards === 1 ? "benefício" : "benefícios"}
                       </p>
                     </div>
                   ))}
@@ -556,8 +560,8 @@ function AdminLoyaltyPage() {
           </div>
         )}
       </section>
-      <section className="space-y-3 rounded-2xl border border-border bg-card p-4">
-        <h2 className="text-sm font-black">Gerir carimbos e indicações</h2>
+      {canManageLedger && <section className="space-y-3 rounded-2xl border border-border bg-card p-4">
+        <h2 className="text-sm font-black">Gerir garimpos e indicações</h2>
         <p className="text-xs text-muted-foreground">Os ajustes ficam registados com motivo. Benefícios já conquistados mantêm-se.</p>
         <div className="flex gap-2">
           <Input aria-label="Pesquisar cliente" placeholder="Pesquisar cliente pelo nome" value={clientQuery}
@@ -566,10 +570,10 @@ function AdminLoyaltyPage() {
         </div>
         {clients.length > 0 && <Select value={selectedClientId} onValueChange={(value) => { pendingStampActionRef.current = null; setSelectedClientId(value); }}>
           <SelectTrigger aria-label="Cliente para ajuste"><SelectValue placeholder="Selecionar cliente" /></SelectTrigger>
-          <SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.id}>{client.name} · {client.stamps} carimbos</SelectItem>)}</SelectContent>
+          <SelectContent>{clients.map((client) => <SelectItem key={client.id} value={client.id}>{client.name} · {formatGarimpos(client.stamps)}</SelectItem>)}</SelectContent>
         </Select>}
         <div className="grid gap-2 sm:grid-cols-[7rem_minmax(0,1fr)_auto]">
-          <Input type="number" min={-20} max={20} step={1} value={stampDelta} aria-label="Ajuste de carimbos"
+          <Input type="number" min={-20} max={20} step={1} value={stampDelta} aria-label="Ajuste de garimpos"
             onChange={(event) => { pendingStampActionRef.current = null; setStampDelta(Number(event.target.value)); }} />
           <Input maxLength={300} value={stampNote} aria-label="Motivo do ajuste" placeholder="Motivo do ajuste (mínimo 5 caracteres)"
             onChange={(event) => { pendingStampActionRef.current = null; setStampNote(event.target.value); }} />
@@ -589,7 +593,7 @@ function AdminLoyaltyPage() {
             </div>}
           </div>)}
         </div>
-      </section>
+      </section>}
       {canConfigurePromotions && <div className="sticky bottom-20 z-20 rounded-full bg-background/90 p-1 shadow-lg backdrop-blur sm:hidden">
         <Button onClick={save} disabled={!hasChanges || saving} className="h-10 w-full rounded-full">
           {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Save className="mr-2 size-4" />} Guardar
@@ -597,6 +601,10 @@ function AdminLoyaltyPage() {
       </div>}
     </main>
   );
+}
+
+function formatGarimpos(count: number) {
+  return `${count} ${count === 1 ? "garimpo" : "garimpos"}`;
 }
 
 function SettingsCard({

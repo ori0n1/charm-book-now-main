@@ -88,6 +88,22 @@ async function assertLoyaltyManager(sb: ReturnType<typeof getAdminClient>, userI
   if (error || !data?.role) throw new Response("loyalty_management_forbidden", { status: 403 });
 }
 
+async function assertLoyaltyPromotionEditor(sb: ReturnType<typeof getAdminClient>, userId: string, studioId: string) {
+  await assertStudioAccess(sb, userId, studioId, { entitlement: "loyalty" });
+  const { data, error } = await sb.from("user_roles").select("role")
+    .eq("user_id", userId).eq("studio_id", studioId)
+    .in("role", ["studio_owner", "manager", "staff"]).limit(1).maybeSingle();
+  if (error || !data?.role) throw new Response("loyalty_promotion_editor_required", { status: 403 });
+}
+
+async function assertLoyaltySummaryReader(sb: ReturnType<typeof getAdminClient>, userId: string, studioId: string) {
+  await assertStudioAccess(sb, userId, studioId, { entitlement: "loyalty" });
+  const { data, error } = await sb.from("user_roles").select("role")
+    .eq("user_id", userId).eq("studio_id", studioId)
+    .in("role", ["saas_owner", "studio_owner", "manager", "staff"]).limit(1).maybeSingle();
+  if (error || !data?.role) throw new Response("loyalty_summary_forbidden", { status: 403 });
+}
+
 async function assertLoyaltyOwner(sb: ReturnType<typeof getAdminClient>, userId: string, studioId: string) {
   await assertStudioAccess(sb, userId, studioId, { entitlement: "loyalty" });
   const { data, error } = await sb.from("user_roles").select("role")
@@ -219,8 +235,22 @@ export const getCustomerLoyaltyAdminSummary = createServerFn({ method: "POST" })
   .inputValidator((input) => StudioInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertLoyaltyManager(sb, (context as any).userId, data.studioId);
+    await assertLoyaltySummaryReader(sb, (context as any).userId, data.studioId);
     return loadCustomerLoyaltyAdminSummary(data.studioId);
+  });
+
+export const getCustomerLoyaltyStudioAccess = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => StudioInput.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = getAdminClient();
+    await assertStudioAccess(sb, (context as any).userId, data.studioId);
+    const { data: allowed, error } = await sb.rpc("studio_has_entitlement", {
+      _studio_id: data.studioId,
+      _feature: "loyalty",
+    });
+    if (error) throw error;
+    return allowed === true;
   });
 
 export const updateCustomerLoyaltySettings = createServerFn({ method: "POST" })
@@ -228,7 +258,7 @@ export const updateCustomerLoyaltySettings = createServerFn({ method: "POST" })
   .inputValidator((input) => SettingsInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertLoyaltyOwner(sb, (context as any).userId, data.studioId);
+    await assertLoyaltyPromotionEditor(sb, (context as any).userId, data.studioId);
     const previous = normalizeSettings(await ensureSettings(data.studioId));
     const ids = new Set<string>();
     const rewardRules = data.rewardRules.map((rule) => {
