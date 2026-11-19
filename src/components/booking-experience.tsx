@@ -286,7 +286,9 @@ type PublicClientAreaPayload = {
     totalStamps: number;
     progressStamps: number;
     nextRewardAt: number;
-    programs: Array<{ id: string; name: string; stampsRequired: number; stampsEarned: number; stampsRemaining: number; type: "percent" | "fixed"; value: number }>;
+    visitProgress: { completed: number; required: number; stamps: number } | null;
+    serviceProgress: { completed: number; stamps: number; eligible: string } | null;
+    programs: Array<{ id: string; name: string; stampsRequired: number; stampsEarned: number; stampsRemaining: number; type: "percent" | "fixed"; value: number; applyWhen: "current" | "next" }>;
     completedReferrals: number;
     levelName: string;
     availableRewards: Array<{
@@ -294,6 +296,7 @@ type PublicClientAreaPayload = {
       type: "percent" | "fixed";
       value: number;
       stampsRequired: number;
+      applyWhen: "current" | "next";
       createdAt: string;
       code: string;
     }>;
@@ -7270,14 +7273,24 @@ function ClientAccountArea({
           )}
           {loyalty?.settings?.enabled && (
             <div className="space-y-3">
-            <CustomerLoyaltyAchievements studioId={studioId} studioName={studioName} logoUrl={studioLogoUrl} brandColor={studioBrandColor} rewards={loyalty.availableRewards} usedRewards={loyalty.usedRewards} expiredRewards={loyalty.expiredRewards} vipBadge={loyalty.vipBadge} progress={loyalty.progressStamps} nextAt={loyalty.nextRewardAt} />
+            <CustomerLoyaltyAchievements studioId={studioId} studioName={studioName} logoUrl={studioLogoUrl} brandColor={studioBrandColor} rewards={loyalty.availableRewards} usedRewards={loyalty.usedRewards} expiredRewards={loyalty.expiredRewards} vipBadge={loyalty.vipBadge} balance={loyalty.totalStamps} progress={loyalty.progressStamps} nextAt={loyalty.nextRewardAt} />
+            {loyalty.visitProgress && <section className="rounded-2xl border border-amber-500/20 bg-card p-4" aria-label="Progresso das visitas">
+              <p className="text-sm font-bold">{loyalty.visitProgress.completed} de {loyalty.visitProgress.required} visitas concluídas</p>
+              <p className="mt-1 text-xs text-muted-foreground">Ao completar a meta, recebes {loyalty.visitProgress.stamps} garimpos. Cada reserva conta como uma visita.</p>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-amber-500" style={{ width: `${Math.min(100, loyalty.visitProgress.completed / loyalty.visitProgress.required * 100)}%` }} /></div>
+            </section>}
+            {loyalty.serviceProgress && <section className="rounded-2xl border border-amber-500/20 bg-card p-4" aria-label="Garimpos por serviço">
+              <p className="text-sm font-bold">{loyalty.serviceProgress.completed} serviços concluídos com garimpos</p>
+              <p className="mt-1 text-xs text-muted-foreground">{loyalty.serviceProgress.eligible} · {loyalty.serviceProgress.stamps} garimpos por serviço realizado.</p>
+            </section>}
             {loyalty.programs?.map((program) => <section key={program.id} className="rounded-2xl border border-amber-500/20 bg-card p-4" aria-label={program.name}>
               <div className="flex items-start justify-between gap-3">
-                <div><h3 className="text-sm font-extrabold">{program.name}</h3><p className="text-xs text-muted-foreground">Meta: {program.stampsRequired} carimbos</p></div>
-                <span className="shrink-0 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-amber-800 dark:text-amber-200">{program.type === "percent" ? `${program.value}%` : `${program.value.toFixed(2)} €`}</span>
+                <div><h3 className="text-sm font-extrabold">{program.name}</h3><p className="text-xs text-muted-foreground">Meta: {program.stampsRequired} garimpos</p></div>
+                <span className="shrink-0 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-amber-800 dark:text-amber-200">{program.type === "percent" ? `${program.value}%` : `${program.value.toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`}</span>
               </div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted"><div className="h-full bg-amber-500" style={{ width: `${Math.min(100, program.stampsEarned / program.stampsRequired * 100)}%` }} /></div>
               <p className="mt-1.5 text-xs text-muted-foreground">{program.stampsEarned} conquistados · {program.stampsRemaining} em falta</p>
+              <p className="mt-1 text-xs text-muted-foreground">Desconto {program.applyWhen === "current" ? "nesta visita, antes do pagamento" : "na próxima visita elegível, antes do pagamento"}.</p>
             </section>)}
             <div className="overflow-hidden rounded-[1.2rem] border border-amber-500/20 bg-gradient-to-br from-amber-500/8 via-card to-card shadow-sm">
               <div className="px-4 py-4">
@@ -7287,14 +7300,14 @@ function ClientAccountArea({
                       Fidelidade
                     </p>
                     <p className="mt-1 text-base font-extrabold tracking-tight text-foreground">
-                      {loyalty.totalStamps} carimbo{loyalty.totalStamps === 1 ? "" : "s"}
+                      {loyalty.totalStamps} garimpo{loyalty.totalStamps === 1 ? "" : "s"}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       Nível {loyalty.levelName}. Indicações contam após a reserva concluída.
                     </p>
                   </div>
                   <span className="shrink-0 rounded-full bg-amber-500/12 px-2.5 py-1 text-[10px] font-bold text-amber-700 dark:text-amber-300">
-                    {loyalty.completedReferrals} indicação{loyalty.completedReferrals === 1 ? "" : "ões"}
+                      {loyalty.completedReferrals} {loyalty.completedReferrals === 1 ? "indicação" : "indicações"}
                   </span>
                 </div>
                 {loyalty.nextRewardAt > 0 && <div className="mt-3">
@@ -7310,7 +7323,7 @@ function ClientAccountArea({
                     <span>
                       {loyalty.progressStamps}/{loyalty.nextRewardAt} para benefício
                     </span>
-                    <span>{loyalty.availableRewards.length} disponível{loyalty.availableRewards.length === 1 ? "" : "is"}</span>
+                    <span>{loyalty.availableRewards.length} conquistado{loyalty.availableRewards.length === 1 ? "" : "s"}</span>
                   </div>
                 </div>}
                 <div className="mt-3 flex flex-col gap-2 rounded-xl bg-muted/60 p-2.5 sm:flex-row sm:items-center">

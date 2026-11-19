@@ -14,6 +14,7 @@ const RewardRuleInput = z.object({
   value: z.number().min(0).max(10000),
   enabled: z.boolean(),
   startedAt: z.string().datetime().nullable(),
+  applyWhen: z.enum(["current", "next"]).default("next"),
 });
 export type CustomerLoyaltyRewardRule = z.infer<typeof RewardRuleInput>;
 
@@ -21,6 +22,11 @@ const SettingsInput = StudioInput.extend({
   enabled: z.boolean(),
   bookingStampsEnabled: z.boolean(),
   stampsPerCompletedBooking: z.number().int().min(0).max(100),
+  visitsRequiredForStamps: z.number().int().min(1).max(1000),
+  serviceStampsEnabled: z.boolean(),
+  stampsPerCompletedService: z.number().int().min(0).max(100),
+  eligibleServiceIds: z.array(z.string().uuid()).max(50).nullable(),
+  allowVisitServiceStacking: z.boolean(),
   referralStampsEnabled: z.boolean(),
   stampsPerCompletedReferral: z.number().int().min(0).max(100),
   stampsRequiredForReward: z.number().int().min(1).max(1000),
@@ -42,6 +48,13 @@ export type CustomerLoyaltySettings = {
   enabled: boolean;
   bookingStampsEnabled: boolean;
   stampsPerCompletedBooking: number;
+  visitsRequiredForStamps: number;
+  visitRuleStartedAt: string | null;
+  serviceStampsEnabled: boolean;
+  stampsPerCompletedService: number;
+  eligibleServiceIds: string[] | null;
+  allowVisitServiceStacking: boolean;
+  serviceRuleStartedAt: string | null;
   referralStampsEnabled: boolean;
   stampsPerCompletedReferral: number;
   stampsRequiredForReward: number;
@@ -53,6 +66,7 @@ export type CustomerLoyaltySettings = {
 
 export type CustomerLoyaltyAdminSummary = {
   settings: CustomerLoyaltySettings;
+  services: Array<{ id: string; name: string }>;
   totalClientsWithStamps: number;
   totalCompletedReferrals: number;
   totalAvailableRewards: number;
@@ -72,6 +86,14 @@ async function assertLoyaltyManager(sb: ReturnType<typeof getAdminClient>, userI
     .eq("user_id", userId).eq("studio_id", studioId)
     .in("role", ["saas_owner", "studio_owner", "manager"]).limit(1).maybeSingle();
   if (error || !data?.role) throw new Response("loyalty_management_forbidden", { status: 403 });
+}
+
+async function assertLoyaltyOwner(sb: ReturnType<typeof getAdminClient>, userId: string, studioId: string) {
+  await assertStudioAccess(sb, userId, studioId, { entitlement: "loyalty" });
+  const { data, error } = await sb.from("user_roles").select("role")
+    .eq("user_id", userId).eq("studio_id", studioId)
+    .eq("role", "studio_owner").limit(1).maybeSingle();
+  if (error || !data?.role) throw new Response("loyalty_owner_required", { status: 403 });
 }
 
 export async function loadCustomerLoyaltySummaryForClient(options: {
@@ -97,10 +119,10 @@ export async function loadCustomerLoyaltySummaryForClient(options: {
     return null;
   }
 
-  const [{ data: stamps }, { data: referrals }, { data: rewards }] = await Promise.all([
+  const [{ data: stamps }, { data: referrals }, { data: rewards }, { count: completedVisits, error: visitError }] = await Promise.all([
     (sb as any)
       .from("customer_loyalty_stamp_entries")
-      .select("stamps,created_at")
+      .select("stamps,created_at,source_type,service_rule_id")
       .eq("studio_id", options.studioId)
       .eq("client_id", options.clientId),
     (sb as any)
@@ -110,10 +132,18 @@ export async function loadCustomerLoyaltySummaryForClient(options: {
       .eq("referrer_client_id", options.clientId),
     (sb as any)
       .from("customer_loyalty_rewards")
-      .select("id,status,reward_type,reward_value,stamps_required,created_at,used_at,redemption_code")
+      .select("id,status,reward_type,reward_value,stamps_required,created_at,used_at,redemption_code,apply_when")
       .eq("studio_id", options.studioId)
       .eq("client_id", options.clientId)
       .order("created_at", { ascending: false }),
+    settings.visitRuleStartedAt
+      ? (sb as any).from("appointments").select("id", { count: "exact", head: true })
+          .eq("studio_id", options.studioId).eq("client_id", options.clientId)
+          .eq("status", "completed").not("attendance_resolved_at", "is", null)
+          .gte("attendance_resolved_at", settings.visitRuleStartedAt)
+          .gte("ends_at", settings.visitRuleStartedAt)
+          .lte("ends_at", new Date().toISOString())
+      : Promise.resolve({ count: null, error: null }),
   ]);
 
   const totalStamps = (stamps ?? []).reduce((sum: number, row: any) => sum + Number(row.stamps ?? 0), 0);
@@ -138,6 +168,7 @@ export async function loadCustomerLoyaltySummaryForClient(options: {
       stampsRemaining: Math.max(0, rule.stampsRequired - earned),
       type: rule.type,
       value: rule.value,
+      applyWhen: rule.applyWhen,
     };
   });
 
@@ -148,6 +179,17 @@ export async function loadCustomerLoyaltySummaryForClient(options: {
     totalStamps,
     progressStamps,
     nextRewardAt,
+    visitProgress: settings.visitRuleStartedAt && settings.bookingStampsEnabled && !visitError
+      ? { completed: Number(completedVisits ?? 0) % settings.visitsRequiredForStamps,
+          required: settings.visitsRequiredForStamps,
+          stamps: settings.stampsPerCompletedBooking }
+      : null,
+    serviceProgress: settings.serviceStampsEnabled && settings.serviceRuleStartedAt
+      ? { completed: (stamps ?? []).filter((row: any) => row.source_type === "service_completed"
+          && row.service_rule_id != null).length,
+          stamps: settings.stampsPerCompletedService,
+          eligible: settings.eligibleServiceIds === null ? "Todos os serviços" : `${settings.eligibleServiceIds.length} serviços escolhidos` }
+      : null,
     programs,
     completedReferrals,
     availableRewards: availableRewards.map((row: any) => ({
@@ -155,6 +197,7 @@ export async function loadCustomerLoyaltySummaryForClient(options: {
       type: row.reward_type as "percent" | "fixed",
       value: Number(row.reward_value ?? 0),
       stampsRequired: Number(row.stamps_required ?? settings.stampsRequiredForReward),
+      applyWhen: row.apply_when === "current" ? "current" as const : "next" as const,
       createdAt: row.created_at as string,
       code: String(row.redemption_code ?? ""),
     })),
@@ -185,7 +228,7 @@ export const updateCustomerLoyaltySettings = createServerFn({ method: "POST" })
   .inputValidator((input) => SettingsInput.parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertLoyaltyManager(sb, (context as any).userId, data.studioId);
+    await assertLoyaltyOwner(sb, (context as any).userId, data.studioId);
     const previous = normalizeSettings(await ensureSettings(data.studioId));
     const ids = new Set<string>();
     const rewardRules = data.rewardRules.map((rule) => {
@@ -207,9 +250,14 @@ export const updateCustomerLoyaltySettings = createServerFn({ method: "POST" })
       enabled: data.enabled,
       booking_stamps_enabled: data.bookingStampsEnabled,
       stamps_per_completed_booking: data.stampsPerCompletedBooking,
+      visits_required_for_stamps: data.visitsRequiredForStamps,
       referral_stamps_enabled: data.referralStampsEnabled,
       stamps_per_completed_referral: data.stampsPerCompletedReferral,
       stamps_required_for_reward: data.stampsRequiredForReward,
+      service_stamps_enabled: data.serviceStampsEnabled,
+      stamps_per_completed_service: data.stampsPerCompletedService,
+      eligible_service_ids: data.eligibleServiceIds,
+      allow_visit_service_stacking: data.allowVisitServiceStacking,
       reward_type: data.rewardType,
       reward_value: data.rewardValue,
       reward_rules: rewardRules,
@@ -233,27 +281,66 @@ export const lookupCustomerLoyaltyReward = createServerFn({ method: "POST" })
     const sb = getAdminClient();
     await assertLoyaltyManager(sb, (context as any).userId, data.studioId);
     const { data: reward, error } = await (sb as any).from("customer_loyalty_rewards")
-      .select("id,status,reward_type,reward_value,clients(name)")
+      .select("id,status,reward_type,reward_value,stamps_required,apply_when,earned_appointment_id,client_id,created_at,clients(name)")
       .eq("studio_id", data.studioId).eq("redemption_code", data.code.toUpperCase()).maybeSingle();
     if (error) throw new Error(error.message);
     if (!reward) return null;
+    let appointment: { id: string; startsAt: string; price: number } | null = null;
+    let effectiveApplyWhen: "current" | "next" = reward.apply_when === "current" ? "current" : "next";
+    let movedToNext = false;
+    if (reward.status === "available" && reward.client_id) {
+      for (const mode of reward.apply_when === "current" ? ["current", "next"] as const : ["next"] as const) {
+        let request = (sb as any).from("appointments").select("id,starts_at,total_price")
+          .eq("studio_id", data.studioId).eq("client_id", reward.client_id);
+        request = mode === "current"
+          ? request.eq("id", reward.earned_appointment_id ?? "00000000-0000-0000-0000-000000000000")
+            .eq("status", "completed").not("attendance_resolved_at", "is", null)
+          : request.gt("starts_at", reward.created_at).in("status", ["confirmed", "completed"])
+            .order("starts_at").limit(10);
+        const { data: candidates, error: appointmentError } = await request;
+        if (appointmentError) throw new Error(appointmentError.message);
+        const ids = (candidates ?? []).map((row: any) => String(row.id));
+        if (!ids.length) break;
+        const [{ data: intents, error: intentError }, { data: movements, error: cashError },
+          { data: applied, error: appliedError }] = await Promise.all([
+          (sb as any).from("payment_intents").select("appointment_id").eq("studio_id", data.studioId).in("appointment_id", ids),
+          (sb as any).from("cash_register_movements").select("appointment_id").eq("studio_id", data.studioId).in("appointment_id", ids),
+          (sb as any).from("customer_loyalty_rewards").select("appointment_id").eq("studio_id", data.studioId)
+            .eq("status", "used").in("appointment_id", ids),
+        ]);
+        if (intentError || cashError || appliedError) throw new Error((intentError ?? cashError ?? appliedError).message);
+        const blocked = new Set([...(intents ?? []), ...(movements ?? []), ...(applied ?? [])]
+          .map((row: any) => String(row.appointment_id)));
+        const first = (candidates ?? []).find((row: any) => !blocked.has(String(row.id)) && Number(row.total_price) > 0);
+        if (first) {
+          appointment = { id: String(first.id), startsAt: String(first.starts_at), price: Number(first.total_price) };
+          effectiveApplyWhen = mode;
+          break;
+        }
+        if (mode === "current") {
+          if (!blocked.has(String(reward.earned_appointment_id))) break;
+          movedToNext = true;
+          effectiveApplyWhen = "next";
+        }
+      }
+    }
     return { id: reward.id, status: reward.status, type: reward.reward_type, value: Number(reward.reward_value),
+      stampsRequired: Number(reward.stamps_required), applyWhen: effectiveApplyWhen, movedToNext, appointment,
       clientName: String((Array.isArray(reward.clients) ? reward.clients[0] : reward.clients)?.name ?? "Cliente") };
   });
 
 export const redeemCustomerLoyaltyReward = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => RedemptionInput.parse(input))
+  .inputValidator((input) => RedemptionInput.extend({ appointmentId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const sb = getAdminClient();
-    await assertLoyaltyManager(sb, (context as any).userId, data.studioId);
-    const { data: reward, error } = await (sb as any).from("customer_loyalty_rewards")
-      .update({ status: "used", used_at: new Date().toISOString() })
-      .eq("studio_id", data.studioId).eq("redemption_code", data.code.toUpperCase())
-      .eq("status", "available").select("id").maybeSingle();
+    await assertLoyaltyOwner(sb, (context as any).userId, data.studioId);
+    const { data: reward, error } = await (sb as any).rpc("redeem_customer_loyalty_discount", {
+      p_studio_id: data.studioId, p_code: data.code, p_appointment_id: data.appointmentId,
+      p_actor_id: (context as any).userId,
+    });
     if (error) throw new Error(error.message);
-    if (!reward) throw new Error("reward_not_available");
-    return { id: String(reward.id), status: "used" as const };
+    return { id: String(reward.rewardId), status: "used" as const, discountCents: Number(reward.discountCents) };
   });
 
 export const findCustomerLoyaltyClients = createServerFn({ method: "POST" })
@@ -318,7 +405,7 @@ export const decideCustomerReferral = createServerFn({ method: "POST" })
 async function loadCustomerLoyaltyAdminSummary(studioId: string): Promise<CustomerLoyaltyAdminSummary> {
   const sb = getAdminClient();
   const settings = normalizeSettings(await ensureSettings(studioId));
-  const [{ data: stampRows, error: stampsError }, { data: referrals, error: referralsError }, { data: rewards, error: rewardsError }, { data: recentReferrals, error: recentError }] = await Promise.all([
+  const [{ data: stampRows, error: stampsError }, { data: referrals, error: referralsError }, { data: rewards, error: rewardsError }, { data: recentReferrals, error: recentError }, { data: services, error: servicesError }] = await Promise.all([
     (sb as any)
       .from("customer_loyalty_stamp_entries")
       .select("client_id,stamps,clients(id,name)")
@@ -335,10 +422,12 @@ async function loadCustomerLoyaltyAdminSummary(studioId: string): Promise<Custom
       .from("customer_referrals")
       .select("id,referrer_client_id,referred_client_id,status,created_at,rejection_reason")
       .eq("studio_id", studioId).order("created_at", { ascending: false }).limit(20),
+    (sb as any).from("services").select("id,name").eq("studio_id", studioId).eq("is_active", true).order("name"),
   ]);
   if (stampsError || referralsError || rewardsError || recentError) {
     throw new Error((stampsError ?? referralsError ?? rewardsError ?? recentError).message);
   }
+  if (servicesError) console.error("[customer-loyalty] service_options_failed", { studio_id: studioId, error: servicesError.message });
 
   const referralClientIds = Array.from(new Set((recentReferrals ?? []).flatMap((row: any) =>
     [row.referrer_client_id, row.referred_client_id].filter(Boolean))));
@@ -398,6 +487,7 @@ async function loadCustomerLoyaltyAdminSummary(studioId: string): Promise<Custom
 
   return {
     settings,
+    services: (services ?? []).map((service: any) => ({ id: String(service.id), name: String(service.name) })),
     totalClientsWithStamps: Array.from(byClient.values()).filter((client) => client.stamps > 0).length,
     totalCompletedReferrals: (referrals ?? []).filter((row: any) => row.status === "completed").length,
     totalAvailableRewards: (rewards ?? []).filter((row: any) => row.status === "available").length,
@@ -425,6 +515,13 @@ function normalizeSettings(row: any): CustomerLoyaltySettings {
     enabled: row?.enabled ?? false,
     bookingStampsEnabled: row?.booking_stamps_enabled ?? true,
     stampsPerCompletedBooking: Number(row?.stamps_per_completed_booking ?? 1),
+    visitsRequiredForStamps: Number(row?.visits_required_for_stamps ?? 1),
+    visitRuleStartedAt: row?.visit_rule_started_at ?? null,
+    serviceStampsEnabled: row?.service_stamps_enabled ?? false,
+    stampsPerCompletedService: Number(row?.stamps_per_completed_service ?? 1),
+    eligibleServiceIds: row?.eligible_service_ids ?? null,
+    allowVisitServiceStacking: row?.allow_visit_service_stacking ?? false,
+    serviceRuleStartedAt: row?.service_rule_started_at ?? null,
     referralStampsEnabled: row?.referral_stamps_enabled ?? true,
     stampsPerCompletedReferral: Number(row?.stamps_per_completed_referral ?? 1),
     stampsRequiredForReward: Number(row?.stamps_required_for_reward ?? 10),
@@ -439,7 +536,7 @@ function normalizeRewardRules(value: unknown, row: any): CustomerLoyaltyRewardRu
   if (Array.isArray(value)) return value.map((rule) => RewardRuleInput.parse(rule));
   return [{ id: "legacy", stampsRequired: Number(row?.stamps_required_for_reward ?? 10),
     type: row?.reward_type === "fixed" ? "fixed" : "percent", value: Number(row?.reward_value ?? 10),
-    enabled: true, startedAt: null }];
+    enabled: true, startedAt: null, applyWhen: "next" }];
 }
 
 export function isCustomerLoyaltyEnabled(settings: Pick<CustomerLoyaltySettings, "enabled"> | null | undefined) {

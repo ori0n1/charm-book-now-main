@@ -4,7 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { Gift, QrCode, Share2, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
-type Reward = { id: string; type: "percent" | "fixed"; value: number; stampsRequired: number; code: string; createdAt: string };
+type Reward = { id: string; type: "percent" | "fixed"; value: number; stampsRequired: number; code: string; createdAt: string; applyWhen: "current" | "next" };
 type UsedReward = { id: string; type: "percent" | "fixed"; value: number; usedAt: string };
 type ExpiredReward = { id: string; type: "percent" | "fixed"; value: number };
 
@@ -37,7 +37,7 @@ function drawCenteredLines(ctx: CanvasRenderingContext2D, text: string, y: numbe
   lines.forEach((line, index) => ctx.fillText(line, 540, y + index * lineHeight, maxWidth));
 }
 
-export function CustomerLoyaltyAchievements({ studioId, studioName, logoUrl, brandColor, rewards, usedRewards, expiredRewards = [], vipBadge }: {
+export function CustomerLoyaltyAchievements({ studioId, studioName, logoUrl, brandColor, rewards, usedRewards, expiredRewards = [], vipBadge, balance }: {
   studioId: string;
   studioName: string;
   logoUrl?: string | null;
@@ -46,6 +46,7 @@ export function CustomerLoyaltyAchievements({ studioId, studioName, logoUrl, bra
   usedRewards: UsedReward[];
   expiredRewards?: ExpiredReward[];
   vipBadge: string | null;
+  balance: number;
   progress: number;
   nextAt: number;
 }) {
@@ -68,7 +69,7 @@ export function CustomerLoyaltyAchievements({ studioId, studioName, logoUrl, bra
   const groups = useMemo(() => {
     const byBenefit = new Map<string, Reward[]>();
     for (const reward of rewards) {
-      const key = `${reward.type}:${reward.value}`;
+      const key = `${reward.type}:${reward.value}:${reward.applyWhen}`;
       const group = byBenefit.get(key) ?? [];
       group.push(reward);
       byBenefit.set(key, group);
@@ -233,7 +234,7 @@ export function CustomerLoyaltyAchievements({ studioId, studioName, logoUrl, bra
         <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-700 dark:text-amber-200"><Gift className="size-4" /></span>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-black text-foreground">Minhas recompensas</p>
-          <p className="truncate text-[11px] text-muted-foreground">{rewards.length} benefício{rewards.length === 1 ? "" : "s"} disponível{rewards.length === 1 ? "" : "eis"} · {studioName}</p>
+          <p className="truncate text-[11px] text-muted-foreground">{rewards.length} benefício{rewards.length === 1 ? "" : "s"} conquistado{rewards.length === 1 ? "" : "s"} · {studioName}</p>
         </div>
         {vipBadge && <span className="max-w-24 truncate rounded-full bg-amber-500/15 px-2 py-1 text-[10px] font-bold text-amber-800 dark:text-amber-200" title={vipBadge}>{vipBadge}</span>}
         <button type="button" aria-expanded={walletOpen} onClick={() => setWalletOpen(!walletOpen)} className="shrink-0 rounded-full bg-foreground px-3 py-2 text-[11px] font-bold text-background">{walletOpen ? "Fechar" : "Ver recompensas"}</button>
@@ -241,13 +242,13 @@ export function CustomerLoyaltyAchievements({ studioId, studioName, logoUrl, bra
       {walletOpen && <div className="space-y-2 border-t border-border/60 px-3 py-3">
         {groups.slice(0, visibleGroups).map(([key, items]) => <div key={key} className="rounded-xl border border-border/70 bg-card/90 px-2.5 py-2">
           <div className="flex min-h-8 items-center gap-2">
-            <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-foreground">{benefit(items[0].type, items[0].value)}{items.length > 1 ? ` · ${items.length} disponíveis` : ""}</p><p className="truncate text-[10px] text-muted-foreground">{studioName} · Disponível</p></div>
+            <div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-foreground">{benefit(items[0].type, items[0].value)}{items.length > 1 ? ` · ${items.length} conquistados` : ""}</p><p className="text-[10px] text-muted-foreground">{studioName} · {items[0].applyWhen === "current" ? "Nesta visita antes do pagamento; se liquidada, na próxima" : "Na próxima visita elegível"}</p></div>
             <button type="button" aria-expanded={expandedGroup === key} onClick={() => { setExpandedGroup(expandedGroup === key ? null : key); setVisibleInGroup(5); }} className="shrink-0 rounded-full border border-border px-2.5 py-1.5 text-[11px] font-bold text-foreground">{expandedGroup === key ? "Fechar" : items.length === 1 ? "Aceder" : "Ver"}</button>
           </div>
           {expandedGroup === key && <div className="mt-2 space-y-1 border-t border-border/60 pt-2">
             {items.slice(0, visibleInGroup).map((reward, index) => <div key={reward.id} className="flex items-center gap-2 rounded-lg bg-muted/45 px-2 py-1.5">
-              <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">{items.length > 1 ? `Recompensa ${index + 1}` : `${reward.stampsRequired} carimbos`} · Disponível</span>
-              <button type="button" onClick={() => setQrRewardId(reward.id)} className="shrink-0 rounded-full bg-foreground px-2 py-1.5 text-[10px] font-bold text-background"><QrCode className="mr-1 inline size-3" />Ver QR code</button>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-foreground">{items.length > 1 ? `Recompensa ${index + 1}` : `${reward.stampsRequired} garimpos`} · {balance >= reward.stampsRequired ? "Pronta para usar" : `Faltam ${reward.stampsRequired - balance} garimpos`}</span>
+              <button type="button" disabled={balance < reward.stampsRequired} onClick={() => setQrRewardId(reward.id)} className="shrink-0 rounded-full bg-foreground px-2 py-1.5 text-[10px] font-bold text-background disabled:opacity-40"><QrCode className="mr-1 inline size-3" />Ver QR code</button>
               <button type="button" onClick={() => prepareShare(reward.id, benefit(reward.type, reward.value), `${reward.stampsRequired} carimbos de fidelidade`)} className="shrink-0 rounded-full border border-border px-2 py-1.5 text-[10px] font-bold text-foreground"><Share2 className="mr-1 inline size-3" />Partilhar</button>
             </div>)}
             {items.length > visibleInGroup && <button type="button" onClick={() => setVisibleInGroup(visibleInGroup + 5)} className="w-full py-1.5 text-xs font-bold text-foreground">Carregar mais</button>}

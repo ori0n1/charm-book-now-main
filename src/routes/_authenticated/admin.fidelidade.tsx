@@ -38,7 +38,9 @@ export const Route = createFileRoute("/_authenticated/admin/fidelidade")({
 });
 
 function AdminLoyaltyPage() {
-  const { studio, loading: studioLoading, error: studioError, refetch: refetchStudio } = useCurrentStudio();
+  const { studio, studios, loading: studioLoading, error: studioError, refetch: refetchStudio } = useCurrentStudio();
+  const canConfigurePromotions = Boolean(studio && studios.some((membership) =>
+    membership.id === studio.id && membership.role === "studio_owner"));
   const loadSummary = useServerFn(getCustomerLoyaltyAdminSummary);
   const saveSettings = useServerFn(updateCustomerLoyaltySettings);
   const lookupReward = useServerFn(lookupCustomerLoyaltyReward);
@@ -54,10 +56,12 @@ function AdminLoyaltyPage() {
   const [saving, setSaving] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
-  const [stampsOpen, setStampsOpen] = useState(false);
+  const [stampsOpen, setStampsOpen] = useState(true);
   const [validationOpen, setValidationOpen] = useState(false);
   const [code, setCode] = useState("");
-  const [foundReward, setFoundReward] = useState<{ id: string; status: string; type: "percent" | "fixed"; value: number; clientName: string } | null>(null);
+  const [foundReward, setFoundReward] = useState<{ id: string; status: string; type: "percent" | "fixed"; value: number;
+    stampsRequired: number; applyWhen: "current" | "next"; movedToNext: boolean; clientName: string;
+    appointment: { id: string; startsAt: string; price: number } | null } | null>(null);
   const [validating, setValidating] = useState(false);
   const [clientQuery, setClientQuery] = useState("");
   const [clients, setClients] = useState<Array<{ id: string; name: string; stamps: number }>>([]);
@@ -113,6 +117,10 @@ function AdminLoyaltyPage() {
 
   async function save() {
     if (!studio?.id || !draft) return;
+    if (draft.serviceStampsEnabled && draft.eligibleServiceIds !== null && draft.eligibleServiceIds.length === 0) {
+      toast.error("Escolhe pelo menos um serviço ou seleciona Todos os serviços.");
+      return;
+    }
     setSaving(true);
     try {
       const next = (await saveSettings({
@@ -183,15 +191,19 @@ function AdminLoyaltyPage() {
   }
 
   async function confirmUse() {
-    if (!studio?.id || !foundReward || foundReward.status !== "available") return;
+    if (!studio?.id || !foundReward || foundReward.status !== "available" || !foundReward.appointment) return;
     setValidating(true);
     try {
-      await redeemReward({ data: { studioId: studio.id, code: code.trim() } });
+      const result = await redeemReward({ data: { studioId: studio.id, code: code.trim(), appointmentId: foundReward.appointment.id } });
       setFoundReward({ ...foundReward, status: "used" });
       setSummary(await loadSummary({ data: { studioId: studio.id } }) as CustomerLoyaltyAdminSummary);
-      toast.success("Benefício utilizado.");
-    } catch {
-      toast.error("Benefício indisponível ou já utilizado.");
+      toast.success(`Desconto de ${(result.discountCents / 100).toLocaleString("pt-PT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € aplicado à reserva.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      toast.error(message.includes("loyalty_visit_has_payment") || message.includes("received_reservation_financial_fields_locked")
+        ? "Esta reserva já tem pagamento ou sinal. O valor não pode ser alterado com segurança."
+        : message.includes("insufficient_loyalty_stamps") ? "A cliente já não tem garimpos suficientes."
+        : "Benefício indisponível ou reserva alterada. Verifica novamente.");
       await checkCode();
     } finally { setValidating(false); }
   }
@@ -272,14 +284,14 @@ function AdminLoyaltyPage() {
               Carimbos, benefícios e indicações deste estúdio.
             </p>
           </div>
-          <Button
+          {canConfigurePromotions && <Button
             onClick={save}
             disabled={!hasChanges || saving}
             className="h-9 shrink-0 gap-1 rounded-full px-3"
           >
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             Guardar
-          </Button>
+          </Button>}
         </div>
 
         <div className="grid grid-cols-2 gap-1.5 p-2 sm:gap-2 sm:p-3 lg:grid-cols-4">
@@ -300,56 +312,124 @@ function AdminLoyaltyPage() {
           <Button type="button" disabled={validating || code.trim().length < 8} onClick={checkCode}>Verificar</Button></div>
         {foundReward && <div className="rounded-xl bg-muted/50 p-3 text-sm">
           <p className="font-bold">{foundReward.clientName}</p>
-          <p>{foundReward.type === "percent" ? `${foundReward.value}%` : `${foundReward.value} €`} de desconto</p>
+          <p>{foundReward.stampsRequired} garimpos por {foundReward.type === "percent" ? `${foundReward.value}%` : `${foundReward.value} €`} de desconto</p>
+          <p className="text-xs text-muted-foreground">{foundReward.movedToNext
+            ? "A visita atual já tem pagamento ou desconto. O benefício mantém-se para a próxima visita elegível."
+            : foundReward.applyWhen === "current" ? "Na visita que conquistou a recompensa" : "Na próxima visita elegível"}</p>
+          {foundReward.status === "available" && (foundReward.appointment
+            ? <p className="mt-2 text-xs">Reserva elegível: {new Date(foundReward.appointment.startsAt).toLocaleString("pt-PT")} · {foundReward.appointment.price.toFixed(2)} € antes do desconto.</p>
+            : <p className="mt-2 text-xs">Sem reserva elegível por liquidar. O desconto só pode ser aplicado antes de qualquer sinal ou pagamento.</p>)}
           <p className="font-semibold">{foundReward.status === "used" ? "Utilizado" : foundReward.status === "available" ? "Disponível" : "Indisponível"}</p>
-          {foundReward.status === "available" && <div className="mt-2 flex gap-2"><Button type="button" disabled={validating} onClick={confirmUse}>Aprovar utilização</Button><Button type="button" variant="outline" disabled={validating} onClick={() => { setFoundReward(null); setCode(""); }}>Recusar</Button></div>}
+          {foundReward.status === "available" && <div className="mt-2 flex gap-2"><Button type="button" disabled={validating || !foundReward.appointment || !canConfigurePromotions} onClick={confirmUse}>Aplicar desconto</Button><Button type="button" variant="outline" disabled={validating} onClick={() => { setFoundReward(null); setCode(""); }}>Cancelar</Button></div>}
         </div>}
       </section>}
 
-      <section className="space-y-2">
+      {canConfigurePromotions ? <section className="space-y-2">
         <button type="button" onClick={() => setStampsOpen((value) => !value)} className="flex w-full items-center justify-between rounded-2xl border border-border bg-card px-3 py-2 text-left text-sm font-black">
-          Carimbos e programa <ChevronDown className={cn("size-4 transition", stampsOpen && "rotate-180")} />
+          Garimpos e programa <ChevronDown className={cn("size-4 transition", stampsOpen && "rotate-180")} />
         </button>
         {stampsOpen && <SettingsCard
-          title="Regras principais"
-          description="Defina quando a cliente ganha carimbos e quando recebe benefício."
+          title="Como ganhar garimpos"
+          description="Escolha as regras que quer oferecer às clientes."
           icon={<Stamp className="size-4" />}
         >
+          <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-extrabold">{draft.enabled ? "Fidelidade ativa" : "Fidelidade pausada"}</p>
+              <p className="text-xs leading-snug text-muted-foreground">{draft.enabled
+                ? "As regras ligadas atribuem garimpos após guardar."
+                : "Pode preparar as regras abaixo. Enquanto estiver pausada, não são atribuídos novos garimpos."}</p>
+            </div>
+            <Button type="button" variant={draft.enabled ? "outline" : "default"} className="w-full shrink-0 sm:w-auto"
+              onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}>
+              {draft.enabled ? "Pausar fidelidade" : "Ativar fidelidade"}
+            </Button>
+          </div>
           <div className="grid gap-3 lg:grid-cols-2">
             <ToggleRow
-              title="Programa ativo"
-              description="Mostra fidelidade na conta da cliente."
-              checked={draft.enabled}
-              onChange={(enabled) => setDraft({ ...draft, enabled })}
-            />
-            <ToggleRow
-              title="Carimbo por reserva"
-              description="Conta após atendimento concluído e pago."
+              title="Garimpos por visitas"
+              description="Cada reserva concluída conta como uma visita."
               checked={draft.bookingStampsEnabled}
               onChange={(bookingStampsEnabled) => setDraft({ ...draft, bookingStampsEnabled })}
             />
             <ToggleRow
-              title="Carimbo por indicação"
+              title="Garimpos por serviço"
+              description="Cada serviço elegível concluído recebe garimpos."
+              checked={draft.serviceStampsEnabled}
+              onChange={(serviceStampsEnabled) => setDraft({ ...draft, serviceStampsEnabled })}
+            />
+            <ToggleRow
+              title="Garimpo por indicação"
               description="Conta quando a indicada conclui a reserva."
               checked={draft.referralStampsEnabled}
               onChange={(referralStampsEnabled) => setDraft({ ...draft, referralStampsEnabled })}
             />
-            <InfoStrip>
-              Cada link pertence a um cliente e a um estúdio. Não gera carimbos noutro estúdio.
-            </InfoStrip>
+            {draft.referralStampsEnabled && <InfoStrip>
+              Cada indicação conta apenas neste estúdio.
+            </InfoStrip>}
           </div>
+          {draft.serviceStampsEnabled && <div className="space-y-3 rounded-xl border border-border p-3">
+            <NumberField label="Garimpos por serviço concluído" value={draft.stampsPerCompletedService}
+              onChange={(stampsPerCompletedService) => setDraft({ ...draft, stampsPerCompletedService })} />
+            <div className="space-y-1">
+              <Label className="text-xs">Serviços que contam</Label>
+              <Select value={draft.eligibleServiceIds === null ? "all" : "selected"} onValueChange={(value) => setDraft({
+                ...draft, eligibleServiceIds: value === "all" ? null : (draft.eligibleServiceIds ?? summary?.services.slice(0, 1).map((service) => service.id) ?? []),
+              })}>
+                <SelectTrigger className="h-10 rounded-xl"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">Todos os serviços</SelectItem><SelectItem value="selected" disabled={!summary?.services.length}>Escolher serviços</SelectItem></SelectContent>
+              </Select>
+            </div>
+            {draft.eligibleServiceIds !== null && <div className="grid gap-2 sm:grid-cols-2">
+              {(summary?.services ?? []).map((service) => <label key={service.id} className="flex min-h-11 items-center gap-2 rounded-xl border border-border px-3 text-sm">
+                <input type="checkbox" checked={draft.eligibleServiceIds?.includes(service.id) ?? false}
+                  onChange={(event) => setDraft({ ...draft, eligibleServiceIds: event.target.checked
+                    ? [...(draft.eligibleServiceIds ?? []), service.id]
+                    : (draft.eligibleServiceIds ?? []).filter((id) => id !== service.id) })} />{service.name}
+              </label>)}
+            </div>}
+            {draft.bookingStampsEnabled && <ToggleRow title="Acumular visita e serviços"
+              description="Desligado por padrão: a mesma visita só recebe garimpos pela regra de visitas."
+              checked={draft.allowVisitServiceStacking}
+              onChange={(allowVisitServiceStacking) => setDraft({ ...draft, allowVisitServiceStacking })} />}
+            <div role="status" className="rounded-xl bg-amber-500/10 p-3 text-sm">
+              {draft.bookingStampsEnabled && !draft.allowVisitServiceStacking
+                ? "As visitas têm prioridade. Desative os garimpos por visita ou autorize a acumulação para contar serviços."
+                : `Cada serviço elegível concluído dá ${draft.stampsPerCompletedService} garimpos. ${draft.eligibleServiceIds === null ? "Todos os serviços contam." : `${draft.eligibleServiceIds.length} serviços escolhidos contam.`}`}
+            </div>
+          </div>}
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))]">
+          {draft.bookingStampsEnabled && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))]">
+            <div className="space-y-2">
+              <NumberField
+                label="Visitas concluídas necessárias"
+                value={draft.visitsRequiredForStamps}
+                min={1}
+                onChange={(visitsRequiredForStamps) => setDraft({ ...draft, visitsRequiredForStamps })}
+              />
+              <div className="flex gap-2" aria-label="Metas rápidas de visitas">
+                {[1, 5, 10].map((count) => <Button key={count} type="button" size="sm"
+                  variant={draft.visitsRequiredForStamps === count ? "default" : "outline"}
+                  onClick={() => setDraft({ ...draft, visitsRequiredForStamps: count })}>{count}</Button>)}
+              </div>
+            </div>
             <NumberField
-              label="Por reserva"
+              label="Garimpos ao atingir a meta"
               value={draft.stampsPerCompletedBooking}
               onChange={(stampsPerCompletedBooking) => setDraft({ ...draft, stampsPerCompletedBooking })}
             />
-            <NumberField
-              label="Por indicação"
-              value={draft.stampsPerCompletedReferral}
-              onChange={(stampsPerCompletedReferral) => setDraft({ ...draft, stampsPerCompletedReferral })}
-            />
+          </div>}
+          {draft.referralStampsEnabled && <NumberField
+            label="Garimpos por indicação concluída"
+            value={draft.stampsPerCompletedReferral}
+            onChange={(stampsPerCompletedReferral) => setDraft({ ...draft, stampsPerCompletedReferral })}
+          />}
+          <div role="status" className="rounded-xl bg-amber-500/10 p-3 text-sm leading-relaxed">
+            {!draft.enabled ? "Prévia das regras: a fidelidade está pausada. " : null}
+            {draft.bookingStampsEnabled
+              ? `A cada ${draft.visitsRequiredForStamps} ${draft.visitsRequiredForStamps === 1 ? "visita concluída" : "visitas concluídas"}, a cliente recebe ${draft.stampsPerCompletedBooking} garimpos. Uma reserva com vários serviços conta como uma visita.`
+              : "Garimpos por visitas desligados. Os benefícios já conquistados mantêm-se."}
+            {draft.visitRuleStartedAt && <span className="mt-1 block text-xs text-muted-foreground">Ao alterar a meta, os garimpos ou reativar o programa, a contagem de visitas recomeça após guardar. Os garimpos anteriores mantêm-se.</span>}
           </div>
         </SettingsCard>}
 
@@ -357,13 +437,18 @@ function AdminLoyaltyPage() {
           Recompensas ({draft.rewardRules.length}) <ChevronDown className={cn("size-4 transition", rulesOpen && "rotate-180")} />
         </button>
         {rulesOpen && <SettingsCard title="Recompensas" icon={<BadgePercent className="size-4" />}>
+          <p className="text-xs text-muted-foreground">Exemplos: 5 garimpos = 5 €; 10 garimpos = 15%. Cada desconto fica limitado ao valor da reserva.</p>
           {draft.rewardRules.map((rule, index) => <div key={rule.id} className="grid gap-2 rounded-xl border border-border p-2 sm:grid-cols-[7rem_9rem_8rem_auto] sm:items-end">
             <div className="space-y-1 sm:col-span-4"><Label className="text-xs">Nome do programa</Label><Input maxLength={60} value={rule.name ?? ""} placeholder={`Programa ${index + 1}`} onChange={(event) => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, name: event.target.value || undefined } : item) })} /></div>
-            <NumberField label="Carimbos" value={rule.stampsRequired} min={1} onChange={(stampsRequired) => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, stampsRequired } : item) })} />
+            <NumberField label="Garimpos necessários" value={rule.stampsRequired} min={1} onChange={(stampsRequired) => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, stampsRequired } : item) })} />
             <div className="space-y-1"><Label className="text-xs">Desconto</Label><Select value={rule.type} onValueChange={(type) => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, type: type as "percent" | "fixed" } : item) })}>
               <SelectTrigger className="h-9 rounded-xl"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="percent">Percentagem</SelectItem><SelectItem value="fixed">Valor fixo</SelectItem></SelectContent>
             </Select></div>
             <NumberField label={rule.type === "percent" ? "Desconto (%)" : "Desconto (€)"} value={rule.value} min={0} step={rule.type === "percent" ? 1 : 0.5} onChange={(value) => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, value } : item) })} />
+            <div className="space-y-1"><Label className="text-xs">Quando usar</Label><Select value={rule.applyWhen} onValueChange={(applyWhen) => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, applyWhen: applyWhen as "current" | "next" } : item) })}>
+              <SelectTrigger className="h-9 rounded-xl"><SelectValue /></SelectTrigger><SelectContent>
+                <SelectItem value="current">Nesta visita</SelectItem><SelectItem value="next">Próxima visita</SelectItem>
+              </SelectContent></Select></div>
             <div className="flex items-center gap-1">
               <Button type="button" className="min-w-0 flex-1" variant={rule.enabled ? "default" : "outline"} onClick={() => setDraft({ ...draft, rewardRules: draft.rewardRules.map((item, i) => i === index ? { ...item, enabled: !item.enabled } : item) })}>{rule.enabled ? "Ativa" : "Inativa"}</Button>
               <Button type="button" variant="ghost" size="icon" disabled={saving} title="Excluir recompensa" aria-label={`Excluir recompensa ${index + 1}`} onClick={() => {
@@ -373,12 +458,13 @@ function AdminLoyaltyPage() {
               }}><Trash2 className="size-4" /></Button>
             </div>
           </div>)}
-          <Button type="button" variant="outline" disabled={draft.rewardRules.length >= 12} onClick={() => setDraft({ ...draft, rewardRules: [...draft.rewardRules, { id: crypto.randomUUID(), name: `Programa ${draft.rewardRules.length + 1}`, stampsRequired: 5, type: "percent", value: 10, enabled: true, startedAt: null }] })}>
+          <Button type="button" variant="outline" disabled={draft.rewardRules.length >= 12} onClick={() => setDraft({ ...draft, rewardRules: [...draft.rewardRules, { id: crypto.randomUUID(), name: `Programa ${draft.rewardRules.length + 1}`, stampsRequired: 5, type: "fixed", value: 5, enabled: true, startedAt: null, applyWhen: "next" }] })}>
             <Plus className="mr-2 size-4" /> Adicionar recompensa
           </Button>
-          <p className="text-xs text-muted-foreground">Novas regras contam apenas carimbos acumulados após guardar. Benefícios já conquistados mantêm-se.</p>
+          <p role="status" className="rounded-xl bg-amber-500/10 p-3 text-sm">{draft.rewardRules.filter((rule) => rule.enabled).map((rule) => `${rule.stampsRequired} garimpos = ${rule.value}${rule.type === "percent" ? "%" : " €"} de desconto ${rule.applyWhen === "current" ? "nesta visita" : "na próxima visita"}.`).join(" ") || "Ative uma recompensa para mostrar a pré-visualização."}</p>
+          <p className="text-xs text-muted-foreground">Novas regras contam apenas garimpos acumulados após guardar. Benefícios já conquistados mantêm-se. O desconto só é aplicado antes de qualquer sinal ou pagamento.</p>
         </SettingsCard>}
-      </section>
+      </section> : <p className="rounded-xl bg-muted/60 p-3 text-sm text-muted-foreground">Só a proprietária pode configurar as promoções de fidelidade.</p>}
 
       <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <button
@@ -504,11 +590,11 @@ function AdminLoyaltyPage() {
           </div>)}
         </div>
       </section>
-      <div className="sticky bottom-20 z-20 rounded-full bg-background/90 p-1 shadow-lg backdrop-blur sm:hidden">
+      {canConfigurePromotions && <div className="sticky bottom-20 z-20 rounded-full bg-background/90 p-1 shadow-lg backdrop-blur sm:hidden">
         <Button onClick={save} disabled={!hasChanges || saving} className="h-10 w-full rounded-full">
           {saving ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Save className="mr-2 size-4" />} Guardar
         </Button>
-      </div>
+      </div>}
     </main>
   );
 }
@@ -553,11 +639,11 @@ function ToggleRow({
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className="flex min-h-14 w-full items-center justify-between gap-2 rounded-xl border border-border bg-background/60 p-2 text-left sm:min-h-[4.25rem] sm:p-3"
+      className="flex min-h-14 w-full items-center justify-between gap-2 overflow-hidden rounded-xl border border-border bg-background/60 p-2 text-left whitespace-normal sm:min-h-[4.25rem] sm:p-3"
     >
       <span className="min-w-0 flex-1">
         <span className="block break-words text-sm font-extrabold leading-snug text-foreground">{title}</span>
-        <span className="mt-0.5 block break-words text-xs leading-snug text-muted-foreground">{description}</span>
+        <span className="mt-0.5 block whitespace-normal break-words text-xs leading-snug text-muted-foreground">{description}</span>
       </span>
       <span
         className={cn(
