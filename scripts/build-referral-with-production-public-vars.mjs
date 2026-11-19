@@ -1,5 +1,5 @@
 // Local build only. The live financial VITE bindings must be checked by OAuth,
-// but their build-time opt-in is absent from the active dbce9473 Worker.
+// but their build-time opt-in is absent from the dbce9473 and e5bb73f6 Workers.
 // Preserve the active compiled behavior until a separate release authorizes it.
 import { readFileSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -11,7 +11,8 @@ if (mode !== "active" && mode !== "rollback") {
 }
 const vars = JSON.parse(readFileSync("wrangler.production.jsonc", "utf8")).env.production.vars;
 const official = JSON.parse(readFileSync("OFFICIAL_BASE.json", "utf8"));
-if (official.cloudflareVersionId !== "dbce9473-991e-4294-8606-ceb0c78356e0") {
+if (!["dbce9473-991e-4294-8606-ceb0c78356e0", "e5bb73f6-a486-4236-99cc-996b4ec09666"]
+  .includes(official.cloudflareVersionId)) {
   throw new Error("financial_build_parity_reference_changed");
 }
 const required = [
