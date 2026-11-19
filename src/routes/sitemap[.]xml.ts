@@ -1,12 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { createClient } from "@supabase/supabase-js";
 import { BLOG_BASE_URL, blogArticles, escapeXml } from "@/lib/blog";
-import { isExcludedQaStudio } from "@/lib/qa-public-visibility";
+import { isExcludedFromSearchIndex } from "@/lib/qa-public-visibility";
 
 type SitemapUrl = {
   loc: string;
   changefreq: "daily" | "weekly" | "monthly" | "yearly";
   priority: string;
   lastmod?: string;
+};
+
+type PublicStudioRow = {
+  id: string | null;
+  slug: string | null;
+  updated_at: string | null;
 };
 
 const STATIC_URLS: SitemapUrl[] = [
@@ -23,10 +30,12 @@ const STATIC_URLS: SitemapUrl[] = [
 
 async function getPublicStudioUrls(): Promise<SitemapUrl[]> {
   try {
-    const { getAdminClient } = await import("@/lib/supabase-admin.server");
-    const supabase = getAdminClient();
-    const { data, error } = await supabase
-      .from("studios")
+    const url = process.env.VITE_SUPABASE_URL ?? process.env.SUPABASE_URL;
+    const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_PUBLISHABLE_KEY;
+    if (!url || !key) throw new Error("Public Supabase configuration unavailable");
+    const supabase = createClient(url, key, { auth: { persistSession: false } });
+    const { data, error } = await (supabase as any)
+      .from("public_studios")
       .select("id,slug,updated_at")
       .eq("is_active", true)
       .not("slug", "is", null)
@@ -38,8 +47,9 @@ async function getPublicStudioUrls(): Promise<SitemapUrl[]> {
       return [];
     }
 
-    return data
-      .filter((studio) => !isExcludedQaStudio(studio))
+    const studios = data as PublicStudioRow[];
+    return studios
+      .filter((studio) => !isExcludedFromSearchIndex(studio))
       .map((studio) => ({
         loc: `/s/${String(studio.slug).trim().toLowerCase()}`,
         changefreq: "weekly" as const,

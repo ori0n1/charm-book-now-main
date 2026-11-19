@@ -14,3 +14,8 @@ export function isExcludedQaStudio(studio: { id?: string | null; slug?: string |
   return (typeof studio.id === "string" && QA_STUDIO_IDS.has(studio.id.toLowerCase()))
     || (typeof studio.slug === "string" && QA_STUDIO_SLUGS.has(studio.slug.toLowerCase()));
 }
+
+export function isExcludedFromSearchIndex(studio: { id?: string | null; slug?: string | null }): boolean {
+  return isExcludedQaStudio(studio)
+    || studio.slug?.toLowerCase() === "bellza-studio-demo";
+}

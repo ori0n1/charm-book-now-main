@@ -5,6 +5,7 @@ import { APP_BRAND, CANONICAL_ORIGIN } from "@/lib/app-brand";
 import { BELLZA_APP_ICON_512 } from "@/lib/brand-assets";
 import { serializeJsonForHtmlScript } from "@/lib/output-safety";
 import { getPublicStudioSeo } from "@/lib/public-studio.functions";
+import { isExcludedFromSearchIndex } from "@/lib/qa-public-visibility";
 
 const BookingExperience = lazy(() =>
   import("@/components/booking-experience").then((mod) => ({ default: mod.BookingExperience })),
@@ -30,7 +31,7 @@ export const Route = createFileRoute("/s/$slug")({
     if (!studio) throw notFound();
     return studio;
   },
-  head: ({ loaderData, params }) => {
+  head: ({ loaderData }) => {
     if (!loaderData) {
       return {
         meta: [
@@ -40,7 +41,7 @@ export const Route = createFileRoute("/s/$slug")({
       };
     }
     const studio = loaderData;
-    const canonical = `${CANONICAL_ORIGIN}/s/${params.slug}`;
+    const canonical = `${CANONICAL_ORIGIN}/s/${studio.slug}`;
     const title = `${studio.name} | ${studio.bookingFlowMode === "request" ? "Solicitar agendamento" : "Marcação online"} na ${APP_BRAND.name}`;
     const description = studioDescription(studio.name, studio.description, studio.tagline, studio.bookingFlowMode);
     const socialImage = studio.logoUrl || `${CANONICAL_ORIGIN}${BELLZA_APP_ICON_512}`;
@@ -49,7 +50,7 @@ export const Route = createFileRoute("/s/$slug")({
       meta: [
         { title },
         { name: "description", content: description },
-        { name: "robots", content: "index,follow,max-image-preview:large" },
+        { name: "robots", content: isExcludedFromSearchIndex(studio) ? "noindex,follow" : "index,follow,max-image-preview:large" },
         { property: "og:title", content: title },
         { property: "og:description", content: description },
         { property: "og:type", content: "website" },
@@ -69,7 +70,7 @@ export const Route = createFileRoute("/s/$slug")({
         { rel: "canonical", href: canonical },
         // Studio-specific PWA manifest: ensures Chrome/Safari capture the studio's
         // name, icon and start_url BEFORE the beforeinstallprompt event fires.
-        { rel: "manifest", href: `/api/public/studio-manifest/${params.slug}` },
+        { rel: "manifest", href: `/api/public/studio-manifest/${studio.slug}` },
       ],
     };
   },
@@ -81,7 +82,7 @@ function PublicStudioPage() {
   const description = studioDescription(studio.name, studio.description, studio.tagline, studio.bookingFlowMode);
   const schema = {
     "@context": "https://schema.org",
-    "@type": "BeautySalon",
+    "@type": "LocalBusiness",
     name: studio.name,
     description,
     url: `${CANONICAL_ORIGIN}/s/${studio.slug}`,
