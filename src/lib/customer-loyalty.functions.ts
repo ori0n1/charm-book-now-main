@@ -92,7 +92,7 @@ async function assertLoyaltyPromotionEditor(sb: ReturnType<typeof getAdminClient
   await assertStudioAccess(sb, userId, studioId, { entitlement: "loyalty" });
   const { data, error } = await sb.from("user_roles").select("role")
     .eq("user_id", userId).eq("studio_id", studioId)
-    .in("role", ["studio_owner", "manager", "staff"]).limit(1).maybeSingle();
+    .in("role", ["studio_owner", "manager"]).limit(1).maybeSingle();
   if (error || !data?.role) throw new Response("loyalty_promotion_editor_required", { status: 403 });
 }
 
@@ -100,7 +100,7 @@ async function assertLoyaltySummaryReader(sb: ReturnType<typeof getAdminClient>,
   await assertStudioAccess(sb, userId, studioId, { entitlement: "loyalty" });
   const { data, error } = await sb.from("user_roles").select("role")
     .eq("user_id", userId).eq("studio_id", studioId)
-    .in("role", ["saas_owner", "studio_owner", "manager", "staff"]).limit(1).maybeSingle();
+    .in("role", ["saas_owner", "studio_owner", "manager"]).limit(1).maybeSingle();
   if (error || !data?.role) throw new Response("loyalty_summary_forbidden", { status: 403 });
 }
 

@@ -339,7 +339,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const effectivePlan = normalizePlanTier(billingQuery.data?.effectivePlan ?? studio?.plan_tier);
   const teamLoyaltyQuery = useQuery({
     queryKey: ["team-loyalty-access", studio?.id, studio?.user_id],
-    enabled: !!studio && (studio.role === "manager" || studio.role === "staff"),
+    enabled: !!studio && studio.role === "manager",
     staleTime: ADMIN_REFERENCE_STALE_MS,
     gcTime: ADMIN_REFERENCE_GC_MS,
     queryFn: async () => loadLoyaltyAccess({ data: { studioId: studio!.id } }),
@@ -403,7 +403,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     const allowedPaths =
       accessMode === "desk"
         ? ["/admin/balcao", "/admin/agenda"]
-        : ["/admin", "/admin/agenda", "/admin/clientes", "/admin/balcao", "/admin/horarios", "/admin/fidelidade"];
+        : ["/admin", "/admin/agenda", "/admin/clientes", "/admin/balcao", "/admin/horarios"];
     const canAccess = allowedPaths.some((to) =>
       to === "/admin" ? pathname === to : pathname.startsWith(to),
     );
@@ -579,7 +579,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
               "/admin/clientes",
               "/admin/balcao",
               "/admin/horarios",
-              "/admin/fidelidade",
+              ...(studio.role === "manager" ? ["/admin/fidelidade"] : []),
             ].includes(item.to),
           )
         : NAV.filter((item) =>
@@ -596,7 +596,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   ]);
   const roleNav = allowedNavByRole.filter((item) => {
     if (studio.role === "saas_owner" && item.to === "/admin/central") return true;
-    if ((studio.role === "manager" || studio.role === "staff") && item.to === "/admin/fidelidade") {
+    if (studio.role === "manager" && item.to === "/admin/fidelidade") {
       return teamLoyaltyQuery.data === true || pathname.startsWith("/admin/fidelidade");
     }
     if (accessMode !== "full") return true;
@@ -607,19 +607,18 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const requiredRouteFeature = requiredFeatureForAdminPath(pathname);
   const routeEntitlementPending = Boolean(
     (accessMode === "full" && requiredRouteFeature && !billingQuery.data && billingQuery.isLoading) ||
-    ((studio.role === "manager" || studio.role === "staff") && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.isPending),
+    (studio.role === "manager" && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.isPending),
   );
   const routePlanBlocked = Boolean(
     (accessMode === "full" && !(studio.role === "manager" && requiredRouteFeature === "loyalty") &&
       requiredRouteFeature && !planHasFeature(effectivePlan, requiredRouteFeature)) ||
-    ((studio.role === "manager" || studio.role === "staff") && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.data !== true),
+    (studio.role === "manager" && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.data !== true),
   );
 
   const navGroups = groupNavItems(roleNav);
   const primaryMobileNav = roleNav.filter((item) => "primary" in item && item.primary).slice(0, 4);
-  const limitedMobilePaths = new Set(["/admin/balcao", "/admin/agenda", "/admin/clientes", "/admin/fidelidade"]);
   const directMobileNav =
-    accessMode === "desk" ? roleNav : accessMode === "limited" ? roleNav.filter((item) => limitedMobilePaths.has(item.to)) : primaryMobileNav;
+    accessMode === "desk" || accessMode === "limited" ? roleNav : primaryMobileNav;
   const secondaryMobileNav =
     roleNav.filter((item) => !directMobileNav.includes(item));
   const secondaryMobileGroups = groupNavItems(secondaryMobileNav);
@@ -628,11 +627,9 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     accessMode === "limited" && item.to === "/admin" ? "Financeiro" : item.label;
   const mobileNavLabel = (item: (typeof NAV)[number]) =>
     accessMode === "limited" && item.to === "/admin"
-      ? "Financeiro"
+      ? "Início"
       : accessMode === "limited" && item.to === "/admin/horarios"
         ? "Horários"
-        : accessMode === "limited" && item.to === "/admin/fidelidade"
-          ? "Fidelidade"
         : item.mobileLabel;
   const tourTargetFor = (to: string) =>
     to === "/admin"
@@ -880,7 +877,9 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
           {showCancellationBanner && (
             <CancellationScheduledBanner endDate={billingQuery.data!.nextBillingAt} />
           )}
-          {(studio.role === "manager" || studio.role === "staff") && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.isError ? (
+          {studio.role === "staff" && requiredRouteFeature === "loyalty" ? (
+            <p className="rounded-xl border border-border bg-card p-4 text-sm">A gestão da fidelidade está disponível para a proprietária e para profissionais com acesso de gestão.</p>
+          ) : studio.role === "manager" && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.isError ? (
             <p className="rounded-xl border border-border bg-card p-4 text-sm">Não foi possível confirmar o acesso à fidelidade. Tente novamente mais tarde.</p>
           ) : routeEntitlementPending ? (
             <BrandLoadingState label="A confirmar o acesso..." />
@@ -1007,7 +1006,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
       )}
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border/70 bg-card/96 px-3 pb-[max(env(safe-area-inset-bottom),8px)] pt-2 shadow-[0_-16px_36px_rgba(0,0,0,0.35)] backdrop-blur-2xl md:hidden">
-        <div className={`mx-auto flex max-w-full items-center rounded-[1.65rem] bg-background/35 p-1 ${accessMode === "limited" ? "w-full gap-1" : "w-fit justify-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}`}>
+        <div className={`mx-auto flex max-w-full items-center rounded-[1.65rem] bg-background/35 p-1 ${accessMode === "limited" ? "w-full gap-0.5" : "w-fit justify-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"}`}>
           {directMobileNav.map((item) => {
             const active = isActive(item.to, item.exact);
             const Icon = item.icon;
@@ -1017,7 +1016,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
                 to={item.to}
                 data-tour={tourTargetFor(item.to)}
                 onClick={() => setMobileMenuOpen(false)}
-                className={`flex h-14 flex-col items-center justify-center gap-1.5 rounded-2xl font-semibold leading-none tracking-normal transition ${accessMode === "limited" ? "min-w-0 flex-1 px-0.5 text-[9px] min-[360px]:text-[10px]" : "min-w-[4.25rem] shrink-0 px-2 text-[10px]"} ${
+                className={`flex h-14 flex-col items-center justify-center gap-1.5 rounded-2xl font-semibold leading-none tracking-normal transition ${accessMode === "limited" ? "min-w-0 flex-1 px-0 text-[9px] tracking-tight min-[360px]:text-[10px]" : "min-w-[4.25rem] shrink-0 px-2 text-[10px]"} ${
                   active
                     ? "bg-foreground text-background shadow-lg shadow-black/20"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -1033,7 +1032,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
               type="button"
               data-tour="nav-more"
               onClick={() => setMobileMenuOpen((open) => !open)}
-              className={`flex h-14 flex-col items-center justify-center gap-1.5 rounded-2xl font-semibold leading-none tracking-normal transition ${accessMode === "limited" ? "min-w-0 flex-1 px-0.5 text-[9px] min-[360px]:text-[10px]" : "min-w-[4.25rem] shrink-0 px-2 text-[10px]"} ${
+              className={`flex h-14 min-w-[4.25rem] shrink-0 flex-col items-center justify-center gap-1.5 rounded-2xl px-2 text-[10px] font-semibold leading-none tracking-normal transition ${
                 mobileMenuOpen || secondaryActive
                   ? "bg-foreground text-background shadow-lg shadow-black/20"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"

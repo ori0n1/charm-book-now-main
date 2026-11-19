@@ -40,7 +40,7 @@ export const Route = createFileRoute("/_authenticated/admin/fidelidade")({
 function AdminLoyaltyPage() {
   const { studio, studios, loading: studioLoading, error: studioError, refetch: refetchStudio } = useCurrentStudio();
   const canConfigurePromotions = Boolean(studio && studios.some((membership) =>
-    membership.id === studio.id && ["studio_owner", "manager", "staff"].includes(membership.role)));
+    membership.id === studio.id && ["studio_owner", "manager"].includes(membership.role)));
   const canManageLedger = Boolean(studio && studios.some((membership) =>
     membership.id === studio.id && ["saas_owner", "studio_owner", "manager"].includes(membership.role)));
   const canRedeemReward = Boolean(studio && studios.some((membership) =>
