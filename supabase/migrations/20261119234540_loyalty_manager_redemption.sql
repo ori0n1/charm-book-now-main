@@ -1,9 +1,5 @@
 -- Extend only loyalty redemption to studio managers. The existing financial
 -- appointment editor and its payment/receipt guards remain unchanged.
-BEGIN;
-SET LOCAL lock_timeout = '5s';
-SET LOCAL statement_timeout = '30s';
-
 DO $migration$
 DECLARE
   v_redeem_oid regprocedure := to_regprocedure('public.redeem_customer_loyalty_discount(uuid,text,uuid,uuid)');
@@ -13,6 +9,8 @@ DECLARE
   v_old text := 'r.role=''studio_owner''';
   v_new text := 'r.role IN (''studio_owner'',''manager'')';
 BEGIN
+  PERFORM set_config('lock_timeout', '5s', true);
+  PERFORM set_config('statement_timeout', '30s', true);
   IF v_redeem_oid IS NULL OR v_editor_oid IS NULL THEN
     RAISE EXCEPTION 'loyalty_manager_redemption_dependency_missing';
   END IF;
@@ -39,5 +37,3 @@ BEGIN
     'loyalty_owner_required', 'loyalty_redeemer_required');
 END;
 $migration$;
-
-COMMIT;

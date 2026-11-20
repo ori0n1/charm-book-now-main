@@ -1,6 +1,6 @@
 -- Run only on the bellza-finance-full disposable database. psql ON_ERROR_STOP required.
--- Stage the adjacent migration under /tmp/loyalty_manager_patch_no_transaction.sql
--- with its standalone BEGIN/COMMIT lines removed so this test can ROLLBACK it.
+-- Stage the adjacent migration under /tmp/loyalty_manager_patch.sql;
+-- this test's transaction ROLLBACKs the migration and all fixture rows.
 -- The local fixture predates agenda role parity; adjust that one existing role
 -- predicate inside this transaction to exercise the already published pathway.
 BEGIN;
@@ -18,7 +18,7 @@ BEGIN
 END;
 $local_fixture$;
 
-\i /tmp/loyalty_manager_patch_no_transaction.sql
+\i /tmp/loyalty_manager_patch.sql
 
 INSERT INTO public.appointments
   (id,studio_id,staff_id,client_id,starts_at,ends_at,status,total_price,
