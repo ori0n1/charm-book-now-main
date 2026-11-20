@@ -25,6 +25,7 @@ import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { getProfessionalDailySummaries } from "@/lib/professional-daily-summary.functions";
 import { sortAppointmentsChronologically } from "@/lib/appointment-ordering";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
+import { getStudioTeamPlan } from "@/lib/studio-team-plan.functions";
 import {
   allocateAuthoritativeLineTotals,
   computeFinancialSplit,
@@ -197,6 +198,7 @@ function OverviewPage() {
   const { studio } = useCurrentStudio();
   const isAccountOwner = studio?.role === "studio_owner" || studio?.role === "saas_owner";
   const loadBilling = useServerFn(getPlatformSubscriptionSummary);
+  const loadTeamPlan = useServerFn(getStudioTeamPlan);
   const [summaryPeriod, setSummaryPeriod] = useState<SummaryPeriod>(30);
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriodMode>("30d");
   const [customPeriodStart, setCustomPeriodStart] = useState(() =>
@@ -227,7 +229,17 @@ function OverviewPage() {
     retry: 1,
     queryFn: async () => (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
-  const effectivePlan = normalizePlanTier(billing.data?.effectivePlan ?? studio?.plan_tier);
+  const teamPlan = useQuery({
+    queryKey: ["studio-team-plan", studio?.id, studio?.user_id],
+    enabled: !!studio && studio.role === "manager",
+    staleTime: ADMIN_REFERENCE_STALE_MS,
+    gcTime: ADMIN_REFERENCE_GC_MS,
+    refetchOnWindowFocus: true,
+    queryFn: () => loadTeamPlan({ data: { studioId: studio!.id } }),
+  });
+  const effectivePlan = studio?.role === "manager"
+    ? normalizePlanTier(teamPlan.data)
+    : normalizePlanTier(billing.data?.effectivePlan ?? studio?.plan_tier);
   const financeEnabled = (isAccountOwner || studio?.role === "manager") && planHasFeature(effectivePlan, "finance_basic");
   const overview = useQuery({
     queryKey: [
@@ -349,8 +361,11 @@ function OverviewPage() {
     };
   }, [refetchOverview, studio?.id, studio?.role]);
 
-  if (!studio || overview.isLoading)
+  if (!studio || overview.isLoading || (studio.role === "manager" && teamPlan.isPending))
     return <p className="text-sm text-muted-foreground">A carregar...</p>;
+
+  if (studio.role === "manager" && teamPlan.isError)
+    return <p className="text-sm text-muted-foreground">Não foi possível confirmar o plano do estúdio. Tente novamente mais tarde.</p>;
 
   if (studio.role === "staff") {
     return (

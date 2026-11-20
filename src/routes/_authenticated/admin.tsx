@@ -39,6 +39,7 @@ import { saveSelectedStudio, useCurrentStudio, type AppRole } from "@/hooks/use-
 import { APP_BRAND } from "@/lib/app-brand";
 import { getSegmentConfig } from "@/lib/segments";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
+import { getStudioTeamPlan } from "@/lib/studio-team-plan.functions";
 import { getCustomerLoyaltyStudioAccess } from "@/lib/customer-loyalty.functions";
 import { revokeCurrentDevicePushSubscription } from "@/lib/push-subscriptions.functions";
 import { getCurrentPushSubscription, unsubscribeCurrentPushSubscription } from "@/lib/pwa-push";
@@ -315,6 +316,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     (item, index) => studios.findIndex((candidate) => candidate.id === item.id) === index,
   );
   const loadBilling = useServerFn(getPlatformSubscriptionSummary);
+  const loadTeamPlan = useServerFn(getStudioTeamPlan);
   const loadLoyaltyAccess = useServerFn(getCustomerLoyaltyStudioAccess);
   const revokeCurrentDevicePush = useServerFn(revokeCurrentDevicePushSubscription);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -336,7 +338,17 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     retry: 1,
     queryFn: async () => (await loadBilling({ data: { studioId: studio!.id } })) as BillingSummary,
   });
-  const effectivePlan = normalizePlanTier(billingQuery.data?.effectivePlan ?? studio?.plan_tier);
+  const teamPlanQuery = useQuery({
+    queryKey: ["studio-team-plan", studio?.id, studio?.user_id],
+    enabled: !!studio && studio.role === "manager",
+    staleTime: ADMIN_REFERENCE_STALE_MS,
+    gcTime: ADMIN_REFERENCE_GC_MS,
+    refetchOnWindowFocus: true,
+    queryFn: () => loadTeamPlan({ data: { studioId: studio!.id } }),
+  });
+  const effectivePlan = studio?.role === "manager"
+    ? normalizePlanTier(teamPlanQuery.data)
+    : normalizePlanTier(billingQuery.data?.effectivePlan ?? studio?.plan_tier);
   const teamLoyaltyQuery = useQuery({
     queryKey: ["team-loyalty-access", studio?.id, studio?.user_id],
     enabled: !!studio && studio.role === "manager",
@@ -353,7 +365,10 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
     billingQuery.data.cancelAtPeriodEnd,
   );
   const premiumIndicatorVisible = Boolean(
-    accessMode === "full" && billingQuery.data && (premiumActive || premiumLocked),
+    accessMode === "full" && (
+      (isAccountOwner && billingQuery.data && (premiumActive || premiumLocked)) ||
+      (studio?.role === "manager" && teamPlanQuery.data === "premium")
+    ),
   );
   const premiumIndicatorTone = premiumLocked
     ? "expired"
@@ -366,7 +381,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const premiumTooltip = getPremiumHeaderTooltip(billingQuery.data);
   const isPremiumPage = pathname.startsWith("/admin/premium");
   const isOverviewPage = pathname === "/admin" || pathname === "/admin/";
-  const showOverviewPrivacy = isOverviewPage && isAccountOwner;
+  const showOverviewPrivacy = isOverviewPage && (isAccountOwner || studio?.role === "manager");
   const isAgendaPage = pathname.startsWith("/admin/agenda");
   const showCancellationBanner = Boolean(
     accessMode === "full" &&
@@ -607,6 +622,7 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
   const requiredRouteFeature = requiredFeatureForAdminPath(pathname);
   const routeEntitlementPending = Boolean(
     (accessMode === "full" && requiredRouteFeature && !billingQuery.data && billingQuery.isLoading) ||
+    (studio.role === "manager" && requiredRouteFeature && teamPlanQuery.isPending) ||
     (studio.role === "manager" && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.isPending),
   );
   const routePlanBlocked = Boolean(
@@ -881,6 +897,8 @@ function AdminPanelLayout({ pathname }: { pathname: string }) {
             <p className="rounded-xl border border-border bg-card p-4 text-sm">A gestão da fidelidade está disponível para a proprietária e para profissionais com acesso de gestão.</p>
           ) : studio.role === "manager" && requiredRouteFeature === "loyalty" && teamLoyaltyQuery.isError ? (
             <p className="rounded-xl border border-border bg-card p-4 text-sm">Não foi possível confirmar o acesso à fidelidade. Tente novamente mais tarde.</p>
+          ) : studio.role === "manager" && requiredRouteFeature && teamPlanQuery.isError ? (
+            <p className="rounded-xl border border-border bg-card p-4 text-sm">Não foi possível confirmar o plano do estúdio. Tente novamente mais tarde.</p>
           ) : routeEntitlementPending ? (
             <BrandLoadingState label="A confirmar o acesso..." />
           ) : routePlanBlocked && requiredRouteFeature ? (
