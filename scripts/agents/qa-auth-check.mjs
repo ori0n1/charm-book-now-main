@@ -16,7 +16,7 @@ if (!studioCode || !password || !publishableKey) {
 } else {
   try {
     const session = await signInQa({ studioCode, password, publishableKey,
-      legacyVaultPassword: studioCode === "STUDIO_QA_A" || studioCode === "STUDIO_QA_B" });
+      legacyVaultPassword: studioCode === "STUDIO_QA_B" });
     const rls = operation === "rls-read" ? await readQaIsolation({
       studioCode, accessToken: session.accessToken, publishableKey }) : null;
     process.stdout.write(JSON.stringify({ studioCode: session.studioCode,

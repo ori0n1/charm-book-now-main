@@ -2,6 +2,8 @@
 -- services, prices, receipts, commission snapshots or notification preferences.
 -- This separate RPC leaves the published edit and move functions intact.
 BEGIN;
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '30s';
 
 CREATE OR REPLACE FUNCTION public.move_studio_appointment_stage2(
   p_studio_id uuid,

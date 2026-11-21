@@ -46,22 +46,25 @@ test("QA Auth rejeita token de outra identidade e autenticação falhada", async
     fetchImpl: async () => Response.json({}, { status: 401 }) }), /QA_AUTH_DENIED/);
 });
 
-test("senhas QA legadas só entram pelo opt-in do cofre; novas continuam com mínimo 12", async () => {
+test("só QA B mantém a exceção da senha legada no cofre", async () => {
   const shortPassword = "qaLegacy8";
   let calls = 0;
   const fetchImpl = async (url) => {
     calls += 1;
     return url.endsWith("/auth/v1/user")
-      ? Response.json({ id: QA_IDENTITIES.STUDIO_QA_A.userId, role: "authenticated" })
-      : Response.json({ access_token: jwt("STUDIO_QA_A"), expires_in: 120 });
+      ? Response.json({ id: QA_IDENTITIES.STUDIO_QA_B.userId, role: "authenticated" })
+      : Response.json({ access_token: jwt("STUDIO_QA_B"), expires_in: 120 });
   };
   await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A",
     password: shortPassword, publishableKey: KEY, fetchImpl }), /QA_AUTH_CONFIG_INVALID/);
   assert.equal(calls, 0);
-  const session = await signInQa({ studioCode: "STUDIO_QA_A",
+  const session = await signInQa({ studioCode: "STUDIO_QA_B",
     password: shortPassword, publishableKey: KEY, legacyVaultPassword: true, fetchImpl });
-  assert.equal(session.userId, QA_IDENTITIES.STUDIO_QA_A.userId);
+  assert.equal(session.userId, QA_IDENTITIES.STUDIO_QA_B.userId);
   assert.equal(calls, 2);
+  await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A",
+    password: shortPassword, publishableKey: KEY, legacyVaultPassword: true,
+    fetchImpl }), /QA_AUTH_CONFIG_INVALID/);
   await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A_PROFESSIONAL",
     password: shortPassword, publishableKey: KEY, legacyVaultPassword: true,
     fetchImpl }), /QA_AUTH_CONFIG_INVALID/);
@@ -82,8 +85,9 @@ test("leitura RLS QA usa apenas HEAD autenticado e recusa resultados cruzados", 
   };
   const result = await readQaIsolation({ studioCode: "STUDIO_QA_B",
     accessToken: "synthetic-jwt", publishableKey: KEY, fetchImpl });
-  assert.deepEqual(result, { ownRoles: 1, foreignRoles: 0, foreignAppointments: 0 });
-  assert.equal(seen.length, 3);
+  assert.deepEqual(result, { ownRoles: 1, ownAppointments: 1,
+    foreignRoles: 0, foreignAppointments: 0 });
+  assert.equal(seen.length, 4);
   assert.ok(seen.every((call) => call.method === "HEAD" &&
     call.url.startsWith("https://pwmdzpvnatrvfpgcvnzg.supabase.co/rest/v1/")));
   await assert.rejects(readQaIsolation({ studioCode: "STUDIO_QA_B",

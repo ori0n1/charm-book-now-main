@@ -21,7 +21,7 @@ export const QA_AUTH_IDENTITIES = Object.freeze({
   STUDIO_QA_A_PROFESSIONAL: Object.freeze({
     studioId: "e2663064-7774-41c5-95cb-e5e6afc4fab4",
     userId: "9aef1eae-90b1-4ae7-9c5f-aee93abfb212",
-    email: "qa-profissional-20261025@bellza.invalid",
+    email: "qa-professional-20261025@bellza.invalid",
   }),
 });
 
@@ -53,10 +53,9 @@ async function smallJson(response) {
 export async function signInQa({ studioCode, password, publishableKey,
   legacyVaultPassword = false, fetchImpl = fetch } = {}) {
   const identity = QA_AUTH_IDENTITIES[studioCode];
-  // Existing QA A/B passwords may predate the 12-character local vault rule.
-  // Only the protected-vault runner opts in; new vault entries still require 12.
+  // QA B retains its protected legacy password. New vault entries require 12.
   const minimumLength = legacyVaultPassword === true &&
-    ["STUDIO_QA_A", "STUDIO_QA_B"].includes(studioCode) ? 8 : 12;
+    studioCode === "STUDIO_QA_B" ? 8 : 12;
   if (!identity || typeof password !== "string" || password.length < minimumLength ||
       password.length > 512 || !KEY.test(publishableKey ?? "") ||
       typeof fetchImpl !== "function") throw new Error("QA_AUTH_CONFIG_INVALID");

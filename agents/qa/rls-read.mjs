@@ -28,10 +28,11 @@ export async function readQaIsolation({ studioCode, accessToken, publishableKey,
     return Number(match[1] ?? match[2]);
   }
   const ownRoles = await count("user_roles", own.studioId);
+  const ownAppointments = await count("appointments", own.studioId);
   const foreignRoles = await count("user_roles", foreign.studioId);
   const foreignAppointments = await count("appointments", foreign.studioId);
   if (ownRoles < 1 || foreignRoles !== 0 || foreignAppointments !== 0) {
     throw new Error("QA_RLS_ISOLATION_FAILED");
   }
-  return { ownRoles, foreignRoles, foreignAppointments };
+  return { ownRoles, ownAppointments, foreignRoles, foreignAppointments };
 }

@@ -12,9 +12,9 @@ Estúdio ativo `bellza-qa-e2663064`, ID `e2663064-7774-41c5-95cb-e5e6afc4fab4`. 
 | `9aef1eae-90b1-4ae7-9c5f-aee93abfb212` | `staff` | QA profissional |
 | `ec3128b3-a366-4358-afb6-cabd41b68e79` | `studio_owner` | QA de proprietário e futura prova RLS |
 
-Emails QA A confirmados no catálogo Auth: `qa-manager-20261025@bellza.invalid`, `qa-profissional-20261025@bellza.invalid` e `qa-owner-20261025@bellza.invalid`, respetivamente.
+Emails QA A confirmados no catálogo Auth: `qa-manager-20261025@bellza.invalid`, `qa-professional-20261025@bellza.invalid` e `qa-owner-20261025@bellza.invalid`, respetivamente. O email do profissional foi reconfirmado no Auth em 2026-11-21; o registo anterior em português estava incorreto.
 
-As três contas estavam confirmadas, não bloqueadas e sem `saas_owner` na revisão inicial. Após a criação de QA B, os três vínculos acima continuavam presentes. Sessões atuais de QA A não foram verificadas.
+As três contas estavam confirmadas, não bloqueadas e sem `saas_owner` na revisão inicial. Após a criação de QA B, os três vínculos acima continuavam presentes. As sessões do proprietário e profissional QA A foram verificadas em 2026-11-21.
 
 ## QA B — criado e inativo
 
@@ -60,17 +60,19 @@ Reversão da proposta local: descartar o commit candidato. Se a correção vier 
 
 ### Autenticação local preparada
 
-O ficheiro `scripts/agents/qa-vault.ps1` usa DPAPI do utilizador Windows e ACL do próprio utilizador num diretório separado de Telegram, em `%LOCALAPPDATA%\Bellza\QA\secrets`. O autoteste com um segredo sintético temporário passou no perfil Windows efetivo. Nenhuma senha QA foi introduzida neste cofre nesta etapa; a senha QA B guardada pelo proprietário no navegador não foi extraída. O proprietário deve introduzir diretamente no cofre as senhas QA A e QA B e a chave pública `sb_publishable_` do projeto, sem as transmitir à Codex.
+O ficheiro `scripts/agents/qa-vault.ps1` usa DPAPI do utilizador Windows e ACL do próprio utilizador num diretório separado de Telegram, em `%LOCALAPPDATA%\Bellza\QA\secrets`. O autoteste com um segredo sintético temporário passou no perfil Windows efetivo. As três senhas QA e a chave pública estão guardadas nesse cofre. O proprietário deve manter futuras credenciais exclusivamente nele, sem as transmitir à Codex.
 
 Comandos manuais no PowerShell do proprietário, nesta worktree:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agents/qa-vault.ps1 -Mode set -Name qa-a-password
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agents/qa-vault.ps1 -Mode set -Name qa-b-password
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agents/qa-vault.ps1 -Mode set -Name publishable-key
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agents/qa-vault.ps1 -Mode status -Name qa-b-password
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/agents/qa-vault.ps1 -Mode run -Studio STUDIO_QA_B -Operation auth-check
+pwsh -NoProfile -File scripts/agents/qa-vault.ps1 -Mode set -Name qa-a-password
+pwsh -NoProfile -File scripts/agents/qa-vault.ps1 -Mode set -Name qa-b-password
+pwsh -NoProfile -File scripts/agents/qa-vault.ps1 -Mode set -Name publishable-key
+pwsh -NoProfile -File scripts/agents/qa-vault.ps1 -Mode status -Name qa-b-password
+pwsh -NoProfile -File scripts/agents/qa-vault.ps1 -Mode run -Studio STUDIO_QA_B -Operation auth-check
 ```
+
+Em 2026-11-21, o Auth confirmou novamente os IDs, emails, marcadores QA, contas confirmadas e ausência de bloqueio do proprietário QA A e do profissional QA A. Com autorização específica do proprietário, apenas as senhas dessas duas contas sintéticas foram redefinidas pelo Auth Admin oficial e guardadas diretamente no DPAPI com ACL privada. QA B não foi alterada. As três contas autenticaram pelo cofre e fizeram leituras HEAD com JWT autenticado; QA B não viu as duas reservas visíveis ao proprietário QA A. O profissional QA A viu uma reserva própria. Isto comprova isolamento de leitura observado, não autoriza escrita em produção nem comprova a RPC candidata ainda não publicada.
 
 O `auth-check` usa o endpoint oficial Supabase Auth de senha e valida o ID esperado da identidade no endpoint Auth `/user`; não lê tabelas de negócio. O JWT só existe na memória do processo curto. Cada execução autentica de novo, sem guardar refresh token. Rotação local: `-Mode rotate -Name <nome>`; revogação local: `-Mode revoke -Name <nome>`. A revogação do ficheiro local **não** invalida senhas ou sessões no servidor; rotação/bloqueio no Supabase Auth requer autorização administrativa específica. Nunca colocar a senha ou token em argumentos de comando, no Git, no gateway Telegram ou em prompts da IA.
 
