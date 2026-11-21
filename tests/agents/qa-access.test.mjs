@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { QA_IDENTITIES, signInQa } from "../../agents/qa/auth-session.mjs";
+import { readQaIsolation } from "../../agents/qa/rls-read.mjs";
 import { createQaReadExecutor } from "../../agents/qa/read-executor.mjs";
 
 const KEY = "sb_publishable_synthetic_only";
@@ -43,6 +44,48 @@ test("QA Auth rejeita token de outra identidade e autenticação falhada", async
   await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A",
     password: "synthetic-password-only", publishableKey: KEY,
     fetchImpl: async () => Response.json({}, { status: 401 }) }), /QA_AUTH_DENIED/);
+});
+
+test("senhas QA legadas só entram pelo opt-in do cofre; novas continuam com mínimo 12", async () => {
+  const shortPassword = "qaLegacy8";
+  let calls = 0;
+  const fetchImpl = async (url) => {
+    calls += 1;
+    return url.endsWith("/auth/v1/user")
+      ? Response.json({ id: QA_IDENTITIES.STUDIO_QA_A.userId, role: "authenticated" })
+      : Response.json({ access_token: jwt("STUDIO_QA_A"), expires_in: 120 });
+  };
+  await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A",
+    password: shortPassword, publishableKey: KEY, fetchImpl }), /QA_AUTH_CONFIG_INVALID/);
+  assert.equal(calls, 0);
+  const session = await signInQa({ studioCode: "STUDIO_QA_A",
+    password: shortPassword, publishableKey: KEY, legacyVaultPassword: true, fetchImpl });
+  assert.equal(session.userId, QA_IDENTITIES.STUDIO_QA_A.userId);
+  assert.equal(calls, 2);
+  await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A",
+    password: "short7!", publishableKey: KEY, legacyVaultPassword: true,
+    fetchImpl }), /QA_AUTH_CONFIG_INVALID/);
+  assert.equal(calls, 2);
+});
+
+test("leitura RLS QA usa apenas HEAD autenticado e recusa resultados cruzados", async () => {
+  const seen = [];
+  const fetchImpl = async (url, options) => {
+    seen.push({ url: String(url), method: options.method });
+    const own = String(url).includes(QA_IDENTITIES.STUDIO_QA_B.studioId);
+    return new Response(null, { status: 200,
+      headers: { "content-range": own ? "0-0/1" : "*/0" } });
+  };
+  const result = await readQaIsolation({ studioCode: "STUDIO_QA_B",
+    accessToken: "synthetic-jwt", publishableKey: KEY, fetchImpl });
+  assert.deepEqual(result, { ownRoles: 1, foreignRoles: 0, foreignAppointments: 0 });
+  assert.equal(seen.length, 3);
+  assert.ok(seen.every((call) => call.method === "HEAD" &&
+    call.url.startsWith("https://pwmdzpvnatrvfpgcvnzg.supabase.co/rest/v1/")));
+  await assert.rejects(readQaIsolation({ studioCode: "STUDIO_QA_B",
+    accessToken: "synthetic-jwt", publishableKey: KEY,
+    fetchImpl: async () => new Response(null, { status: 200,
+      headers: { "content-range": "0-0/1" } }) }), /QA_RLS_ISOLATION_FAILED/);
 });
 
 test("executor não aceita estúdios reais, escrita nem leitura sem prova", async () => {

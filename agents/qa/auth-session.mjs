@@ -42,9 +42,12 @@ async function smallJson(response) {
 // Official Supabase Auth password grant. The password and returned JWT stay in
 // this short-lived local process; callers must never log or persist either.
 export async function signInQa({ studioCode, password, publishableKey,
-  fetchImpl = fetch } = {}) {
+  legacyVaultPassword = false, fetchImpl = fetch } = {}) {
   const identity = QA_IDENTITIES[studioCode];
-  if (!identity || typeof password !== "string" || password.length < 12 ||
+  // Existing QA A/B passwords may predate the 12-character local vault rule.
+  // Only the protected-vault runner opts in; new vault entries still require 12.
+  const minimumLength = legacyVaultPassword === true && identity ? 8 : 12;
+  if (!identity || typeof password !== "string" || password.length < minimumLength ||
       password.length > 512 || !KEY.test(publishableKey ?? "") ||
       typeof fetchImpl !== "function") throw new Error("QA_AUTH_CONFIG_INVALID");
   let tokenResponse;
@@ -57,7 +60,16 @@ export async function signInQa({ studioCode, password, publishableKey,
       body: JSON.stringify({ email: identity.email, password }),
     });
   } catch { throw new Error("QA_AUTH_UNAVAILABLE"); }
-  if (tokenResponse.status !== 200) throw new Error("QA_AUTH_DENIED");
+  if (tokenResponse.status !== 200) {
+    let reason = "UNSPECIFIED";
+    try {
+      const errorData = await smallJson(tokenResponse);
+      const code = errorData?.error_code;
+      if (["invalid_credentials", "weak_password", "email_not_confirmed",
+        "user_banned"].includes(code)) reason = code.toUpperCase();
+    } catch { /* Keep only a safe, fixed diagnostic code. */ }
+    throw new Error(`QA_AUTH_DENIED_${reason}`);
+  }
   const tokenData = await smallJson(tokenResponse);
   const token = tokenData?.access_token;
   if (typeof token !== "string" || token.length > 4096 || !JWT.test(token) ||

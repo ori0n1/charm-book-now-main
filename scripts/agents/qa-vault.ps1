@@ -2,7 +2,7 @@ param(
   [Parameter(Mandatory=$true)][ValidateSet('set','rotate','status','revoke','run','selftest')][string]$Mode,
   [ValidateSet('qa-a-password','qa-b-password','publishable-key')][string]$Name,
   [ValidateSet('STUDIO_QA_A','STUDIO_QA_B')][string]$Studio,
-  [ValidateSet('auth-check')][string]$Operation = 'auth-check'
+  [ValidateSet('auth-check','rls-read')][string]$Operation = 'auth-check'
 )
 $ErrorActionPreference = 'Stop'
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
