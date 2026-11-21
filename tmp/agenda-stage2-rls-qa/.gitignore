@@ -1,0 +1,3 @@
+# Local disposable Supabase instance and protected production catalog metadata.
+/supabase/
+/*.json
