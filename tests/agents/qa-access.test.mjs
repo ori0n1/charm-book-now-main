@@ -62,6 +62,10 @@ test("senhas QA legadas só entram pelo opt-in do cofre; novas continuam com mí
     password: shortPassword, publishableKey: KEY, legacyVaultPassword: true, fetchImpl });
   assert.equal(session.userId, QA_IDENTITIES.STUDIO_QA_A.userId);
   assert.equal(calls, 2);
+  await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A_PROFESSIONAL",
+    password: shortPassword, publishableKey: KEY, legacyVaultPassword: true,
+    fetchImpl }), /QA_AUTH_CONFIG_INVALID/);
+  assert.equal(calls, 2);
   await assert.rejects(signInQa({ studioCode: "STUDIO_QA_A",
     password: "short7!", publishableKey: KEY, legacyVaultPassword: true,
     fetchImpl }), /QA_AUTH_CONFIG_INVALID/);
@@ -90,6 +94,7 @@ test("leitura RLS QA usa apenas HEAD autenticado e recusa resultados cruzados", 
 
 test("executor não aceita estúdios reais, escrita nem leitura sem prova", async () => {
   const executor = createQaReadExecutor();
+  assert.deepEqual(executor.capabilities().qaStudios, ["STUDIO_QA_A", "STUDIO_QA_B"]);
   assert.deepEqual(executor.capabilities().writeOperations, []);
   await assert.rejects(executor.run({ studioCode: "STUDIO_27", operation: "agenda" }),
     /QA_OPERATION_DENIED/);

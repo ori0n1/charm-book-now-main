@@ -1,7 +1,7 @@
 param(
   [Parameter(Mandatory=$true)][ValidateSet('set','rotate','status','revoke','run','selftest')][string]$Mode,
-  [ValidateSet('qa-a-password','qa-b-password','publishable-key')][string]$Name,
-  [ValidateSet('STUDIO_QA_A','STUDIO_QA_B')][string]$Studio,
+  [ValidateSet('qa-a-password','qa-b-password','qa-a-professional-password','publishable-key')][string]$Name,
+  [ValidateSet('STUDIO_QA_A','STUDIO_QA_B','STUDIO_QA_A_PROFESSIONAL')][string]$Studio,
   [ValidateSet('auth-check','rls-read')][string]$Operation = 'auth-check'
 )
 $ErrorActionPreference = 'Stop'
@@ -58,7 +58,11 @@ if ($Mode -eq 'selftest') {
 }
 if ($Mode -eq 'run') {
   if (-not $Studio) { throw 'QA_STUDIO_REQUIRED' }
-  $passwordName = if ($Studio -eq 'STUDIO_QA_A') { 'qa-a-password' } else { 'qa-b-password' }
+  $passwordName = switch ($Studio) {
+    'STUDIO_QA_A' { 'qa-a-password' }
+    'STUDIO_QA_B' { 'qa-b-password' }
+    'STUDIO_QA_A_PROFESSIONAL' { 'qa-a-professional-password' }
+  }
   $passwordPath = Join-Path $directory "$passwordName.dpapi"
   $keyPath = Join-Path $directory 'publishable-key.dpapi'
   if (-not (Test-Path -LiteralPath $passwordPath) -or

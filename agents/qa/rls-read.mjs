@@ -1,16 +1,17 @@
-import { QA_IDENTITIES } from "./auth-session.mjs";
+import { QA_AUTH_IDENTITIES, QA_IDENTITIES } from "./auth-session.mjs";
 
 const ORIGIN = "https://pwmdzpvnatrvfpgcvnzg.supabase.co";
 const COUNT = /^\d+-\d+\/(\d+)$|^\*\/(\d+)$/;
 
 export async function readQaIsolation({ studioCode, accessToken, publishableKey,
   fetchImpl = fetch } = {}) {
-  const own = QA_IDENTITIES[studioCode];
+  const own = QA_AUTH_IDENTITIES[studioCode];
   if (!own || typeof accessToken !== "string" || !accessToken ||
     typeof publishableKey !== "string" || !publishableKey) {
     throw new Error("QA_RLS_CONFIG_INVALID");
   }
-  const foreign = QA_IDENTITIES[studioCode === "STUDIO_QA_A" ? "STUDIO_QA_B" : "STUDIO_QA_A"];
+  const foreign = QA_IDENTITIES[own.studioId === QA_IDENTITIES.STUDIO_QA_A.studioId
+    ? "STUDIO_QA_B" : "STUDIO_QA_A"];
   async function count(table, studioId) {
     const url = new URL(`/rest/v1/${table}`, ORIGIN);
     url.searchParams.set("select", table === "user_roles" ? "user_id" : "id");
