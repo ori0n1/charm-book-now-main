@@ -202,11 +202,27 @@ BEGIN
   UPDATE public.appointment_services SET staff_id=NULL,starts_at=NULL,ends_at=NULL,position=NULL
     WHERE appointment_id=p_appointment_id AND staff_id IS NOT NULL;
   PERFORM set_config('bellza.allow_manual_overlap','on',true);
-  UPDATE public.appointments SET staff_id=v_first_staff,starts_at=p_starts_at,ends_at=v_new_end,
-    total_duration_min=round(extract(epoch FROM (v_new_end-p_starts_at))/60)::integer,
-    duration_overridden=coalesce(duration_overridden,false) OR v_duration_changed,
-    is_manual_fit=v_manual_fit_after,updated_at=now()
-    WHERE id=p_appointment_id AND studio_id=p_studio_id;
+  IF v_first_staff IS DISTINCT FROM v_appt.staff_id THEN
+    UPDATE public.appointments SET staff_id=v_first_staff,starts_at=p_starts_at,ends_at=v_new_end,
+      total_duration_min=round(extract(epoch FROM (v_new_end-p_starts_at))/60)::integer,
+      duration_overridden=coalesce(duration_overridden,false) OR v_duration_changed,
+      is_manual_fit=v_manual_fit_after,updated_at=now()
+      WHERE id=p_appointment_id AND studio_id=p_studio_id;
+    -- A staff reassignment fires the published commission trigger. Keep the
+    -- reservation's recorded snapshot; the line snapshots are restored below.
+    UPDATE public.appointments SET
+      studio_commission_percent_snapshot=v_appt.studio_commission_percent_snapshot
+      WHERE id=p_appointment_id AND studio_id=p_studio_id
+        AND studio_commission_percent_snapshot IS DISTINCT FROM
+          v_appt.studio_commission_percent_snapshot;
+  ELSE
+    -- Omitting staff_id avoids firing that trigger on a pure time/duration edit.
+    UPDATE public.appointments SET starts_at=p_starts_at,ends_at=v_new_end,
+      total_duration_min=round(extract(epoch FROM (v_new_end-p_starts_at))/60)::integer,
+      duration_overridden=coalesce(duration_overridden,false) OR v_duration_changed,
+      is_manual_fit=v_manual_fit_after,updated_at=now()
+      WHERE id=p_appointment_id AND studio_id=p_studio_id;
+  END IF;
   FOR v_item IN SELECT value FROM jsonb_array_elements(v_lines) AS item(value) LOOP
     UPDATE public.appointment_services SET
       duration_min=(v_item->>'durationMin')::integer,
@@ -231,6 +247,12 @@ BEGIN
       s.studio_commission_percent_snapshot IS DISTINCT FROM (item.value->>'studioCommission')::numeric
       OR s.professional_commission_percent_snapshot IS DISTINCT FROM (item.value->>'professionalCommission')::numeric
     )) THEN RAISE EXCEPTION 'commission_snapshot_changed'; END IF;
+  IF EXISTS (SELECT 1 FROM public.appointments a
+    WHERE a.id=p_appointment_id AND a.studio_id=p_studio_id
+      AND a.studio_commission_percent_snapshot IS DISTINCT FROM
+        v_appt.studio_commission_percent_snapshot) THEN
+    RAISE EXCEPTION 'commission_snapshot_changed';
+  END IF;
   INSERT INTO public.appointment_schedule_events
     (studio_id,appointment_id,actor_id,operation,previous_state,next_state)
   VALUES (p_studio_id,p_appointment_id,p_actor_id,
