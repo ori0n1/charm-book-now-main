@@ -6,6 +6,7 @@ import { BELLZA_APP_ICON_192, BELLZA_NOTIFICATION_BADGE } from "@/lib/brand-asse
 import { buildStudioNotificationDeepLink } from "@/lib/notification-deep-link";
 import { loadTrustedPushStudios, type TrustedPushStudio } from "@/lib/push-tenant-identity";
 import { shouldDeliverManualAppointmentPush } from "@/lib/manual-appointment-push";
+import { isOwnerSelfReschedule } from "@/lib/owner-self-reschedule.server";
 
 type ClaimedDelivery = {
   delivery_id: string;
@@ -329,6 +330,17 @@ async function validateStudioNotificationScope(
   if (membershipError) throw new Error(membershipError.message);
   if (!currentMembership?.role) {
     return { ok: false as const, reason: "subscription_user_not_studio_member" };
+  }
+
+  if (notification.kind === "appointment_rescheduled" && await isOwnerSelfReschedule(sb, {
+    studioId: notification.studio_id,
+    notificationId: notification.notification_id,
+    appointmentId: readPayloadString(notification.payload, "appointment_id") ?? "",
+    startsAt: readPayloadString(notification.payload, "starts_at") ?? "",
+    recipientId: notification.user_id,
+    recipientRole: currentMembership.role,
+  })) {
+    return { ok: false as const, reason: "owner_self_schedule_move" };
   }
 
   const payloadStudioId = readPayloadString(notification.payload, "studio_id");

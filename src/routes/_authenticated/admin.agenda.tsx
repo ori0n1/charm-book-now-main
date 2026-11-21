@@ -412,6 +412,7 @@ function AgendaPage() {
   const prependScrollWidthRef = useRef<number | null>(null);
   const dateRangeLoadingRef = useRef(false);
   const agendaLoadSequenceRef = useRef(0);
+  const pendingDropMovesRef = useRef(new Set<string>());
   const displayPhoneCacheRef = useRef(new Map<string, { phone: string; expiresAt: number }>());
   const selectedDateScrollPendingRef = useRef(true);
   const followsTodayRef = useRef(true);
@@ -600,7 +601,10 @@ function AgendaPage() {
           ? { ...appointment, clients: { ...appointment.clients, display_phone: cached.phone || appointment.clients.phone } }
           : appointment;
       });
-      setAppts(cachedAppts);
+      setAppts((current) => cachedAppts.map((appointment) =>
+        pendingDropMovesRef.current.has(appointment.id)
+          ? (current.find((item) => item.id === appointment.id) ?? appointment)
+          : appointment));
       setAgendaStaff((payload.staff ?? []) as StudioStaff[]);
       setStaffAvailability((payload.availability ?? []) as StaffAvailabilityRow[]);
       setAttendanceGraceMinutes(
@@ -1476,13 +1480,20 @@ function AgendaPage() {
     }
     const date = toDateInputValue(selectedDate);
     const time = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    const simpleMove = !hasServiceStates && source.appointment_services?.length === 1 &&
+      currentStaffId === staffId && (paidByAppointment.get(source.id) ?? 0) <= 0;
+    if (simpleMove && pendingDropMovesRef.current.has(source.id)) return;
+    if (simpleMove) pendingDropMovesRef.current.add(source.id);
+    let rollbackDrop: (() => void) | null = null;
     try {
-      const catalog = await loadDropCatalog({ data: { studioId: studio.id, staffId: null } });
-      if (!isManualAppointmentServiceAllowed(catalog.links as ManualAppointmentStaffServiceLink[], staffId, line.services.id)) {
+      const [catalog, { startsAt }] = await Promise.all([
+        simpleMove ? Promise.resolve(null) : loadDropCatalog({ data: { studioId: studio.id, staffId: null } }),
+        resolveDropDateTime({ data: { studioId: studio.id, date, time } }),
+      ]);
+      if (catalog && !isManualAppointmentServiceAllowed(catalog.links as ManualAppointmentStaffServiceLink[], staffId, line.services.id)) {
         toast.error("Este profissional não realiza o serviço da marcação.");
         return;
       }
-      const { startsAt } = await resolveDropDateTime({ data: { studioId: studio.id, date, time } });
       const durationMin = Math.round((new Date(entry.endsAt).getTime() - new Date(entry.startsAt).getTime()) / 60000);
       const preview = await previewDropSchedule({ data: {
         studioId: studio.id, staffId, startsAt, durationMin, ignoreAppointmentIds: [source.id],
@@ -1491,26 +1502,42 @@ function AgendaPage() {
         toast.error("Horário indisponível, bloqueado ou em conflito. A marcação mantém a posição original.");
         return;
       }
-      if (!hasServiceStates && source.appointment_services?.length === 1 &&
-        currentStaffId === staffId && (paidByAppointment.get(source.id) ?? 0) <= 0) {
+      if (simpleMove) {
+        const optimisticEnd = new Date(Date.parse(startsAt) + durationMin * 60_000).toISOString();
+        setAppts((current) => current.map((item) => item.id !== source.id ? item : {
+          ...item, starts_at: startsAt, ends_at: optimisticEnd,
+          appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
+            { ...service, starts_at: startsAt, ends_at: optimisticEnd }),
+        }));
+        rollbackDrop = () => setAppts((current) => current.map((item) =>
+          item.id !== source.id || item.starts_at !== startsAt ? item : {
+            ...item, starts_at: source.starts_at, ends_at: source.ends_at,
+            appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
+              { ...service, starts_at: line.starts_at, ends_at: line.ends_at }),
+          }));
         const result = await moveDroppedAppointment({ data: {
           studioId: studio.id, appointmentId: source.id, startsAt, durationMin,
           confirmOverlap: false, expectedConflictIds: [], operation: "move",
         } });
         if (result.changed) {
+          rollbackDrop = null;
+          // Ignore agenda reads started before the committed mutation.
+          agendaLoadSequenceRef.current += 1;
+          setLoading(false);
           setAppts((current) => current.map((item) => item.id !== source.id ? item : {
             ...item, starts_at: result.startsAt, ends_at: result.endsAt,
             appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
               { ...service, starts_at: result.startsAt, ends_at: result.endsAt }),
           }));
-          void loadData({ silent: true });
           toast.success("Marcação reagendada.");
+        } else {
+          rollbackDrop();
         }
         return;
       }
       if (hasServiceStates) {
         setDropRescheduleDraft({ time, staffId,
-          staffName: (catalog.staff as StudioStaff[]).find((person) => person.id === staffId)?.name ?? "Profissional" });
+          staffName: (catalog?.staff as StudioStaff[] | undefined)?.find((person) => person.id === staffId)?.name ?? "Profissional" });
         setRescheduleServiceLineId(line.id);
         setRescheduleApptId(source.id);
       } else {
@@ -1518,7 +1545,10 @@ function AgendaPage() {
         setEditApptId(source.id);
       }
     } catch (error) {
+      rollbackDrop?.();
       toast.error(scheduleChangeMessage(error));
+    } finally {
+      if (simpleMove) pendingDropMovesRef.current.delete(source.id);
     }
   }
 
