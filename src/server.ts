@@ -9,6 +9,7 @@ import {
   withCspReportOnly,
 } from "./lib/http-security";
 import { SUPABASE_AUTH_COOKIE_NAME } from "./integrations/supabase/auth-config";
+import { withRequestBackground } from "./lib/request-background.server";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -331,7 +332,7 @@ export default {
       if (cspReport) return withSecurityHeaders(cspReport, request);
 
       const handler = await getServerEntry();
-      const response = await handler.fetch(request, env, ctx);
+      const response = await withRequestBackground(ctx, async () => handler.fetch(request, env, ctx));
       return withCspReportOnly(
         request,
         withPwaUpdateHeaders(

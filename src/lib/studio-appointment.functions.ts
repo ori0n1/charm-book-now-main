@@ -12,6 +12,7 @@ import { sendAppointmentLifecycleMessage } from "@/lib/whatsapp.functions";
 import { notifyClientAppointmentChange } from "@/lib/public-client.functions";
 import { releaseOwnerPaymentHolds } from "@/lib/owner-payment-hold.server";
 import { formatStudioDateTime } from "@/lib/studio-time";
+import { deferRequestBackground } from "@/lib/request-background.server";
 
 const StudioRescheduleInput = z.object({
   studioId: z.string().uuid(),
@@ -47,6 +48,17 @@ const MoveStudioAppointmentInput = z.object({
   confirmOverlap: z.boolean().default(false),
   expectedConflictIds: z.array(z.string().uuid()).max(20).default([]),
   operation: z.enum(["move", "duration"]).default("move"),
+});
+
+const MoveStudioAppointmentStage2Input = z.object({
+  studioId: z.string().uuid(),
+  appointmentId: z.string().uuid(),
+  startsAt: z.string().transform(normalizeAppointmentStart),
+  assignments: z.array(z.object({
+    lineId: z.string().uuid(),
+    staffId: z.string().uuid(),
+    durationMin: z.number().int().min(5).max(720),
+  })).min(1).max(20),
 });
 
 const SwapStudioAppointmentsInput = z.object({
@@ -307,6 +319,42 @@ export const moveStudioAppointment = createServerFn({ method: "POST" })
       changed: boolean;
       overlapConfirmed: boolean;
       conflicts: StudioScheduleConflict[];
+    };
+  });
+
+export const moveStudioAppointmentStage2 = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input) => MoveStudioAppointmentStage2Input.parse(input))
+  .handler(async ({ data, context }) => {
+    const sb = getAdminClient() as any;
+    const userId = String((context as any).userId ?? "");
+    await assertStudioAccess(sb, userId, data.studioId);
+    await assertAgendaAppointmentAccess(sb, userId, data.appointmentId);
+    await Promise.all([...new Set(data.assignments.map((item) => item.staffId))].map((staffId) =>
+      assertScheduleStaffAccess(sb, userId, data.studioId, staffId)));
+    const { data: result, error } = await sb.rpc("move_studio_appointment_stage2", {
+      p_studio_id: data.studioId,
+      p_appointment_id: data.appointmentId,
+      p_starts_at: data.startsAt,
+      p_assignments: data.assignments,
+      p_actor_id: userId,
+    });
+    if (error) throw new Error(translateScheduleMutationError(error));
+    if (result?.changed && result.shouldNotify) {
+      const notification = dispatchRescheduleNotifications(sb, data.studioId, [data.appointmentId]);
+      if (!deferRequestBackground(notification)) await notification;
+    }
+    return result as {
+      appointmentId: string;
+      startsAt: string;
+      endsAt: string;
+      durationMin: number;
+      isManualFit: boolean;
+      autoFitCreated?: boolean;
+      shouldNotify: boolean;
+      changed: boolean;
+      conflicts: StudioScheduleConflict[];
+      services: Array<{ id: string; staffId: string; startsAt: string; endsAt: string; durationMin: number }>;
     };
   });
 

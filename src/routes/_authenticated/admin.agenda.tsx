@@ -69,6 +69,7 @@ import {
   cancelStudioAppointment,
   createStudioManualFit,
   moveStudioAppointment,
+  moveStudioAppointmentStage2,
   previewStudioScheduleChange,
   resolveStudioLocalDateTime,
   swapStudioAppointments,
@@ -228,6 +229,16 @@ type Appt = {
     studio_commission_percent_snapshot?: number | null;
     services: ({ id?: string; name: string } & FinancialRuleSource) | null;
   }[];
+};
+
+type Stage2ScheduleResult = {
+  appointmentId: string;
+  startsAt: string;
+  endsAt: string;
+  durationMin: number;
+  isManualFit: boolean;
+  changed: boolean;
+  services: Array<{ id: string; staffId: string; startsAt: string; endsAt: string; durationMin: number }>;
 };
 
 type PaidRow = {
@@ -402,7 +413,7 @@ function AgendaPage() {
   const previewDropSchedule = useServerFn(previewStudioScheduleChange);
   const resolveDropDateTime = useServerFn(resolveStudioLocalDateTime);
   const loadDropCatalog = useServerFn(getProtectedAgendaCatalog);
-  const moveDroppedAppointment = useServerFn(moveStudioAppointment);
+  const moveDroppedAppointment = useServerFn(moveStudioAppointmentStage2);
   const [agendaStaff, setAgendaStaff] = useState<StudioStaff[]>([]);
   const [staffAvailability, setStaffAvailability] = useState<StaffAvailabilityRow[]>([]);
   const [staffTimeOff, setStaffTimeOff] = useState<StaffTimeOffRow[]>([]);
@@ -1457,6 +1468,40 @@ function AgendaPage() {
     selectedAvailability,
   );
 
+  function commitScheduleResult(result: Stage2ScheduleResult) {
+    const previousStaffId = appts.find((item) => item.id === result.appointmentId)?.staff?.id;
+    agendaLoadSequenceRef.current += 1;
+    setLoading(false);
+    setAppts((current) => current.map((item) => {
+      if (item.id !== result.appointmentId) return item;
+      const firstStaffId = result.services[0]?.staffId;
+      const firstStaffName = agendaStaff.find((person) => person.id === firstStaffId)?.name;
+      return {
+        ...item,
+        starts_at: result.startsAt,
+        ends_at: result.endsAt,
+        total_duration_min: result.durationMin,
+        is_manual_fit: result.isManualFit,
+        staff: firstStaffId && firstStaffName
+          ? { ...item.staff, id: firstStaffId, name: firstStaffName }
+          : item.staff,
+        appointment_services: item.appointment_services?.map((line) => {
+          const changed = result.services.find((service) => service.id === line.id);
+          if (!changed) return line;
+          const name = agendaStaff.find((person) => person.id === changed.staffId)?.name;
+          return {
+            ...line,
+            starts_at: changed.startsAt,
+            ends_at: changed.endsAt,
+            duration_min: changed.durationMin,
+            staff: name ? { id: changed.staffId, name } : line.staff,
+          };
+        }),
+      };
+    }));
+    if (previousStaffId !== result.services[0]?.staffId) void loadData({ silent: true });
+  }
+
   async function prepareDraggedAppointment(entry: ProfessionalTimelineAppointment, staffId: string, minutes: number) {
     if (!studio || (studio.role !== "studio_owner" && studio.role !== "saas_owner")) return;
     const source = appts.find((item) => item.id === (entry.sourceId ?? entry.id));
@@ -1481,13 +1526,14 @@ function AgendaPage() {
     const date = toDateInputValue(selectedDate);
     const time = `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
     const simpleMove = !hasServiceStates && source.appointment_services?.length === 1 &&
-      currentStaffId === staffId && (paidByAppointment.get(source.id) ?? 0) <= 0;
+      (paidByAppointment.get(source.id) ?? 0) <= 0;
     if (simpleMove && pendingDropMovesRef.current.has(source.id)) return;
     if (simpleMove) pendingDropMovesRef.current.add(source.id);
     let rollbackDrop: (() => void) | null = null;
     try {
       const [catalog, { startsAt }] = await Promise.all([
-        simpleMove ? Promise.resolve(null) : loadDropCatalog({ data: { studioId: studio.id, staffId: null } }),
+        simpleMove && currentStaffId === staffId ? Promise.resolve(null)
+          : loadDropCatalog({ data: { studioId: studio.id, staffId: null } }),
         resolveDropDateTime({ data: { studioId: studio.id, date, time } }),
       ]);
       if (catalog && !isManualAppointmentServiceAllowed(catalog.links as ManualAppointmentStaffServiceLink[], staffId, line.services.id)) {
@@ -1498,38 +1544,38 @@ function AgendaPage() {
       const preview = await previewDropSchedule({ data: {
         studioId: studio.id, staffId, startsAt, durationMin, ignoreAppointmentIds: [source.id],
       } });
-      if (preview.hardBlocked || !preview.withinAvailability || preview.hasConflict) {
-        toast.error("Horário indisponível, bloqueado ou em conflito. A marcação mantém a posição original.");
+      if (preview.hardBlocked) {
+        toast.error("Bloqueio rígido, folga ou pagamento em processamento. A marcação mantém a posição original.");
         return;
       }
       if (simpleMove) {
         const optimisticEnd = new Date(Date.parse(startsAt) + durationMin * 60_000).toISOString();
+        const nextStaffName = agendaStaff.find((person) => person.id === staffId)?.name
+          ?? (catalog?.staff as StudioStaff[] | undefined)?.find((person) => person.id === staffId)?.name;
         setAppts((current) => current.map((item) => item.id !== source.id ? item : {
           ...item, starts_at: startsAt, ends_at: optimisticEnd,
+          is_manual_fit: Boolean(item.is_manual_fit || preview.hasConflict || !preview.withinAvailability),
+          staff: nextStaffName ? { ...item.staff, id: staffId, name: nextStaffName } : item.staff,
           appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
-            { ...service, starts_at: startsAt, ends_at: optimisticEnd }),
+            { ...service, starts_at: startsAt, ends_at: optimisticEnd,
+              staff: nextStaffName ? { id: staffId, name: nextStaffName } : service.staff }),
         }));
         rollbackDrop = () => setAppts((current) => current.map((item) =>
           item.id !== source.id || item.starts_at !== startsAt ? item : {
             ...item, starts_at: source.starts_at, ends_at: source.ends_at,
+            is_manual_fit: source.is_manual_fit,
+            staff: source.staff,
             appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
-              { ...service, starts_at: line.starts_at, ends_at: line.ends_at }),
+              { ...service, starts_at: line.starts_at, ends_at: line.ends_at, staff: line.staff }),
           }));
         const result = await moveDroppedAppointment({ data: {
-          studioId: studio.id, appointmentId: source.id, startsAt, durationMin,
-          confirmOverlap: false, expectedConflictIds: [], operation: "move",
+          studioId: studio.id, appointmentId: source.id, startsAt,
+          assignments: [{ lineId: line.id, staffId, durationMin }],
         } });
         if (result.changed) {
           rollbackDrop = null;
-          // Ignore agenda reads started before the committed mutation.
-          agendaLoadSequenceRef.current += 1;
-          setLoading(false);
-          setAppts((current) => current.map((item) => item.id !== source.id ? item : {
-            ...item, starts_at: result.startsAt, ends_at: result.endsAt,
-            appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
-              { ...service, starts_at: result.startsAt, ends_at: result.endsAt }),
-          }));
-          toast.success("Marcação reagendada.");
+          commitScheduleResult(result);
+          toast.success(result.isManualFit ? "Marcação reagendada como encaixe." : "Marcação reagendada.");
         } else {
           rollbackDrop();
         }
@@ -2013,6 +2059,18 @@ function AgendaPage() {
               },
             });
           }
+          if (timelineDetailAppt.status === "confirmed" && serviceSegments.length > 0 &&
+            !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id)) {
+            actions.push({
+              id: "schedule-duration",
+              label: "Horário e duração",
+              icon: <Timer className="h-4 w-4" />,
+              onClick: () => {
+                setDurationApptId(timelineDetailAppt.id);
+                setTimelineDetailId(null);
+              },
+            });
+          }
           if (isJointBooking && timelineDetailAppt.status === "confirmed" &&
             timelineDetailAppt.staff?.id) {
             actions.push({
@@ -2353,10 +2411,11 @@ function AgendaPage() {
             setNewApptOpen(true);
           } : undefined}
           onClose={() => { setEditApptId(null); setDropEditDraft(null); }}
-          onSaved={() => {
+          onSaved={(result) => {
             setEditApptId(null);
             setDropEditDraft(null);
-            void loadData({ silent: true });
+            if (result) commitScheduleResult(result);
+            else void loadData({ silent: true });
           }}
         />
       )}
@@ -2371,11 +2430,12 @@ function AgendaPage() {
           serviceLineId={rescheduleServiceLineId}
           initialDrop={dropRescheduleDraft ?? undefined}
           onClose={() => { setRescheduleApptId(null); setRescheduleServiceLineId(null); setDropRescheduleDraft(null); }}
-          onSaved={() => {
+          onSaved={(result) => {
             setRescheduleApptId(null);
             setRescheduleServiceLineId(null);
             setDropRescheduleDraft(null);
-            void loadData({ silent: true });
+            if (result) commitScheduleResult(result);
+            else void loadData({ silent: true });
           }}
         />
       )}
@@ -2396,11 +2456,12 @@ function AgendaPage() {
       {durationAppt && studio && (
         <AppointmentDurationModal
           studioId={studio.id}
+          studioTimezone={studio.timezone}
           appt={durationAppt}
           onClose={() => setDurationApptId(null)}
-          onSaved={() => {
+          onSaved={(result) => {
             setDurationApptId(null);
-            loadData();
+            commitScheduleResult(result);
           }}
         />
       )}
@@ -3584,7 +3645,8 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   ownerCanEditResolved,
   onSwap, onFit }: {
   studioId: string; studioTimezone?: string | null; staffId?: string | null;
-  appt: Appt; receivedAmount: number; onClose: () => void; onSaved: () => void;
+  appt: Appt; receivedAmount: number; onClose: () => void;
+  onSaved: (result?: Stage2ScheduleResult) => void;
   initialMove?: { date: string; time: string; staffId: string; lineId: string };
   ownerCanEditResolved: boolean;
   onSwap?: () => void; onFit?: () => void;
@@ -3611,6 +3673,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   const previewSchedule = useServerFn(previewStudioScheduleChange);
   const updateResolvedNotes = useServerFn(updateProtectedResolvedAppointmentNotes);
   const updateResolvedFull = useServerFn(updateProtectedResolvedAppointmentFull);
+  const moveStage2 = useServerFn(moveStudioAppointmentStage2);
   const loadCatalog = useServerFn(getProtectedAgendaCatalog);
   const resolvedState = appt.status === "completed" || appt.status === "no_show";
   const hasActiveReceipt = receivedAmount > 0;
@@ -3733,6 +3796,50 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
         toast.success("Notas atualizadas."); onSaved();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Erro ao atualizar notas.");
+      } finally { savingRef.current = false; setSaving(false); }
+      return;
+    }
+    const scheduleAmount = Number(price.replace(",", "."));
+    const scheduleOnly = appt.status === "confirmed" && !structuralChange &&
+      scheduleAmount === Number(appt.total_price) && notes === (appt.notes ?? "") &&
+      assignments.every((item) => {
+        const line = appt.appointment_services?.find((candidate) => candidate.id === item.lineId);
+        return Boolean(line && line.services?.id === item.serviceId);
+      });
+    if (scheduleOnly) {
+      const lines = [...(appt.appointment_services ?? [])].sort(compareAppointmentServiceLines);
+      const nextAssignments = lines.map((line) => {
+        const draft = assignments.find((item) => item.lineId === line.id);
+        return {
+          lineId: line.id ?? "",
+          staffId: draft?.staffId ?? "",
+          durationMin: Number(durationDrafts[line.id ?? ""] ??
+            (lines.length === 1 ? appointmentDurationMinutes(appt) : line.duration_min)),
+        };
+      });
+      if (!date || !time || !nextAssignments.length || nextAssignments.some((item) =>
+        !item.lineId || !item.staffId || !Number.isInteger(item.durationMin) ||
+        item.durationMin < 5 || item.durationMin > 720)) {
+        toast.error("Indique horário, profissional e duração válidos para cada serviço.");
+        return;
+      }
+      if (hasActiveReceipt && nextAssignments.some((item) => {
+        const line = appt.appointment_services?.find((candidate) => candidate.id === item.lineId);
+        return item.staffId !== (line?.staff?.id ?? appt.staff?.id);
+      })) {
+        toast.error("O profissional não pode mudar após um recebimento.");
+        return;
+      }
+      savingRef.current = true; setSaving(true);
+      try {
+        const { startsAt } = await resolveDateTime({ data: { studioId, date, time } });
+        const result = await moveStage2({ data: {
+          studioId, appointmentId: appt.id, startsAt, assignments: nextAssignments,
+        } });
+        toast.success(result.isManualFit ? "Reserva guardada como encaixe." : "Horário da reserva atualizado.");
+        onSaved(result);
+      } catch (error) {
+        toast.error(scheduleChangeMessage(error));
       } finally { savingRef.current = false; setSaving(false); }
       return;
     }
@@ -3895,13 +4002,13 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
               {durationHints[assignment.lineId] && durationHints[assignment.lineId].available < durationHints[assignment.lineId].original && (
                 <div role="status" className="mb-2 rounded-lg border border-amber-500/35 bg-amber-500/10 p-2.5 text-xs">
                   {durationHints[assignment.lineId].available >= 5 ? (
-                    <>Há {durationHints[assignment.lineId].available} minutos disponíveis neste horário. Ajuste a duração abaixo.</>
-                  ) : "Não há intervalo válido de pelo menos 5 minutos. Escolha outro horário."}
+                    <>Há {durationHints[assignment.lineId].available} minutos livres. Se mantiver a duração, será criado um encaixe quando permitido.</>
+                  ) : "O período está ocupado. A reserva pode passar a encaixe quando as regras permitirem."}
                 </div>
               )}
               <div>
                 <input aria-label="Duração individual em minutos" type="number" min={5} step={1}
-                  max={protectedFullEdit ? 720 : durationHints[assignment.lineId]?.original}
+                  max={currentServiceId === assignment.serviceId ? 720 : durationHints[assignment.lineId]?.original}
                   value={durationDrafts[assignment.lineId] ?? String(assignment.durationMin ??
                     (currentServiceId === assignment.serviceId ? currentLine?.duration_min : undefined) ??
                     selectedDuration ?? appointmentDurationMinutes(appt))}
@@ -3951,10 +4058,10 @@ function RescheduleModal({
   serviceLineId?: string | null;
   initialDrop?: { time: string; staffId: string; staffName: string };
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (result?: Stage2ScheduleResult) => void;
 }) {
   const previewSchedule = useServerFn(previewStudioScheduleChange);
-  const moveAppointment = useServerFn(moveStudioAppointment);
+  const moveAppointment = useServerFn(moveStudioAppointmentStage2);
   const moveJointService = useServerFn(rescheduleProtectedJointService);
   const resolveScheduleDateTime = useServerFn(resolveStudioLocalDateTime);
   const serviceLine = serviceLineId
@@ -4004,33 +4111,29 @@ function RescheduleModal({
           ignoreAppointmentIds: [appt.id],
         },
       });
-      if (preview.hardBlocked || (!preview.withinAvailability && !appt.is_manual_fit)) {
-        const blockedPreview = !preview.withinAvailability
-          ? { ...preview, hardBlocked: true }
-          : preview;
-        setConflictPreview(blockedPreview);
+      if (preview.hardBlocked) {
+        setConflictPreview(preview);
         throw new Error("O novo horário contém um bloqueio, folga ou pagamento em processamento.");
       }
-      const decisionPreview = !preview.withinAvailability
-        ? { ...preview, hasConflict: true, canOverride: true }
-        : preview;
-      if (decisionPreview.hasConflict && !sameScheduleDecision(decisionPreview, conflictPreview)) {
-        setConflictPreview(decisionPreview);
-        return;
+      const assignments = (appt.appointment_services ?? []).map((line) => ({
+        lineId: line.id ?? "",
+        staffId: line.staff?.id ?? appt.staff?.id ?? "",
+        durationMin: (appt.appointment_services?.length ?? 0) === 1
+          ? durationMin : line.duration_min ?? durationMin,
+      }));
+      if (!assignments.length || assignments.some((item) => !item.lineId || !item.staffId)) {
+        throw new Error("Os segmentos desta marcação precisam de revisão antes de mover.");
       }
-      await moveAppointment({
+      const result = await moveAppointment({
         data: {
           studioId,
           appointmentId: appt.id,
           startsAt,
-          durationMin,
-          confirmOverlap: preview.hasConflict,
-          expectedConflictIds: preview.conflicts.map((conflict) => conflict.appointmentId),
-          operation: "move",
+          assignments,
         },
       });
-      toast.success("Marcação reagendada.");
-      onSaved();
+      toast.success(result.isManualFit ? "Marcação reagendada como encaixe." : "Marcação reagendada.");
+      onSaved(result);
     } catch (err) {
       toast.error(scheduleChangeMessage(err));
     } finally {
@@ -4113,7 +4216,7 @@ function RescheduleModal({
         onSave={handleSave}
         saving={saving}
         disabled={Boolean(conflictPreview?.hardBlocked)}
-        label={conflictPreview?.hasConflict ? "Confirmar encaixe" : "Verificar e mover"}
+        label="Guardar horário"
       />
     </ModalShell>
   );
@@ -4257,68 +4360,80 @@ function SwapAppointmentModal({
 
 function AppointmentDurationModal({
   studioId,
+  studioTimezone,
   appt,
   onClose,
   onSaved,
 }: {
   studioId: string;
+  studioTimezone?: string | null;
   appt: Appt;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (result: Stage2ScheduleResult) => void;
 }) {
-  const previewSchedule = useServerFn(previewStudioScheduleChange);
-  const moveAppointment = useServerFn(moveStudioAppointment);
+  const moveAppointment = useServerFn(moveStudioAppointmentStage2);
+  const resolveDateTime = useServerFn(resolveStudioLocalDateTime);
   const originalDuration = appointmentDurationMinutes(appt);
+  const [date, setDate] = useState(getStudioDateKey(appt.starts_at, studioTimezone));
+  const [time, setTime] = useState(formatStudioTime(appt.starts_at, studioTimezone));
+  const [endDate, setEndDate] = useState(getStudioDateKey(appt.ends_at, studioTimezone));
+  const [endTime, setEndTime] = useState(formatStudioTime(appt.ends_at, studioTimezone));
   const [duration, setDuration] = useState(String(originalDuration));
   const [saving, setSaving] = useState(false);
-  const [conflictPreview, setConflictPreview] = useState<StudioSchedulePreview | null>(null);
   const durationMin = Number(duration);
+  const lines = [...(appt.appointment_services ?? [])].sort(compareAppointmentServiceLines);
+  const maxDuration = lines.length === 1 ? 720 : 1440;
 
-  useEffect(() => setConflictPreview(null), [duration]);
+  function syncEnd(nextDate: string, nextTime: string, minutes: number) {
+    if (!nextDate || !nextTime || !Number.isInteger(minutes)) return;
+    const local = new Date(`${nextDate}T${nextTime}:00Z`);
+    if (!Number.isFinite(local.getTime())) return;
+    local.setUTCMinutes(local.getUTCMinutes() + minutes);
+    setEndDate(local.toISOString().slice(0, 10));
+    setEndTime(local.toISOString().slice(11, 16));
+  }
+
+  function syncDuration(nextEndDate: string, nextEndTime: string) {
+    if (!date || !time || !nextEndDate || !nextEndTime) return;
+    const start = Date.parse(`${date}T${time}:00Z`);
+    const end = Date.parse(`${nextEndDate}T${nextEndTime}:00Z`);
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      setDuration(String(Math.round((end - start) / 60_000)));
+    }
+  }
 
   async function handleSave() {
-    if (!appt.staff?.id || !Number.isInteger(durationMin) || durationMin < 5 || durationMin > 720) {
-      toast.error("Indique uma duração entre 5 e 720 minutos.");
+    if (!date || !time || !endDate || !endTime || !Number.isInteger(durationMin)
+      || durationMin < 5 || durationMin > maxDuration || !lines.length) {
+      toast.error(`Indique início, término e uma duração entre 5 e ${maxDuration} minutos.`);
       return;
     }
     setSaving(true);
     try {
-      const startsAt = normalizeAppointmentStart(appt.starts_at);
-      const preview = await previewSchedule({
-        data: {
-          studioId,
-          staffId: appt.staff.id,
-          startsAt,
-          durationMin,
-          ignoreAppointmentIds: [appt.id],
-        },
-      });
-      if (preview.hardBlocked || (!preview.withinAvailability && !appt.is_manual_fit)) {
-        setConflictPreview(
-          !preview.withinAvailability ? { ...preview, hardBlocked: true } : preview,
-        );
-        throw new Error("A nova duração encontra um bloqueio ou pagamento em processamento.");
+      const [start, end] = await Promise.all([
+        resolveDateTime({ data: { studioId, date, time } }),
+        resolveDateTime({ data: { studioId, date: endDate, time: endTime } }),
+      ]);
+      const actualDuration = Math.round((Date.parse(end.startsAt) - Date.parse(start.startsAt)) / 60_000);
+      if (actualDuration !== durationMin) {
+        throw new Error("A mudança de hora local altera a duração. Reveja início e término.");
       }
-      const decisionPreview = !preview.withinAvailability
-        ? { ...preview, hasConflict: true, canOverride: true }
-        : preview;
-      if (decisionPreview.hasConflict && !sameScheduleDecision(decisionPreview, conflictPreview)) {
-        setConflictPreview(decisionPreview);
-        return;
+      const delta = durationMin - originalDuration;
+      const assignments = lines.map((line, index) => ({
+        lineId: line.id ?? "",
+        staffId: line.staff?.id ?? appt.staff?.id ?? "",
+        durationMin: lines.length === 1 ? durationMin
+          : (line.duration_min ?? 0) + (index === lines.length - 1 ? delta : 0),
+      }));
+      if (assignments.some((item) => !item.lineId || !item.staffId ||
+        !Number.isInteger(item.durationMin) || item.durationMin < 5 || item.durationMin > 720)) {
+        throw new Error("Reveja a duração dos serviços: cada segmento deve ter entre 5 e 720 minutos.");
       }
-      await moveAppointment({
-        data: {
-          studioId,
-          appointmentId: appt.id,
-          startsAt,
-          durationMin,
-          confirmOverlap: preview.hasConflict,
-          expectedConflictIds: preview.conflicts.map((conflict) => conflict.appointmentId),
-          operation: "duration",
-        },
-      });
-      toast.success("Duração desta marcação atualizada.");
-      onSaved();
+      const result = await moveAppointment({ data: {
+        studioId, appointmentId: appt.id, startsAt: start.startsAt, assignments,
+      } });
+      toast.success(result.isManualFit ? "Horário guardado como encaixe." : "Horário e duração atualizados.");
+      onSaved(result);
     } catch (error) {
       toast.error(scheduleChangeMessage(error));
     } finally {
@@ -4326,26 +4441,46 @@ function AppointmentDurationModal({
     }
   }
 
-  const nextEnd = Number.isFinite(durationMin)
-    ? new Date(new Date(appt.starts_at).getTime() + durationMin * 60_000).toISOString()
-    : appt.ends_at;
-
   return (
-    <ModalShell title="Ajustar duração" onClose={onClose}>
+    <ModalShell title="Ajustar horário e duração" onClose={onClose}>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
         <div className="rounded-xl border border-border bg-muted/25 px-3 py-2.5">
           <p className="text-sm font-black">{appt.clients?.name ?? "Cliente"}</p>
           <p className="text-xs text-muted-foreground">{appointmentServiceLabel(appt)}</p>
         </div>
-        <ModalField label="Duração desta marcação">
+        <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
+          <ModalField label="Data de início *">
+            <PremiumDatePicker value={date} onChange={(value) => { setDate(value); syncEnd(value, time, durationMin); }}
+              className={datePickerCls} portalLayer="modal" />
+          </ModalField>
+          <ModalField label="Hora de início *">
+            <input type="time" value={time} onChange={(event) => {
+              setTime(event.target.value); syncEnd(date, event.target.value, durationMin);
+            }} className={timeCls} />
+          </ModalField>
+          <ModalField label="Data de término *">
+            <PremiumDatePicker value={endDate} onChange={(value) => {
+              setEndDate(value); syncDuration(value, endTime);
+            }} className={datePickerCls} portalLayer="modal" />
+          </ModalField>
+          <ModalField label="Hora de término *">
+            <input type="time" value={endTime} onChange={(event) => {
+              setEndTime(event.target.value); syncDuration(endDate, event.target.value);
+            }} className={timeCls} />
+          </ModalField>
+        </div>
+        <ModalField label="Duração total desta marcação">
           <div className="relative">
             <input
               type="number"
               min={5}
-              max={720}
-              step={5}
+              max={maxDuration}
+              step={1}
               value={duration}
-              onChange={(event) => setDuration(event.target.value)}
+              onChange={(event) => {
+                setDuration(event.target.value);
+                syncEnd(date, time, Number(event.target.value));
+              }}
               className={`${inputCls} pr-14`}
             />
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">
@@ -4359,7 +4494,7 @@ function AppointmentDurationModal({
               Antes
             </p>
             <p className="mt-1 font-black">
-              {formatScheduleTime(appt.starts_at)}–{formatScheduleTime(appt.ends_at)}
+              {formatStudioTime(appt.starts_at, studioTimezone)}–{formatStudioTime(appt.ends_at, studioTimezone)}
             </p>
           </div>
           <div>
@@ -4367,15 +4502,14 @@ function AppointmentDurationModal({
               Depois
             </p>
             <p className="mt-1 font-black">
-              {formatScheduleTime(appt.starts_at)}–{formatScheduleTime(nextEnd)}
+              {time}–{endTime} · {durationMin} min
             </p>
           </div>
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          A duração padrão do serviço não será alterada. Preço e pagamentos também permanecem
-          iguais.
+          Se houver conflito permitido, a marcação passa automaticamente a encaixe. A duração padrão dos serviços,
+          o preço, os pagamentos e as comissões permanecem iguais.
         </p>
-        {conflictPreview && <ScheduleConflictWarning preview={conflictPreview} mode="duration" />}
       </div>
       <ModalFooter
         onClose={onClose}
@@ -4384,10 +4518,9 @@ function AppointmentDurationModal({
         disabled={
           !Number.isInteger(durationMin) ||
           durationMin < 5 ||
-          durationMin > 720 ||
-          Boolean(conflictPreview?.hardBlocked)
+          durationMin > maxDuration
         }
-        label={conflictPreview?.hasConflict ? "Confirmar duração com encaixe" : "Guardar duração"}
+        label="Guardar horário e duração"
       />
     </ModalShell>
   );
@@ -4419,7 +4552,9 @@ function ScheduleConflictWarning({
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {preview.hardBlocked
               ? "Bloqueios, folgas e pagamentos em processamento não podem ser ignorados."
-              : "A Bellza não fará a alteração silenciosamente. Reveja o impacto e confirme apenas se consegue atender as duas marcações."}
+              : mode === "move" || mode === "duration"
+                ? "Ao guardar, esta marcação será identificada automaticamente como encaixe."
+                : "Reveja o impacto e confirme apenas se consegue atender as duas marcações."}
           </p>
         </div>
       </div>

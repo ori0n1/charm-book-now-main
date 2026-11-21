@@ -15,7 +15,8 @@ const newStart = '2030-10-30T11:00:00.000Z';
 const newEnd = '2030-10-30T12:00:00.000Z';
 
 function loadDrop(source, context) {
-  const start = source.indexOf('  async function prepareDraggedAppointment(');
+  const helper = source.indexOf('  function commitScheduleResult(');
+  const start = helper >= 0 ? helper : source.indexOf('  async function prepareDraggedAppointment(');
   const end = source.indexOf('\n  return (', start);
   assert.ok(start >= 0 && end > start);
   const javascript = ts.transpileModule(source.slice(start, end), {
@@ -33,6 +34,7 @@ async function measure(source) {
   let reloads = 0;
   const context = {
     studio: { id: 'studio-a', role: 'studio_owner' }, appts: appointments,
+    agendaStaff: [{ id: 'staff-a', name: 'QA profissional' }],
     selectedDate: new Date('2030-10-30T00:00:00Z'), paidByAppointment: new Map(),
     pendingDropMovesRef: { current: new Set() }, agendaLoadSequenceRef: { current: 0 },
     setAppts: (update) => {
@@ -47,7 +49,10 @@ async function measure(source) {
     previewDropSchedule: async () => { await delay(30); return { hardBlocked: false,
       withinAvailability: true, hasConflict: false }; },
     moveDroppedAppointment: async () => { await delay(160); return { changed: true,
-      startsAt: newStart, endsAt: newEnd }; },
+      appointmentId: 'appointment-a', startsAt: newStart, endsAt: newEnd,
+      durationMin: 60, isManualFit: false,
+      services: [{ id: 'line-a', staffId: 'staff-a', startsAt: newStart,
+        endsAt: newEnd, durationMin: 60 }] }; },
     loadData: async () => { reloads++; await delay(50); },
     toast: { error: () => {}, info: () => {}, success: () => {} },
     scheduleChangeMessage: (error) => error.message,

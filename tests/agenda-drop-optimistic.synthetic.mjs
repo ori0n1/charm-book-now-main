@@ -6,7 +6,7 @@ import vm from "node:vm";
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
 const source = readFileSync("src/routes/_authenticated/admin.agenda.tsx", "utf8");
-const start = source.indexOf("  async function prepareDraggedAppointment(");
+const start = source.indexOf("  function commitScheduleResult(");
 const end = source.indexOf("\n  return (", start);
 assert.ok(start >= 0 && end > start);
 const functionSource = ts.transpileModule(source.slice(start, end), {
@@ -33,6 +33,7 @@ async function runCase(outcome) {
   const moveResult = new Promise((resolve, reject) => { releaseMove = { resolve, reject }; });
   const context = {
     studio: { id: "studio-a", role: "studio_owner" }, appts: appointments,
+    agendaStaff: [{ id: "staff-a", name: "QA profissional" }],
     selectedDate: new Date("2030-10-30T00:00:00Z"),
     paidByAppointment: new Map(),
     pendingDropMovesRef: { current: new Set() },
@@ -59,7 +60,10 @@ async function runCase(outcome) {
   await moveCalled;
   assert.equal(appointments[0].starts_at, newStart, "visual move precedes RPC response");
   assert.equal(appointments[0].appointment_services[0].ends_at, newEnd);
-  if (outcome === "success") releaseMove.resolve({ changed: true, startsAt: newStart, endsAt: newEnd });
+  if (outcome === "success") releaseMove.resolve({ changed: true, appointmentId,
+    startsAt: newStart, endsAt: newEnd, durationMin: 60, isManualFit: false,
+    services: [{ id: "line-a", staffId: "staff-a", startsAt: newStart,
+      endsAt: newEnd, durationMin: 60 }] });
   else releaseMove.reject(new Error("synthetic_database_failure"));
   await pending;
   assert.equal(appointments[0].starts_at, outcome === "success" ? newStart : oldStart);
