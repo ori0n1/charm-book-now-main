@@ -6,3 +6,5 @@
 4. Depois da equivalência, aplicar a migração candidata apenas no QA local e executar as operações pela aplicação com os três utilizadores sintéticos. Nunca usar `service_role` para provar autorização.
 
 O snapshot contém definições SQL e metadados de segurança; não o colocar no Git nem em relatórios. A ausência do snapshot impede declarar a reprodução fiel ou validar RLS da Etapa 2.
+
+O modo `--base-only` de `stage2-build-local.mjs` reconstrói a base já comparada de 21 políticas e 13 funções principais. Os snapshots locais ficam em `tmp/agenda-stage2-rls-qa/` e são ignorados pelo Git. A reprodução ampliada exige o snapshot de dependências transitivas antes de gerar DDL; o gerador falha fechado se ele estiver ausente. `stage2-auth-rls.local.mjs` cria apenas contas e dados sintéticos no Supabase local e verifica sessões autenticadas; a sonda da RPC distingue falhas de funções auxiliares ainda não reproduzidas.

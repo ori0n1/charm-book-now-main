@@ -66,7 +66,17 @@ for (const key of sections) {
   const actual = normalize(local[key]);
   const expected = normalize(production[key]);
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    differences.push({section:key,production:expected.length,local:actual.length});
+    const detail = key === 'functions'
+      ? production.functions.map((want) => {
+          const got = local.functions.find((item) => item.signature === want.signature);
+          return {signature:want.signature,fields:got
+            ? Object.keys(want).filter((field) =>
+                JSON.stringify(want[field]) !== JSON.stringify(got[field]))
+            : ['missing']};
+        }).filter((item) => item.fields.length)
+      : undefined;
+    differences.push({section:key,production:expected.length,local:actual.length,
+      ...(detail ? {detail} : {})});
   }
 }
 if (production.server_version !== local.server_version) {
