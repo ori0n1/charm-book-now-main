@@ -7,6 +7,8 @@
     "dev": "vite dev",
     "build": "vite build",
     "build:dev": "vite build --mode development",
+    "bellza:release-gate": "node scripts/check-bellza-release.mjs",
+    "bellza:release-gate:test": "node --test tests/check-bellza-release.test.mjs",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write ."

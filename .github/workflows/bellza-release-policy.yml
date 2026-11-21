@@ -1,0 +1,21 @@
+name: Bellza release policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify policy and release gate
+        run: |
+          test -f AGENTS.md
+          test -f docs/bellza-deploy-protocol.md
+          grep -q 'Protocolo global obrigatório de publicação' AGENTS.md
+          npm run bellza:release-gate:test
