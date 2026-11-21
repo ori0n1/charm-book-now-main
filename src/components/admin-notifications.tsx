@@ -35,6 +35,7 @@ import {
   type PushActivationCode,
 } from "@/lib/pwa-push";
 import { syncStudioPushNotifications } from "@/lib/notification-dispatcher.functions";
+import { getStudioBellNotifications } from "@/lib/studio-bell.functions";
 import { ClientAvatar } from "@/components/client-avatar";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
@@ -115,10 +116,12 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
   const [isMobile, setIsMobile] = useState(false);
   const reconcilePayments = useServerFn(reconcileStudioBookingPayments);
   const syncPushNotifications = useServerFn(syncStudioPushNotifications);
+  const loadBellNotifications = useServerFn(getStudioBellNotifications);
   const persistPushSubscription = useServerFn(savePushSubscription);
   const sendTestPush = useServerFn(sendTestPushNotification);
   const loadPushHealth = useServerFn(getStudioPushHealth);
   const pushRegistrationRef = useRef<Promise<boolean> | null>(null);
+  const bellLoadSequenceRef = useRef(0);
   const [permission, setPermission] = useState<NotificationPermission | "unsupported">(
     "unsupported",
   );
@@ -306,29 +309,22 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
     let cancelled = false;
 
     async function loadNotifications() {
-      const [historyResult, unreadResult] = await Promise.all([
-        (supabase as any)
-          .from("studio_notifications")
-          .select("id,studio_id,appointment_id,kind,title,body,payload,action_url,read_at,created_at,appointments:appointment_id(starts_at,studio_id)")
-          .eq("studio_id", studioId)
-          .order("created_at", { ascending: false })
-          .limit(100),
-        (supabase as any)
-          .from("studio_notifications")
-          .select("id", { count: "exact", head: true })
-          .eq("studio_id", studioId)
-          .is("read_at", null),
-      ]);
-
-      if (!cancelled && !historyResult.error) {
-        setItems(
-          ((historyResult.data ?? []) as StudioNotification[])
-            .filter((item) => item.studio_id === studioId)
-            .map((item) => normalizeNotification(item, timeZone)),
-        );
-      }
-      if (!cancelled && !unreadResult.error) {
-        setUnreadCount(Number(unreadResult.count ?? 0));
+      const sequence = ++bellLoadSequenceRef.current;
+      try {
+        const result = await loadBellNotifications({ data: { studioId } });
+        if (cancelled) return [] as StudioNotification[];
+        const visible = ((result.items ?? []) as StudioNotification[])
+          .filter((item) => item.studio_id === studioId)
+          .map((item) => normalizeNotification(item, timeZone));
+        if (sequence === bellLoadSequenceRef.current) {
+          setItems(visible);
+          setUnreadCount(result.unreadCount);
+        }
+        return visible;
+      } catch (error) {
+        console.warn("studio_bell_load_failed", error);
+        // Fail closed: an unfiltered realtime payload must never enter the bell.
+        return [] as StudioNotification[];
       }
     }
 
@@ -363,23 +359,19 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
         (payload) => {
           const raw = payload.new as StudioNotification;
           if (raw.studio_id !== studioId) return;
-          const next = normalizeNotification(raw, timeZone);
-          setItems((current) => {
-            const alreadyLoaded = current.some((item) => item.id === next.id);
-            if (!alreadyLoaded && !next.read_at) {
-              setUnreadCount((count) => count + 1);
+          void loadNotifications().then((visible) => {
+            if (cancelled) return;
+            const next = visible.find((item) => item.id === raw.id);
+            if (next && shouldShowRealtimeToast(studioId, next.id)) {
+              toast(next.title, {
+                description: next.body,
+                action: {
+                  label: "Abrir",
+                  onClick: () => window.location.assign(notificationActionUrl(next)),
+                },
+              });
             }
-            return [next, ...current.filter((item) => item.id !== next.id)].slice(0, 100);
           });
-          if (shouldShowRealtimeToast(studioId, next.id)) {
-            toast(next.title, {
-              description: next.body,
-              action: {
-                label: "Abrir",
-                onClick: () => window.location.assign(notificationActionUrl(next)),
-              },
-            });
-          }
           void syncPushNotifications({ data: { studioId } }).catch((error) => {
             console.warn("studio_push_realtime_dispatch_failed", error);
           });
@@ -396,22 +388,7 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
         (payload) => {
           const raw = payload.new as StudioNotification;
           if (raw.studio_id !== studioId) return;
-          const next = normalizeNotification(raw, timeZone);
-          setItems((current) => {
-            const existing = current.find((item) => item.id === next.id);
-            if (!existing && next.read_at) {
-              setUnreadCount((count) => Math.max(0, count - 1));
-            }
-            return current.map((item) => {
-              if (item.id !== next.id) return item;
-              if (!item.read_at && next.read_at) {
-                setUnreadCount((count) => Math.max(0, count - 1));
-              } else if (item.read_at && !next.read_at) {
-                setUnreadCount((count) => count + 1);
-              }
-              return next;
-            });
-          });
+          void loadNotifications();
         },
       )
       .subscribe((status) => {
@@ -433,7 +410,7 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
       document.removeEventListener("visibilitychange", recoverNotifications);
       void supabase.removeChannel(channel);
     };
-  }, [reconcilePayments, standardNotificationsEnabled, studioId, studioName, syncPushNotifications, timeZone]);
+  }, [loadBellNotifications, reconcilePayments, standardNotificationsEnabled, studioId, studioName, syncPushNotifications, timeZone]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -550,27 +527,18 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
   }
 
   async function reloadNotificationState() {
-    const [historyResult, unreadResult] = await Promise.all([
-      (supabase as any)
-        .from("studio_notifications")
-        .select("id,studio_id,appointment_id,kind,title,body,payload,action_url,read_at,created_at,appointments:appointment_id(starts_at,studio_id)")
-        .eq("studio_id", studioId)
-        .order("created_at", { ascending: false })
-        .limit(100),
-      (supabase as any)
-        .from("studio_notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("studio_id", studioId)
-        .is("read_at", null),
-    ]);
-    if (!historyResult.error) {
-      setItems(
-        ((historyResult.data ?? []) as StudioNotification[])
+    const sequence = ++bellLoadSequenceRef.current;
+    try {
+      const result = await loadBellNotifications({ data: { studioId } });
+      if (sequence === bellLoadSequenceRef.current) {
+        setItems(((result.items ?? []) as StudioNotification[])
           .filter((item) => item.studio_id === studioId)
-          .map((item) => normalizeNotification(item, timeZone)),
-      );
+          .map((item) => normalizeNotification(item, timeZone)));
+        setUnreadCount(result.unreadCount);
+      }
+    } catch (error) {
+      console.warn("studio_bell_reload_failed", error);
     }
-    if (!unreadResult.error) setUnreadCount(Number(unreadResult.count ?? 0));
   }
 
   const panel = (
