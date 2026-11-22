@@ -1503,7 +1503,7 @@ function AgendaPage() {
   }
 
   async function prepareDraggedAppointment(entry: ProfessionalTimelineAppointment, staffId: string, minutes: number) {
-    if (!studio || (studio.role !== "studio_owner" && studio.role !== "saas_owner")) return;
+    if (!studio || !["studio_owner", "saas_owner", "manager"].includes(studio.role)) return;
     const source = appts.find((item) => item.id === (entry.sourceId ?? entry.id));
     if (!source || source.status !== "confirmed") return;
     const serviceLineId = entry.sourceId ? entry.id.slice(entry.sourceId.length + 1) : "";
@@ -1515,8 +1515,7 @@ function AgendaPage() {
     }
     const hasServiceStates = source.appointment_services?.some((item) => item.service_state != null);
     if ((source.appointment_services?.length ?? 0) > 1 && !hasServiceStates) {
-      toast.info("Esta reserva tem vários serviços. Use Editar marcação para rever a sequência completa.");
-      return;
+      toast.info("A reserva tem vários serviços. Confirme a nova sequência na janela de edição.");
     }
     const currentStaffId = line.staff?.id ?? source.staff?.id;
     if (currentStaffId !== staffId && (paidByAppointment.get(source.id) ?? 0) > 0) {
@@ -1544,9 +1543,12 @@ function AgendaPage() {
       const preview = await previewDropSchedule({ data: {
         studioId: studio.id, staffId, startsAt, durationMin, ignoreAppointmentIds: [source.id],
       } });
-      if (preview.hardBlocked) {
-        toast.error("Bloqueio rígido, folga ou pagamento em processamento. A marcação mantém a posição original.");
+      if (!preview.staffAvailable || preview.paymentHolds.length > 0) {
+        toast.error("Profissional indisponível ou pagamento em processamento. A marcação mantém a posição original.");
         return;
+      }
+      if (preview.hardBlocked || preview.hasConflict || !preview.withinAvailability) {
+        toast.info("Horário indisponível: a marcação será guardada como encaixe.");
       }
       if (simpleMove) {
         const optimisticEnd = new Date(Date.parse(startsAt) + durationMin * 60_000).toISOString();
@@ -1554,7 +1556,7 @@ function AgendaPage() {
           ?? (catalog?.staff as StudioStaff[] | undefined)?.find((person) => person.id === staffId)?.name;
         setAppts((current) => current.map((item) => item.id !== source.id ? item : {
           ...item, starts_at: startsAt, ends_at: optimisticEnd,
-          is_manual_fit: Boolean(item.is_manual_fit || preview.hasConflict || !preview.withinAvailability),
+          is_manual_fit: Boolean(item.is_manual_fit || preview.hardBlocked || preview.hasConflict || !preview.withinAvailability),
           staff: nextStaffName ? { ...item.staff, id: staffId, name: nextStaffName } : item.staff,
           appointment_services: item.appointment_services?.map((service) => service.id !== line.id ? service :
             { ...service, starts_at: startsAt, ends_at: optimisticEnd,
@@ -1587,7 +1589,13 @@ function AgendaPage() {
         setRescheduleServiceLineId(line.id);
         setRescheduleApptId(source.id);
       } else {
-        setDropEditDraft({ date, time, staffId, lineId: line.id });
+        const segmentOffset = Date.parse(line.starts_at ?? source.starts_at) - Date.parse(source.starts_at);
+        const bookingStart = new Date(Date.parse(startsAt) - segmentOffset).toISOString();
+        setDropEditDraft({
+          date: getStudioDateKey(bookingStart, studio.timezone),
+          time: formatStudioTime(bookingStart, studio.timezone),
+          staffId, lineId: line.id,
+        });
         setEditApptId(source.id);
       }
     } catch (error) {
@@ -1963,7 +1971,7 @@ function AgendaPage() {
               time: `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
             });
           }}
-          onDropAppointment={studio?.role === "studio_owner" || studio?.role === "saas_owner"
+          onDropAppointment={studio && ["studio_owner", "saas_owner", "manager"].includes(studio.role)
             ? (appointment, staffId, minutes) => { void prepareDraggedAppointment(appointment, staffId, minutes); }
             : undefined}
         />
@@ -2071,21 +2079,14 @@ function AgendaPage() {
               },
             });
           }
-          if (isJointBooking && timelineDetailAppt.status === "confirmed" &&
-            timelineDetailAppt.staff?.id) {
+          if (["studio_owner", "saas_owner", "manager"].includes(studio?.role ?? "") &&
+            timelineDetailAppt.status === "confirmed" && timelineDetailAppt.staff?.id) {
             actions.push({
               id: "fit",
-              label: "Encaixar",
+              label: timelineDetailAppt.is_manual_fit ? "Gerir encaixe" : "Encaixar",
               icon: <Sparkles className="h-3.5 w-3.5" />,
               onClick: () => {
-                const start = new Date(timelineDetailAppt.starts_at);
-                setNewApptDefaults({
-                  staffId: timelineDetailAppt.staff?.id,
-                  date: getStudioDateKey(start, studio?.timezone),
-                  time: formatStudioTime(start, studio?.timezone),
-                  mode: "fit",
-                });
-                setNewApptOpen(true);
+                setDurationApptId(timelineDetailAppt.id);
                 setTimelineDetailId(null);
               },
             });
@@ -2329,6 +2330,7 @@ function AgendaPage() {
       {newApptOpen && studio && (
         <NewAppointmentModal
           studioId={studio.id}
+          canOverrideScheduleBlocks={["studio_owner", "saas_owner", "manager"].includes(studio.role)}
           ownerCanOverridePaymentHold={
             studio.role === "studio_owner" || studio.role === "saas_owner"
           }
@@ -2399,16 +2401,10 @@ function AgendaPage() {
               setEditApptId(null);
               setSwapApptId(editAppt.id);
             } : undefined}
-          onFit={editAppt.status === "confirmed" && editAppt.staff?.id ? () => {
-            const start = new Date(editAppt.starts_at);
-            setNewApptDefaults({
-              staffId: editAppt.staff?.id,
-              date: getStudioDateKey(start, studio.timezone),
-              time: formatStudioTime(start, studio.timezone),
-              mode: "fit",
-            });
+          onFit={editAppt.status === "confirmed" && editAppt.staff?.id &&
+            ["studio_owner", "saas_owner", "manager"].includes(studio.role) ? () => {
+            setDurationApptId(editAppt.id);
             setEditApptId(null);
-            setNewApptOpen(true);
           } : undefined}
           onClose={() => { setEditApptId(null); setDropEditDraft(null); }}
           onSaved={(result) => {
@@ -2424,6 +2420,7 @@ function AgendaPage() {
       {rescheduleAppt && studio && (
         <RescheduleModal
           studioId={studio.id}
+          canOverrideAvailability={["studio_owner", "saas_owner", "manager"].includes(studio.role)}
           studioTimezone={studio.timezone}
           staffId={null}
           appt={rescheduleAppt}
@@ -2456,6 +2453,7 @@ function AgendaPage() {
       {durationAppt && studio && (
         <AppointmentDurationModal
           studioId={studio.id}
+          canOverrideAvailability={["studio_owner", "saas_owner", "manager"].includes(studio.role)}
           studioTimezone={studio.timezone}
           appt={durationAppt}
           onClose={() => setDurationApptId(null)}
@@ -2906,6 +2904,7 @@ function BlockDateTimeFields({
 
 function NewAppointmentModal({
   studioId,
+  canOverrideScheduleBlocks,
   ownerCanOverridePaymentHold,
   staffId,
   initialStaffId,
@@ -2916,6 +2915,7 @@ function NewAppointmentModal({
   onCreated,
 }: {
   studioId: string;
+  canOverrideScheduleBlocks: boolean;
   ownerCanOverridePaymentHold: boolean;
   staffId?: string | null;
   initialStaffId?: string;
@@ -3152,9 +3152,14 @@ function NewAppointmentModal({
       );
       const preview = mergeSchedulePreviews(previews, startsAt, totalServiceDuration);
       const canReplaceUnpaidHold = ownerCanOverridePaymentHold && preview.paymentHolds.length > 0;
-      const canOwnerOverrideHardBlock = ownerCanOverridePaymentHold && preview.hardBlocked;
+      const canOverrideBlockedSlot = canOverrideScheduleBlocks && preview.staffAvailable &&
+        (preview.paymentHolds.length === 0 || ownerCanOverridePaymentHold) && preview.hardBlocked;
+      const useManualFit = creationMode === "fit" ||
+        (canOverrideScheduleBlocks && preview.staffAvailable &&
+          (preview.paymentHolds.length === 0 || ownerCanOverridePaymentHold) &&
+          (preview.hardBlocked || preview.hasConflict || !preview.withinAvailability));
       let appointmentId: string;
-      if (withoutClient && creationMode === "standard" && !canOwnerOverrideHardBlock) {
+      if (withoutClient && !useManualFit) {
         if (preview.hardBlocked || preview.hasConflict) throw new Error("Este horário já não está disponível.");
         const { data: created, error } = await (supabase as any).rpc("create_studio_walkin_appointment", {
           p_studio_id: studioId, p_assignments: serviceAssignments, p_starts_at: startsAt,
@@ -3162,12 +3167,12 @@ function NewAppointmentModal({
         });
         if (error || !created?.appointment_id) throw new Error(formatManualAppointmentError(error?.message));
         appointmentId = created.appointment_id;
-      } else if (creationMode === "fit" || canOwnerOverrideHardBlock) {
-        if (preview.hardBlocked && !canOwnerOverrideHardBlock) {
+      } else if (useManualFit) {
+        if (preview.hardBlocked && !canOverrideBlockedSlot) {
           setConflictPreview(preview);
           throw new Error("O horário contém um bloqueio, folga ou pagamento em processamento.");
         }
-        const decisionPreview = canOwnerOverrideHardBlock || !preview.withinAvailability
+        const decisionPreview = canOverrideBlockedSlot || !preview.withinAvailability
           ? { ...preview, hardBlocked: false, hasConflict: true, canOverride: true }
           : preview;
         if (
@@ -4030,7 +4035,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
       <div className="shrink-0 border-t border-border/70 px-4 py-3">
         <div className="flex flex-wrap gap-2">
           {onSwap && <button type="button" onClick={onSwap} className="min-h-8 rounded-lg border border-border px-2 text-xs font-semibold hover:bg-muted">Trocar</button>}
-          {onFit && <button type="button" onClick={onFit} className="min-h-8 rounded-lg border border-border px-2 text-xs font-semibold hover:bg-muted">Encaixar</button>}
+          {onFit && <button type="button" onClick={onFit} className="min-h-8 rounded-lg border border-border px-2 text-xs font-semibold hover:bg-muted">{appt.is_manual_fit ? "Gerir encaixe" : "Encaixar"}</button>}
         </div>
       </div>
     )}
@@ -4044,6 +4049,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
 
 function RescheduleModal({
   studioId,
+  canOverrideAvailability,
   studioTimezone,
   appt,
   serviceLineId,
@@ -4052,6 +4058,7 @@ function RescheduleModal({
   onSaved,
 }: {
   studioId: string;
+  canOverrideAvailability: boolean;
   studioTimezone?: string | null;
   staffId?: string | null;
   appt: Appt;
@@ -4111,9 +4118,14 @@ function RescheduleModal({
           ignoreAppointmentIds: [appt.id],
         },
       });
-      if (preview.hardBlocked) {
+      if (!preview.staffAvailable || preview.paymentHolds.length > 0 ||
+        (preview.hardBlocked && !canOverrideAvailability)) {
         setConflictPreview(preview);
         throw new Error("O novo horário contém um bloqueio, folga ou pagamento em processamento.");
+      }
+      if (preview.hardBlocked || preview.hasConflict || !preview.withinAvailability) {
+        setConflictPreview({ ...preview, hardBlocked: false, hasConflict: true });
+        toast.info("Horário indisponível: a marcação será guardada como encaixe.");
       }
       const assignments = (appt.appointment_services ?? []).map((line) => ({
         lineId: line.id ?? "",
@@ -4360,12 +4372,14 @@ function SwapAppointmentModal({
 
 function AppointmentDurationModal({
   studioId,
+  canOverrideAvailability,
   studioTimezone,
   appt,
   onClose,
   onSaved,
 }: {
   studioId: string;
+  canOverrideAvailability: boolean;
   studioTimezone?: string | null;
   appt: Appt;
   onClose: () => void;
@@ -4379,6 +4393,7 @@ function AppointmentDurationModal({
   const [endDate, setEndDate] = useState(getStudioDateKey(appt.ends_at, studioTimezone));
   const [endTime, setEndTime] = useState(formatStudioTime(appt.ends_at, studioTimezone));
   const [duration, setDuration] = useState(String(originalDuration));
+  const [manualFitChoice, setManualFitChoice] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const durationMin = Number(duration);
   const lines = [...(appt.appointment_services ?? [])].sort(compareAppointmentServiceLines);
@@ -4431,6 +4446,7 @@ function AppointmentDurationModal({
       }
       const result = await moveAppointment({ data: {
         studioId, appointmentId: appt.id, startsAt: start.startsAt, assignments,
+        manualFit: manualFitChoice,
       } });
       toast.success(result.isManualFit ? "Horário guardado como encaixe." : "Horário e duração atualizados.");
       onSaved(result);
@@ -4507,9 +4523,18 @@ function AppointmentDurationModal({
           </div>
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Se houver conflito permitido, a marcação passa automaticamente a encaixe. A duração padrão dos serviços,
+          Se houver conflito de disponibilidade, a marcação passa automaticamente a encaixe. A duração padrão dos serviços,
           o preço, os pagamentos e as comissões permanecem iguais.
         </p>
+        {canOverrideAvailability && (
+          <button type="button" onClick={() => setManualFitChoice(
+            !(manualFitChoice ?? Boolean(appt.is_manual_fit)),
+          )} className="min-h-11 w-full rounded-xl border border-amber-400/50 bg-amber-500/10 px-3 text-left text-sm font-semibold">
+            {(manualFitChoice ?? Boolean(appt.is_manual_fit))
+              ? "Encaixe marcado · toque para retirar quando o horário estiver livre"
+              : "Marcar esta reserva existente como encaixe"}
+          </button>
+        )}
       </div>
       <ModalFooter
         onClose={onClose}

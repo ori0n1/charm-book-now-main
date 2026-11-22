@@ -59,6 +59,7 @@ const MoveStudioAppointmentStage2Input = z.object({
     staffId: z.string().uuid(),
     durationMin: z.number().int().min(5).max(720),
   })).min(1).max(20),
+  manualFit: z.boolean().nullable().default(null),
 });
 
 const SwapStudioAppointmentsInput = z.object({
@@ -330,6 +331,7 @@ export const moveStudioAppointmentStage2 = createServerFn({ method: "POST" })
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(sb, userId, data.studioId);
     await assertAgendaAppointmentAccess(sb, userId, data.appointmentId);
+    if (data.manualFit !== null) await assertScheduleOverrideAccess(sb, userId, data.studioId);
     await Promise.all([...new Set(data.assignments.map((item) => item.staffId))].map((staffId) =>
       assertScheduleStaffAccess(sb, userId, data.studioId, staffId)));
     const { data: result, error } = await sb.rpc("move_studio_appointment_stage2", {
@@ -338,6 +340,7 @@ export const moveStudioAppointmentStage2 = createServerFn({ method: "POST" })
       p_starts_at: data.startsAt,
       p_assignments: data.assignments,
       p_actor_id: userId,
+      p_manual_fit: data.manualFit,
     });
     if (error) throw new Error(translateScheduleMutationError(error));
     if (result?.changed && result.shouldNotify) {
@@ -402,6 +405,7 @@ export const createStudioManualFit = createServerFn({ method: "POST" })
     const sb = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(sb, userId, data.studioId);
+    await assertScheduleOverrideAccess(sb, userId, data.studioId);
     await Promise.all(
       [...new Set(data.assignments.map((assignment) => assignment.staffId))].map((staffId) =>
         assertScheduleStaffAccess(sb, userId, data.studioId, staffId),
@@ -519,6 +523,14 @@ async function assertScheduleStaffAccess(
     .eq("is_active", true)
     .maybeSingle();
   if (staffError || !staff?.id) throw new Response("forbidden", { status: 403 });
+}
+
+async function assertScheduleOverrideAccess(sb: any, userId: string, studioId: string) {
+  const { data, error } = await sb.from("user_roles").select("role")
+    .eq("user_id", userId).eq("studio_id", studioId)
+    .in("role", ["saas_owner", "studio_owner", "manager"])
+    .limit(1).maybeSingle();
+  if (error || !data?.role) throw new Response("forbidden", { status: 403 });
 }
 
 function translateRescheduleDatabaseError(error: {

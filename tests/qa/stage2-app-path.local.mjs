@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {createClient} from '@supabase/supabase-js';
 import {chromium} from 'playwright';
 
-const raw = execFileSync('supabase',['status','--workdir','tmp/agenda-stage2-rls-qa','-o','json'],
+const raw = execFileSync('supabase',['status','--workdir',
+  process.env.BELLZA_STAGE2_QA_WORKDIR ?? 'tmp/agenda-stage2-rls-qa','-o','json'],
   {encoding:'utf8'});
 const local=JSON.parse(raw.slice(raw.indexOf('{'),raw.lastIndexOf('}')+1));
 if(local.API_URL!=='http://127.0.0.1:57931')throw new Error('WRONG_QA_TARGET');
@@ -134,8 +135,38 @@ try{
   const bodyAfter=await page.locator('body').innerText();
   assert.ok(bodyAfter.includes('Profissional QA local · 1h'));
   assert.equal(http.some((entry)=>entry.status===404),false);
+  await page.goto(`http://127.0.0.1:4178/admin/agenda?appointment=${booking}&studio=${studio}`,
+    {waitUntil:'domcontentloaded',timeout:30000});
+  await page.getByText('Detalhes da marcação',{exact:true}).waitFor({timeout:15000});
+  await page.getByRole('button',{name:'Editar reserva',exact:true}).click();
+  const editAgain=page.getByRole('dialog',{name:'Editar marcação'});
+  await editAgain.getByRole('button',{name:'Encaixar',exact:true}).click();
+  const fitDialog=page.getByRole('dialog',{name:'Ajustar horário e duração'});
+  await fitDialog.getByRole('button',{name:'Marcar esta reserva existente como encaixe'}).click();
+  await fitDialog.getByRole('button',{name:'Guardar horário e duração'}).click();
+  await fitDialog.waitFor({state:'hidden',timeout:20000});
+  const fitted=await admin.from('appointments').select('is_manual_fit,total_price,studio_commission_percent_snapshot')
+    .eq('id',booking).single();
+  assert.ifError(fitted.error);
+  assert.equal(fitted.data.is_manual_fit,true);
+  assert.equal(fitted.data.total_price,28);
+  assert.equal(fitted.data.studio_commission_percent_snapshot,23);
+  await page.goto(`http://127.0.0.1:4178/admin/agenda?appointment=${booking}&studio=${studio}`,
+    {waitUntil:'domcontentloaded',timeout:30000});
+  await page.getByText('Detalhes da marcação',{exact:true}).waitFor({timeout:15000});
+  await page.getByRole('button',{name:'Editar reserva',exact:true}).click();
+  await page.getByRole('dialog',{name:'Editar marcação'})
+    .getByRole('button',{name:'Gerir encaixe',exact:true}).click();
+  const clearDialog=page.getByRole('dialog',{name:'Ajustar horário e duração'});
+  await clearDialog.getByRole('button',{name:/Encaixe marcado/}).click();
+  await clearDialog.getByRole('button',{name:'Guardar horário e duração'}).click();
+  await clearDialog.waitFor({state:'hidden',timeout:20000});
+  const cleared=await admin.from('appointments').select('is_manual_fit').eq('id',booking).single();
+  assert.ifError(cleared.error);
+  assert.equal(cleared.data.is_manual_fit,false);
   console.log(JSON.stringify({environment:'disposable-local-app',sessionVerified:true,
     appointmentOpened:true,dialogClosed:true,durationMin:60,pricePreserved:true,
     commissionPreserved:true,servicePreserved:true,
-    cardUpdatedWithoutReload:true,noMissingModule:true}));
+    cardUpdatedWithoutReload:true,existingBookingFitMarked:true,existingBookingFitCleared:true,
+    noMissingModule:true}));
 }finally{await browser.close();}
