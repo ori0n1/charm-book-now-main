@@ -1,6 +1,13 @@
-# Base oficial da produção Bellza — atualizada em 2026-11-19
+# Base oficial da produção Bellza — atualizada em 2026-11-23
 
-## Produção ativa — fidelidade para proprietária, gestoras e profissionais
+## Produção ativa — cartões da agenda (Etapa 4)
+
+- Cloudflare OAuth confirmou o deployment `a7a29d42-6f81-49cf-88bb-83001cfe2b77`, versão `1ef0f35f-098a-4879-8068-256580a647ed` a 100% do tráfego. A Etapa 3, `df7b87d2-0b2e-4bb7-9753-0dca6bc32836`, permanece a 0% para rollback seguro do Worker. Fonte funcional publicada: commit `59fcc567722f7a0a4737a839fd2f8b1f27216183`, que contém a alteração visual `c0fbb9b` e a correção isolada da referência do build `59fcc56`.
+- O único componente funcional alterado foi `src/components/agenda/professional-timeline.tsx`. O serviço ganhou destaque; cliente e horário continuam visíveis nos cartões de 15, 30, 45 e 60 minutos. Capturas sintéticas de antes/depois em mobile e desktop estão em `tests/evidence/agenda-cards-stage4/`.
+- Artefato local: manifesto SHA-256 `360b13c5ffc955dce0921038c2f9023707bbc34b4458ec7fbfbefa9389d93415`; configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`. A Cloudflare confirmou ETag `94c6f6c6348e595676f05715d6e65b21eccf38446f006cfd0ac1cbdf06f68132`, 234 módulos idênticos byte a byte e 221 assets públicos com SHA-256 igual ao build.
+- Configuração: 53 bindings, 24 secrets por nome/tipo, dois crons, dois domínios e runtime preservados. Não houve migração, alteração de dados, cobrança nem envio de notificação. O build de produção passou com 17 contratos e a opção financeira compilada preservada; o gate proporcional passou 11 itens. Com a candidata a 0%, GET `/` e `/login` responderam 200, `/admin/agenda` 307, `/api/auth/session` 401. Após a ativação a 100%, quatro rondas dos mesmos GETs e do asset da agenda passaram. Evidência detalhada: `docs/stage4-agenda-cards-release-20261123.json`.
+
+## Histórico — fidelidade para proprietária, gestoras e profissionais
 
 - Cloudflare OAuth confirmou o deployment `af253956-ccaa-44c3-8fbd-84a43f5be559`, versão `be47026f-6ad3-4f81-b85b-22d5e3c0d69a` a 100% do tráfego; a anterior `e5bb73f6-a486-4236-99cc-996b4ec09666` permanece a 0%. Fonte de produto publicada: commit `e89ad1894446ef57dcedf41b5d14251a12c0c60a`.
 - Só três ficheiros funcionais mudaram: guarda do editor de promoções, página de fidelidade e navegação do painel. A proprietária, gestoras e profissionais podem gerir regras e recompensas do próprio estúdio; resgate e ajustes manuais de saldo mantêm permissões anteriores. Textos da página foram revistos para português e pluralização de garimpos.
