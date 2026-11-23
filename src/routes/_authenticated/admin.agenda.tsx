@@ -35,7 +35,6 @@ import {
   Plus,
   Search,
   Sparkles,
-  Timer,
   TrendingDown,
   TrendingUp,
   Undo2,
@@ -403,7 +402,6 @@ function AgendaPage() {
   const [dropRescheduleDraft, setDropRescheduleDraft] = useState<{ time: string; staffId: string; staffName: string } | null>(null);
   const [updatingServiceLineId, setUpdatingServiceLineId] = useState<string | null>(null);
   const [swapApptId, setSwapApptId] = useState<string | null>(null);
-  const [durationApptId, setDurationApptId] = useState<string | null>(null);
   const [enableInPersonMbWay, setEnableInPersonMbWay] = useState(false);
   const [agendaNow, setAgendaNow] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => startOfLocalDay(new Date()));
@@ -1435,7 +1433,6 @@ function AgendaPage() {
     ? (appts.find((a) => a.id === rescheduleApptId) ?? null)
     : null;
   const swapAppt = swapApptId ? (appts.find((a) => a.id === swapApptId) ?? null) : null;
-  const durationAppt = durationApptId ? (appts.find((a) => a.id === durationApptId) ?? null) : null;
   const pendingAttendanceAppointments = sortAppointmentsChronologically(
     appts.filter(
       (appointment) =>
@@ -2067,18 +2064,6 @@ function AgendaPage() {
               },
             });
           }
-          if (timelineDetailAppt.status === "confirmed" && serviceSegments.length > 0 &&
-            !pendingOnlinePaymentByAppointment.has(timelineDetailAppt.id)) {
-            actions.push({
-              id: "schedule-duration",
-              label: "Horário e duração",
-              icon: <Timer className="h-4 w-4" />,
-              onClick: () => {
-                setDurationApptId(timelineDetailAppt.id);
-                setTimelineDetailId(null);
-              },
-            });
-          }
           if (["studio_owner", "saas_owner", "manager"].includes(studio?.role ?? "") &&
             timelineDetailAppt.status === "confirmed" && timelineDetailAppt.staff?.id) {
             actions.push({
@@ -2086,7 +2071,7 @@ function AgendaPage() {
               label: timelineDetailAppt.is_manual_fit ? "Gerir encaixe" : "Encaixar",
               icon: <Sparkles className="h-3.5 w-3.5" />,
               onClick: () => {
-                setDurationApptId(timelineDetailAppt.id);
+                setEditApptId(timelineDetailAppt.id);
                 setTimelineDetailId(null);
               },
             });
@@ -2401,11 +2386,8 @@ function AgendaPage() {
               setEditApptId(null);
               setSwapApptId(editAppt.id);
             } : undefined}
-          onFit={editAppt.status === "confirmed" && editAppt.staff?.id &&
-            ["studio_owner", "saas_owner", "manager"].includes(studio.role) ? () => {
-            setDurationApptId(editAppt.id);
-            setEditApptId(null);
-          } : undefined}
+          canManageFit={editAppt.status === "confirmed" && Boolean(editAppt.staff?.id) &&
+            ["studio_owner", "saas_owner", "manager"].includes(studio.role)}
           onClose={() => { setEditApptId(null); setDropEditDraft(null); }}
           onSaved={(result) => {
             setEditApptId(null);
@@ -2446,20 +2428,6 @@ function AgendaPage() {
           onSaved={() => {
             setSwapApptId(null);
             loadData();
-          }}
-        />
-      )}
-
-      {durationAppt && studio && (
-        <AppointmentDurationModal
-          studioId={studio.id}
-          canOverrideAvailability={["studio_owner", "saas_owner", "manager"].includes(studio.role)}
-          studioTimezone={studio.timezone}
-          appt={durationAppt}
-          onClose={() => setDurationApptId(null)}
-          onSaved={(result) => {
-            setDurationApptId(null);
-            commitScheduleResult(result);
           }}
         />
       )}
@@ -3648,13 +3616,13 @@ function NewAppointmentModal({
 
 function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receivedAmount, onClose, onSaved, initialMove,
   ownerCanEditResolved,
-  onSwap, onFit }: {
+  onSwap, canManageFit }: {
   studioId: string; studioTimezone?: string | null; staffId?: string | null;
   appt: Appt; receivedAmount: number; onClose: () => void;
   onSaved: (result?: Stage2ScheduleResult) => void;
   initialMove?: { date: string; time: string; staffId: string; lineId: string };
   ownerCanEditResolved: boolean;
-  onSwap?: () => void; onFit?: () => void;
+  onSwap?: () => void; canManageFit: boolean;
 }) {
   const [services, setServices] = useState<StudioService[]>([]);
   const [staffList, setStaffList] = useState<StudioStaff[]>([]);
@@ -3669,6 +3637,10 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   const [durationHints, setDurationHints] = useState<Record<string, { available: number; original: number }>>({});
   const [date, setDate] = useState(initialMove?.date ?? getStudioDateKey(appt.starts_at, studioTimezone));
   const [time, setTime] = useState(initialMove?.time ?? formatStudioTime(appt.starts_at, studioTimezone));
+  const [endDate, setEndDate] = useState(getStudioDateKey(appt.ends_at, studioTimezone));
+  const [endTime, setEndTime] = useState(formatStudioTime(appt.ends_at, studioTimezone));
+  const [totalDurationDraft, setTotalDurationDraft] = useState(String(appointmentDurationMinutes(appt)));
+  const [manualFitChoice, setManualFitChoice] = useState<boolean | null>(null);
   const [price, setPrice] = useState(String(appt.total_price));
   const [notes, setNotes] = useState(appt.notes ?? "");
   const [saving, setSaving] = useState(false);
@@ -3700,8 +3672,51 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   const editRestriction = (appt.status === "cancelled" ||
     (resolvedState && !ownerCanEditResolved))
     ? "Desfaça o estado atual para editar esta marcação." : null;
-  const draftKey = JSON.stringify({ date, time, price, notes, assignments, durationDrafts });
+  const originalDuration = appointmentDurationMinutes(appt);
+  const maxDuration = assignments.length === 1 ? 720 : 1440;
+  const lineDuration = (item: typeof assignments[number]) => {
+    const line = appt.appointment_services?.find((candidate) => candidate.id === item.lineId);
+    return Number(durationDrafts[item.lineId] ?? item.durationMin ??
+      (line?.services?.id === item.serviceId
+        ? (assignments.length === 1 ? originalDuration : line?.duration_min)
+        : undefined) ?? services.find((service) => service.id === item.serviceId)?.duration_min ?? 0);
+  };
+  const originalLines = appt.appointment_services ?? [];
+  const originalLineMinutes = originalLines.length === 1 ? originalDuration :
+    originalLines.reduce((sum, line) => sum + Number(line.duration_min ?? 0), 0);
+  const totalDuration = originalDuration +
+    assignments.reduce((sum, item) => sum + lineDuration(item), 0) - originalLineMinutes;
+  const draftKey = JSON.stringify({ date, time, price, notes, assignments, durationDrafts, manualFitChoice });
   useEffect(() => setConfirmFinancialChange(false), [draftKey]);
+
+  useEffect(() => {
+    if (!date || !time || !Number.isInteger(totalDuration) || totalDuration < 5) return;
+    const start = Date.parse(`${date}T${time}:00Z`);
+    if (!Number.isFinite(start)) return;
+    const end = new Date(start + totalDuration * 60_000);
+    setEndDate(end.toISOString().slice(0, 10));
+    setEndTime(end.toISOString().slice(11, 16));
+    setTotalDurationDraft(String(totalDuration));
+  }, [date, time, totalDuration]);
+
+  function applyTotalDuration(value: string) {
+    setTotalDurationDraft(value);
+    const minutes = Number(value);
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > maxDuration || !assignments.length) return;
+    const last = assignments.at(-1)!;
+    setDurationDrafts((current) => ({
+      ...current, [last.lineId]: String(lineDuration(last) + minutes - totalDuration),
+    }));
+  }
+
+  function applyEnd(nextDate: string, nextTime: string) {
+    if (!date || !time || !nextDate || !nextTime) return;
+    const start = Date.parse(`${date}T${time}:00Z`);
+    const end = Date.parse(`${nextDate}T${nextTime}:00Z`);
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      applyTotalDuration(String(Math.round((end - start) / 60_000)));
+    }
+  }
 
   function updateDraftPrice(nextAssignments: typeof assignments) {
     const total = nextAssignments.reduce((sum, item) => sum + Number(
@@ -3811,6 +3826,15 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
         const line = appt.appointment_services?.find((candidate) => candidate.id === item.lineId);
         return Boolean(line && line.services?.id === item.serviceId);
       });
+    if (!endDate || !endTime || !Number.isInteger(Number(totalDurationDraft)) ||
+      Number(totalDurationDraft) !== totalDuration || totalDuration < 5 || totalDuration > maxDuration) {
+      toast.error("Indique um término e uma duração total válidos.");
+      return;
+    }
+    if (!scheduleOnly && manualFitChoice !== null) {
+      toast.error("Guarde a alteração do encaixe separadamente das alterações de serviço, preço ou notas.");
+      return;
+    }
     if (scheduleOnly) {
       const lines = [...(appt.appointment_services ?? [])].sort(compareAppointmentServiceLines);
       const nextAssignments = lines.map((line) => {
@@ -3818,8 +3842,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
         return {
           lineId: line.id ?? "",
           staffId: draft?.staffId ?? "",
-          durationMin: Number(durationDrafts[line.id ?? ""] ??
-            (lines.length === 1 ? appointmentDurationMinutes(appt) : line.duration_min)),
+          durationMin: draft ? lineDuration(draft) : NaN,
         };
       });
       if (!date || !time || !nextAssignments.length || nextAssignments.some((item) =>
@@ -3837,9 +3860,16 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
       }
       savingRef.current = true; setSaving(true);
       try {
-        const { startsAt } = await resolveDateTime({ data: { studioId, date, time } });
+        const [start, end] = await Promise.all([
+          resolveDateTime({ data: { studioId, date, time } }),
+          resolveDateTime({ data: { studioId, date: endDate, time: endTime } }),
+        ]);
+        if (Math.round((Date.parse(end.startsAt) - Date.parse(start.startsAt)) / 60_000) !== totalDuration) {
+          throw new Error("A mudança de hora local altera a duração. Reveja início e término.");
+        }
         const result = await moveStage2({ data: {
-          studioId, appointmentId: appt.id, startsAt, assignments: nextAssignments,
+          studioId, appointmentId: appt.id, startsAt: start.startsAt,
+          assignments: nextAssignments, manualFit: manualFitChoice,
         } });
         toast.success(result.isManualFit ? "Reserva guardada como encaixe." : "Horário da reserva atualizado.");
         onSaved(result);
@@ -3961,6 +3991,56 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
           <ModalField label="Data *"><PremiumDatePicker value={date} onChange={setDate} className={datePickerCls} portalLayer="modal" /></ModalField>
           <AppointmentTimePicker value={time} onChange={setTime} />
         </div>
+        {appt.status === "confirmed" && <div className="space-y-3 rounded-xl border border-border p-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Horário e duração da marcação</p>
+          <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
+            <ModalField label="Data de término *">
+              <PremiumDatePicker value={endDate} onChange={(value) => {
+                setEndDate(value); applyEnd(value, endTime);
+              }} className={datePickerCls} portalLayer="modal" />
+            </ModalField>
+            <ModalField label="Hora de término *">
+              <input type="time" value={endTime} onChange={(event) => {
+                setEndTime(event.target.value); applyEnd(endDate, event.target.value);
+              }} className={timeCls} />
+            </ModalField>
+          </div>
+          <ModalField label="Duração total desta marcação">
+            <div className="relative">
+              <input aria-label="Duração total desta marcação em minutos" type="number" min={5}
+                max={maxDuration} step={1} value={totalDurationDraft}
+                onChange={(event) => applyTotalDuration(event.target.value)}
+                className={`${inputCls} pr-14`} />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">min</span>
+            </div>
+            {assignments.length === 1 && (() => {
+              const service = services.find((item) => item.id === assignments[0]?.serviceId);
+              return service && service.duration_min !== totalDuration
+                ? <p className="mt-1 text-xs text-muted-foreground">
+                    Duração padrão do serviço: {service.duration_min} min. Esta marcação usa {totalDuration} min.
+                  </p>
+                : null;
+            })()}
+          </ModalField>
+          {(date !== getStudioDateKey(appt.starts_at, studioTimezone) ||
+            time !== formatStudioTime(appt.starts_at, studioTimezone) || totalDuration !== originalDuration ||
+            endDate !== getStudioDateKey(appt.ends_at, studioTimezone) ||
+            endTime !== formatStudioTime(appt.ends_at, studioTimezone)) &&
+            <p className="rounded-lg bg-blue-500/8 p-2.5 text-xs">
+              Antes: {getStudioDateKey(appt.starts_at, studioTimezone).split("-").reverse().join("/")} {formatStudioTime(appt.starts_at, studioTimezone)}–{formatStudioTime(appt.ends_at, studioTimezone)} ({originalDuration} min)
+              <span className="block font-bold">Depois: {date.split("-").reverse().join("/")} {time}–{endTime} ({totalDuration} min)</span>
+            </p>}
+          <p className="text-xs text-muted-foreground">
+            Se houver conflito de disponibilidade, a marcação passa a encaixe quando permitido. Ajustar o horário ou a duração não altera o preço, os pagamentos nem as comissões.
+          </p>
+          {canManageFit && <button type="button"
+            onClick={() => setManualFitChoice(!(manualFitChoice ?? Boolean(appt.is_manual_fit)))}
+            className="min-h-11 w-full rounded-xl border border-amber-400/50 bg-amber-500/10 px-3 text-left text-sm font-semibold">
+            {(manualFitChoice ?? Boolean(appt.is_manual_fit))
+              ? "Encaixe marcado · toque para retirar quando o horário estiver livre"
+              : "Marcar esta reserva como encaixe"}
+          </button>}
+        </div>}
         {assignments.map((assignment, index) => {
           const currentLine = appt.appointment_services?.find((line) => line.id === assignment.lineId);
           const currentServiceId = currentLine?.services?.id;
@@ -4006,7 +4086,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
                 </SelectContent>
               </Select>
             </ModalField>
-            <ModalField label="Duração individual">
+            {(assignments.length > 1 || appt.status !== "confirmed") && <ModalField label="Duração individual">
               {durationHints[assignment.lineId] && durationHints[assignment.lineId].available < durationHints[assignment.lineId].original && (
                 <div role="status" className="mb-2 rounded-lg border border-amber-500/35 bg-amber-500/10 p-2.5 text-xs">
                   {durationHints[assignment.lineId].available >= 5 ? (
@@ -4026,7 +4106,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
                   Duração padrão do serviço: {selectedDuration} min. Esta marcação usa {lineDuration} min.
                 </p>
               )}
-            </ModalField>
+            </ModalField>}
           </div>;
         })}
         {canChangeStructure && assignments.length < 20 && <button type="button"
@@ -4037,11 +4117,10 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
         <ModalField label="Preço / valor (€) *"><input aria-label="Preço / valor (€)" type="number" min="0" step="0.01" value={price} disabled={hasActiveReceipt} onChange={(e) => setPrice(e.target.value)} className={inputCls} /></ModalField>
         <ModalField label="Notas"><textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={textareaCls} /></ModalField>
       </div>}
-    {(onSwap || onFit) && (
+    {onSwap && (
       <div className="shrink-0 border-t border-border/70 px-4 py-3">
         <div className="flex flex-wrap gap-2">
           {onSwap && <button type="button" onClick={onSwap} className="min-h-8 rounded-lg border border-border px-2 text-xs font-semibold hover:bg-muted">Trocar</button>}
-          {onFit && <button type="button" onClick={onFit} className="min-h-8 rounded-lg border border-border px-2 text-xs font-semibold hover:bg-muted">{appt.is_manual_fit ? "Gerir encaixe" : "Encaixar"}</button>}
         </div>
       </div>
     )}
@@ -4371,203 +4450,6 @@ function SwapAppointmentModal({
         saving={saving}
         disabled={!selected || Boolean(conflictPreview?.hardBlocked)}
         label={conflictPreview?.hasConflict ? "Confirmar troca com encaixe" : "Confirmar troca"}
-      />
-    </ModalShell>
-  );
-}
-
-function AppointmentDurationModal({
-  studioId,
-  canOverrideAvailability,
-  studioTimezone,
-  appt,
-  onClose,
-  onSaved,
-}: {
-  studioId: string;
-  canOverrideAvailability: boolean;
-  studioTimezone?: string | null;
-  appt: Appt;
-  onClose: () => void;
-  onSaved: (result: Stage2ScheduleResult) => void;
-}) {
-  const moveAppointment = useServerFn(moveStudioAppointmentStage2);
-  const resolveDateTime = useServerFn(resolveStudioLocalDateTime);
-  const originalDuration = appointmentDurationMinutes(appt);
-  const [date, setDate] = useState(getStudioDateKey(appt.starts_at, studioTimezone));
-  const [time, setTime] = useState(formatStudioTime(appt.starts_at, studioTimezone));
-  const [endDate, setEndDate] = useState(getStudioDateKey(appt.ends_at, studioTimezone));
-  const [endTime, setEndTime] = useState(formatStudioTime(appt.ends_at, studioTimezone));
-  const [duration, setDuration] = useState(String(originalDuration));
-  const [manualFitChoice, setManualFitChoice] = useState<boolean | null>(null);
-  const [saving, setSaving] = useState(false);
-  const durationMin = Number(duration);
-  const lines = [...(appt.appointment_services ?? [])].sort(compareAppointmentServiceLines);
-  const maxDuration = lines.length === 1 ? 720 : 1440;
-  const originalStartDate = getStudioDateKey(appt.starts_at, studioTimezone);
-  const originalStartTime = formatStudioTime(appt.starts_at, studioTimezone);
-  const originalEndDate = getStudioDateKey(appt.ends_at, studioTimezone);
-  const originalEndTime = formatStudioTime(appt.ends_at, studioTimezone);
-  const scheduleChanged = date !== originalStartDate || time !== originalStartTime ||
-    endDate !== originalEndDate || endTime !== originalEndTime || durationMin !== originalDuration;
-  const fitChanged = manualFitChoice !== null && manualFitChoice !== Boolean(appt.is_manual_fit);
-  const hasChanges = scheduleChanged || fitChanged;
-
-  function syncEnd(nextDate: string, nextTime: string, minutes: number) {
-    if (!nextDate || !nextTime || !Number.isInteger(minutes)) return;
-    const local = new Date(`${nextDate}T${nextTime}:00Z`);
-    if (!Number.isFinite(local.getTime())) return;
-    local.setUTCMinutes(local.getUTCMinutes() + minutes);
-    setEndDate(local.toISOString().slice(0, 10));
-    setEndTime(local.toISOString().slice(11, 16));
-  }
-
-  function syncDuration(nextEndDate: string, nextEndTime: string) {
-    if (!date || !time || !nextEndDate || !nextEndTime) return;
-    const start = Date.parse(`${date}T${time}:00Z`);
-    const end = Date.parse(`${nextEndDate}T${nextEndTime}:00Z`);
-    if (Number.isFinite(start) && Number.isFinite(end)) {
-      setDuration(String(Math.round((end - start) / 60_000)));
-    }
-  }
-
-  async function handleSave() {
-    if (!hasChanges) return;
-    if (!date || !time || !endDate || !endTime || !Number.isInteger(durationMin)
-      || durationMin < 5 || durationMin > maxDuration || !lines.length) {
-      toast.error(`Indique início, término e uma duração entre 5 e ${maxDuration} minutos.`);
-      return;
-    }
-    setSaving(true);
-    try {
-      const [start, end] = await Promise.all([
-        resolveDateTime({ data: { studioId, date, time } }),
-        resolveDateTime({ data: { studioId, date: endDate, time: endTime } }),
-      ]);
-      const actualDuration = Math.round((Date.parse(end.startsAt) - Date.parse(start.startsAt)) / 60_000);
-      if (actualDuration !== durationMin) {
-        throw new Error("A mudança de hora local altera a duração. Reveja início e término.");
-      }
-      const delta = durationMin - originalDuration;
-      const assignments = lines.map((line, index) => ({
-        lineId: line.id ?? "",
-        staffId: line.staff?.id ?? appt.staff?.id ?? "",
-        durationMin: lines.length === 1 ? durationMin
-          : (line.duration_min ?? 0) + (index === lines.length - 1 ? delta : 0),
-      }));
-      if (assignments.some((item) => !item.lineId || !item.staffId ||
-        !Number.isInteger(item.durationMin) || item.durationMin < 5 || item.durationMin > 720)) {
-        throw new Error("Reveja a duração dos serviços: cada segmento deve ter entre 5 e 720 minutos.");
-      }
-      const result = await moveAppointment({ data: {
-        studioId, appointmentId: appt.id, startsAt: start.startsAt, assignments,
-        manualFit: manualFitChoice,
-      } });
-      toast.success(result.isManualFit ? "Horário guardado como encaixe." : "Horário e duração atualizados.");
-      onSaved(result);
-    } catch (error) {
-      toast.error(scheduleChangeMessage(error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <ModalShell title="Ajustar horário e duração" onClose={onClose}>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-        <div className="rounded-xl border border-border bg-muted/25 px-3 py-2.5">
-          <p className="text-sm font-black">{appt.clients?.name ?? "Cliente"}</p>
-          <p className="text-xs text-muted-foreground">{appointmentServiceLabel(appt)}</p>
-        </div>
-        <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
-          <ModalField label="Data de início *">
-            <PremiumDatePicker value={date} onChange={(value) => { setDate(value); syncEnd(value, time, durationMin); }}
-              className={datePickerCls} portalLayer="modal" />
-          </ModalField>
-          <ModalField label="Hora de início *">
-            <input type="time" value={time} onChange={(event) => {
-              setTime(event.target.value); syncEnd(date, event.target.value, durationMin);
-            }} className={timeCls} />
-          </ModalField>
-          <ModalField label="Data de término *">
-            <PremiumDatePicker value={endDate} onChange={(value) => {
-              setEndDate(value); syncDuration(value, endTime);
-            }} className={datePickerCls} portalLayer="modal" />
-          </ModalField>
-          <ModalField label="Hora de término *">
-            <input type="time" value={endTime} onChange={(event) => {
-              setEndTime(event.target.value); syncDuration(endDate, event.target.value);
-            }} className={timeCls} />
-          </ModalField>
-        </div>
-        <ModalField label="Duração total desta marcação">
-          <div className="relative">
-            <input
-              type="number"
-              min={5}
-              max={maxDuration}
-              step={1}
-              value={duration}
-              onChange={(event) => {
-                setDuration(event.target.value);
-                syncEnd(date, time, Number(event.target.value));
-              }}
-              className={`${inputCls} pr-14`}
-            />
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-muted-foreground">
-              min
-            </span>
-          </div>
-        </ModalField>
-        {scheduleChanged ? <div className="grid grid-cols-2 gap-2 rounded-xl border border-blue-500/25 bg-blue-500/8 p-3 text-xs">
-          <div>
-            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
-              Antes
-            </p>
-            <p className="mt-1 break-words font-black">
-              <span className="block">{originalStartDate.split("-").reverse().join("/")}{originalEndDate !== originalStartDate ? ` → ${originalEndDate.split("-").reverse().join("/")}` : ""}</span>
-              <span className="block">{originalStartTime}–{originalEndTime}</span>
-              <span className="block">{originalDuration} min</span>
-            </p>
-          </div>
-          <div>
-            <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
-              Depois
-            </p>
-            <p className="mt-1 break-words font-black">
-              <span className="block">{date.split("-").reverse().join("/")}{endDate !== date ? ` → ${endDate.split("-").reverse().join("/")}` : ""}</span>
-              <span className="block">{time}–{endTime}</span>
-              <span className="block">{durationMin} min</span>
-            </p>
-          </div>
-        </div> : <p className="rounded-xl border border-border bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
-          {fitChanged ? "Horário e duração mantidos. Só a marcação de encaixe será alterada." : "Altere o horário ou a duração para ver a comparação antes de guardar."}
-        </p>}
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          Se houver conflito de disponibilidade, a marcação passa automaticamente a encaixe. A duração padrão dos serviços,
-          o preço, os pagamentos e as comissões permanecem iguais.
-        </p>
-        {canOverrideAvailability && (
-          <button type="button" onClick={() => setManualFitChoice(
-            !(manualFitChoice ?? Boolean(appt.is_manual_fit)),
-          )} className="min-h-11 w-full rounded-xl border border-amber-400/50 bg-amber-500/10 px-3 text-left text-sm font-semibold">
-            {(manualFitChoice ?? Boolean(appt.is_manual_fit))
-              ? "Encaixe marcado · toque para retirar quando o horário estiver livre"
-              : "Marcar esta reserva existente como encaixe"}
-          </button>
-        )}
-      </div>
-      <ModalFooter
-        onClose={onClose}
-        onSave={handleSave}
-        saving={saving}
-        disabled={
-          !hasChanges ||
-          !Number.isInteger(durationMin) ||
-          durationMin < 5 ||
-          durationMin > maxDuration
-        }
-        label="Guardar horário e duração"
       />
     </ModalShell>
   );
