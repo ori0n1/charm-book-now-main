@@ -3965,6 +3965,9 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
           const currentLine = appt.appointment_services?.find((line) => line.id === assignment.lineId);
           const currentServiceId = currentLine?.services?.id;
           const selectedDuration = services.find((service) => service.id === assignment.serviceId)?.duration_min;
+          const lineDuration = durationDrafts[assignment.lineId] ?? String(assignment.durationMin ??
+            (currentServiceId === assignment.serviceId ? currentLine?.duration_min : undefined) ??
+            selectedDuration ?? appointmentDurationMinutes(appt));
           const selectableServices = services.filter((s) => manualAppointmentStaffForService(staffList, links, s.id).length > 0);
           const allowedStaff = manualAppointmentStaffForService(staffList, links, assignment.serviceId);
           return <div key={assignment.lineId} className="space-y-2 rounded-xl border border-border p-3">
@@ -3990,7 +3993,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
                 <SelectTrigger className={`${selectTriggerCls} pr-4`}><SelectValue placeholder="Escolher serviço" /></SelectTrigger>
                 <SelectContent className={modalSelectContentCls}>
                   {currentServiceId && !selectableServices.some((s) => s.id === currentServiceId) && <SelectItem value={currentServiceId}>{currentLine?.services?.name} (atual)</SelectItem>}
-                  {selectableServices.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} — {s.duration_min}min</SelectItem>)}
+                  {selectableServices.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} — padrão {s.duration_min} min</SelectItem>)}
                 </SelectContent>
               </Select>
             </ModalField>
@@ -4014,12 +4017,15 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
               <div>
                 <input aria-label="Duração individual em minutos" type="number" min={5} step={1}
                   max={currentServiceId === assignment.serviceId ? 720 : durationHints[assignment.lineId]?.original}
-                  value={durationDrafts[assignment.lineId] ?? String(assignment.durationMin ??
-                    (currentServiceId === assignment.serviceId ? currentLine?.duration_min : undefined) ??
-                    selectedDuration ?? appointmentDurationMinutes(appt))}
+                  value={lineDuration}
                   onChange={(event) => setDurationDrafts((current) => ({ ...current, [assignment.lineId]: event.target.value }))}
                   className={inputCls} />
               </div>
+              {selectedDuration !== undefined && lineDuration !== "" && Number(lineDuration) !== selectedDuration && (
+                <p className="text-xs text-muted-foreground">
+                  Duração padrão do serviço: {selectedDuration} min. Esta marcação usa {lineDuration} min.
+                </p>
+              )}
             </ModalField>
           </div>;
         })}
@@ -4398,6 +4404,14 @@ function AppointmentDurationModal({
   const durationMin = Number(duration);
   const lines = [...(appt.appointment_services ?? [])].sort(compareAppointmentServiceLines);
   const maxDuration = lines.length === 1 ? 720 : 1440;
+  const originalStartDate = getStudioDateKey(appt.starts_at, studioTimezone);
+  const originalStartTime = formatStudioTime(appt.starts_at, studioTimezone);
+  const originalEndDate = getStudioDateKey(appt.ends_at, studioTimezone);
+  const originalEndTime = formatStudioTime(appt.ends_at, studioTimezone);
+  const scheduleChanged = date !== originalStartDate || time !== originalStartTime ||
+    endDate !== originalEndDate || endTime !== originalEndTime || durationMin !== originalDuration;
+  const fitChanged = manualFitChoice !== null && manualFitChoice !== Boolean(appt.is_manual_fit);
+  const hasChanges = scheduleChanged || fitChanged;
 
   function syncEnd(nextDate: string, nextTime: string, minutes: number) {
     if (!nextDate || !nextTime || !Number.isInteger(minutes)) return;
@@ -4418,6 +4432,7 @@ function AppointmentDurationModal({
   }
 
   async function handleSave() {
+    if (!hasChanges) return;
     if (!date || !time || !endDate || !endTime || !Number.isInteger(durationMin)
       || durationMin < 5 || durationMin > maxDuration || !lines.length) {
       toast.error(`Indique início, término e uma duração entre 5 e ${maxDuration} minutos.`);
@@ -4504,24 +4519,30 @@ function AppointmentDurationModal({
             </span>
           </div>
         </ModalField>
-        <div className="grid grid-cols-2 gap-2 rounded-xl border border-blue-500/25 bg-blue-500/8 p-3 text-xs">
+        {scheduleChanged ? <div className="grid grid-cols-2 gap-2 rounded-xl border border-blue-500/25 bg-blue-500/8 p-3 text-xs">
           <div>
             <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
               Antes
             </p>
-            <p className="mt-1 font-black">
-              {formatStudioTime(appt.starts_at, studioTimezone)}–{formatStudioTime(appt.ends_at, studioTimezone)}
+            <p className="mt-1 break-words font-black">
+              <span className="block">{originalStartDate.split("-").reverse().join("/")}{originalEndDate !== originalStartDate ? ` → ${originalEndDate.split("-").reverse().join("/")}` : ""}</span>
+              <span className="block">{originalStartTime}–{originalEndTime}</span>
+              <span className="block">{originalDuration} min</span>
             </p>
           </div>
           <div>
             <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">
               Depois
             </p>
-            <p className="mt-1 font-black">
-              {time}–{endTime} · {durationMin} min
+            <p className="mt-1 break-words font-black">
+              <span className="block">{date.split("-").reverse().join("/")}{endDate !== date ? ` → ${endDate.split("-").reverse().join("/")}` : ""}</span>
+              <span className="block">{time}–{endTime}</span>
+              <span className="block">{durationMin} min</span>
             </p>
           </div>
-        </div>
+        </div> : <p className="rounded-xl border border-border bg-muted/25 px-3 py-2.5 text-xs text-muted-foreground">
+          {fitChanged ? "Horário e duração mantidos. Só a marcação de encaixe será alterada." : "Altere o horário ou a duração para ver a comparação antes de guardar."}
+        </p>}
         <p className="text-xs leading-relaxed text-muted-foreground">
           Se houver conflito de disponibilidade, a marcação passa automaticamente a encaixe. A duração padrão dos serviços,
           o preço, os pagamentos e as comissões permanecem iguais.
@@ -4541,6 +4562,7 @@ function AppointmentDurationModal({
         onSave={handleSave}
         saving={saving}
         disabled={
+          !hasChanges ||
           !Number.isInteger(durationMin) ||
           durationMin < 5 ||
           durationMin > maxDuration
