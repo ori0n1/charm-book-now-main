@@ -670,13 +670,14 @@ export function ProfessionalTimeline({
                             <GripVertical className="size-4" />
                           </span>}
                         <span className="flex min-w-0 items-center justify-between gap-1">
-                          <span className="shrink-0 whitespace-nowrap font-mono text-[9px] font-black leading-none tabular-nums md:text-[10px]">
-                            {formatTime(appointment.startsAt, timeZone)} –{" "}
-                            {formatTime(appointment.endsAt, timeZone)}
+                          <span className="shrink-0 whitespace-nowrap font-mono text-[9px] font-bold leading-none tabular-nums md:text-[10px]">
+                            {formatTime(appointment.startsAt, timeZone)}
+                            {appointment.height >= 32 && <> – {formatTime(appointment.endsAt, timeZone)}</>}
                           </span>
                           {appointment.height < 32 && (
-                            <span className="min-w-0 truncate text-[9px] font-black leading-none">
-                              {appointment.clientName}
+                            <span className="flex min-w-0 flex-1 items-baseline gap-1 text-[9px] leading-none">
+                              <span className="min-w-0 flex-[3] truncate font-black">{appointment.serviceName}</span>
+                              <span className="min-w-0 flex-[2] truncate font-semibold">{appointment.clientName}</span>
                             </span>
                           )}
                           {appointment.height >= 32 && (appointment.attendancePending ? (
@@ -706,14 +707,20 @@ export function ProfessionalTimeline({
                             </span>
                           ))}
                         </span>
-                        {appointment.height >= 32 && (
-                          <span className="mt-0.5 block truncate text-[10px] font-black leading-tight md:text-xs">
-                            {appointment.clientName}
+                        {appointment.height >= 32 && appointment.height < 44 && (
+                          <span className="mt-0.5 flex min-w-0 items-baseline gap-1 leading-tight">
+                            <span className="min-w-0 flex-[3] truncate text-[10px] font-black md:text-xs">{appointment.serviceName}</span>
+                            <span className="min-w-0 flex-[2] truncate text-[9px] font-semibold md:text-[10px]">{appointment.clientName}</span>
                           </span>
                         )}
                         {appointment.height >= 44 && (
-                          <span className="mt-0.5 block truncate text-[9px] font-medium leading-tight opacity-80 md:text-[10px]">
+                          <span className="mt-0.5 block truncate text-[11px] font-black leading-tight md:text-xs">
                             {appointment.serviceName}{unified ? ` · ${appointment.professionalName}` : ""}
+                          </span>
+                        )}
+                        {appointment.height >= 44 && (
+                          <span className="mt-0.5 block truncate text-[10px] font-semibold leading-tight md:text-[11px]">
+                            {appointment.clientName}
                           </span>
                         )}
                         {appointment.jointBooking && appointment.height >= 58 && (

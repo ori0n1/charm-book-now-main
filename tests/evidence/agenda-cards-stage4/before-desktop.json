@@ -1,0 +1,34 @@
+[
+  {
+    "height": 25,
+    "width": 391,
+    "text": "09:00 – 09:15Maria Silva",
+    "aria": "09:00, Maria Silva, Corte feminino, Ana, , 25 €, Confirmada",
+    "background": "oklch(0.951 0.026 236.824)",
+    "borderLeft": "oklab(0.828 -0.0708764 -0.0854256 / 0.8)"
+  },
+  {
+    "height": 50,
+    "width": 391,
+    "text": "09:30 – 10:00ConfirmadaSofia MartinsManicure gel",
+    "aria": "09:30, Sofia Martins, Manicure gel, Ana, , 25 €, Confirmada",
+    "background": "oklch(0.951 0.026 236.824)",
+    "borderLeft": "oklab(0.828 -0.0708764 -0.0854256 / 0.8)"
+  },
+  {
+    "height": 75,
+    "width": 391,
+    "text": "10:15 – 11:00EEncaixeCarolina FerreiraColoração e reflexosAna · 30 min25 €",
+    "aria": "10:15, Carolina Ferreira, Coloração e reflexos, Ana, , 25 €, Confirmada",
+    "background": "oklch(0.943 0.029 294.588)",
+    "borderLeft": "oklab(0.811 0.0443873 -0.101739 / 0.8)"
+  },
+  {
+    "height": 100,
+    "width": 391,
+    "text": "11:15 – 12:15CompareceuJoana CostaTratamento capilarAna · 60 min25 €",
+    "aria": "11:15, Joana Costa, Tratamento capilar, Ana, , 25 €, Concluída",
+    "background": "oklch(0.95 0.052 163.051)",
+    "borderLeft": "oklab(0.845 -0.138113 0.0370641 / 0.8)"
+  }
+]
