@@ -407,7 +407,7 @@ export function TimelineAppointmentDrawer({
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={closePayment} className="h-9 rounded-lg border border-border text-xs font-bold">Voltar</button>
               <button type="button" disabled={payment.busy || (!details.jointBooking && !clientAttended) || (sendingMbWayCharge && !isValidInternationalPhone(normalizedMbWayPhone))}
-                onClick={() => void payment.confirm(paymentMethod, paymentMethod === "mb_way" ? { mbWayAction: sendingMbWayCharge ? "charge" : "received", ...(sendingMbWayCharge ? { phone: normalizedMbWayPhone } : {}) } : undefined).then((saved) => { if (saved) closePayment(); })}
+                onClick={() => void payment.confirm(paymentMethod, paymentMethod === "mb_way" ? { mbWayAction: sendingMbWayCharge ? "charge" : "received", ...(sendingMbWayCharge ? { phone: normalizedMbWayPhone } : {}) } : undefined).then((saved) => { if (saved) { closePayment(); onClose(); } })}
                 className="h-9 rounded-lg bg-emerald-700 px-2 text-xs font-bold text-white disabled:opacity-45">{sendingMbWayCharge ? "Enviar cobrança" : "Confirmar recebimento"}</button>
             </div>
           </div>}
