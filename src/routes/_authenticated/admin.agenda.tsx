@@ -3639,6 +3639,7 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
   const [time, setTime] = useState(initialMove?.time ?? formatStudioTime(appt.starts_at, studioTimezone));
   const [endDate, setEndDate] = useState(getStudioDateKey(appt.ends_at, studioTimezone));
   const [endTime, setEndTime] = useState(formatStudioTime(appt.ends_at, studioTimezone));
+  const [endTouched, setEndTouched] = useState(false);
   const [totalDurationDraft, setTotalDurationDraft] = useState(String(appointmentDurationMinutes(appt)));
   const [manualFitChoice, setManualFitChoice] = useState<boolean | null>(null);
   const [price, setPrice] = useState(String(appt.total_price));
@@ -3860,12 +3861,12 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
       }
       savingRef.current = true; setSaving(true);
       try {
-        const [start, end] = await Promise.all([
-          resolveDateTime({ data: { studioId, date, time } }),
-          resolveDateTime({ data: { studioId, date: endDate, time: endTime } }),
-        ]);
-        if (Math.round((Date.parse(end.startsAt) - Date.parse(start.startsAt)) / 60_000) !== totalDuration) {
-          throw new Error("A mudança de hora local altera a duração. Reveja início e término.");
+        const start = await resolveDateTime({ data: { studioId, date, time } });
+        if (endTouched) {
+          const end = await resolveDateTime({ data: { studioId, date: endDate, time: endTime } });
+          if (Math.round((Date.parse(end.startsAt) - Date.parse(start.startsAt)) / 60_000) !== totalDuration) {
+            throw new Error("A mudança de hora local altera a duração. Reveja início e término.");
+          }
         }
         const result = await moveStage2({ data: {
           studioId, appointmentId: appt.id, startsAt: start.startsAt,
@@ -3996,12 +3997,12 @@ function EditAppointmentModal({ studioId, studioTimezone, staffId, appt, receive
           <div className="grid grid-cols-1 gap-2 min-[360px]:grid-cols-2">
             <ModalField label="Data de término *">
               <PremiumDatePicker value={endDate} onChange={(value) => {
-                setEndDate(value); applyEnd(value, endTime);
+                setEndTouched(true); setEndDate(value); applyEnd(value, endTime);
               }} className={datePickerCls} portalLayer="modal" />
             </ModalField>
             <ModalField label="Hora de término *">
               <input type="time" value={endTime} onChange={(event) => {
-                setEndTime(event.target.value); applyEnd(endDate, event.target.value);
+                setEndTouched(true); setEndTime(event.target.value); applyEnd(endDate, event.target.value);
               }} className={timeCls} />
             </ModalField>
           </div>
