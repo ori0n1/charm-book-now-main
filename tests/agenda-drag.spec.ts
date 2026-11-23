@@ -21,6 +21,33 @@ test("desktop drag shows a target in another professional column", async ({ page
   expect(drop.minutes % 15).toBe(0);
 });
 
+test("desktop drag accepts a blocked slot for the existing fit flow", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${fixture}?blocked=1`, { waitUntil: "domcontentloaded" });
+  await page.addScriptTag({ url: "/tests/agenda-drag-harness.tsx", type: "module" });
+  await page.getByRole("button", { name: /Cliente sintética/ }).dragTo(
+    page.getByRole("button", { name: /Bloqueado, 11:00 a 12:00, Bloqueio sintético/ }),
+  );
+  await expect.poll(() => page.evaluate(() => (window as any).__drops.length)).toBe(1);
+  const drop = await page.evaluate(() => (window as any).__drops[0]);
+  expect(drop.staffId).toBe("staff-b");
+  expect(drop.minutes).toBeGreaterThanOrEqual(660);
+});
+
+test("desktop drag accepts outside availability for the existing fit flow", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${fixture}?outside=1`, { waitUntil: "domcontentloaded" });
+  await page.addScriptTag({ url: "/tests/agenda-drag-harness.tsx", type: "module" });
+  const target = page.locator('[data-agenda-staff-column="staff-b"]');
+  await page.getByRole("button", { name: /Cliente sintética/ }).dragTo(target, {
+    targetPosition: { x: 60, y: 180 },
+  });
+  await expect.poll(() => page.evaluate(() => (window as any).__drops.length)).toBe(1);
+  const drop = await page.evaluate(() => (window as any).__drops[0]);
+  expect(drop.staffId).toBe("staff-b");
+  expect(drop.minutes + 60).toBeGreaterThan(600);
+});
+
 test("mobile long press moves to a professional tab without opening details", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(fixture, { waitUntil: "domcontentloaded" });

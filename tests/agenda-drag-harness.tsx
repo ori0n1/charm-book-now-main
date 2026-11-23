@@ -15,6 +15,11 @@ const appointment = {
   status: "confirmed", clientName: "Cliente sintética", serviceName: "Serviço sintético",
   professionalName: "Ana", durationLabel: "60 min", privateDetails: true,
 };
+const blockedAppointment = {
+  ...appointment, id: "block-b", sourceId: undefined, staffId: "staff-b",
+  startsAt: "2026-10-30T11:00:00Z", endsAt: "2026-10-30T12:00:00Z",
+  kind: "block" as const, clientName: "Bloqueio sintético", professionalName: "Bea",
+};
 document.body.replaceChildren(document.createElement("div"));
 const root = createRoot(document.body.firstElementChild!);
 const params = new URLSearchParams(location.search);
@@ -40,8 +45,9 @@ function DrawerHarness() {
 }
 root.render(drawerMode ? <DrawerHarness /> : colorStudio ? <ColorHarness studioId={colorStudio} /> : <ProfessionalTimeline
   date={new Date("2026-10-30T12:00:00Z")} now={new Date("2026-10-30T08:00:00Z")}
-  professionals={people} appointments={[appointment]}
-  availability={people.map(person => ({ staffId: person.id, startMinutes: 540, endMinutes: 1020 }))}
+  professionals={people} appointments={params.has("blocked") ? [appointment, blockedAppointment] : [appointment]}
+  availability={people.map(person => ({ staffId: person.id, startMinutes: 540,
+    endMinutes: params.has("outside") && person.id === "staff-b" ? 600 : 1020 }))}
   timeZone="Europe/Lisbon" onOpenAppointment={() => { page.__opened++; }}
   onOpenBlock={() => {}} onCreateAtSlot={() => {}} onBlockAtSlot={() => {}}
   onDropAppointment={(entry, staffId, minutes) => page.__drops.push({ id: entry.id, staffId, minutes })}

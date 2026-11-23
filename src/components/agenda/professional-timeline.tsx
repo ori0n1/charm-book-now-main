@@ -16,7 +16,6 @@ import {
 import { formatStudioTime, getStudioDateKey, getZonedDateParts, getZonedMinutes } from "@/lib/studio-time";
 import { layoutUnifiedTimeline } from "./unified-timeline-layout";
 import type { AgendaColor } from "@/hooks/use-agenda-color";
-import { toast } from "sonner";
 
 const MOBILE_HOUR_HEIGHT = 72;
 const DESKTOP_HOUR_HEIGHT = 100;
@@ -228,8 +227,7 @@ export function ProfessionalTimeline({
       bounds.startHour, bounds.endHour, hourHeight) : (dragMinuteRef.current ?? getZonedMinutes(source.startsAt, timeZone));
     if (column) dragMinuteRef.current = minutes;
     const duration = Math.max(15, Math.ceil((new Date(source.endsAt).getTime() - new Date(source.startsAt).getTime()) / 60000));
-    const valid = staffId !== "unassigned" && (availability ?? []).some((period) =>
-      period.staffId === staffId && minutes >= period.startMinutes && minutes + duration <= period.endMinutes);
+    const valid = staffId !== "unassigned";
     dragTargetRef.current = { staffId, minutes, valid };
     const previewKey = `${staffId}:${minutes}:${valid}:${duration}`;
     if (dragPreviewKeyRef.current !== previewKey) {
@@ -247,7 +245,7 @@ export function ProfessionalTimeline({
     dragPreviewKeyRef.current = "";
     setDragPreview(null);
     if (!source || !target) return;
-    if (!target.valid) { toast.error("Este horário está fora da disponibilidade do profissional."); return; }
+    if (!target.valid) return;
     if (source.staffId === target.staffId && getZonedMinutes(source.startsAt, timeZone) === target.minutes) return;
     onDropAppointment?.(source, target.staffId, target.minutes);
   }

@@ -34,7 +34,6 @@ import {
   Phone,
   Plus,
   Search,
-  Sparkles,
   TrendingDown,
   TrendingUp,
   Undo2,
@@ -2059,18 +2058,6 @@ function AgendaPage() {
                   toast.info("Desfaça o estado atual para editar esta marcação.");
                   return;
                 }
-                setEditApptId(timelineDetailAppt.id);
-                setTimelineDetailId(null);
-              },
-            });
-          }
-          if (["studio_owner", "saas_owner", "manager"].includes(studio?.role ?? "") &&
-            timelineDetailAppt.status === "confirmed" && timelineDetailAppt.staff?.id) {
-            actions.push({
-              id: "fit",
-              label: timelineDetailAppt.is_manual_fit ? "Gerir encaixe" : "Encaixar",
-              icon: <Sparkles className="h-3.5 w-3.5" />,
-              onClick: () => {
                 setEditApptId(timelineDetailAppt.id);
                 setTimelineDetailId(null);
               },
