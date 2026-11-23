@@ -12,7 +12,6 @@ import { sendAppointmentLifecycleMessage } from "@/lib/whatsapp.functions";
 import { notifyClientAppointmentChange } from "@/lib/public-client.functions";
 import { releaseOwnerPaymentHolds } from "@/lib/owner-payment-hold.server";
 import { formatStudioDateTime } from "@/lib/studio-time";
-import { deferRequestBackground } from "@/lib/request-background.server";
 
 const StudioRescheduleInput = z.object({
   studioId: z.string().uuid(),
@@ -344,8 +343,7 @@ export const moveStudioAppointmentStage2 = createServerFn({ method: "POST" })
     });
     if (error) throw new Error(translateScheduleMutationError(error));
     if (result?.changed && result.shouldNotify) {
-      const notification = dispatchRescheduleNotifications(sb, data.studioId, [data.appointmentId]);
-      if (!deferRequestBackground(notification)) await notification;
+      await dispatchRescheduleNotifications(sb, data.studioId, [data.appointmentId]);
     }
     return result as {
       appointmentId: string;
@@ -444,13 +442,19 @@ async function dispatchRescheduleNotifications(
   studioId: string,
   appointmentIds: string[],
 ) {
-  await Promise.allSettled(
+  const outcomes = await Promise.allSettled(
     appointmentIds.flatMap((appointmentId) => [
       sendAppointmentLifecycleMessage(sb, appointmentId, "reschedule"),
       dispatchPendingStudioPushNotifications({ studioId, appointmentId }),
       notifyClientReschedule(sb, studioId, appointmentId),
     ]),
   );
+  const channels = ["whatsapp", "studio_push", "client_center"] as const;
+  outcomes.forEach((outcome, index) => {
+    if (outcome.status === "rejected") {
+      console.error("[agenda] reschedule notification failed", { channel: channels[index % channels.length] });
+    }
+  });
 }
 
 function normalizeAppointmentRelations(row: any) {
