@@ -1,0 +1,119 @@
+{
+  "decision": { "evidenceMode": "proportional", "phase": "activation" },
+  "authorization": {
+    "commit": "59fcc56",
+    "baseCommit": "c0fbb9b",
+    "fullWorkerCycle": true,
+    "scope": "Agenda appointment card visuals plus the active-version build guard reference"
+  },
+  "baseline": {
+    "activeVersion": "df7b87d2-0b2e-4bb7-9753-0dca6bc32836",
+    "activeTrafficPercent": 100,
+    "rollbackVersion": "df7b87d2-0b2e-4bb7-9753-0dca6bc32836",
+    "rollbackAvailable": true,
+    "rollbackSafe": true,
+    "noDatabaseMigration": true
+  },
+  "artifact": {
+    "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+    "commit": "59fcc56",
+    "qaSourceCommit": "c0fbb9b",
+    "qaBridgeDiffEvidence": "git diff c0fbb9b..59fcc56 changes only scripts/build-referral-with-production-public-vars.mjs allowlist; no product source changed",
+    "qaCurrentTargetedEvidence": "npm run build:production passed, including 17 contracts and financial_build_opt_in_matches_active_reference",
+    "localManifestSha256": "360b13c5ffc955dce0921038c2f9023707bbc34b4458ec7fbfbefa9389d93415",
+    "configSha256": "cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634",
+    "uploadedScriptEtag": "94c6f6c6348e595676f05715d6e65b21eccf38446f006cfd0ac1cbdf06f68132",
+    "remoteModulesMatchManifest": true,
+    "remoteModuleCount": 234,
+    "remoteAssetsVerified": true,
+    "remoteAssetCount": 221,
+    "routesIdentical": 45
+  },
+  "config": {
+    "bindings": true, "secretNamesAndTypes": true, "crons": true, "domains": true,
+    "modules": true, "assets": true, "routes": true, "runtime": true
+  },
+  "safety": {
+    "noRealTransactions": true, "noRealMessages": true, "noRealDataWrites": true
+  },
+  "activation": {
+    "deploymentId": "a7a29d42-6f81-49cf-88bb-83001cfe2b77",
+    "publishedAt": "2026-11-23T23:13:07.589804Z",
+    "activeVersion": "1ef0f35f-098a-4879-8068-256580a647ed",
+    "activeTrafficPercent": 100,
+    "rollbackVersion": "df7b87d2-0b2e-4bb7-9753-0dca6bc32836",
+    "rollbackTrafficPercent": 0,
+    "postReleaseSmokeRounds": 4,
+    "normalTrafficStatuses": [200, 200, 307, 401, 200],
+    "agendaAssetHashMatched": true,
+    "criticalErrorsObserved": false
+  },
+  "tests": {
+    "workerStart": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "remote-readonly", "readOnly": true,
+      "evidence": "Candidate override GET / and /login returned 200 while Stage 3 remained at 100%."
+    },
+    "routesApis": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "remote-readonly", "readOnly": true,
+      "evidence": "Candidate override GET / 200, /login 200, /admin/agenda 307, /api/auth/session 401; 45 routes retained."
+    },
+    "authPermissions": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "unchanged-contract", "impact": "unchanged",
+      "sourceDiffEvidence": "git diff 9703252..59fcc56 -- src scripts changes only professional-timeline visual markup and build version allowlist.",
+      "baselineEvidence": "OFFICIAL_BASE.json Stage 3 validated 307 agenda redirect and 401 session response.",
+      "remoteReadOnlyEvidence": "Candidate override GET /admin/agenda 307 and /api/auth/session 401."
+    },
+    "agendaReservations": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "qa-equivalent-artifact", "impact": "changed", "isolated": true,
+      "qaEvidence": "tests/evidence/agenda-cards-stage4: before/after Chromium screenshots at 390 and 1280 px, 15/30/45/60 min cards; dimensions, colors, border and aria unchanged; service and client visible.",
+      "evidence": "Candidate agenda asset and all 221 public assets matched local SHA-256; 234 Worker modules byte equal by OAuth. No booking was created."
+    },
+    "paymentsStripeConnect": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "qa-equivalent-artifact", "impact": "related", "isolated": true,
+      "qaEvidence": "The synthetic card visual check retained price and state presentation; production build verified financial compiled opt-in and 17 contracts passed.",
+      "evidence": "No payment or Stripe source changed; 53 bindings unchanged; no transactions sent."
+    },
+    "whatsapp": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "unchanged-contract", "impact": "unchanged",
+      "sourceDiffEvidence": "No WhatsApp or notification source changes in git diff 9703252..59fcc56.",
+      "baselineEvidence": "Stage 3 release evidence records the working notification contract.",
+      "remoteReadOnlyEvidence": "Candidate GET / and /login 200; bindings equal; no messages sent."
+    },
+    "email": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "unchanged-contract", "impact": "unchanged",
+      "sourceDiffEvidence": "No email or notification source changes in git diff 9703252..59fcc56.",
+      "baselineEvidence": "Stage 3 release evidence records the working notification contract.",
+      "remoteReadOnlyEvidence": "Candidate GET / and /login 200; bindings equal; no messages sent."
+    },
+    "push": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "unchanged-contract", "impact": "unchanged",
+      "sourceDiffEvidence": "No push or notification source changes in git diff 9703252..59fcc56.",
+      "baselineEvidence": "Stage 3 release evidence records the working notification contract.",
+      "remoteReadOnlyEvidence": "Candidate GET / and /login 200; bindings equal; no notifications sent."
+    },
+    "bindingsSecretsCrons": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "cloudflare-metadata",
+      "evidence": "OAuth confirmed 53 matching bindings including 24 secret names/types, same runtime, two crons and two domains."
+    },
+    "existingFeatures": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "qa-equivalent-artifact", "impact": "related", "isolated": true,
+      "qaEvidence": "Approved Stage 4 synthetic mobile/desktop card QA; production build passed 17 existing feature contracts; Stage 1–3 source unchanged.",
+      "evidence": "234 Worker modules byte equal, 221 public assets SHA-256 equal, 45 routes retained; candidate read-only smoke passed."
+    },
+    "criticalErrors": {
+      "status": "PASS", "versionId": "1ef0f35f-098a-4879-8068-256580a647ed",
+      "method": "remote-readonly", "readOnly": true,
+      "evidence": "Four candidate override GET routes returned expected statuses and all 221 assets succeeded without 5xx."
+    }
+  }
+}
