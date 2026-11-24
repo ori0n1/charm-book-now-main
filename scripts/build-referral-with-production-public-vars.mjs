@@ -11,7 +11,7 @@ if (mode !== "active" && mode !== "rollback") {
 }
 const vars = JSON.parse(readFileSync("wrangler.production.jsonc", "utf8")).env.production.vars;
 const official = JSON.parse(readFileSync("OFFICIAL_BASE.json", "utf8"));
-if (!["dbce9473-991e-4294-8606-ceb0c78356e0", "e5bb73f6-a486-4236-99cc-996b4ec09666", "be47026f-6ad3-4f81-b85b-22d5e3c0d69a", "e1f3cde6-a395-4c38-81fb-02315bcd8099", "51d0b86b-30d0-435e-ac64-8ba158446ea0", "049e17b4-d407-4a6c-9c88-8eae7b910ea3", "df7b87d2-0b2e-4bb7-9753-0dca6bc32836", "1ef0f35f-098a-4879-8068-256580a647ed"]
+if (!["dbce9473-991e-4294-8606-ceb0c78356e0", "e5bb73f6-a486-4236-99cc-996b4ec09666", "be47026f-6ad3-4f81-b85b-22d5e3c0d69a", "e1f3cde6-a395-4c38-81fb-02315bcd8099", "51d0b86b-30d0-435e-ac64-8ba158446ea0", "049e17b4-d407-4a6c-9c88-8eae7b910ea3", "df7b87d2-0b2e-4bb7-9753-0dca6bc32836", "1ef0f35f-098a-4879-8068-256580a647ed", "de5d7b7d-efe4-4c9a-a25a-118b930657b8"]
   .includes(official.cloudflareVersionId)) {
   throw new Error("financial_build_parity_reference_changed");
 }
