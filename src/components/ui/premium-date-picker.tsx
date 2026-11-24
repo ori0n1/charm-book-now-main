@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 type PremiumDatePickerProps = {
   value: string;
   onChange: (value: string) => void;
+  ariaLabel?: string;
   placeholder?: string;
   className?: string;
   disabled?: boolean;
@@ -29,6 +30,7 @@ type PremiumDatePickerProps = {
 export function PremiumDatePicker({
   value,
   onChange,
+  ariaLabel,
   placeholder = "dd/mm/aaaa",
   className,
   disabled,
@@ -88,6 +90,7 @@ export function PremiumDatePicker({
       <PopoverTrigger asChild>
         <button
           type="button"
+          aria-label={ariaLabel}
           disabled={disabled}
           className={cn(
             "box-border flex h-12 w-full min-w-0 max-w-full items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 text-left text-sm shadow-sm outline-none transition",

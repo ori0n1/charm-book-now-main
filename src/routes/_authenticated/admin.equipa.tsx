@@ -693,7 +693,7 @@ function TeamPage() {
           items={staff}
           initialCount={5}
           className="grid grid-cols-1 items-start gap-2.5 sm:grid-cols-2 lg:grid-cols-3"
-          itemClassName="min-w-0"
+          itemClassName={(member) => expandedStaff[member.id] ? "min-w-0 sm:col-span-2" : "min-w-0"}
           buttonWrapClassName="sm:col-span-2 lg:col-span-3"
           getKey={(member) => member.id}
           moreLabel={(hidden) => `Mostrar mais ${hidden} profissional${hidden !== 1 ? "is" : ""}`}

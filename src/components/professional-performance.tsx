@@ -5,16 +5,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { getProfessionalDailySummaries } from "@/lib/professional-daily-summary.functions";
 import { validPerformanceRange } from "@/lib/professional-history";
 import { formatEUR } from "@/lib/utils";
+import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 
 type Period = "today" | "7d" | "15d" | "custom";
 const filters: { value: Period; label: string }[] = [
   { value: "today", label: "Hoje" }, { value: "7d", label: "7 dias" },
   { value: "15d", label: "15 dias" }, { value: "custom", label: "Personalizado" },
 ];
-
-function displayDate(value: string) {
-  return value ? `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}` : "dd/mm/aaaa";
-}
 
 export function ProfessionalPerformance({ studioId, staffId, viewerRole, title = "Meu desempenho" }: {
   studioId: string; staffId: string; viewerRole: string; title?: string;
@@ -61,22 +58,14 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
         </button>)}
       </div>
       {period === "custom" && <div className="mt-2 grid min-w-0 grid-cols-2 gap-2">
-        <label className="min-w-0 text-[11px] font-medium text-muted-foreground">Início
-          <span className="relative mt-1 flex h-10 min-w-0 items-center rounded-lg border border-border bg-background px-2.5 text-xs font-semibold tabular-nums text-foreground focus-within:ring-2 focus-within:ring-emerald-500/50">
-            <span className="whitespace-nowrap">{displayDate(startDate)}</span>
-            <input type="date" aria-label="Data inicial" value={startDate} max={endDate || undefined}
-              onChange={(event) => setStartDate(event.target.value)}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
-          </span>
-        </label>
-        <label className="min-w-0 text-[11px] font-medium text-muted-foreground">Fim
-          <span className="relative mt-1 flex h-10 min-w-0 items-center rounded-lg border border-border bg-background px-2.5 text-xs font-semibold tabular-nums text-foreground focus-within:ring-2 focus-within:ring-emerald-500/50">
-            <span className="whitespace-nowrap">{displayDate(endDate)}</span>
-            <input type="date" aria-label="Data final" value={endDate} min={startDate || undefined}
-              onChange={(event) => setEndDate(event.target.value)}
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
-          </span>
-        </label>
+        <div className="min-w-0 text-[11px] font-medium text-muted-foreground">Início
+          <PremiumDatePicker ariaLabel="Data inicial" value={startDate} onChange={setStartDate}
+            className="mt-1 h-10 gap-1 rounded-lg bg-background px-1.5 text-[10px] font-semibold tabular-nums shadow-none sm:gap-2 sm:px-2.5 sm:text-xs" />
+        </div>
+        <div className="min-w-0 text-[11px] font-medium text-muted-foreground">Fim
+          <PremiumDatePicker ariaLabel="Data final" value={endDate} onChange={setEndDate}
+            className="mt-1 h-10 gap-1 rounded-lg bg-background px-1.5 text-[10px] font-semibold tabular-nums shadow-none sm:gap-2 sm:px-2.5 sm:text-xs" />
+        </div>
       </div>}
     </div>
     {!validCustom ? <p className="p-4 text-sm text-muted-foreground">Selecione datas válidas, por ordem, até 366 dias.</p>

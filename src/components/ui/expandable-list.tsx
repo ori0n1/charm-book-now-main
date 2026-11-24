@@ -8,7 +8,7 @@ type ExpandableListProps<T> = {
   renderItem: (item: T, index: number) => ReactNode;
   getKey: (item: T, index: number) => string;
   className?: string;
-  itemClassName?: string;
+  itemClassName?: string | ((item: T, index: number) => string);
   buttonClassName?: string;
   buttonWrapClassName?: string;
   moreLabel?: (hiddenCount: number, total: number) => string;
@@ -36,7 +36,7 @@ export function ExpandableList<T>({
   return (
     <div className={cn("min-w-0", className)}>
       {visibleItems.map((item, index) => (
-        <div key={getKey(item, index)} className={itemClassName}>
+        <div key={getKey(item, index)} className={typeof itemClassName === "function" ? itemClassName(item, index) : itemClassName}>
           {renderItem(item, index)}
         </div>
       ))}
