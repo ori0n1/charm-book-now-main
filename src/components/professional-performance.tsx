@@ -110,48 +110,56 @@ function Metric({ label, value, featured = false }: { label: string; value: stri
 function PerformanceChart({ points }: { points: { date: string; completed: number; commissionCents: number; services: { serviceId: string; name: string; count: number }[] }[] }) {
   const [active, setActive] = useState<number | null>(null);
   if (!points.length) return null;
-  const selected = Math.min(active ?? points.length - 1, points.length - 1);
+  const selected = active === null ? null : Math.min(active, points.length - 1);
   const maximum = Math.max(2, ...points.map((point) => point.completed));
   const x = (index: number) => 34 + index * 312 / Math.max(1, points.length - 1);
   const y = (count: number) => 100 - count * 75 / maximum;
   const line = points.map((point, index) => `${x(index)},${y(point.completed)}`).join(" ");
   const label = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
-  const selectedDay = points[selected];
+  const selectedDay = selected === null ? null : points[selected];
   const selectAt = (event: React.PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     const position = (event.clientX - bounds.left) / bounds.width * 360;
     setActive(Math.max(0, Math.min(points.length - 1, Math.round((position - 34) / 312 * (points.length - 1)))));
   };
-  return <div className="mt-1.5 min-w-0">
-    <div className="px-1 text-[11px]" aria-live="polite" aria-label="Detalhe do dia selecionado">
-      <div className="flex flex-wrap items-center gap-1">
-        <strong className="whitespace-nowrap rounded-md bg-emerald-500/10 px-1.5 py-1 text-emerald-700 dark:text-emerald-400">{selectedDay.date.slice(8, 10)}/{selectedDay.date.slice(5, 7)}/{selectedDay.date.slice(0, 4)} · {selectedDay.completed}</strong>
-        <span className="whitespace-nowrap rounded-md bg-muted px-1.5 py-1">{formatEUR(selectedDay.commissionCents / 100)} ganhos</span>
-      </div>
-      <div className="mt-1 flex flex-wrap gap-1" aria-label="Serviços realizados no dia">
-        {selectedDay.services.length ? selectedDay.services.map((service) =>
-          <span key={service.serviceId} className="max-w-full rounded-md bg-muted px-1.5 py-1">{service.name} · {service.count}</span>)
-          : <span className="rounded-md bg-muted px-1.5 py-1">Sem serviços nesse dia</span>}
-      </div>
-    </div>
-    <svg viewBox="0 0 360 125" className="mx-auto h-auto w-full max-w-[720px] touch-pan-y" role="img" tabIndex={0}
+  return <div className="relative mx-auto mt-1.5 w-full max-w-[720px]">
+    <svg viewBox="0 0 360 125" className="h-auto w-full touch-pan-y" role="img" tabIndex={0}
       aria-label={`Evolução diária: ${points.map((point) => `${label(point.date)}: ${point.completed}`).join(", ")}`}
       onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); selectAt(event); }}
       onPointerMove={selectAt}
+      onPointerUp={(event) => { if (event.pointerType !== "mouse") setActive(null); }}
+      onPointerLeave={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) setActive(null); }}
+      onPointerCancel={() => setActive(null)}
+      onFocus={() => setActive((current) => current ?? points.length - 1)}
+      onBlur={() => setActive(null)}
       onKeyDown={(event) => {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
           event.preventDefault();
-          setActive(Math.max(0, Math.min(points.length - 1, selected + (event.key === "ArrowRight" ? 1 : -1))));
+          setActive(Math.max(0, Math.min(points.length - 1, (selected ?? points.length - 1) + (event.key === "ArrowRight" ? 1 : -1))));
         }
       }}>
       {[0, 1, 2].map((step) => <g key={step}><line x1="34" x2="346" y1={y(maximum * step / 2)} y2={y(maximum * step / 2)} stroke="currentColor" opacity=".12" />
         <text x="28" y={y(maximum * step / 2) + 3} textAnchor="end" fill="currentColor" opacity=".55" fontSize="9">{Math.round(maximum * step / 2)}</text></g>)}
       <polygon points={`34,100 ${line} 346,100`} fill="#10b981" opacity=".1" />
       <polyline points={line} fill="none" stroke="#059669" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-      <line x1={x(selected)} x2={x(selected)} y1="20" y2="100" stroke="#059669" strokeWidth="1" strokeDasharray="3 3" opacity=".35" />
-      <circle cx={x(selected)} cy={y(points[selected].completed)} r="4" fill="#059669" stroke="white" strokeWidth="2" />
+      {selected !== null && <>
+        <line x1={x(selected)} x2={x(selected)} y1="20" y2="100" stroke="#059669" strokeWidth="1" strokeDasharray="3 3" opacity=".3" />
+        <circle cx={x(selected)} cy={y(points[selected].completed)} r="4" fill="#059669" stroke="white" strokeWidth="2" />
+      </>}
       {[0, Math.floor((points.length - 1) / 2), points.length - 1].map((index) =>
         <text key={index} x={x(index)} y="119" textAnchor="middle" fill="currentColor" opacity=".6" fontSize="9">{label(points[index].date)}</text>)}
     </svg>
+    {selectedDay && selected !== null && <div
+      className="pointer-events-none absolute top-1 z-10 w-36 rounded-xl border border-emerald-700/20 bg-card/95 p-2 text-[10px] leading-snug shadow-lg backdrop-blur-sm sm:w-44"
+      role="status" aria-label="Detalhe do dia selecionado"
+      style={{ left: `${x(selected) / 360 * 100}%`, transform: x(selected) <= 180 ? "translateX(8px)" : "translateX(calc(-100% - 8px))" }}>
+      <p className="font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">{selectedDay.date.slice(8, 10)}/{selectedDay.date.slice(5, 7)}/{selectedDay.date.slice(0, 4)}</p>
+      <p className="mt-1 font-semibold tabular-nums">{formatEUR(selectedDay.commissionCents / 100)} ganhos</p>
+      <div className="mt-1 border-t border-border/70 pt-1">
+        {selectedDay.services.length ? selectedDay.services.map((service) =>
+          <p key={service.serviceId} className="break-words">{service.name} · {service.count}</p>)
+          : <p>Sem serviços nesse dia</p>}
+      </div>
+    </div>}
   </div>;
 }
