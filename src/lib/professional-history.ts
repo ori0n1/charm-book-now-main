@@ -7,6 +7,13 @@ export function periodDateKeys(today: string, days: 1 | 7 | 15 | 30) {
     new Date(Date.UTC(year, month - 1, day - days + 1 + index)).toISOString().slice(0, 10));
 }
 
+export function dateKeysBetween(start: string, end: string) {
+  const first = Date.parse(`${start}T00:00:00Z`);
+  const last = Date.parse(`${end}T00:00:00Z`);
+  return Array.from({ length: Math.round((last - first) / 86400000) + 1 }, (_, index) =>
+    new Date(first + index * 86400000).toISOString().slice(0, 10));
+}
+
 export function summarizeProfessionalHistory(
   staffIds: string[],
   dateKeys: string[],

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { periodDateKeys, summarizeProfessionalHistory } from "../src/lib/professional-history.ts";
+import { dateKeysBetween, periodDateKeys, summarizeProfessionalHistory } from "../src/lib/professional-history.ts";
 
 test("periods include today and respect calendar boundaries", () => {
   for (const days of [1, 7, 15, 30]) {
@@ -10,6 +10,13 @@ test("periods include today and respect calendar boundaries", () => {
     assert.equal(keys[0], new Date(Date.UTC(2026, 10, 5 - days)).toISOString().slice(0, 10));
   }
   assert.equal(periodDateKeys("2026-03-01", 7)[0], "2026-02-23");
+});
+
+test("custom dates include both boundaries across month and leap-day changes", () => {
+  assert.deepEqual(dateKeysBetween("2028-02-28", "2028-03-01"), [
+    "2028-02-28", "2028-02-29", "2028-03-01",
+  ]);
+  assert.deepEqual(dateKeysBetween("2026-11-04", "2026-11-04"), ["2026-11-04"]);
 });
 
 test("appointments are unique per professional and service lines remain distinct", () => {

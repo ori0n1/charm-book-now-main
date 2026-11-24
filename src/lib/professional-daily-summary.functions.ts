@@ -5,7 +5,7 @@ import { computeAppointmentFinancialSplit, toCents } from "@/lib/financial-ledge
 import { assertStudioAccessWithOptions } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { getStudioDateKey, getZonedDateParts, normalizeStudioTimeZone } from "@/lib/studio-time";
-import { periodDateKeys, summarizeProfessionalHistory, type AttendanceEvent, type ServiceEvent } from "@/lib/professional-history";
+import { dateKeysBetween, periodDateKeys, summarizeProfessionalHistory, type AttendanceEvent, type ServiceEvent } from "@/lib/professional-history";
 
 export type ProfessionalDailySummary = {
   staffId: string;
@@ -40,7 +40,17 @@ export function studioTodayBounds(timezone: string, now = new Date()) {
 
 export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ studioId: z.string().uuid(), days: z.union([z.literal(1), z.literal(7), z.literal(15), z.literal(30)]).default(1) }).parse(input))
+  .inputValidator((input) => z.object({
+    studioId: z.string().uuid(),
+    days: z.union([z.literal(1), z.literal(7), z.literal(15), z.literal(30)]).default(1),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).refine((value) => Boolean(value.startDate) === Boolean(value.endDate), "complete_date_range_required")
+    .refine((value) => !value.startDate || (
+      !Number.isNaN(Date.parse(`${value.startDate}T00:00:00Z`)) &&
+      !Number.isNaN(Date.parse(`${value.endDate}T00:00:00Z`)) &&
+      value.startDate <= (value.endDate ?? "")
+    ), "invalid_date_range").parse(input))
   .handler(async ({ data, context }): Promise<Record<string, ProfessionalDailySummary>> => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
@@ -59,11 +69,17 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     }
 
     const timezone = normalizeStudioTimeZone(studio.timezone);
-    const { date, until } = studioTodayBounds(timezone);
+    const { date, until: todayUntil } = studioTodayBounds(timezone);
     const days = data.days;
-    const dateKeys = periodDateKeys(date, days);
+    const dateKeys = data.startDate && data.endDate
+      ? dateKeysBetween(data.startDate, data.endDate)
+      : periodDateKeys(date, days);
     const firstDate = dateKeys[0];
     const from = midnightUtc(firstDate, timezone);
+    const lastDate = dateKeys[dateKeys.length - 1];
+    const [lastYear, lastMonth, lastDay] = lastDate.split("-").map(Number);
+    const nextDate = new Date(Date.UTC(lastYear, lastMonth - 1, lastDay + 1)).toISOString().slice(0, 10);
+    const until = lastDate === date ? todayUntil : midnightUtc(nextDate, timezone);
     const result: Record<string, ProfessionalDailySummary> = {};
     for (const member of staff ?? []) {
       result[member.id] = { staffId: member.id, date, timezone, completed: 0, commissionCents: 0, studioCents: 0, baseCents: 0,
