@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../src/styles.css";
 import { ProfessionalTimeline } from "../src/components/agenda/professional-timeline";
@@ -43,12 +43,24 @@ function DrawerHarness() {
     onConfirmCancel={async () => drawerMode !== "failure"}
   />;
 }
-root.render(drawerMode ? <DrawerHarness /> : colorStudio ? <ColorHarness studioId={colorStudio} /> : <ProfessionalTimeline
+function TimelineHarness() {
+  const [initialProfessionalId, setInitialProfessionalId] = useState<string | null>(
+    params.has("own") ? "staff-b" : null,
+  );
+  useEffect(() => {
+    if (!params.has("lateOwn")) return;
+    const timer = window.setTimeout(() => setInitialProfessionalId("staff-b"), 150);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return <ProfessionalTimeline
   date={new Date("2026-10-30T12:00:00Z")} now={new Date("2026-10-30T08:00:00Z")}
-  professionals={people} appointments={params.has("blocked") ? [appointment, blockedAppointment] : [appointment]}
+  professionals={people} initialProfessionalId={initialProfessionalId}
+  appointments={params.has("blocked") ? [appointment, blockedAppointment] : [appointment]}
   availability={people.map(person => ({ staffId: person.id, startMinutes: 540,
     endMinutes: params.has("outside") && person.id === "staff-b" ? 600 : 1020 }))}
   timeZone="Europe/Lisbon" onOpenAppointment={() => { page.__opened++; }}
   onOpenBlock={() => {}} onCreateAtSlot={() => {}} onBlockAtSlot={() => {}}
   onDropAppointment={(entry, staffId, minutes) => page.__drops.push({ id: entry.id, staffId, minutes })}
-/>);
+  />;
+}
+root.render(drawerMode ? <DrawerHarness /> : colorStudio ? <ColorHarness studioId={colorStudio} /> : <TimelineHarness />);

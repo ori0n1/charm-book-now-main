@@ -26,6 +26,7 @@ export function ProfessionalTimeline({
   date,
   now,
   professionals,
+  initialProfessionalId,
   appointments,
   occupiedIntervals,
   availability,
@@ -43,6 +44,7 @@ export function ProfessionalTimeline({
   date: Date;
   now: Date;
   professionals: ProfessionalTimelinePerson[];
+  initialProfessionalId?: string | null;
   appointments: ProfessionalTimelineAppointment[];
   occupiedIntervals?: ProfessionalTimelineOccupancy[];
   availability?: ProfessionalAvailabilityPeriod[];
@@ -69,8 +71,9 @@ export function ProfessionalTimeline({
   const [dragPreview, setDragPreview] = useState<{ staffId: string; minutes: number; valid: boolean; duration: number } | null>(null);
   const [draggingTouchId, setDraggingTouchId] = useState<string | null>(null);
   const [mobile, setMobile] = useState(false);
+  const manuallySelectedProfessionalRef = useRef(false);
   const [mobileProfessionalId, setMobileProfessionalId] = useState(
-    professionals[0]?.id ?? "unassigned",
+    professionals.find((person) => person.id === initialProfessionalId)?.id ?? professionals[0]?.id ?? "unassigned",
   );
   const [slotMenu, setSlotMenu] = useState<{ staffId: string; minutes: number } | null>(null);
   const hourHeight = mobile ? MOBILE_HOUR_HEIGHT : DESKTOP_HOUR_HEIGHT;
@@ -103,6 +106,12 @@ export function ProfessionalTimeline({
         : [{ id: "unassigned", name: "Agenda", avatarUrl: null }],
     [professionals],
   );
+  const desktopProfessionals = useMemo(() => {
+    const own = displayProfessionals.find((person) => person.id === initialProfessionalId);
+    return own
+      ? [own, ...displayProfessionals.filter((person) => person.id !== own.id)]
+      : displayProfessionals;
+  }, [displayProfessionals, initialProfessionalId]);
   const appointmentCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const appointment of operationalAppointments) {
@@ -137,8 +146,8 @@ export function ProfessionalTimeline({
     () =>
       mobile
         ? displayProfessionals.filter((person) => person.id === mobileProfessionalId)
-        : displayProfessionals,
-    [displayProfessionals, mobile, mobileProfessionalId],
+        : desktopProfessionals,
+    [desktopProfessionals, displayProfessionals, mobile, mobileProfessionalId],
   );
   const safeVisibleProfessionals =
     unified ? [{ id: "unified", name: "Agenda unificada" }] :
@@ -165,10 +174,19 @@ export function ProfessionalTimeline({
   }, []);
 
   useEffect(() => {
-    if (!displayProfessionals.some((person) => person.id === mobileProfessionalId)) {
-      setMobileProfessionalId(displayProfessionals[0].id);
+    if (manuallySelectedProfessionalRef.current || !initialProfessionalId) return;
+    if (displayProfessionals.some((person) => person.id === initialProfessionalId)) {
+      setMobileProfessionalId(initialProfessionalId);
     }
-  }, [displayProfessionals, mobileProfessionalId]);
+  }, [displayProfessionals, initialProfessionalId]);
+
+  useEffect(() => {
+    if (!displayProfessionals.some((person) => person.id === mobileProfessionalId)) {
+      setMobileProfessionalId(
+        displayProfessionals.find((person) => person.id === initialProfessionalId)?.id ?? displayProfessionals[0].id,
+      );
+    }
+  }, [displayProfessionals, initialProfessionalId, mobileProfessionalId]);
 
   useEffect(() => {
     const autoScrollKey = `${dateKey}:${unified}:${mobile ? "mobile" : "desktop"}:${mobileProfessionalId}:${focusRequestKey}`;
@@ -337,6 +355,7 @@ export function ProfessionalTimeline({
             data-agenda-professional-tab={person.id}
             type="button"
             onClick={() => {
+              manuallySelectedProfessionalRef.current = true;
               setMobileProfessionalId(person.id);
               setSlotMenu(null);
             }}

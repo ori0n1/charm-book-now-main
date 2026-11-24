@@ -345,6 +345,20 @@ function AgendaPage() {
   const [messageLogs, setMessageLogs] = useState<MessageLog[]>([]);
   const [whatsappAvailable, setWhatsappAvailable] = useState(false);
   const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventRow[]>([]);
+  const [agendaIdentityStaffId, setAgendaIdentityStaffId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!studio?.id || !studio.user_id || studio.staff_id) return;
+    setAgendaIdentityStaffId(null);
+    let active = true;
+    void supabase.from("staff").select("id")
+      .eq("studio_id", studio.id)
+      .eq("user_id", studio.user_id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (active) setAgendaIdentityStaffId(data?.id ?? null);
+      });
+    return () => { active = false; };
+  }, [studio?.id, studio?.staff_id, studio?.user_id]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [groupCollapseOverrides, setGroupCollapseOverrides] = useState<Map<string, boolean>>(
@@ -1929,12 +1943,14 @@ function AgendaPage() {
         </div>
       ) : (
         <ProfessionalTimeline
+          key={studio?.id}
           unified={agendaView === "unificada"}
           appointmentColor={agendaColor}
           date={selectedDate}
           now={agendaNow}
           timeZone={studio?.timezone ?? "Europe/Lisbon"}
           professionals={timelineProfessionals}
+          initialProfessionalId={studio?.staff_id ?? agendaIdentityStaffId}
           appointments={timelineEntries}
           occupiedIntervals={[...timelineOccupiedIntervals, ...timelineBlocks]}
           availability={selectedAvailability}
