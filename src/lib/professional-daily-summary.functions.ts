@@ -5,7 +5,7 @@ import { computeAppointmentFinancialSplit, toCents } from "@/lib/financial-ledge
 import { assertStudioAccessWithOptions } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { getStudioDateKey, getZonedDateParts, normalizeStudioTimeZone } from "@/lib/studio-time";
-import { periodDateKeys, summarizeProfessionalHistory, type AttendanceEvent, type ServiceEvent } from "@/lib/professional-history";
+import { dateKeysBetween, periodDateKeys, summarizeProfessionalHistory, validPerformanceRange, type AttendanceEvent, type ServiceEvent } from "@/lib/professional-history";
 
 export type ProfessionalDailySummary = {
   staffId: string;
@@ -15,7 +15,7 @@ export type ProfessionalDailySummary = {
   commissionCents: number;
   studioCents: number;
   baseCents: number;
-  evolution: { date: string; completed: number }[];
+  evolution: { date: string; completed: number; commissionCents: number; services: { serviceId: string; name: string; count: number }[] }[];
   topServices: { serviceId: string; name: string; count: number; percent: number }[];
 };
 
@@ -40,7 +40,13 @@ export function studioTodayBounds(timezone: string, now = new Date()) {
 
 export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ studioId: z.string().uuid(), days: z.union([z.literal(1), z.literal(7), z.literal(15), z.literal(30)]).default(1) }).parse(input))
+  .inputValidator((input) => z.object({
+    studioId: z.string().uuid(),
+    days: z.union([z.literal(1), z.literal(7), z.literal(15), z.literal(30)]).default(1),
+    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  }).refine((value) => Boolean(value.startDate) === Boolean(value.endDate), "complete_date_range_required")
+    .refine((value) => !value.startDate || validPerformanceRange(value.startDate, value.endDate ?? ""), "invalid_date_range").parse(input))
   .handler(async ({ data, context }): Promise<Record<string, ProfessionalDailySummary>> => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");
@@ -59,26 +65,37 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     }
 
     const timezone = normalizeStudioTimeZone(studio.timezone);
-    const { date, until } = studioTodayBounds(timezone);
+    const { date, until: todayUntil } = studioTodayBounds(timezone);
     const days = data.days;
-    const dateKeys = periodDateKeys(date, days);
+    const dateKeys = data.startDate && data.endDate
+      ? dateKeysBetween(data.startDate, data.endDate)
+      : periodDateKeys(date, days);
     const firstDate = dateKeys[0];
     const from = midnightUtc(firstDate, timezone);
+    const lastDate = dateKeys[dateKeys.length - 1];
+    const [lastYear, lastMonth, lastDay] = lastDate.split("-").map(Number);
+    const nextDate = new Date(Date.UTC(lastYear, lastMonth - 1, lastDay + 1)).toISOString().slice(0, 10);
+    const until = lastDate === date ? todayUntil : midnightUtc(nextDate, timezone);
     const result: Record<string, ProfessionalDailySummary> = {};
     for (const member of staff ?? []) {
       result[member.id] = { staffId: member.id, date, timezone, completed: 0, commissionCents: 0, studioCents: 0, baseCents: 0,
-        evolution: dateKeys.map((key) => ({ date: key, completed: 0 })), topServices: [] };
+        evolution: dateKeys.map((key) => ({ date: key, completed: 0, commissionCents: 0, services: [] })), topServices: [] };
     }
     if (!staff?.length) return result;
     const staffById = new Map(staff.map((member: { id: string; commission_percent: number | null }) => [member.id, member]));
     const seen = new Set<string>();
     const attendanceEvents: AttendanceEvent[] = [];
     const serviceEvents: ServiceEvent[] = [];
-    const recordAttendance = (staffId: string, appointmentId: string, startsAt: string) => {
-      attendanceEvents.push({ staffId, appointmentId, date: getStudioDateKey(new Date(startsAt), timezone) });
+    const dailyCommissions = new Map<string, number>();
+    const recordAttendance = (staffId: string, appointmentId: string, dayKey: string) => {
+      attendanceEvents.push({ staffId, appointmentId, date: dayKey });
     };
-    const recordService = (staffId: string, lineId: string, serviceId: string, name: string | null | undefined) => {
-      serviceEvents.push({ staffId, lineId, serviceId, name });
+    const recordService = (staffId: string, lineId: string, serviceId: string, name: string | null | undefined, dayKey: string) => {
+      serviceEvents.push({ staffId, lineId, serviceId, name, date: dayKey });
+    };
+    const recordDailyCommission = (staffId: string, dayKey: string, cents: number) => {
+      const key = `${staffId}:${dayKey}`;
+      dailyCommissions.set(key, (dailyCommissions.get(key) ?? 0) + cents);
     };
     const pageSize = 500;
     for (let offset = 0; ; offset += pageSize) {
@@ -109,9 +126,11 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
         const commissionCents = toCents(split.professional);
         const studioCents = toCents(split.studio);
         if (commissionCents + studioCents !== baseCents) throw new Error("professional_summary_reconciliation_failed");
-        recordAttendance(appointment.staff_id, appointment.id, appointment.starts_at);
+        const dayKey = getStudioDateKey(new Date(appointment.starts_at), timezone);
+        recordAttendance(appointment.staff_id, appointment.id, dayKey);
+        recordDailyCommission(appointment.staff_id, dayKey, commissionCents);
         for (const line of appointment.appointment_services ?? []) {
-          recordService(appointment.staff_id, line.id, line.service_id, line.services?.name);
+          recordService(appointment.staff_id, line.id, line.service_id, line.services?.name, dayKey);
         }
         summary.baseCents += baseCents;
         summary.commissionCents += commissionCents;
@@ -139,8 +158,10 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
             (staffById.get(line.staff_id) as { commission_percent: number | null } | undefined)?.commission_percent ??
             studio.commission_percent ?? 0)));
         const commissionCents = Math.round(baseCents * percent / 100);
-        recordAttendance(line.staff_id, line.appointment_id, line.starts_at);
-        recordService(line.staff_id, line.id, line.service_id, line.services?.name);
+        const dayKey = getStudioDateKey(new Date(line.starts_at), timezone);
+        recordAttendance(line.staff_id, line.appointment_id, dayKey);
+        recordDailyCommission(line.staff_id, dayKey, commissionCents);
+        recordService(line.staff_id, line.id, line.service_id, line.services?.name, dayKey);
         summary.baseCents += baseCents;
         summary.commissionCents += commissionCents;
         summary.studioCents += baseCents - commissionCents;
@@ -150,7 +171,13 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     const history = summarizeProfessionalHistory(Object.keys(result), dateKeys, attendanceEvents, serviceEvents);
     for (const [staffId, values] of Object.entries(history)) {
       result[staffId].completed = values.completed;
-      result[staffId].evolution = values.evolution;
+      result[staffId].evolution = values.evolution.map((day) => ({
+        ...day,
+        commissionCents: dailyCommissions.get(`${staffId}:${day.date}`) ?? 0,
+      }));
+      if (result[staffId].evolution.reduce((total, day) => total + day.commissionCents, 0) !== result[staffId].commissionCents) {
+        throw new Error("professional_summary_reconciliation_failed");
+      }
       result[staffId].topServices = values.topServices;
     }
     return result;

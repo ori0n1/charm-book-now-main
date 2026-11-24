@@ -1,10 +1,26 @@
 export type AttendanceEvent = { staffId: string; appointmentId: string; date: string };
-export type ServiceEvent = { staffId: string; lineId: string; serviceId: string; name: string | null | undefined };
+export type ServiceEvent = { staffId: string; lineId: string; serviceId: string; name: string | null | undefined; date: string };
 
 export function periodDateKeys(today: string, days: 1 | 7 | 15 | 30) {
   const [year, month, day] = today.split("-").map(Number);
   return Array.from({ length: days }, (_, index) =>
     new Date(Date.UTC(year, month - 1, day - days + 1 + index)).toISOString().slice(0, 10));
+}
+
+export function dateKeysBetween(start: string, end: string) {
+  const first = Date.parse(`${start}T00:00:00Z`);
+  const last = Date.parse(`${end}T00:00:00Z`);
+  return Array.from({ length: Math.round((last - first) / 86400000) + 1 }, (_, index) =>
+    new Date(first + index * 86400000).toISOString().slice(0, 10));
+}
+
+export function validPerformanceRange(start: string, end: string) {
+  const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
+    new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+  if (!validDate(start) || !validDate(end)) return false;
+  const span = (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000;
+  return span >= 0 && span < 366;
 }
 
 export function summarizeProfessionalHistory(
@@ -15,7 +31,7 @@ export function summarizeProfessionalHistory(
 ) {
   const summaries = Object.fromEntries(staffIds.map((staffId) => [staffId, {
     completed: 0,
-    evolution: dateKeys.map((date) => ({ date, completed: 0 })),
+    evolution: dateKeys.map((date) => ({ date, completed: 0, services: [] as { serviceId: string; name: string; count: number }[] })),
     topServices: [] as { serviceId: string; name: string; count: number; percent: number }[],
   }]));
   const seenAttendance = new Set<string>();
@@ -31,6 +47,7 @@ export function summarizeProfessionalHistory(
 
   const seenServices = new Set<string>();
   const countsByStaff = new Map<string, Map<string, { name: string; count: number }>>();
+  const countsByDay = new Map<string, Map<string, { name: string; count: number }>>();
   for (const event of serviceEvents) {
     if (!summaries[event.staffId] || seenServices.has(event.lineId)) continue;
     seenServices.add(event.lineId);
@@ -39,12 +56,25 @@ export function summarizeProfessionalHistory(
     const prior = counts.get(event.serviceId);
     counts.set(event.serviceId, { name, count: (prior?.count ?? 0) + 1 });
     countsByStaff.set(event.staffId, counts);
+    const dayKey = `${event.staffId}:${event.date}`;
+    const dailyCounts = countsByDay.get(dayKey) ?? new Map<string, { name: string; count: number }>();
+    const dailyPrior = dailyCounts.get(event.serviceId);
+    dailyCounts.set(event.serviceId, { name, count: (dailyPrior?.count ?? 0) + 1 });
+    countsByDay.set(dayKey, dailyCounts);
   }
   for (const [staffId, counts] of countsByStaff) {
     const total = [...counts.values()].reduce((sum, item) => sum + item.count, 0);
     summaries[staffId].topServices = [...counts].map(([serviceId, { name, count }]) => ({
       serviceId, name, count, percent: Math.round(count * 1000 / total) / 10,
     })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt")).slice(0, 5);
+  }
+  for (const [staffId, summary] of Object.entries(summaries)) {
+    for (const day of summary.evolution) {
+      const dailyCounts = countsByDay.get(`${staffId}:${day.date}`);
+      if (!dailyCounts) continue;
+      day.services = [...dailyCounts].map(([serviceId, { name, count }]) => ({ serviceId, name, count }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt"));
+    }
   }
   return summaries;
 }

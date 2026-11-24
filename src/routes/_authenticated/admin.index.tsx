@@ -1,11 +1,10 @@
-﻿import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
   ArrowRight,
-  Calendar,
   ChevronDown,
   CreditCard,
   Euro,
@@ -22,7 +21,7 @@ import { VisualMoney, VisualPrivacyBoundary, VisualPrivacyHeaderButton, useVisua
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { InternationalPhoneInput } from "@/components/ui/international-phone-input";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
-import { getProfessionalDailySummaries } from "@/lib/professional-daily-summary.functions";
+import { ProfessionalPerformance } from "@/components/professional-performance";
 import { sortAppointmentsChronologically } from "@/lib/appointment-ordering";
 import { getPlatformSubscriptionSummary } from "@/lib/subscriptions.functions";
 import { getStudioTeamPlan } from "@/lib/studio-team-plan.functions";
@@ -826,162 +825,10 @@ function OverviewPage() {
   );
 }
 
-function ProfessionalOverview({ studio }: { studio: { id: string; staff_id?: string | null } }) {
-  const loadDailySummaries = useServerFn(getProfessionalDailySummaries);
-  const [historyDays, setHistoryDays] = useState<7 | 15 | 30>(7);
-  const daily = useQuery({
-    queryKey: ["professional-daily-summary", studio.id, studio.staff_id],
-    enabled: Boolean(studio.id && studio.staff_id),
-    staleTime: 0,
-    refetchInterval: 10_000,
-    refetchOnWindowFocus: true,
-    queryFn: () => loadDailySummaries({ data: { studioId: studio.id } }),
-  });
-  const history = useQuery({
-    queryKey: ["professional-history", studio.id, studio.staff_id, historyDays],
-    enabled: Boolean(studio.id && studio.staff_id),
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
-    queryFn: () => loadDailySummaries({ data: { studioId: studio.id, days: historyDays } }),
-  });
-  const refetchDaily = daily.refetch;
-  const refetchHistory = history.refetch;
-  useEffect(() => {
-    if (!studio.id) return;
-    const channel = supabase.channel("professional-finance-" + studio.id)
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: "studio_id=eq." + studio.id }, () => { void refetchDaily(); void refetchHistory(); })
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, () => { void refetchDaily(); void refetchHistory(); })
-      .subscribe();
-    return () => { void supabase.removeChannel(channel); };
-  }, [studio.id, refetchDaily, refetchHistory]);
-  const summary = studio.staff_id ? daily.data?.[studio.staff_id] : undefined;
-  const historySummary = studio.staff_id ? history.data?.[studio.staff_id] : undefined;
-  return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 pb-4">
-      <section className="overflow-hidden rounded-[1.35rem] border border-border bg-card shadow-sm">
-        <div className="bg-[linear-gradient(135deg,rgba(16,185,129,0.14),rgba(255,255,255,0.02)_52%,rgba(14,165,233,0.08))] px-4 py-4 sm:px-5">
-          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">Painel do profissional</p>
-          <h1 className="mt-1 text-xl font-light tracking-tight sm:text-2xl">Resumo de hoje</h1>
-          <p className="mt-1 text-xs text-muted-foreground">Atendimentos concluídos no fuso horário do estúdio</p>
-        </div>
-        {daily.isError || !studio.staff_id ? (
-          <p className="p-4 text-sm text-red-600">Não foi possível carregar o resumo financeiro.</p>
-        ) : !summary ? (
-          <p className="p-4 text-sm text-muted-foreground">A carregar...</p>
-        ) : (
-          <div className="grid grid-cols-1 gap-2 p-3 sm:grid-cols-3 sm:gap-3 sm:p-4">
-            <ProfessionalMetric label="Atendimentos hoje" value={String(summary.completed)} detail="Concluídos" icon={<Calendar className="h-4 w-4" />} />
-            <ProfessionalMetric label="Ganhos do profissional" value={formatEUR(summary.commissionCents / 100)} detail="Comissões de hoje" icon={<Euro className="h-4 w-4" />} featured />
-            <ProfessionalMetric label="Parte do estúdio" value={formatEUR(summary.studioCents / 100)} detail="Dos mesmos atendimentos" icon={<Users className="h-4 w-4" />} />
-          </div>
-        )}
-      </section>
-      <section className="rounded-[1.35rem] border border-border bg-card p-4 shadow-sm sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">Meu desempenho</h2>
-            <p className="text-xs text-muted-foreground">Atendimentos realizados no fuso horário do estúdio</p>
-          </div>
-          <div className="flex gap-1 rounded-full bg-muted/70 p-1" role="group" aria-label="Período do desempenho">
-            {([7, 15, 30] as const).map((days) => (
-              <button key={days} type="button" onClick={() => setHistoryDays(days)} aria-pressed={historyDays === days}
-                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${historyDays === days ? "bg-emerald-600 text-white" : "text-muted-foreground hover:text-foreground"}`}>
-                {days} dias
-              </button>
-            ))}
-          </div>
-        </div>
-        {history.isError || !studio.staff_id ? (
-          <p className="mt-4 text-sm text-red-600">Não foi possível carregar o desempenho.</p>
-        ) : !historySummary ? (
-          <p className="mt-4 text-sm text-muted-foreground">A carregar...</p>
-        ) : (
-          <div className="mt-4 space-y-4">
-            <div className="grid gap-2 sm:grid-cols-2">
-              <ProfessionalMetric label="Atendimentos" value={String(historySummary.completed)} detail={`Últimos ${historyDays} dias`} icon={<Calendar className="h-4 w-4" />} />
-              <ProfessionalMetric label="Ganhos do profissional" value={formatEUR(historySummary.commissionCents / 100)} detail={`Últimos ${historyDays} dias`} icon={<Euro className="h-4 w-4" />} featured />
-            </div>
-            <div className="rounded-2xl border border-border/75 bg-background/65 p-3 sm:p-4">
-              <h3 className="text-sm font-semibold">Evolução dos atendimentos</h3>
-              <PerformanceChart points={historySummary.evolution} />
-            </div>
-            <div className="rounded-2xl border border-border/75 bg-background/65 p-3 sm:p-4">
-              <h3 className="text-sm font-semibold">Serviços mais realizados</h3>
-              {historySummary.topServices.length === 0 ? (
-                <p className="mt-3 text-xs text-muted-foreground">Sem serviços realizados neste período.</p>
-              ) : (
-                <ol className="mt-3 space-y-2">
-                  {historySummary.topServices.map((service) => (
-                    <li key={service.serviceId} className="flex min-w-0 items-center justify-between gap-3 text-sm">
-                      <span className="min-w-0 truncate">{service.name}</span>
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">{service.count} · {service.percent.toLocaleString("pt-PT")} %</span>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function PerformanceChart({ points }: { points: { date: string; completed: number }[] }) {
-  const maximum = Math.max(2, ...points.map((point) => point.completed));
-  const x = (index: number) => 35 + index * 310 / Math.max(1, points.length - 1);
-  const y = (count: number) => 145 - count * 120 / maximum;
-  const line = points.map((point, index) => `${x(index)},${y(point.completed)}`).join(" ");
-  const labelDate = (date: string) => date.slice(8, 10) + "/" + date.slice(5, 7);
-  return (
-    <div className="mt-2 w-full">
-      <svg viewBox="0 0 360 180" className="h-auto w-full" role="img"
-        aria-label={`Evolução diária: ${points.map((point) => `${labelDate(point.date)}: ${point.completed}`).join(", ")}`}>
-        {[0, 1, 2].map((step) => {
-          const value = Math.round(maximum * step / 2);
-          return <g key={step}><line x1="35" x2="345" y1={y(value)} y2={y(value)} stroke="currentColor" opacity="0.12" />
-            <text x="26" y={y(value) + 4} textAnchor="end" fill="currentColor" opacity="0.6" fontSize="11">{value}</text></g>;
-        })}
-        <polyline points={line} fill="none" stroke="#059669" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-        {points.map((point, index) => <circle key={point.date} cx={x(index)} cy={y(point.completed)} r="2.5" fill="#059669" />)}
-        {[0, Math.floor((points.length - 1) / 2), points.length - 1].map((index) =>
-          <text key={index} x={x(index)} y="172" textAnchor="middle" fill="currentColor" opacity="0.6" fontSize="11">{labelDate(points[index].date)}</text>)}
-      </svg>
-    </div>
-  );
-}
-
-function ProfessionalMetric({
-  label,
-  value,
-  detail,
-  icon,
-  featured,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-  icon: ReactNode;
-  featured?: boolean;
-}) {
-  return (
-    <div
-      className={`flex h-full min-h-[6rem] min-w-0 flex-col rounded-2xl border p-3 shadow-sm sm:p-3.5 ${
-        featured ? "border-emerald-700/25 bg-emerald-500/10" : "border-border/75 bg-background/65"
-      }`}
-    >
-      <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
-        <span className="grid size-7 shrink-0 place-items-center rounded-xl bg-card/80">{icon}</span>
-        <p className="min-w-0 text-[9px] font-bold uppercase leading-tight tracking-[0.05em]">
-          {label}
-        </p>
-      </div>
-      <p className="mt-2 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.1rem,3.8vw,1.5rem)] font-semibold leading-tight tracking-tight">
-        {value}
-      </p>
-      <p className="mt-auto pt-1 text-xs leading-snug text-muted-foreground">{detail}</p>
-    </div>
-  );
+function ProfessionalOverview({ studio }: { studio: { id: string; staff_id?: string | null; role?: string | null } }) {
+  return studio.staff_id
+    ? <div className="mx-auto w-full max-w-5xl pb-4"><ProfessionalPerformance studioId={studio.id} staffId={studio.staff_id} viewerRole={studio.role ?? "staff"} /></div>
+    : <p className="p-4 text-sm text-red-600">Não foi possível carregar o desempenho.</p>;
 }
 
 function MobileOverview({
