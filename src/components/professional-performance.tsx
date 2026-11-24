@@ -72,24 +72,24 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
     {!validCustom ? <p className="p-4 text-sm text-muted-foreground">Selecione as duas datas por ordem.</p>
       : summaries.isError ? <p className="p-4 text-sm text-red-600">Não foi possível carregar o desempenho.</p>
       : !summary ? <p className="p-4 text-sm text-muted-foreground">A carregar...</p>
-      : <div className="grid gap-3 p-3 sm:p-4">
-        <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+      : <div className="min-w-0 p-3 sm:p-4">
+        <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-1 sm:gap-2" aria-label="Resumo do período">
           <Metric icon={<CalendarDays className="size-4" />} label="Atendimentos" value={String(summary.completed)} />
           <Metric icon={<Euro className="size-4" />} label="Ganhos" value={formatEUR(summary.commissionCents / 100)} featured />
           <Metric icon={<Users className="size-4" />} label="Estúdio" value={formatEUR(summary.studioCents / 100)} />
         </div>
-        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-          <div className="min-w-0 rounded-xl border border-border/65 bg-background/60 p-2.5">
+        <div className="mt-2 flex min-w-0 gap-2 overflow-x-auto pb-1 lg:grid lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:overflow-visible">
+          <div className="w-[min(82vw,440px)] min-w-[280px] shrink-0 rounded-xl border border-border/65 bg-background/60 p-2.5 lg:w-auto lg:min-w-0">
             <h3 className="px-1 text-xs font-semibold">Evolução dos atendimentos</h3>
             <PerformanceChart points={summary.evolution} />
           </div>
-          <div className="min-w-0 rounded-xl border border-border/65 bg-background/60 p-2.5">
-            <h3 className="px-1 text-xs font-semibold">Serviços mais realizados</h3>
+          <div className="w-[min(76vw,360px)] min-w-[250px] shrink-0 overflow-x-auto rounded-xl border border-border/65 bg-background/60 p-2.5 lg:w-auto lg:min-w-0">
+            <h3 className="whitespace-nowrap px-1 text-xs font-semibold">Serviços mais realizados</h3>
             {summary.topServices.length === 0 ? <p className="px-1 pt-3 text-xs text-muted-foreground">Sem serviços no período.</p>
               : <ol className="mt-2 space-y-2">
-                {summary.topServices.map((service) => <li key={service.serviceId} className="min-w-0">
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <span className="min-w-0 truncate" title={service.name}>{service.name}</span>
+                {summary.topServices.map((service) => <li key={service.serviceId} className="min-w-max">
+                  <div className="flex min-w-max items-center justify-between gap-2 whitespace-nowrap text-xs">
+                    <span>{service.name}</span>
                     <span className="shrink-0 font-semibold tabular-nums">{service.count} · {service.percent.toLocaleString("pt-PT")} %</span>
                   </div>
                   <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${service.percent}%` }} /></div>
@@ -102,13 +102,13 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
 }
 
 function Metric({ icon, label, value, featured = false }: { icon: React.ReactNode; label: string; value: string; featured?: boolean }) {
-  return <div className={`min-w-0 rounded-xl border p-2 sm:p-3 ${featured ? "border-emerald-600/30 bg-emerald-500/10" : "border-border/60 bg-background/70"}`}>
-    <div className="flex items-center gap-1 text-muted-foreground">{icon}<span className="min-w-0 text-[9px] font-semibold uppercase leading-tight">{label}</span></div>
-    <p className="mt-1.5 break-words text-[clamp(.78rem,2.7vw,1.25rem)] font-semibold leading-tight tabular-nums" title={value}>{value}</p>
+  return <div className={`min-w-max flex-1 rounded-xl border p-2 sm:p-3 ${featured ? "border-emerald-600/30 bg-emerald-500/10" : "border-border/60 bg-background/70"}`}>
+    <div className="flex items-center gap-1 whitespace-nowrap text-muted-foreground">{icon}<span className="text-[9px] font-semibold uppercase leading-tight">{label}</span></div>
+    <p className="mt-1.5 whitespace-nowrap text-[clamp(.78rem,2.7vw,1.25rem)] font-semibold leading-tight tabular-nums">{value}</p>
   </div>;
 }
 
-function PerformanceChart({ points }: { points: { date: string; completed: number }[] }) {
+function PerformanceChart({ points }: { points: { date: string; completed: number; commissionCents: number; topService: { serviceId: string; name: string; count: number } | null }[] }) {
   const [active, setActive] = useState<number | null>(null);
   if (!points.length) return null;
   const selected = Math.min(active ?? points.length - 1, points.length - 1);
@@ -117,18 +117,22 @@ function PerformanceChart({ points }: { points: { date: string; completed: numbe
   const y = (count: number) => 100 - count * 75 / maximum;
   const line = points.map((point, index) => `${x(index)},${y(point.completed)}`).join(" ");
   const label = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}`;
+  const selectedDay = points[selected];
+  const selectAt = (event: React.PointerEvent<SVGSVGElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const position = (event.clientX - bounds.left) / bounds.width * 360;
+    setActive(Math.max(0, Math.min(points.length - 1, Math.round((position - 34) / 312 * (points.length - 1)))));
+  };
   return <div className="mt-1.5 min-w-0">
-    <div className="flex items-baseline gap-2 px-1 text-xs" aria-live="polite">
-      <strong className="text-emerald-700 dark:text-emerald-400">{points[selected].completed} atendimentos</strong>
-      <span className="text-muted-foreground">{label(points[selected].date)}</span>
+    <div className="flex min-w-0 gap-1 overflow-x-auto whitespace-nowrap px-1 pb-1 text-[11px]" aria-live="polite" aria-label="Detalhe do dia selecionado">
+      <strong className="shrink-0 rounded-md bg-emerald-500/10 px-1.5 py-1 text-emerald-700 dark:text-emerald-400">{selectedDay.date.slice(8, 10)}/{selectedDay.date.slice(5, 7)}/{selectedDay.date.slice(0, 4)} · {selectedDay.completed}</strong>
+      <span className="shrink-0 rounded-md bg-muted px-1.5 py-1">{formatEUR(selectedDay.commissionCents / 100)} ganhos</span>
+      <span className="shrink-0 rounded-md bg-muted px-1.5 py-1">{selectedDay.topService ? `${selectedDay.topService.name} · ${selectedDay.topService.count}` : "Sem serviços"}</span>
     </div>
     <svg viewBox="0 0 360 125" className="h-auto w-full touch-pan-y" role="img" tabIndex={0}
       aria-label={`Evolução diária: ${points.map((point) => `${label(point.date)}: ${point.completed}`).join(", ")}`}
-      onPointerMove={(event) => {
-        const bounds = event.currentTarget.getBoundingClientRect();
-        const position = (event.clientX - bounds.left) / bounds.width * 360;
-        setActive(Math.max(0, Math.min(points.length - 1, Math.round((position - 34) / 312 * (points.length - 1)))));
-      }}
+      onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); selectAt(event); }}
+      onPointerMove={selectAt}
       onKeyDown={(event) => {
         if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
           event.preventDefault();

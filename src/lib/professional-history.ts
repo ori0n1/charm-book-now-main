@@ -1,5 +1,5 @@
 export type AttendanceEvent = { staffId: string; appointmentId: string; date: string };
-export type ServiceEvent = { staffId: string; lineId: string; serviceId: string; name: string | null | undefined };
+export type ServiceEvent = { staffId: string; lineId: string; serviceId: string; name: string | null | undefined; date: string };
 
 export function periodDateKeys(today: string, days: 1 | 7 | 15 | 30) {
   const [year, month, day] = today.split("-").map(Number);
@@ -22,7 +22,7 @@ export function summarizeProfessionalHistory(
 ) {
   const summaries = Object.fromEntries(staffIds.map((staffId) => [staffId, {
     completed: 0,
-    evolution: dateKeys.map((date) => ({ date, completed: 0 })),
+    evolution: dateKeys.map((date) => ({ date, completed: 0, topService: null as { serviceId: string; name: string; count: number } | null })),
     topServices: [] as { serviceId: string; name: string; count: number; percent: number }[],
   }]));
   const seenAttendance = new Set<string>();
@@ -38,6 +38,7 @@ export function summarizeProfessionalHistory(
 
   const seenServices = new Set<string>();
   const countsByStaff = new Map<string, Map<string, { name: string; count: number }>>();
+  const countsByDay = new Map<string, Map<string, { name: string; count: number }>>();
   for (const event of serviceEvents) {
     if (!summaries[event.staffId] || seenServices.has(event.lineId)) continue;
     seenServices.add(event.lineId);
@@ -46,12 +47,25 @@ export function summarizeProfessionalHistory(
     const prior = counts.get(event.serviceId);
     counts.set(event.serviceId, { name, count: (prior?.count ?? 0) + 1 });
     countsByStaff.set(event.staffId, counts);
+    const dayKey = `${event.staffId}:${event.date}`;
+    const dailyCounts = countsByDay.get(dayKey) ?? new Map<string, { name: string; count: number }>();
+    const dailyPrior = dailyCounts.get(event.serviceId);
+    dailyCounts.set(event.serviceId, { name, count: (dailyPrior?.count ?? 0) + 1 });
+    countsByDay.set(dayKey, dailyCounts);
   }
   for (const [staffId, counts] of countsByStaff) {
     const total = [...counts.values()].reduce((sum, item) => sum + item.count, 0);
     summaries[staffId].topServices = [...counts].map(([serviceId, { name, count }]) => ({
       serviceId, name, count, percent: Math.round(count * 1000 / total) / 10,
     })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt")).slice(0, 5);
+  }
+  for (const [staffId, summary] of Object.entries(summaries)) {
+    for (const day of summary.evolution) {
+      const dailyCounts = countsByDay.get(`${staffId}:${day.date}`);
+      if (!dailyCounts) continue;
+      const best = [...dailyCounts].sort((a, b) => b[1].count - a[1].count || a[1].name.localeCompare(b[1].name, "pt"))[0];
+      day.topService = { serviceId: best[0], name: best[1].name, count: best[1].count };
+    }
   }
   return summaries;
 }

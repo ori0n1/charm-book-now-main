@@ -15,7 +15,7 @@ export type ProfessionalDailySummary = {
   commissionCents: number;
   studioCents: number;
   baseCents: number;
-  evolution: { date: string; completed: number }[];
+  evolution: { date: string; completed: number; commissionCents: number; topService: { serviceId: string; name: string; count: number } | null }[];
   topServices: { serviceId: string; name: string; count: number; percent: number }[];
 };
 
@@ -83,18 +83,23 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     const result: Record<string, ProfessionalDailySummary> = {};
     for (const member of staff ?? []) {
       result[member.id] = { staffId: member.id, date, timezone, completed: 0, commissionCents: 0, studioCents: 0, baseCents: 0,
-        evolution: dateKeys.map((key) => ({ date: key, completed: 0 })), topServices: [] };
+        evolution: dateKeys.map((key) => ({ date: key, completed: 0, commissionCents: 0, topService: null })), topServices: [] };
     }
     if (!staff?.length) return result;
     const staffById = new Map(staff.map((member: { id: string; commission_percent: number | null }) => [member.id, member]));
     const seen = new Set<string>();
     const attendanceEvents: AttendanceEvent[] = [];
     const serviceEvents: ServiceEvent[] = [];
-    const recordAttendance = (staffId: string, appointmentId: string, startsAt: string) => {
-      attendanceEvents.push({ staffId, appointmentId, date: getStudioDateKey(new Date(startsAt), timezone) });
+    const dailyCommissions = new Map<string, number>();
+    const recordAttendance = (staffId: string, appointmentId: string, dayKey: string) => {
+      attendanceEvents.push({ staffId, appointmentId, date: dayKey });
     };
-    const recordService = (staffId: string, lineId: string, serviceId: string, name: string | null | undefined) => {
-      serviceEvents.push({ staffId, lineId, serviceId, name });
+    const recordService = (staffId: string, lineId: string, serviceId: string, name: string | null | undefined, dayKey: string) => {
+      serviceEvents.push({ staffId, lineId, serviceId, name, date: dayKey });
+    };
+    const recordDailyCommission = (staffId: string, dayKey: string, cents: number) => {
+      const key = `${staffId}:${dayKey}`;
+      dailyCommissions.set(key, (dailyCommissions.get(key) ?? 0) + cents);
     };
     const pageSize = 500;
     for (let offset = 0; ; offset += pageSize) {
@@ -125,9 +130,11 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
         const commissionCents = toCents(split.professional);
         const studioCents = toCents(split.studio);
         if (commissionCents + studioCents !== baseCents) throw new Error("professional_summary_reconciliation_failed");
-        recordAttendance(appointment.staff_id, appointment.id, appointment.starts_at);
+        const dayKey = getStudioDateKey(new Date(appointment.starts_at), timezone);
+        recordAttendance(appointment.staff_id, appointment.id, dayKey);
+        recordDailyCommission(appointment.staff_id, dayKey, commissionCents);
         for (const line of appointment.appointment_services ?? []) {
-          recordService(appointment.staff_id, line.id, line.service_id, line.services?.name);
+          recordService(appointment.staff_id, line.id, line.service_id, line.services?.name, dayKey);
         }
         summary.baseCents += baseCents;
         summary.commissionCents += commissionCents;
@@ -155,8 +162,10 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
             (staffById.get(line.staff_id) as { commission_percent: number | null } | undefined)?.commission_percent ??
             studio.commission_percent ?? 0)));
         const commissionCents = Math.round(baseCents * percent / 100);
-        recordAttendance(line.staff_id, line.appointment_id, line.starts_at);
-        recordService(line.staff_id, line.id, line.service_id, line.services?.name);
+        const dayKey = getStudioDateKey(new Date(line.starts_at), timezone);
+        recordAttendance(line.staff_id, line.appointment_id, dayKey);
+        recordDailyCommission(line.staff_id, dayKey, commissionCents);
+        recordService(line.staff_id, line.id, line.service_id, line.services?.name, dayKey);
         summary.baseCents += baseCents;
         summary.commissionCents += commissionCents;
         summary.studioCents += baseCents - commissionCents;
@@ -166,7 +175,13 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     const history = summarizeProfessionalHistory(Object.keys(result), dateKeys, attendanceEvents, serviceEvents);
     for (const [staffId, values] of Object.entries(history)) {
       result[staffId].completed = values.completed;
-      result[staffId].evolution = values.evolution;
+      result[staffId].evolution = values.evolution.map((day) => ({
+        ...day,
+        commissionCents: dailyCommissions.get(`${staffId}:${day.date}`) ?? 0,
+      }));
+      if (result[staffId].evolution.reduce((total, day) => total + day.commissionCents, 0) !== result[staffId].commissionCents) {
+        throw new Error("professional_summary_reconciliation_failed");
+      }
       result[staffId].topServices = values.topServices;
     }
     return result;
