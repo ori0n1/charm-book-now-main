@@ -9,7 +9,6 @@ import {
   Euro,
   Loader2,
   Pencil,
-  Phone,
   UserRound,
   X,
 } from "lucide-react";
@@ -434,27 +433,23 @@ export function TimelineAppointmentDrawer({
               />
               <div className="min-w-0 flex-1">
                 {!details.serviceAssignments?.length && <p className="break-words text-xs text-muted-foreground">{details.serviceName}</p>}
-                <div className="mt-2 flex min-w-0 items-center gap-2">
-                  {details.clientPhone ? (
-                    <a href={`tel:${details.clientPhone}`}
-                      className="inline-flex min-w-0 items-center gap-1.5 break-all text-xs font-bold text-foreground hover:underline">
-                      <Phone className="size-3 shrink-0" />{details.clientPhone}
-                    </a>
-                  ) : <span className="text-xs text-muted-foreground">Sem número</span>}
+                <div className="mt-1.5 min-w-0">
                   {manualWhatsAppUrl ? (
                     <a href={manualWhatsAppUrl} target="_blank" rel="noopener noreferrer"
                       aria-label={`Contactar ${details.clientName} no WhatsApp`}
                       title="Abrir mensagem no WhatsApp para editar e enviar"
                       data-testid="manual-appointment-whatsapp"
-                      className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 dark:text-emerald-300">
-                      <WhatsAppIcon className="size-5" />
+                      className="inline-flex min-h-9 max-w-full items-center gap-1.5 break-all text-xs font-bold text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">
+                      <span>{details.clientPhone}</span>
+                      <WhatsAppIcon className="h-3.5 w-3.5 shrink-0 text-emerald-700 dark:text-emerald-300" />
                     </a>
                   ) : (
                     <button type="button" disabled aria-label="WhatsApp indisponível: número inválido"
                       title="WhatsApp indisponível: número inválido"
                       data-testid="manual-appointment-whatsapp"
-                      className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/60 text-muted-foreground/40">
-                      <WhatsAppIcon className="size-5" />
+                      className="inline-flex min-h-9 max-w-full items-center gap-1.5 break-all text-xs text-muted-foreground/60">
+                      <span>{details.clientPhone || "Sem número"}</span>
+                      <WhatsAppIcon className="h-3.5 w-3.5 shrink-0 opacity-40" />
                     </button>
                   )}
                 </div>

@@ -31,6 +31,9 @@ try {
     const url = new URL(href);
     assert.equal(url.origin, "https://wa.me");
     assert.equal(url.pathname, "/351912345678");
+    assert.match(await action.textContent(), /\+351 912 345 678/);
+    const iconWidth = await action.locator("svg").evaluate((node) => node.getBoundingClientRect().width);
+    assert.ok(iconWidth <= 15, `ícone compacto: ${iconWidth}px`);
     assert.match(url.searchParams.get("text"), /Ana Silva.*Bellza Centro.*Manicure gel.*03.*dezembro.*2026.*10:00/s);
     assert.equal(await page.getByRole("button", { name: /Reenviar WhatsApp/ }).count(), 0);
     assert.equal(await action.getAttribute("target"), "_blank");
