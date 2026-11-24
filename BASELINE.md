@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-24
 
+## Produção ativa — agenda inicial do profissional autenticado
+
+- Cloudflare OAuth confirmou o deployment `9b0f9457-ad13-4d8d-9851-8967ff8c8c10`, versão `fcb6194c-81fa-49f7-9f18-5f885f418258` a 100% do tráfego. A versão anterior `85ea1e04-69e5-422b-8fac-9681c4db6aa4` permanece a 0% para rollback seguro do Worker. Fonte funcional publicada: `cf0b83c1e38381830e1c8a119d26f9a1591a0a99`.
+- A agenda do profissional associado à conta abre primeiro no telemóvel e no desktop. A navegação manual e a vista unificada permanecem. Contas sem associação continuam com a seleção anterior. A mudança funcional está restrita a `professional-timeline.tsx` e `admin.agenda.tsx`; não houve migração ou alteração de permissões.
+- Manifesto SHA-256 `a868ed0544f38e98942b3e1f241ed9973c00a7e07606f16376498a38d5698df2`; configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`. Os 233 módulos JS do Worker e 220 assets públicos coincidiram byte a byte com o artefato aprovado. Os 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime foram preservados. O `robots.txt` recebe o mesmo conteúdo gerido pela Cloudflare nas versões antiga e nova.
+- Typecheck, build e quatro casos Playwright dirigidos passaram. A conta QA profissional confirmou a associação única sob RLS e a conta QA proprietária confirmou ausência de associação; os casos sintéticos verificaram a prioridade, o fallback, a navegação e a identidade que chega após a montagem em larguras mobile e desktop. Smoke após publicação em tráfego normal: `/` e `/login` 200, `/admin/agenda` 307, `/api/auth/session` 401; os 220 assets coincidiram com o build. Não houve escrita em dados reais.
+
 ## Produção ativa — cartão desktop e calendário Bellza
 
 - Cloudflare OAuth confirmou o deployment `86c6b99c-4e63-46e3-8e7e-37070c931918`, versão `85ea1e04-69e5-422b-8fac-9681c4db6aa4` a 100% do tráfego. A versão anterior `30e4e2ce-38de-484d-a511-0f3f70c85142` permanece a 0% para rollback do Worker somente com autorização específica. Fonte funcional publicada: `34c672e8313092bd0a1ae0a2a11d0fe9055bf829` (correção visual `ef90de6`; commit seguinte atualiza apenas o guard de build para a versão ativa anterior).
