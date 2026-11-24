@@ -15,7 +15,7 @@ export type ProfessionalDailySummary = {
   commissionCents: number;
   studioCents: number;
   baseCents: number;
-  evolution: { date: string; completed: number; commissionCents: number; topService: { serviceId: string; name: string; count: number } | null }[];
+  evolution: { date: string; completed: number; commissionCents: number; services: { serviceId: string; name: string; count: number }[] }[];
   topServices: { serviceId: string; name: string; count: number; percent: number }[];
 };
 
@@ -83,7 +83,7 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     const result: Record<string, ProfessionalDailySummary> = {};
     for (const member of staff ?? []) {
       result[member.id] = { staffId: member.id, date, timezone, completed: 0, commissionCents: 0, studioCents: 0, baseCents: 0,
-        evolution: dateKeys.map((key) => ({ date: key, completed: 0, commissionCents: 0, topService: null })), topServices: [] };
+        evolution: dateKeys.map((key) => ({ date: key, completed: 0, commissionCents: 0, services: [] })), topServices: [] };
     }
     if (!staff?.length) return result;
     const staffById = new Map(staff.map((member: { id: string; commission_percent: number | null }) => [member.id, member]));

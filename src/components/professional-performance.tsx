@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { CalendarDays, Euro, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { getProfessionalDailySummaries } from "@/lib/professional-daily-summary.functions";
 import { formatEUR } from "@/lib/utils";
@@ -74,23 +73,23 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
       : !summary ? <p className="p-4 text-sm text-muted-foreground">A carregar...</p>
       : <div className="min-w-0 p-3 sm:p-4">
         <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-1 sm:gap-2" aria-label="Resumo do período">
-          <Metric icon={<CalendarDays className="size-4" />} label="Atendimentos" value={String(summary.completed)} />
-          <Metric icon={<Euro className="size-4" />} label="Ganhos" value={formatEUR(summary.commissionCents / 100)} featured />
-          <Metric icon={<Users className="size-4" />} label="Estúdio" value={formatEUR(summary.studioCents / 100)} />
+          <Metric label="Atendimentos" value={String(summary.completed)} />
+          <Metric label="Ganhos do profissional" value={formatEUR(summary.commissionCents / 100)} featured />
+          <Metric label="Parte do estúdio" value={formatEUR(summary.studioCents / 100)} />
         </div>
-        <div className="mt-2 flex min-w-0 gap-2 overflow-x-auto pb-1 lg:grid lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] lg:overflow-visible">
-          <div className="w-[min(82vw,440px)] min-w-[280px] shrink-0 rounded-xl border border-border/65 bg-background/60 p-2.5 lg:w-auto lg:min-w-0">
+        <div className="mt-2 grid min-w-0 gap-2">
+          <div className="min-w-0 rounded-xl border border-border/65 bg-background/60 p-2.5 sm:p-3">
             <h3 className="px-1 text-xs font-semibold">Evolução dos atendimentos</h3>
             <PerformanceChart points={summary.evolution} />
           </div>
-          <div className="w-[min(76vw,360px)] min-w-[250px] shrink-0 overflow-x-auto rounded-xl border border-border/65 bg-background/60 p-2.5 lg:w-auto lg:min-w-0">
-            <h3 className="whitespace-nowrap px-1 text-xs font-semibold">Serviços mais realizados</h3>
+          <div className="min-w-0 rounded-xl border border-border/65 bg-background/60 p-2.5 sm:p-3">
+            <h3 className="px-1 text-xs font-semibold">Serviços mais realizados</h3>
             {summary.topServices.length === 0 ? <p className="px-1 pt-3 text-xs text-muted-foreground">Sem serviços no período.</p>
               : <ol className="mt-2 space-y-2">
-                {summary.topServices.map((service) => <li key={service.serviceId} className="min-w-max">
-                  <div className="flex min-w-max items-center justify-between gap-2 whitespace-nowrap text-xs">
-                    <span>{service.name}</span>
-                    <span className="shrink-0 font-semibold tabular-nums">{service.count} · {service.percent.toLocaleString("pt-PT")} %</span>
+                {summary.topServices.map((service) => <li key={service.serviceId} className="min-w-0">
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2 text-xs">
+                    <span className="min-w-0 break-words">{service.name}</span>
+                    <span className="whitespace-nowrap font-semibold tabular-nums">{service.count} · {service.percent.toLocaleString("pt-PT")} %</span>
                   </div>
                   <div className="mt-1 h-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${service.percent}%` }} /></div>
                 </li>)}
@@ -101,14 +100,14 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
   </section>;
 }
 
-function Metric({ icon, label, value, featured = false }: { icon: React.ReactNode; label: string; value: string; featured?: boolean }) {
-  return <div className={`min-w-max flex-1 rounded-xl border p-2 sm:p-3 ${featured ? "border-emerald-600/30 bg-emerald-500/10" : "border-border/60 bg-background/70"}`}>
-    <div className="flex items-center gap-1 whitespace-nowrap text-muted-foreground">{icon}<span className="text-[9px] font-semibold uppercase leading-tight">{label}</span></div>
-    <p className="mt-1.5 whitespace-nowrap text-[clamp(.78rem,2.7vw,1.25rem)] font-semibold leading-tight tabular-nums">{value}</p>
+function Metric({ label, value, featured = false }: { label: string; value: string; featured?: boolean }) {
+  return <div className={`min-w-max flex-1 rounded-xl border px-2 py-1.5 sm:px-3 sm:py-2 ${featured ? "border-emerald-600/30 bg-emerald-500/10" : "border-border/60 bg-background/70"}`}>
+    <p className="whitespace-nowrap text-[8px] font-semibold leading-tight text-muted-foreground sm:text-[10px]">{label}</p>
+    <p className="mt-1 whitespace-nowrap text-sm font-semibold leading-tight tabular-nums sm:text-lg">{value}</p>
   </div>;
 }
 
-function PerformanceChart({ points }: { points: { date: string; completed: number; commissionCents: number; topService: { serviceId: string; name: string; count: number } | null }[] }) {
+function PerformanceChart({ points }: { points: { date: string; completed: number; commissionCents: number; services: { serviceId: string; name: string; count: number }[] }[] }) {
   const [active, setActive] = useState<number | null>(null);
   if (!points.length) return null;
   const selected = Math.min(active ?? points.length - 1, points.length - 1);
@@ -124,12 +123,18 @@ function PerformanceChart({ points }: { points: { date: string; completed: numbe
     setActive(Math.max(0, Math.min(points.length - 1, Math.round((position - 34) / 312 * (points.length - 1)))));
   };
   return <div className="mt-1.5 min-w-0">
-    <div className="flex min-w-0 gap-1 overflow-x-auto whitespace-nowrap px-1 pb-1 text-[11px]" aria-live="polite" aria-label="Detalhe do dia selecionado">
-      <strong className="shrink-0 rounded-md bg-emerald-500/10 px-1.5 py-1 text-emerald-700 dark:text-emerald-400">{selectedDay.date.slice(8, 10)}/{selectedDay.date.slice(5, 7)}/{selectedDay.date.slice(0, 4)} · {selectedDay.completed}</strong>
-      <span className="shrink-0 rounded-md bg-muted px-1.5 py-1">{formatEUR(selectedDay.commissionCents / 100)} ganhos</span>
-      <span className="shrink-0 rounded-md bg-muted px-1.5 py-1">{selectedDay.topService ? `${selectedDay.topService.name} · ${selectedDay.topService.count}` : "Sem serviços"}</span>
+    <div className="px-1 text-[11px]" aria-live="polite" aria-label="Detalhe do dia selecionado">
+      <div className="flex flex-wrap items-center gap-1">
+        <strong className="whitespace-nowrap rounded-md bg-emerald-500/10 px-1.5 py-1 text-emerald-700 dark:text-emerald-400">{selectedDay.date.slice(8, 10)}/{selectedDay.date.slice(5, 7)}/{selectedDay.date.slice(0, 4)} · {selectedDay.completed}</strong>
+        <span className="whitespace-nowrap rounded-md bg-muted px-1.5 py-1">{formatEUR(selectedDay.commissionCents / 100)} ganhos</span>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1" aria-label="Serviços realizados no dia">
+        {selectedDay.services.length ? selectedDay.services.map((service) =>
+          <span key={service.serviceId} className="max-w-full rounded-md bg-muted px-1.5 py-1">{service.name} · {service.count}</span>)
+          : <span className="rounded-md bg-muted px-1.5 py-1">Sem serviços nesse dia</span>}
+      </div>
     </div>
-    <svg viewBox="0 0 360 125" className="h-auto w-full touch-pan-y" role="img" tabIndex={0}
+    <svg viewBox="0 0 360 125" className="mx-auto h-auto w-full max-w-[720px] touch-pan-y" role="img" tabIndex={0}
       aria-label={`Evolução diária: ${points.map((point) => `${label(point.date)}: ${point.completed}`).join(", ")}`}
       onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); selectAt(event); }}
       onPointerMove={selectAt}
@@ -143,7 +148,7 @@ function PerformanceChart({ points }: { points: { date: string; completed: numbe
         <text x="28" y={y(maximum * step / 2) + 3} textAnchor="end" fill="currentColor" opacity=".55" fontSize="9">{Math.round(maximum * step / 2)}</text></g>)}
       <polygon points={`34,100 ${line} 346,100`} fill="#10b981" opacity=".1" />
       <polyline points={line} fill="none" stroke="#059669" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-      <line x1={x(selected)} x2={x(selected)} y1="20" y2="100" stroke="#059669" strokeWidth="1" strokeDasharray="3 3" />
+      <line x1={x(selected)} x2={x(selected)} y1="20" y2="100" stroke="#059669" strokeWidth="1" strokeDasharray="3 3" opacity=".35" />
       <circle cx={x(selected)} cy={y(points[selected].completed)} r="4" fill="#059669" stroke="white" strokeWidth="2" />
       {[0, Math.floor((points.length - 1) / 2), points.length - 1].map((index) =>
         <text key={index} x={x(index)} y="119" textAnchor="middle" fill="currentColor" opacity=".6" fontSize="9">{label(points[index].date)}</text>)}

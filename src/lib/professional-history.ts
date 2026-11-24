@@ -22,7 +22,7 @@ export function summarizeProfessionalHistory(
 ) {
   const summaries = Object.fromEntries(staffIds.map((staffId) => [staffId, {
     completed: 0,
-    evolution: dateKeys.map((date) => ({ date, completed: 0, topService: null as { serviceId: string; name: string; count: number } | null })),
+    evolution: dateKeys.map((date) => ({ date, completed: 0, services: [] as { serviceId: string; name: string; count: number }[] })),
     topServices: [] as { serviceId: string; name: string; count: number; percent: number }[],
   }]));
   const seenAttendance = new Set<string>();
@@ -63,8 +63,8 @@ export function summarizeProfessionalHistory(
     for (const day of summary.evolution) {
       const dailyCounts = countsByDay.get(`${staffId}:${day.date}`);
       if (!dailyCounts) continue;
-      const best = [...dailyCounts].sort((a, b) => b[1].count - a[1].count || a[1].name.localeCompare(b[1].name, "pt"))[0];
-      day.topService = { serviceId: best[0], name: best[1].name, count: best[1].count };
+      day.services = [...dailyCounts].map(([serviceId, { name, count }]) => ({ serviceId, name, count }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "pt"));
     }
   }
   return summaries;

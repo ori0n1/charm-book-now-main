@@ -36,9 +36,9 @@ test("appointments are unique per professional and service lines remain distinct
   ]);
   assert.equal(result.ana.completed, 2);
   assert.deepEqual(result.ana.evolution.map((day) => day.completed), [1, 1]);
-  assert.deepEqual(result.ana.evolution.map((day) => day.topService), [
-    { serviceId: "cut", name: "Corte", count: 2 },
-    { serviceId: "color", name: "Cor", count: 1 },
+  assert.deepEqual(result.ana.evolution.map((day) => day.services), [
+    [{ serviceId: "cut", name: "Corte", count: 2 }],
+    [{ serviceId: "color", name: "Cor", count: 1 }],
   ]);
   assert.deepEqual(result.ana.topServices, [
     { serviceId: "cut", name: "Corte", count: 2, percent: 66.7 },
@@ -56,4 +56,5 @@ test("services with the same display name retain separate identities", () => {
   ]);
   assert.equal(result.ana.topServices.length, 2);
   assert.deepEqual(result.ana.topServices.map((item) => item.percent), [50, 50]);
+  assert.deepEqual(result.ana.evolution[0].services.map((item) => item.count), [1, 1]);
 });
