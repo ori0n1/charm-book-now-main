@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-24
 
+## Produção ativa — cartão do titular primeiro no telemóvel
+
+- Cloudflare OAuth confirmou o deployment `fddf789d-0689-4508-8d76-629fe932528b`, versão `cbc15689-334e-4f6f-872e-6eb6b9d7d23d` a 100% do tráfego. A versão anterior `fcb6194c-81fa-49f7-9f18-5f885f418258` permanece a 0% para rollback seguro do Worker. Fonte funcional publicada: `a8f82ad09df2c3017c1d995baf1b1c1de96003df`.
+- No telemóvel, o cartão do profissional associado à conta aparece primeiro na faixa da agenda, além de já ser o selecionado. As demais agendas continuam acessíveis; contas sem associação mantêm a ordem anterior. A disposição desktop e a vista unificada mantêm o comportamento existente. A única alteração de produto foi em `professional-timeline.tsx`; não houve migração ou alteração de permissões.
+- Manifesto SHA-256 `c214949bd9fc85a1ac4c072f5f7d80773f54a93d562a14f99b2fccca40a4fffa`; configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`. Os 233 módulos JS do Worker e 220 assets públicos coincidiram byte a byte com o artefato aprovado. Os 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime foram preservados. O gate obrigatório passou.
+- Quatro casos Playwright dirigidos verificaram três profissionais com a titular originalmente em último, seleção manual, fallback sem associação e chegada tardia da identidade em 390 e 1280 px. Typecheck e build passaram. As contas QA profissional e proprietária autenticaram sob RLS sem acesso a dados de outro estúdio. Smoke após publicação em tráfego normal: `/` e `/login` 200, `/admin/agenda` 307, `/api/auth/session` 401; os 220 assets coincidiram com o build. Não houve escrita em dados reais.
+
 ## Produção ativa — agenda inicial do profissional autenticado
 
 - Cloudflare OAuth confirmou o deployment `9b0f9457-ad13-4d8d-9851-8967ff8c8c10`, versão `fcb6194c-81fa-49f7-9f18-5f885f418258` a 100% do tráfego. A versão anterior `85ea1e04-69e5-422b-8fac-9681c4db6aa4` permanece a 0% para rollback seguro do Worker. Fonte funcional publicada: `cf0b83c1e38381830e1c8a119d26f9a1591a0a99`.
