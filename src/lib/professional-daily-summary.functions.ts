@@ -42,6 +42,7 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => z.object({
     studioId: z.string().uuid(),
+    staffId: z.string().uuid(),
     days: z.union([z.literal(1), z.literal(7), z.literal(15), z.literal(30)]).default(1),
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -58,7 +59,8 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     ]);
     if (rolesError || !roles?.length || studioError || !studio?.id) throw new Error("professional_summary_access_failed");
     const manager = roles.some((row: { role: string }) => ["saas_owner", "studio_owner", "manager"].includes(row.role));
-    const staffQuery = admin.from("staff").select("id,commission_percent,user_id").eq("studio_id", data.studioId);
+    const staffQuery = admin.from("staff").select("id,commission_percent,user_id")
+      .eq("studio_id", data.studioId).eq("id", data.staffId);
     const { data: staff, error: staffError } = await (manager ? staffQuery : staffQuery.eq("user_id", userId));
     if (staffError || (!manager && (!roles.some((row: { role: string }) => row.role === "staff") || !staff?.length))) {
       throw new Error("professional_summary_access_failed");
@@ -102,6 +104,7 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
       const { data: appointments, error } = await admin.from("appointments")
         .select("id,staff_id,starts_at,status,total_price,studio_commission_percent_snapshot,appointment_services(id,service_id,price,service_state,studio_commission_percent_snapshot,services(name,commission_percent))")
         .eq("studio_id", data.studioId)
+        .eq("staff_id", data.staffId)
         .eq("status", "completed")
         .gte("starts_at", from)
         .lt("starts_at", until)
@@ -142,6 +145,7 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
       const { data: lines, error } = await admin.from("appointment_services")
         .select("id,appointment_id,service_id,staff_id,starts_at,price,service_state,professional_commission_percent_snapshot,services(name),appointments!inner(studio_id)")
         .eq("appointments.studio_id", data.studioId)
+        .eq("staff_id", data.staffId)
         .eq("service_state", "completed")
         .gte("starts_at", from)
         .lt("starts_at", until)

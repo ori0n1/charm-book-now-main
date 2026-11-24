@@ -12,6 +12,10 @@ const filters: { value: Period; label: string }[] = [
   { value: "15d", label: "15 dias" }, { value: "custom", label: "Personalizado" },
 ];
 
+function displayDate(value: string) {
+  return value ? `${value.slice(8, 10)}/${value.slice(5, 7)}/${value.slice(0, 4)}` : "dd/mm/aaaa";
+}
+
 export function ProfessionalPerformance({ studioId, staffId, viewerRole, title = "Meu desempenho" }: {
   studioId: string; staffId: string; viewerRole: string; title?: string;
 }) {
@@ -28,7 +32,7 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
     refetchInterval: 30_000,
     refetchOnWindowFocus: true,
     queryFn: () => load({ data: {
-      studioId, days,
+      studioId, staffId, days,
       ...(period === "custom" ? { startDate, endDate } : {}),
     } }),
   });
@@ -37,7 +41,7 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
     if (!studioId || !staffId) return;
     const channel = supabase.channel(`professional-performance-${studioId}-${staffId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "appointments", filter: `studio_id=eq.${studioId}` }, () => void refetch())
-      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services" }, () => void refetch())
+      .on("postgres_changes", { event: "*", schema: "public", table: "appointment_services", filter: `staff_id=eq.${staffId}` }, () => void refetch())
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
   }, [studioId, staffId, refetch]);
@@ -49,23 +53,29 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
         <h2 className="text-base font-semibold tracking-tight sm:text-lg">{title}</h2>
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Fuso do estúdio</span>
       </div>
-      <div className="mt-3 grid grid-cols-4 gap-1 rounded-xl bg-muted/75 p-1" role="group" aria-label="Período do desempenho">
+      <div className="mt-3 grid grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.8fr)] gap-1 rounded-xl bg-muted/75 p-1" role="group" aria-label="Período do desempenho">
         {filters.map((filter) => <button key={filter.value} type="button" onClick={() => setPeriod(filter.value)}
           aria-pressed={period === filter.value}
-          className={`min-h-9 rounded-lg px-1 text-[11px] font-semibold leading-tight transition sm:text-xs ${period === filter.value ? "bg-emerald-600 text-white shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}>
+          className={`min-h-10 min-w-0 whitespace-nowrap rounded-lg px-1.5 text-[11px] font-semibold leading-tight transition sm:text-xs ${period === filter.value ? "bg-emerald-600 text-white shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground"}`}>
           {filter.label}
         </button>)}
       </div>
-      {period === "custom" && <div className="mt-2 grid grid-cols-2 gap-2">
+      {period === "custom" && <div className="mt-2 grid min-w-0 grid-cols-2 gap-2">
         <label className="min-w-0 text-[11px] font-medium text-muted-foreground">Início
-          <input type="date" aria-label="Data inicial" value={startDate} max={endDate || undefined}
-            onChange={(event) => setStartDate(event.target.value)}
-            className="mt-1 h-10 w-full min-w-0 rounded-lg border border-border bg-background px-2 text-xs text-foreground" />
+          <span className="relative mt-1 flex h-10 min-w-0 items-center rounded-lg border border-border bg-background px-2.5 text-xs font-semibold tabular-nums text-foreground focus-within:ring-2 focus-within:ring-emerald-500/50">
+            <span className="whitespace-nowrap">{displayDate(startDate)}</span>
+            <input type="date" aria-label="Data inicial" value={startDate} max={endDate || undefined}
+              onChange={(event) => setStartDate(event.target.value)}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
+          </span>
         </label>
         <label className="min-w-0 text-[11px] font-medium text-muted-foreground">Fim
-          <input type="date" aria-label="Data final" value={endDate} min={startDate || undefined}
-            onChange={(event) => setEndDate(event.target.value)}
-            className="mt-1 h-10 w-full min-w-0 rounded-lg border border-border bg-background px-2 text-xs text-foreground" />
+          <span className="relative mt-1 flex h-10 min-w-0 items-center rounded-lg border border-border bg-background px-2.5 text-xs font-semibold tabular-nums text-foreground focus-within:ring-2 focus-within:ring-emerald-500/50">
+            <span className="whitespace-nowrap">{displayDate(endDate)}</span>
+            <input type="date" aria-label="Data final" value={endDate} min={startDate || undefined}
+              onChange={(event) => setEndDate(event.target.value)}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
+          </span>
         </label>
       </div>}
     </div>
