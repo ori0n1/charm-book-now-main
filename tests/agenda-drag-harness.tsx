@@ -8,7 +8,9 @@ import { useAgendaColor } from "../src/hooks/use-agenda-color";
 const page = window as typeof window & { __drops: Array<{ id: string; staffId: string; minutes: number }>; __opened: number };
 page.__drops = [];
 page.__opened = 0;
-const people = [{ id: "staff-a", name: "Ana" }, { id: "staff-b", name: "Bea" }];
+const params = new URLSearchParams(location.search);
+const people = [{ id: "staff-a", name: "Ana" }, { id: "staff-b", name: "Bea" },
+  ...(params.has("three") ? [{ id: "staff-c", name: "Zara" }] : [])];
 const appointment = {
   id: "appointment-a:line-a", sourceId: "appointment-a", staffId: "staff-a",
   startsAt: "2026-10-30T10:00:00Z", endsAt: "2026-10-30T11:00:00Z",
@@ -22,7 +24,6 @@ const blockedAppointment = {
 };
 document.body.replaceChildren(document.createElement("div"));
 const root = createRoot(document.body.firstElementChild!);
-const params = new URLSearchParams(location.search);
 const drawerMode = params.get("drawer");
 const colorStudio = params.get("color");
 function ColorHarness({ studioId }: { studioId: string }) {
@@ -45,11 +46,12 @@ function DrawerHarness() {
 }
 function TimelineHarness() {
   const [initialProfessionalId, setInitialProfessionalId] = useState<string | null>(
-    params.has("own") ? "staff-b" : null,
+    params.has("ownLast") ? "staff-c" : params.has("own") ? "staff-b" : null,
   );
   useEffect(() => {
-    if (!params.has("lateOwn")) return;
-    const timer = window.setTimeout(() => setInitialProfessionalId("staff-b"), 150);
+    if (!params.has("lateOwn") && !params.has("lateOwnLast")) return;
+    const timer = window.setTimeout(() => setInitialProfessionalId(
+      params.has("lateOwnLast") ? "staff-c" : "staff-b"), 150);
     return () => window.clearTimeout(timer);
   }, []);
   return <ProfessionalTimeline

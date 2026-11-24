@@ -106,7 +106,7 @@ export function ProfessionalTimeline({
         : [{ id: "unassigned", name: "Agenda", avatarUrl: null }],
     [professionals],
   );
-  const desktopProfessionals = useMemo(() => {
+  const prioritizedProfessionals = useMemo(() => {
     const own = displayProfessionals.find((person) => person.id === initialProfessionalId);
     return own
       ? [own, ...displayProfessionals.filter((person) => person.id !== own.id)]
@@ -146,8 +146,8 @@ export function ProfessionalTimeline({
     () =>
       mobile
         ? displayProfessionals.filter((person) => person.id === mobileProfessionalId)
-        : desktopProfessionals,
-    [desktopProfessionals, displayProfessionals, mobile, mobileProfessionalId],
+        : prioritizedProfessionals,
+    [displayProfessionals, mobile, mobileProfessionalId, prioritizedProfessionals],
   );
   const safeVisibleProfessionals =
     unified ? [{ id: "unified", name: "Agenda unificada" }] :
@@ -344,12 +344,12 @@ export function ProfessionalTimeline({
       {!unified && (
       <div
         className={`agenda-professionals relative z-20 flex min-h-[4.25rem] snap-x snap-mandatory scroll-smooth scroll-px-2 gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain border-b border-border/60 bg-card/95 px-2 py-1.5 backdrop-blur-xl touch-pan-x [-webkit-overflow-scrolling:touch] [scrollbar-width:none] md:hidden [&::-webkit-scrollbar]:hidden ${
-          displayProfessionals.length <= 2 ? "justify-center" : "justify-start"
+          prioritizedProfessionals.length <= 2 ? "justify-center" : "justify-start"
         }`}
         aria-label="Profissionais da agenda"
         data-testid="agenda-professionals"
       >
-        {displayProfessionals.map((person) => (
+        {prioritizedProfessionals.map((person) => (
           <button
             key={person.id}
             data-agenda-professional-tab={person.id}
@@ -364,9 +364,9 @@ export function ProfessionalTimeline({
                 ? "border-foreground bg-foreground text-background shadow-sm"
                 : "border-border/70 bg-muted/45 text-muted-foreground"
             } ${
-              displayProfessionals.length === 1
+              prioritizedProfessionals.length === 1
                 ? "w-[min(100%,16rem)]"
-                : displayProfessionals.length === 2
+                : prioritizedProfessionals.length === 2
                   ? "w-[calc(50%_-_0.25rem)] min-w-0"
                   : "w-[11rem]"
             } ${dragPreview?.staffId === person.id ? dragPreview.valid ? "ring-2 ring-sky-500" : "ring-2 ring-rose-500" : ""}`}

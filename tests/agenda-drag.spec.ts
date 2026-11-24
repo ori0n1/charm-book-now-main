@@ -8,10 +8,13 @@ test.beforeEach(async ({ page }) => {
 
 test("mobile opens the associated professional and preserves manual navigation", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${fixture}?own=1`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${fixture}?three=1&ownLast=1`, { waitUntil: "domcontentloaded" });
   await page.addScriptTag({ url: "/tests/agenda-drag-harness.tsx", type: "module" });
-  const own = page.locator('[data-agenda-professional-tab="staff-b"]');
+  const tabs = page.locator('[data-testid="agenda-professionals"] > button');
+  const own = page.locator('[data-agenda-professional-tab="staff-c"]');
   const colleague = page.locator('[data-agenda-professional-tab="staff-a"]');
+  await expect(tabs).toHaveCount(3);
+  await expect(tabs.first()).toHaveAttribute("data-agenda-professional-tab", "staff-c");
   await expect(own).toHaveAttribute("aria-pressed", "true");
   await colleague.click();
   await expect(colleague).toHaveAttribute("aria-pressed", "true");
@@ -20,8 +23,10 @@ test("mobile opens the associated professional and preserves manual navigation",
 
 test("mobile keeps the first professional when the account has no association", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(fixture, { waitUntil: "domcontentloaded" });
+  await page.goto(`${fixture}?three=1`, { waitUntil: "domcontentloaded" });
   await page.addScriptTag({ url: "/tests/agenda-drag-harness.tsx", type: "module" });
+  await expect(page.locator('[data-testid="agenda-professionals"] > button').first())
+    .toHaveAttribute("data-agenda-professional-tab", "staff-a");
   await expect(page.locator('[data-agenda-professional-tab="staff-a"]')).toHaveAttribute("aria-pressed", "true");
 });
 
@@ -38,13 +43,15 @@ test("desktop shows the associated professional first and keeps the other agenda
 test("a late authenticated association selects the own agenda on mobile and desktop", async ({ page }) => {
   for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 844 });
-    await page.goto(`${fixture}?lateOwn=1`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${fixture}?three=1&lateOwnLast=1`, { waitUntil: "domcontentloaded" });
     await page.addScriptTag({ url: "/tests/agenda-drag-harness.tsx", type: "module" });
     if (width < 768) {
-      await expect(page.locator('[data-agenda-professional-tab="staff-b"]')).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator('[data-testid="agenda-professionals"] > button').first())
+        .toHaveAttribute("data-agenda-professional-tab", "staff-c");
+      await expect(page.locator('[data-agenda-professional-tab="staff-c"]')).toHaveAttribute("aria-pressed", "true");
     } else {
       await expect(page.locator('[data-testid="agenda-timeline-grid"] > [data-agenda-staff-column]').first())
-        .toHaveAttribute("data-agenda-staff-column", "staff-b");
+        .toHaveAttribute("data-agenda-staff-column", "staff-c");
     }
   }
 });
