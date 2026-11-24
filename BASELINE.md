@@ -1,4 +1,12 @@
-# Base oficial da produção Bellza — atualizada em 2026-11-23
+# Base oficial da produção Bellza — atualizada em 2026-11-24
+
+## Produção ativa — desempenho visual sincronizado (Etapa 6)
+
+- Cloudflare OAuth confirmou o deployment `0f3059ab-0d77-47d2-8253-d4990448436b`, versão `4fd6911e-675b-46fa-a196-bb656724ec6d` a 100% do tráfego. A versão anterior `de5d7b7d-efe4-4c9a-a25a-118b930657b8` está a 0% para rollback somente com autorização específica. Fonte funcional publicada: `aab090e13a93061dd19808a48ee674c39d42d139`.
+- O mesmo componente e a mesma consulta alimentam “Meu desempenho” e o cartão do profissional na Equipa. Os três indicadores cabem lado a lado no mobile; o gráfico mostra data, ganhos e serviços por dia junto da linha discreta ao tocar ou arrastar. A lista de serviços permanece abaixo. Filtros: Hoje, 7 dias, 15 dias e Personalizado. Nenhuma regra financeira, comissão, pagamento, Stripe, permissão, notificação ou migração foi alterada.
+- Manifesto SHA-256 `c1fc19481c8896be97a6819ae1234e384efbfa3aea76d0cbc1dbc04923711ddc`; configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`; ETag `c1b522f8c4f8f7e0d4faeefa479688b81dc02f845faa9cb24e8b15d340bb62ae`. Cloudflare confirmou 234 módulos e 220 assets idênticos byte a byte, 53 bindings, 24 secrets por nome/tipo, dois crons, dois domínios e runtime preservados. Gate proporcional passou 11 verificações.
+- Smoke após ativação: três rondas com `/` e `/login` 200, `/admin/agenda` 307, `/api/auth/session` 401 e asset da agenda com SHA-256 igual. Sessões sintéticas QA de proprietária e profissional mostraram indicadores iguais nos quatro filtros e a linha do gráfico respondeu ao toque. Para testar a Equipa, apenas o estúdio sintético QA A recebeu `premium_access_until=2026-12-24T12:16:27.447947Z`, com autorização específica; não houve Stripe, cobrança ou alteração de conta real. A etiqueta de convite “Sem acesso” desse profissional QA permanece uma lacuna de fidelidade da conta de teste e requer diagnóstico/ação separada antes de testes de permissão.
+- Capturas reais QA de antes e depois, manifesto e evidência de release estão no diretório de evidência da sessão `C:\Users\silas\.codex\visualizations\2026\11\24\01a20b18-4934-7613-a0e7-8e88372d2fec`.
 
 ## Produção ativa — cartões da agenda (Etapa 4)
 

@@ -95,6 +95,10 @@ npm.cmd run test:e2e:chromium
 
 Leia este arquivo antes de qualquer alteração ou preparação de deploy no projeto Bellza.
 
+## Contas QA fiéis para testes direcionados
+
+As contas QA devem reproduzir os papéis, vínculos, permissões, plano, benefícios e configurações relevantes das contas originais para cada teste, usando apenas identidade e dados sintéticos. Verifique a validade de benefícios temporários antes de testar; documente as lacunas de fidelidade em vez de inferir sucesso. Não execute cobranças, reservas reais, mensagens ou alterações em contas de clientes. Qualquer escrita em dados QA de produção, inclusive concessão de acesso, exige autorização específica do proprietário e deve ser limitada ao estúdio sintético identificado.
+
 ## Regra permanente — deploy seguro e preservação de funcionalidades
 
 Esta regra tem prioridade máxima em todos os próximos desenvolvimentos, correções e deploys Bellza. Preserve integralmente as funcionalidades existentes fora do escopo autorizado. Aplique-a automaticamente, com verificações proporcionais ao risco, sem enfraquecer as regras de segurança anteriores.
