@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import { getProfessionalDailySummaries } from "@/lib/professional-daily-summary.functions";
+import { validPerformanceRange } from "@/lib/professional-history";
 import { formatEUR } from "@/lib/utils";
 
 type Period = "today" | "7d" | "15d" | "custom";
@@ -18,7 +19,7 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
   const [period, setPeriod] = useState<Period>("7d");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const validCustom = period !== "custom" || Boolean(startDate && endDate && startDate <= endDate);
+  const validCustom = period !== "custom" || validPerformanceRange(startDate, endDate);
   const days = period === "today" ? 1 : period === "15d" ? 15 : 7;
   const summaries = useQuery({
     queryKey: ["professional-performance", studioId, staffId, viewerRole, period, period === "custom" ? startDate : "", period === "custom" ? endDate : ""],
@@ -68,7 +69,7 @@ export function ProfessionalPerformance({ studioId, staffId, viewerRole, title =
         </label>
       </div>}
     </div>
-    {!validCustom ? <p className="p-4 text-sm text-muted-foreground">Selecione as duas datas por ordem.</p>
+    {!validCustom ? <p className="p-4 text-sm text-muted-foreground">Selecione datas válidas, por ordem, até 366 dias.</p>
       : summaries.isError ? <p className="p-4 text-sm text-red-600">Não foi possível carregar o desempenho.</p>
       : !summary ? <p className="p-4 text-sm text-muted-foreground">A carregar...</p>
       : <div className="min-w-0 p-3 sm:p-4">

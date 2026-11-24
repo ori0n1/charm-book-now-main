@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { dateKeysBetween, periodDateKeys, summarizeProfessionalHistory } from "../src/lib/professional-history.ts";
+import { dateKeysBetween, periodDateKeys, summarizeProfessionalHistory, validPerformanceRange } from "../src/lib/professional-history.ts";
 
 test("periods include today and respect calendar boundaries", () => {
   for (const days of [1, 7, 15, 30]) {
@@ -17,6 +17,14 @@ test("custom dates include both boundaries across month and leap-day changes", (
     "2028-02-28", "2028-02-29", "2028-03-01",
   ]);
   assert.deepEqual(dateKeysBetween("2026-11-04", "2026-11-04"), ["2026-11-04"]);
+});
+
+test("custom range rejects invalid dates and excessive spans", () => {
+  assert.equal(validPerformanceRange("2028-02-29", "2028-03-01"), true);
+  assert.equal(validPerformanceRange("2026-01-01", "2027-01-01"), true);
+  assert.equal(validPerformanceRange("2026-01-01", "2027-01-02"), false);
+  assert.equal(validPerformanceRange("2026-02-30", "2026-03-01"), false);
+  assert.equal(validPerformanceRange("2026-03-02", "2026-03-01"), false);
 });
 
 test("appointments are unique per professional and service lines remain distinct", () => {

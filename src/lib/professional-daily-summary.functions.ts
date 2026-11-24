@@ -5,7 +5,7 @@ import { computeAppointmentFinancialSplit, toCents } from "@/lib/financial-ledge
 import { assertStudioAccessWithOptions } from "@/lib/server-security";
 import { getAdminClient } from "@/lib/supabase-admin.server";
 import { getStudioDateKey, getZonedDateParts, normalizeStudioTimeZone } from "@/lib/studio-time";
-import { dateKeysBetween, periodDateKeys, summarizeProfessionalHistory, type AttendanceEvent, type ServiceEvent } from "@/lib/professional-history";
+import { dateKeysBetween, periodDateKeys, summarizeProfessionalHistory, validPerformanceRange, type AttendanceEvent, type ServiceEvent } from "@/lib/professional-history";
 
 export type ProfessionalDailySummary = {
   staffId: string;
@@ -46,11 +46,7 @@ export const getProfessionalDailySummaries = createServerFn({ method: "POST" })
     startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   }).refine((value) => Boolean(value.startDate) === Boolean(value.endDate), "complete_date_range_required")
-    .refine((value) => !value.startDate || (
-      !Number.isNaN(Date.parse(`${value.startDate}T00:00:00Z`)) &&
-      !Number.isNaN(Date.parse(`${value.endDate}T00:00:00Z`)) &&
-      value.startDate <= (value.endDate ?? "")
-    ), "invalid_date_range").parse(input))
+    .refine((value) => !value.startDate || validPerformanceRange(value.startDate, value.endDate ?? ""), "invalid_date_range").parse(input))
   .handler(async ({ data, context }): Promise<Record<string, ProfessionalDailySummary>> => {
     const admin = getAdminClient() as any;
     const userId = String((context as any).userId ?? "");

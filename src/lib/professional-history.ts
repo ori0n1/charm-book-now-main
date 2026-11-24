@@ -14,6 +14,15 @@ export function dateKeysBetween(start: string, end: string) {
     new Date(first + index * 86400000).toISOString().slice(0, 10));
 }
 
+export function validPerformanceRange(start: string, end: string) {
+  const validDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
+    new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+  if (!validDate(start) || !validDate(end)) return false;
+  const span = (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000;
+  return span >= 0 && span < 366;
+}
+
 export function summarizeProfessionalHistory(
   staffIds: string[],
   dateKeys: string[],
