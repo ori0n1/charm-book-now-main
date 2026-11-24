@@ -14,10 +14,12 @@ import {
   X,
 } from "lucide-react";
 import { ClientAvatar } from "@/components/client-avatar";
+import { WhatsAppIcon } from "@/components/whatsapp-icon";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatStudioTime, normalizeStudioTimeZone } from "@/lib/studio-time";
 import { useModalScrollLock } from "@/lib/modal-scroll-lock";
 import { isValidInternationalPhone, normalizeInternationalPhone } from "@/components/ui/international-phone-input";
+import { buildManualAppointmentWhatsAppMessage, buildWhatsAppComposeUrl } from "@/lib/appointment-whatsapp-message";
 
 export type DrawerPaymentMethod = "cash" | "card" | "mb_way" | "bank_transfer" | "other";
 type PaymentSummary = { amount: number; label?: string };
@@ -39,6 +41,7 @@ export type TimelineDrawerDetails = {
   clientName: string;
   clientAvatarUrl?: string | null;
   clientPhone?: string | null;
+  studioName?: string;
   serviceName: string;
   professionalName: string;
   jointBooking?: boolean;
@@ -150,7 +153,18 @@ export function TimelineAppointmentDrawer({
   const editAction = actionFor("edit");
   const otherActionIds = ["fit"]
     .filter((id) => currentActions.has(id));
-  const contactAction = initialAction("whatsapp");
+  const normalizedClientPhone = normalizeInternationalPhone(details.clientPhone);
+  const manualWhatsAppUrl = isValidInternationalPhone(normalizedClientPhone)
+    ? buildWhatsAppComposeUrl(normalizedClientPhone, buildManualAppointmentWhatsAppMessage({
+        clientName: details.clientName,
+        studioName: details.studioName ?? "",
+        serviceName: details.serviceName,
+        date: new Date(details.startsAt).toLocaleDateString("pt-PT", {
+          day: "2-digit", month: "long", year: "numeric", timeZone: normalizeStudioTimeZone(timeZone),
+        }),
+        time: formatTime(details.startsAt, timeZone),
+      }))
+    : null;
   const primaryActions = [
     { id: "complete", status: "completed", label: "Compareceu",
       icon: <Check className="size-3.5" />,
@@ -418,25 +432,32 @@ export function TimelineAppointmentDrawer({
                 avatarUrl={details.clientAvatarUrl}
                 className="size-10 shrink-0 text-xs"
               />
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 {!details.serviceAssignments?.length && <p className="break-words text-xs text-muted-foreground">{details.serviceName}</p>}
-                {details.clientPhone && (
-                  <a
-                    href={`tel:${details.clientPhone}`}
-                    className="mt-2 inline-flex max-w-full items-center gap-1.5 break-all text-xs font-bold text-foreground hover:underline"
-                  >
-                    <Phone className="h-3 w-3" />
-                    {details.clientPhone}
-                  </a>
-                )}
-                {contactAction && (
-                  <button type="button"
-                    disabled={!currentActions.has("whatsapp") || Boolean(currentActions.get("whatsapp")?.disabled)}
-                    onClick={() => runAction("whatsapp")}
-                    className="mt-2 block text-left text-xs font-semibold text-primary hover:underline disabled:opacity-45">
-                    {contactAction.label}
-                  </button>
-                )}
+                <div className="mt-2 flex min-w-0 items-center gap-2">
+                  {details.clientPhone ? (
+                    <a href={`tel:${details.clientPhone}`}
+                      className="inline-flex min-w-0 items-center gap-1.5 break-all text-xs font-bold text-foreground hover:underline">
+                      <Phone className="size-3 shrink-0" />{details.clientPhone}
+                    </a>
+                  ) : <span className="text-xs text-muted-foreground">Sem número</span>}
+                  {manualWhatsAppUrl ? (
+                    <a href={manualWhatsAppUrl} target="_blank" rel="noopener noreferrer"
+                      aria-label={`Contactar ${details.clientName} no WhatsApp`}
+                      title="Abrir mensagem no WhatsApp para editar e enviar"
+                      data-testid="manual-appointment-whatsapp"
+                      className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 transition hover:bg-emerald-500/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 dark:text-emerald-300">
+                      <WhatsAppIcon className="size-5" />
+                    </a>
+                  ) : (
+                    <button type="button" disabled aria-label="WhatsApp indisponível: número inválido"
+                      title="WhatsApp indisponível: número inválido"
+                      data-testid="manual-appointment-whatsapp"
+                      className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-border/60 text-muted-foreground/40">
+                      <WhatsAppIcon className="size-5" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

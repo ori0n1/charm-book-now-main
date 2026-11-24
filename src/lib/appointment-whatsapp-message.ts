@@ -50,3 +50,16 @@ export function buildWhatsAppComposeUrl(phone: string, message: string) {
   if (!digits) return null;
   return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
 }
+
+export function buildManualAppointmentWhatsAppMessage(input: {
+  clientName: string;
+  studioName: string;
+  serviceName: string;
+  date: string;
+  time: string;
+}) {
+  const client = input.clientName.trim() || "cliente";
+  const studio = input.studioName.trim() || "o estúdio";
+  const service = input.serviceName.trim() || "o seu serviço";
+  return `Olá ${client}! Somos do ${studio}. Entramos em contacto sobre a sua marcação de ${service}, no dia ${input.date} às ${input.time}. Até breve!`;
+}
