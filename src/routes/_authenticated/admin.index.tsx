@@ -5,6 +5,7 @@ import type { InputHTMLAttributes, ReactNode } from "react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
   ArrowRight,
+  Calendar,
   ChevronDown,
   CreditCard,
   Euro,
@@ -17,9 +18,11 @@ import { toast } from "sonner";
 import { ShareStudioCard } from "@/components/share-studio-card";
 import { UpsellMetricsCard } from "@/components/upsell-metrics-card";
 import { ClientAvatar } from "@/components/client-avatar";
+import { Calendar as BellzaCalendar } from "@/components/ui/calendar";
 import { VisualMoney, VisualPrivacyBoundary, VisualPrivacyHeaderButton, useVisualMoneyHidden } from "@/components/visual-money-privacy";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { InternationalPhoneInput } from "@/components/ui/international-phone-input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
 import { ProfessionalPerformance } from "@/components/professional-performance";
 import { sortAppointmentsChronologically } from "@/lib/appointment-ordering";
@@ -2035,15 +2038,15 @@ function DashboardPeriodControls({
   const maxDate = formatDateInput(today);
 
   return (
-    <div className="w-full max-w-xl space-y-2 lg:w-auto">
-      <div className="grid grid-cols-2 gap-1 rounded-2xl border border-border bg-background/45 p-1 sm:grid-cols-4">
+    <div className="w-full max-w-xl space-y-1.5 lg:w-auto">
+      <div className="grid grid-cols-2 gap-0.5 rounded-xl border border-border bg-background/45 p-0.5 sm:grid-cols-4">
         {DASHBOARD_PERIOD_OPTIONS.map((option) => (
           <button
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
             aria-pressed={value === option.value}
-            className={`min-w-0 rounded-xl px-2.5 py-2 text-xs font-semibold transition ${
+            className={`min-w-0 rounded-[10px] px-2 py-1.5 text-xs font-semibold transition ${
               value === option.value
                 ? "bg-emerald-600 text-white shadow-sm shadow-emerald-950/15"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -2054,34 +2057,66 @@ function DashboardPeriodControls({
         ))}
       </div>
       {value === "custom" && (
-        <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/70 bg-background/35 p-2">
-          <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            De
-            <input
-              type="date"
-              min={minDate}
-              max={customEnd || maxDate}
-              value={customStart}
-              onChange={(event) => onCustomStartChange(event.target.value)}
-              className="mt-1 h-9 w-full min-w-0 rounded-lg border border-border bg-background px-2 text-xs font-medium text-foreground outline-none focus:border-emerald-500"
-            />
-          </label>
-          <label className="min-w-0 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Até
-            <input
-              type="date"
-              min={customStart || minDate}
-              max={maxDate}
-              value={customEnd}
-              onChange={(event) => onCustomEndChange(event.target.value)}
-              className="mt-1 h-9 w-full min-w-0 rounded-lg border border-border bg-background px-2 text-xs font-medium text-foreground outline-none focus:border-emerald-500"
-            />
-          </label>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1 rounded-xl border border-border/70 bg-background/35 px-2 py-1.5">
+          <DashboardDateField label="De" value={customStart} min={minDate} max={customEnd || maxDate} onChange={onCustomStartChange} />
+          <DashboardDateField label="Até" value={customEnd} min={customStart || minDate} max={maxDate} onChange={onCustomEndChange} />
           <p className="col-span-2 text-[10px] leading-snug text-muted-foreground">
             Intervalo disponível: últimos 60 dias.
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+function DashboardDateField({ label, value, min, max, onChange }: {
+  label: string;
+  value: string;
+  min: string;
+  max: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = value ? new Date(`${value}T12:00:00`) : undefined;
+  const first = new Date(`${min}T12:00:00`);
+  const last = new Date(`${max}T12:00:00`);
+
+  return (
+    <div className="min-w-0">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label={`${label}: ${selected ? selected.toLocaleDateString("pt-PT") : "escolher data"}`}
+            className="mt-0.5 flex h-9 w-full min-w-0 items-center justify-between gap-1 rounded-lg border border-border bg-background px-2 text-left text-xs font-semibold text-foreground outline-none transition hover:border-emerald-500/50 focus-visible:ring-2 focus-visible:ring-emerald-500/30 data-[state=open]:border-emerald-500"
+          >
+            <span className="min-w-0 truncate">{selected ? selected.toLocaleDateString("pt-PT", { day: "2-digit", month: "short", year: "numeric" }) : "Escolher data"}</span>
+            <Calendar className="size-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" sideOffset={6} collisionPadding={8} className="w-[min(20rem,calc(100vw-1rem))] rounded-2xl border-border bg-popover p-2 shadow-xl">
+          <BellzaCalendar
+            mode="single"
+            selected={selected}
+            onSelect={(date) => {
+              if (!date) return;
+              onChange(formatDateInput(date));
+              setOpen(false);
+            }}
+            disabled={{ before: first, after: last }}
+            startMonth={first}
+            endMonth={last}
+            defaultMonth={selected ?? last}
+            weekStartsOn={1}
+            className="bellza-premium-calendar mx-auto bg-transparent p-2"
+            classNames={{
+              day_button: "data-[selected-single=true]:bg-emerald-600 data-[selected-single=true]:text-white",
+              today: "rounded-md bg-emerald-50 text-emerald-700",
+            }}
+          />
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
