@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-24
 
+## Produção ativa — filtro de datas do painel
+
+- Cloudflare OAuth confirmou o deployment `67b2213e-01f8-46f0-8393-d035ac911eac`, versão `93d3da35-f38c-4c1f-81d7-a7eab14fe50d` a 100% do tráfego. A versão anterior `cbc15689-334e-4f6f-872e-6eb6b9d7d23d` permanece a 0% para rollback seguro do Worker. Artefacto gerado a partir do commit `ac07a24bc6b1f129062a51137e96b07077429a57`; o commit equivalente na branch oficial é `a277cc4eb1327e1a6bc3fe8e11534173bed024cf`, com o mesmo ficheiro funcional.
+- A única alteração de produto é em `src/routes/_authenticated/admin.index.tsx`: o filtro de períodos ficou mais fino, os campos De e Até ficaram separados e abrem o calendário Bellza em vez do seletor nativo. O limite de 60 dias foi preservado. Não houve migração, alteração de dados, permissões, pagamentos ou notificações.
+- Manifesto SHA-256 `60b03e8473a38d14e2e2f3218acdec7959c3ec4a76e0154df81affd531f3c0a3`; configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`; ETag do Worker `83c907df309a650dd8330f85df84d55abca1d45070867936969102dcdfe0bbb9`. Os 235 módulos remotos e 221 assets públicos coincidiram byte a byte com o artefacto. Foram preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime.
+- Typecheck, lint, 17 testes de contrato do build e QA visual sintético passaram. Em 390 e 320 px, os campos tiveram 8,25 px de separação, o calendário abriu dentro do ecrã e não havia inputs nativos de data. O gate proporcional passou 11 itens. Smoke no tráfego normal após publicação: `/` e `/login` 200, `/admin` 307, `/api/auth/session` 401, com os 221 assets públicos idênticos ao build. Nenhuma transação, mensagem ou escrita em dados reais foi executada.
+
 ## Produção ativa — cartão do titular primeiro no telemóvel
 
 - Cloudflare OAuth confirmou o deployment `fddf789d-0689-4508-8d76-629fe932528b`, versão `cbc15689-334e-4f6f-872e-6eb6b9d7d23d` a 100% do tráfego. A versão anterior `fcb6194c-81fa-49f7-9f18-5f885f418258` permanece a 0% para rollback seguro do Worker. Fonte funcional publicada: `a8f82ad09df2c3017c1d995baf1b1c1de96003df`.
