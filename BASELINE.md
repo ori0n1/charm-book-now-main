@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-26
 
+## Produção ativa — Comunicação compacta
+
+- Cloudflare OAuth confirmou o deployment `c80fce74-c2f2-40d4-a82f-731c7adcdcf3`, versão `d6e07110-b38a-4ffd-980e-558ae1e567a1` a 100%. O artefacto vem do commit `a9d09d4babc47f23d038895d6ebf31d7ef886a0d`; a versão anterior `959a93f7-bda1-4edc-8247-2d88e732da76` permanece a 0% e não houve rollback.
+- O único diff funcional altera dois ficheiros de interface: os nove interruptores de preferências ficaram horizontais e compactos, o cabeçalho da página ficou mais curto e o bloco “Notificações inteligentes / Comunidade privada do estúdio” ficou temporariamente oculto. A consulta de campanhas ocultas está suspensa; a consulta e os controlos de WhatsApp permanecem ativos. Não houve mudança de entrega de notificações, RLS, migração, permissões, cobrança ou dados.
+- Artefacto: manifesto SHA-256 `92cad9e19440c5120fa356e45a1ac28978442ed8db4b0cc39068994e59524867`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `83a9bfc485e703098b0b2a31d04b52707d70197ead2cddc16f71f3b9a94c93c4`. Coincidiram 238 módulos remotos e 222 assets de cliente; `robots.txt` é gerido pela Cloudflare e era idêntico nas versões remotas. Preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime.
+- Typecheck, build com 17 contratos, três contratos de preferências, lint dirigido sem erros e Playwright local passaram. A 320 px, o interruptor mediu 37 × 21 px e o cartão 423 px, sem rolagem horizontal; autosave, persistência e reversão em falha passaram. O gate devolveu `GATE_APTO`. Após a ativação, GET `/` e `/login` responderam 200, `/admin/whatsapp` 307 e `/api/auth/session` 401. O smoke não efetuou escritas, mensagens ou cobranças.
+
 ## Produção ativa — preferências de notificações
 
 - Cloudflare OAuth confirmou o deployment `8e6484bd-0db3-4e19-9d3f-b7b56f491e16`, versão `959a93f7-bda1-4edc-8247-2d88e732da76` a 100% do tráfego. O artefacto foi gerado a partir de `f14010b1ee20af4263b2d33a499b3732fc45c11c`; o merge oficial equivalente é `ee65ceb`. A versão anterior `93d3da35-f38c-4c1f-81d7-a7eab14fe50d` permanece a 0%, sem autorização para rollback automático.
