@@ -4,7 +4,7 @@ export const notificationCategories = [
   { id: "cancellations", label: "Cancelamentos" },
   { id: "pending", label: "Pendências a resolver" },
   { id: "payments", label: "Pagamentos" },
-  { id: "reminders", label: "Lembretes" },
+  { id: "reminders", label: "Próximos atendimentos" },
   { id: "clients", label: "Novos clientes" },
   { id: "reviews", label: "Avaliações" },
   { id: "other", label: "Outras notificações" },

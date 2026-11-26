@@ -59,7 +59,7 @@ export function StudioNotificationPreferences({ studioId }: { studioId: string }
         <p className="px-1 text-xs text-destructive">Não foi possível carregar as preferências. Atualize a página.</p>
       ) : (
         <div className="grid gap-x-5 sm:grid-cols-2 xl:grid-cols-3">
-          {notificationCategories.map((category) => (
+          {notificationCategories.filter((category) => category.id !== "other").map((category) => (
             <div key={category.id} className="flex min-h-10 items-center justify-between gap-3 border-t border-border/60 px-1 py-1.5">
               <label htmlFor={`notification-${category.id}`} className="min-w-0 text-sm font-medium">
                 {category.label}
