@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-26
 
+## Produção ativa — plano e utilização do WhatsApp
+
+- Cloudflare OAuth confirmou o deployment `3109941a-f923-4881-84cf-2c0ea5f7b1a8`, versão `ea72aaf7-c7fa-4334-af59-fd32c7a95e53` a 100%, do commit `0f2d9908a0fde25f634e348729a0d8ed3fea194e`. A versão anterior `d6e07110-b38a-4ffd-980e-558ae1e567a1` permanece a 0%; não houve rollback.
+- O único ficheiro funcional alterado é `src/routes/_authenticated/admin.whatsapp.tsx`: o botão indica “Ativado” ou “Desativado” e o cartão mostra o plano do estúdio, mensagens enviadas e restantes. No teste gratuito, o saldo vem do limite efetivo; no adicional ativo sem franquia aplicada, mostra “Sem limite definido”. O cartão foi validado em mobile e desktop sem rolagem horizontal. Não houve mudança de envio, cobrança, banco ou permissões.
+- Manifesto SHA-256 `3426e19c910e1a7b276847dcc6cc6a1a46d0e01b3b8bf51d0f057ec66c4d17ac`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `2e0a001beba0bccccc980bbbb20ec69c611a1449e9f3de0f6c42e534be1a754f`. Coincidiram 238 módulos e 222 assets remotos; o `robots.txt` gerido pela Cloudflare era idêntico nas duas versões. Preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime.
+- Typecheck, build com 17 contratos, lint dirigido e Playwright sintético para teste e plano ativo passaram; o gate devolveu `GATE_APTO`. Após ativação, GET `/` respondeu 200 e `/admin/whatsapp` 307 sem sessão. Sem escritas, mensagens ou cobranças nos testes. Não houve QA autenticado no Worker remoto.
+
 ## Produção ativa — Comunicação compacta
 
 - Cloudflare OAuth confirmou o deployment `c80fce74-c2f2-40d4-a82f-731c7adcdcf3`, versão `d6e07110-b38a-4ffd-980e-558ae1e567a1` a 100%. O artefacto vem do commit `a9d09d4babc47f23d038895d6ebf31d7ef886a0d`; a versão anterior `959a93f7-bda1-4edc-8247-2d88e732da76` permanece a 0% e não houve rollback.
