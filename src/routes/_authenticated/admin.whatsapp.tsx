@@ -559,7 +559,7 @@ function WhatsAppPage() {
           </div>
 
           <label className="flex h-10 min-w-0 items-center justify-between gap-3 rounded-xl border border-border/80 bg-background/70 px-3 text-xs font-medium sm:h-11 sm:min-w-44 sm:rounded-2xl sm:px-3.5 sm:text-sm">
-            <span>Ativar envio</span>
+            <span>{currentSettings.autoSendEnabled ? "Ativado" : "Desativado"}</span>
             <input
               type="checkbox"
               checked={currentSettings.autoSendEnabled}
@@ -571,18 +571,18 @@ function WhatsAppPage() {
         </div>
 
         {commercial.data && (
+          commercial.data.daysRemaining != null ||
+          commercial.data.limit != null ||
+          (commercial.data.alerts.length > 0 && commercial.data.available) ||
+          !commercial.data.available
+        ) && (
           <div className="mt-3 grid gap-2 border-t border-border/70 pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span className={`rounded-full px-2.5 py-1 font-semibold ${commercialTone(commercial.data)}`}>
-                  {commercialLabel(commercial.data)}
-                </span>
-                {commercial.data.daysRemaining != null && (
-                  <span className="text-muted-foreground">
-                    {commercial.data.daysRemaining} dia{commercial.data.daysRemaining === 1 ? "" : "s"} restante{commercial.data.daysRemaining === 1 ? "" : "s"}
-                  </span>
-                )}
-              </div>
+              {commercial.data.daysRemaining != null && (
+                <p className="text-xs text-muted-foreground">
+                  {commercial.data.daysRemaining} dia{commercial.data.daysRemaining === 1 ? "" : "s"} restante{commercial.data.daysRemaining === 1 ? "" : "s"}
+                </p>
+              )}
               {commercial.data.limit != null && (
                 <div className="mt-2 max-w-xl">
                   <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
@@ -621,20 +621,6 @@ function WhatsAppPage() {
       </section>
     </div>
   );
-}
-
-function commercialLabel(status: WhatsAppCommercialStatus) {
-  if (status.status === "trial") return status.available ? "Teste WhatsApp ativo" : "Teste WhatsApp concluído";
-  if (status.status === "active") return "WhatsApp adicional ativo";
-  if (status.status === "legacy") return "WhatsApp ativo";
-  if (status.status === "paused") return "WhatsApp pausado";
-  return "WhatsApp não ativado";
-}
-
-function commercialTone(status: WhatsAppCommercialStatus) {
-  return status.available
-    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-    : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
 }
 
 function emptySettings(studioId: string): WhatsAppSettings {
