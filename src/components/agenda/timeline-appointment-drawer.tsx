@@ -79,6 +79,7 @@ export function TimelineAppointmentDrawer({
   details,
   actions,
   onClose,
+  onManualWhatsApp,
   onChangeAttendance,
   attendanceUnavailableReason,
   onConfirmCancel,
@@ -100,6 +101,7 @@ export function TimelineAppointmentDrawer({
   details: TimelineDrawerDetails;
   actions: TimelineDrawerAction[];
   onClose: () => void;
+  onManualWhatsApp?: () => void;
   onChangeAttendance?: (status: "confirmed" | "completed" | "no_show") => Promise<boolean>;
   attendanceUnavailableReason?: string;
   onConfirmCancel?: (reason: string) => Promise<boolean>;
@@ -434,7 +436,16 @@ export function TimelineAppointmentDrawer({
               <div className="min-w-0 flex-1">
                 {!details.serviceAssignments?.length && <p className="break-words text-xs text-muted-foreground">{details.serviceName}</p>}
                 <div className="mt-1.5 min-w-0">
-                  {manualWhatsAppUrl ? (
+                  {manualWhatsAppUrl && onManualWhatsApp ? (
+                    <button type="button" onClick={onManualWhatsApp}
+                      aria-label={`Editar mensagem para ${details.clientName} no WhatsApp`}
+                      title="Editar mensagem antes de abrir o WhatsApp"
+                      data-testid="manual-appointment-whatsapp"
+                      className="inline-flex min-h-9 max-w-full items-center gap-1.5 break-all text-xs font-bold text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">
+                      <span>{details.clientPhone}</span>
+                      <WhatsAppIcon className="h-3.5 w-3.5 shrink-0 text-emerald-700 dark:text-emerald-300" />
+                    </button>
+                  ) : manualWhatsAppUrl ? (
                     <a href={manualWhatsAppUrl} target="_blank" rel="noopener noreferrer"
                       aria-label={`Contactar ${details.clientName} no WhatsApp`}
                       title="Abrir mensagem no WhatsApp para editar e enviar"

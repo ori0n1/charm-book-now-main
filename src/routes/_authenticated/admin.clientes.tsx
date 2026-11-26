@@ -46,7 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ClientAvatar } from "@/components/client-avatar";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ManualWhatsAppDialog } from "@/components/manual-whatsapp-dialog";
 import { AgendaExportButton } from "@/components/agenda/agenda-export-button";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { getClientProfileEditPermission, inspectClientProfile, removeClientProfiles, unifyEmptyClientProfiles, updateClientProfile } from "@/lib/client-profile.functions";
@@ -59,6 +59,7 @@ import {
 import { resolveScopedNotificationEntity } from "@/lib/notification-deep-link";
 import { MANUAL_MESSAGE_STATUS_HOURS, manualMessageCounts, matchesManualMessageFilter, recentManualMessageClientIds, type ManualMessageRecord, type MessageFilter } from "@/lib/client-manual-message-filter";
 import { buildClientWhatsAppMessage, isInactiveClient, isNearAppointment } from "@/lib/client-manual-whatsapp";
+import { getStudioManualAppointmentWhatsAppStatus, recordManualAppointmentWhatsAppOpen } from "@/lib/appointment-manual-whatsapp.functions";
 
 type ClientsRouteSearch = {
   client?: string;
@@ -151,7 +152,7 @@ type ClientSummary = {
   attendanceRate: number | null;
   badges: ClientBadge[];
   returnReminder: ReturnReminderInsight | null;
-  nextAppointment: { startsAt: string; service: string } | null;
+  nextAppointment: { id: string; startsAt: string; service: string } | null;
 };
 
 type ClientBookingStatus = "active" | "suspended" | "blocked";
@@ -214,14 +215,15 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const [bulkOutcomes, setBulkOutcomes] = useState<{ id: string; name: string; outcome: string; dependencies: Record<string, number> }[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
   const inspectProfile = useServerFn(inspectClientProfile);
+  const getManualAppointmentStatus = useServerFn(getStudioManualAppointmentWhatsAppStatus);
+  const recordAppointmentOpen = useServerFn(recordManualAppointmentWhatsAppOpen);
   const removeProfiles = useServerFn(removeClientProfiles);
   const unifyProfiles = useServerFn(unifyEmptyClientProfiles);
   const getEditPermission = useServerFn(getClientProfileEditPermission);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [messageSaveError, setMessageSaveError] = useState(false);
   const [messageClock, setMessageClock] = useState(() => Date.now());
-  const [whatsappDraft, setWhatsAppDraft] = useState<{ studioId: string; clientId: string; name: string; phone: string; text: string } | null>(null);
-  const [studioWhatsAppConfirmed, setStudioWhatsAppConfirmed] = useState(false);
+  const [whatsappDraft, setWhatsAppDraft] = useState<{ studioId: string; clientId: string; appointmentId?: string; name: string; phone: string; text: string } | null>(null);
   const savingMessageIdsRef = useRef(new Set<string>());
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const handledNotificationTargetRef = useRef<string | null>(null);
@@ -294,6 +296,23 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   });
 
   const clients = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
+  const nearAppointmentIds = useMemo(() => clients.filter(isNearAppointment)
+    .map((client) => client.nextAppointment?.id)
+    .filter((id): id is string => Boolean(id)), [clients]);
+  const manualAppointmentQuery = useQuery({
+    queryKey: ["client-manual-appointment-whatsapp", studio?.id, nearAppointmentIds],
+    enabled: !!studio?.id && (studio.role === "studio_owner" || studio.role === "saas_owner"),
+    queryFn: async () => {
+      const chunks = nearAppointmentIds.length
+        ? Array.from({ length: Math.ceil(nearAppointmentIds.length / 250) }, (_, index) => nearAppointmentIds.slice(index * 250, (index + 1) * 250))
+        : [[]];
+      const results = await Promise.all(chunks.map((appointmentIds) => getManualAppointmentStatus({ data: { studioId: studio!.id, appointmentIds } })));
+      return { manualMode: results[0].manualMode, openedAppointmentIds: results.flatMap((result) => result.openedAppointmentIds) };
+    },
+  });
+  const manualReminderIds = useMemo(() => new Set(manualAppointmentQuery.data?.manualMode
+    ? nearAppointmentIds.filter((id) => !manualAppointmentQuery.data!.openedAppointmentIds.includes(id))
+    : []), [manualAppointmentQuery.data, nearAppointmentIds]);
   const ownerPermission = useQuery({
     queryKey: ["clients-removal-permission", studio?.id],
     enabled: !!studio?.id,
@@ -384,11 +403,22 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
     if (!client || client.studioId !== studio.id) return;
     const url = new URL(anchor.href);
     if (url.hostname !== "wa.me") return;
-    setWhatsAppDraft({ studioId: studio.id, clientId, name: client.name, phone: client.phone, text: url.searchParams.get("text") ?? "" });
-    setStudioWhatsAppConfirmed(false);
+    openWhatsAppDraft(client, url.searchParams.get("text") ?? "");
   }
 
-  function recordWhatsAppOpen(studioId: string, clientId: string) {
+  function openWhatsAppDraft(client: ClientSummary, text?: string) {
+    if (!studio?.id || client.studioId !== studio.id) return;
+    const defaultText = new URL(whatsAppUrl(client, studio.name ?? "", studio.timezone ?? "Europe/Lisbon"))
+      .searchParams.get("text") ?? "";
+    setWhatsAppDraft({
+      studioId: studio.id, clientId: client.id, name: client.name, phone: client.phone,
+      appointmentId: client.nextAppointment && manualReminderIds.has(client.nextAppointment.id)
+        ? client.nextAppointment.id : undefined,
+      text: text ?? defaultText,
+    });
+  }
+
+  function recordWhatsAppOpen(studioId: string, clientId: string, appointmentId?: string) {
     if (savingMessageIdsRef.current.has(clientId)) return;
     savingMessageIdsRef.current.add(clientId);
     setMessageSaveError(false);
@@ -400,20 +430,34 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       );
       setMessageClock(Date.now());
     }
-    void recordWhatsAppClick(studioId, clientId, openedAt);
+    if (appointmentId) {
+      queryClient.setQueryData(
+        ["client-manual-appointment-whatsapp", studioId, nearAppointmentIds],
+        (previous: { manualMode: boolean; openedAppointmentIds: string[] } | undefined) => previous
+          ? { ...previous, openedAppointmentIds: [...new Set([...previous.openedAppointmentIds, appointmentId])] }
+          : previous,
+      );
+    }
+    void recordWhatsAppClick(studioId, clientId, openedAt, appointmentId);
   }
 
-  async function recordWhatsAppClick(studioId: string, clientId: string, openedAt: string) {
+  async function recordWhatsAppClick(studioId: string, clientId: string, openedAt: string, appointmentId?: string) {
     // Opening WhatsApp is the manual "sent" confirmation; delivery remains unverified.
     try {
-      const { error } = await (supabase as any).rpc("record_client_manual_whatsapp_open", {
-        p_studio_id: studioId,
-        p_client_id: clientId,
-      });
-      if (error) throw error;
+      if (appointmentId) {
+        await recordAppointmentOpen({ data: { studioId, appointmentId } });
+        void manualAppointmentQuery.refetch();
+      } else {
+        const { error } = await (supabase as any).rpc("record_client_manual_whatsapp_open", {
+          p_studio_id: studioId,
+          p_client_id: clientId,
+        });
+        if (error) throw error;
+      }
       void manualMessagesQuery.refetch();
       setMessageClock(Date.now());
     } catch {
+      if (appointmentId) void manualAppointmentQuery.refetch();
       queryClient.setQueryData<ManualMessageRecord[]>(
         ["client-manual-whatsapp-confirmations", studioId],
         (rows = []) => rows.filter((row) => row.client_id !== clientId || row.confirmed_at !== openedAt),
@@ -477,27 +521,13 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
 
   return (
     <div className="space-y-3 md:space-y-4" onClickCapture={handleWhatsAppClick}>
-      <Dialog open={!!whatsappDraft && whatsappDraft.studioId === studio.id} onOpenChange={(open) => { if (!open) setWhatsAppDraft(null); }}>
-        <DialogContent className="max-w-md rounded-3xl">
-          <DialogHeader>
-            <DialogTitle className="pr-8 text-left break-words">Mensagem para {whatsappDraft?.name}</DialogTitle>
-            <DialogDescription>Edite o texto antes de abrir a conversa. O envio é manual.</DialogDescription>
-          </DialogHeader>
-          <label className="text-sm font-medium">Mensagem
-            <textarea value={whatsappDraft?.text ?? ""} onChange={(event) => setWhatsAppDraft((draft) => draft ? { ...draft, text: event.target.value } : null)} rows={6} className="mt-2 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-ring/20" />
-          </label>
-          <label className="flex items-start gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" checked={studioWhatsAppConfirmed} onChange={(event) => setStudioWhatsAppConfirmed(event.target.checked)} className="mt-0.5" />
-            Confirmo que a conta de WhatsApp aberta neste aparelho é a do estúdio.
-          </label>
-          {whatsappDraft && studioWhatsAppConfirmed && whatsappDraft.text.trim() && phoneForWhatsApp(whatsappDraft.phone) ? (
-            <a href={`https://wa.me/${phoneForWhatsApp(whatsappDraft.phone)}?text=${encodeURIComponent(whatsappDraft.text)}`} target="_blank" rel="noreferrer" onClick={() => { recordWhatsAppOpen(whatsappDraft.studioId, whatsappDraft.clientId); setWhatsAppDraft(null); }} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-center text-sm font-semibold text-white">Abrir no WhatsApp do estúdio</a>
-          ) : (
-            <button type="button" disabled className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white opacity-40">Abrir no WhatsApp do estúdio</button>
-          )}
-          <p className="text-[11px] text-muted-foreground">Ao abrir o WhatsApp, este card fica marcado como enviado. Confirme o envio no aplicativo.</p>
-        </DialogContent>
-      </Dialog>
+      <ManualWhatsAppDialog
+        key={whatsappDraft ? `${whatsappDraft.clientId}:${whatsappDraft.appointmentId ?? "client"}` : "closed"}
+        draft={whatsappDraft?.studioId === studio.id ? whatsappDraft : null}
+        onClose={() => setWhatsAppDraft(null)}
+        onOpen={() => { if (whatsappDraft) recordWhatsAppOpen(whatsappDraft.studioId, whatsappDraft.clientId, whatsappDraft.appointmentId); }}
+        statusTarget={whatsappDraft?.appointmentId ? "marcação" : "card"}
+      />
       <header className={selectedClient ? "hidden" : "border-b border-border/70 pb-3 md:pb-4"}>
         <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="min-w-0">
@@ -627,8 +657,10 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
           <ClientDesktopTable
             clients={filteredClients}
             sentClientIds={sentClientIds}
+            manualReminderIds={manualReminderIds}
             messageStatusReady={manualMessagesQuery.isSuccess}
             onDetails={(clientId) => setSelectedClientId(clientId)}
+            onManualReminder={openWhatsAppDraft}
           />
         )}
       </section>
@@ -649,7 +681,9 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
               <ClientCompactCard
                 client={client}
                 messageSent={manualMessagesQuery.isSuccess ? sentClientIds.has(client.id) : null}
+                manualReminder={Boolean(client.nextAppointment && manualReminderIds.has(client.nextAppointment.id))}
                 onDetails={() => setSelectedClientId(client.id)}
+                onManualReminder={() => openWhatsAppDraft(client)}
               />
             )}
           />
@@ -790,7 +824,7 @@ function buildClientSummaries(
       existing.hasFutureBooking = true;
       if (appointment.status === "confirmed" &&
         (!existing.nextAppointment || Date.parse(appointment.starts_at) < Date.parse(existing.nextAppointment.startsAt))) {
-        existing.nextAppointment = { startsAt: appointment.starts_at, service: serviceNames.join(", ") || serviceName };
+        existing.nextAppointment = { id: appointment.id, startsAt: appointment.starts_at, service: serviceNames.join(", ") || serviceName };
       }
     }
     if (appointmentBucket === "pending") existing.pendingAppointments += 1;
@@ -1006,13 +1040,17 @@ function describeClientDependencies(dependencies: Record<string, number>) {
 function ClientDesktopTable({
   clients,
   sentClientIds,
+  manualReminderIds,
   messageStatusReady,
   onDetails,
+  onManualReminder,
 }: {
   clients: ClientSummary[];
   sentClientIds: Set<string>;
+  manualReminderIds: Set<string>;
   messageStatusReady: boolean;
   onDetails: (clientId: string) => void;
+  onManualReminder: (client: ClientSummary) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
@@ -1031,19 +1069,22 @@ function ClientDesktopTable({
         getKey={(client) => client.id}
         moreLabel={(hidden) => `Mostrar mais ${hidden} cliente${hidden !== 1 ? "s" : ""}`}
         renderItem={(client) => (
+          // The visible reminder makes the row's primary action the manual composer.
           <div
             role="button"
             tabIndex={0}
-            onClick={() => onDetails(client.id)}
+            onClick={() => client.nextAppointment && manualReminderIds.has(client.nextAppointment.id)
+              ? onManualReminder(client) : onDetails(client.id)}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                onDetails(client.id);
+                if (client.nextAppointment && manualReminderIds.has(client.nextAppointment.id)) onManualReminder(client);
+                else onDetails(client.id);
               }
             }}
             className={`grid w-full grid-cols-[minmax(13rem,1.35fr)_minmax(10rem,1fr)_8rem_8rem_7rem_3.5rem] items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 ${isNearAppointment(client) ? "bg-sky-50/40 dark:bg-sky-950/15" : isInactiveClient(client) ? "bg-amber-50/30 dark:bg-amber-950/10" : ""}`}
           >
-            <ClientIdentity client={client} compact messageSent={messageStatusReady ? sentClientIds.has(client.id) : null} />
+            <ClientIdentity client={client} compact messageSent={messageStatusReady ? sentClientIds.has(client.id) : null} manualReminder={Boolean(client.nextAppointment && manualReminderIds.has(client.nextAppointment.id))} />
             <span className="min-w-0 whitespace-normal text-muted-foreground">{client.lastService}</span>
             <MoneyText value={client.totalPaid} className="text-right text-sm" />
             <span className="text-right text-sm text-muted-foreground">
@@ -1063,19 +1104,23 @@ function ClientDesktopTable({
 function ClientCompactCard({
   client,
   messageSent,
+  manualReminder,
   onDetails,
+  onManualReminder,
 }: {
   client: ClientSummary;
   messageSent: boolean | null;
+  manualReminder: boolean;
   onDetails: () => void;
+  onManualReminder: () => void;
 }) {
   const nearAppointment = isNearAppointment(client);
   const inactive = isInactiveClient(client);
   return (
     <article className={`rounded-2xl border bg-card px-3 py-2.5 shadow-sm transition active:scale-[0.995] ${nearAppointment ? "border-sky-300/70 dark:border-sky-700/70" : inactive ? "border-amber-300/60 dark:border-amber-700/60" : "border-border/80"}`}>
       <div className="flex items-center gap-3">
-        <button type="button" onClick={onDetails} className="min-w-0 flex-1 text-left">
-          <ClientIdentity client={client} compact messageSent={messageSent} />
+        <button type="button" onClick={manualReminder ? onManualReminder : onDetails} className="min-w-0 flex-1 text-left">
+          <ClientIdentity client={client} compact messageSent={messageSent} manualReminder={manualReminder} />
         </button>
         <button
           type="button"
@@ -1092,7 +1137,7 @@ function ClientCompactCard({
       </div>
       <button
         type="button"
-        onClick={onDetails}
+        onClick={manualReminder ? onManualReminder : onDetails}
         className="mt-2 grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl bg-muted/35 px-3 py-2 text-left text-xs"
       >
         <span className="min-w-0 whitespace-normal text-muted-foreground">{client.lastService}</span>
@@ -1284,10 +1329,12 @@ function ClientIdentity({
   client,
   compact = false,
   messageSent,
+  manualReminder = false,
 }: {
   client: ClientSummary;
   compact?: boolean;
   messageSent?: boolean | null;
+  manualReminder?: boolean;
 }) {
   const display = getClientDisplayInfo(client);
   const nearAppointment = isNearAppointment(client);
@@ -1310,6 +1357,7 @@ function ClientIdentity({
           <div className={`mt-0.5 flex min-w-0 items-center gap-1.5 ${messageSent !== undefined ? "flex-wrap" : ""}`}>
             <ClientPrimaryStatus client={client} compact={compact} />
             {nearAppointment && <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-300/70 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-sky-800 dark:border-sky-700 dark:bg-sky-950 dark:text-sky-200"><Clock3 className="size-3" aria-hidden="true" /> Em 2 h</span>}
+            {manualReminder && <span title="Abrir lembrete manual no WhatsApp" aria-label="Lembrete de WhatsApp manual pendente" className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/[0.07] px-1.5 py-0.5 text-[10px] font-medium leading-none text-emerald-800 dark:text-emerald-300"><MessageCircle className="size-3" aria-hidden="true" /> WhatsApp</span>}
             {messageSent !== undefined && <ClientMessageStatus sent={messageSent} />}
             {!compact && (
               <span className="min-w-0 truncate text-xs text-muted-foreground">

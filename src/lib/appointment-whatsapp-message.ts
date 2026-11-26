@@ -57,9 +57,14 @@ export function buildManualAppointmentWhatsAppMessage(input: {
   serviceName: string;
   date: string;
   time: string;
+  purpose?: "confirmation" | "reminder";
 }) {
   const client = input.clientName.trim() || "cliente";
   const studio = input.studioName.trim() || "o estúdio";
   const service = input.serviceName.trim() || "o seu serviço";
+  if (input.purpose === "reminder")
+    return `Olá ${client}! Lembramos que o seu atendimento de ${service} no ${studio} está marcado para hoje às ${input.time}. Até breve!`;
+  if (input.purpose === "confirmation")
+    return `Olá ${client}! Somos do ${studio}. Confirmamos a sua marcação de ${service}, no dia ${input.date} às ${input.time}. Até breve!`;
   return `Olá ${client}! Somos do ${studio}. Entramos em contacto sobre a sua marcação de ${service}, no dia ${input.date} às ${input.time}. Até breve!`;
 }

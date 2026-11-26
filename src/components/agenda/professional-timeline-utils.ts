@@ -113,6 +113,7 @@ export type ProfessionalTimelineAppointment = {
   jointBooking?: boolean;
   relatedServiceSummary?: string;
   attendancePending?: boolean;
+  manualWhatsAppPending?: boolean;
   manualFit?: boolean;
 };
 

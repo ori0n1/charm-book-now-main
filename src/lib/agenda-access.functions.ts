@@ -218,7 +218,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
     const userId = String((context as any).userId ?? "");
     await assertStudioAccess(admin, userId, data.studioId);
 
-    await resolveStudioRole(admin, userId, data.studioId);
+    const access = await resolveStudioRole(admin, userId, data.studioId);
 
     const { data: studio, error: studioError } = await admin
       .from("studios")
@@ -254,7 +254,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
 
     const sensitiveAppointmentIds = rawAppointments.map((row) => String(row.id));
 
-    const [payments, scheduleEvents, cashPayments, refunds, messageLogs] = await Promise.all([
+    const [payments, scheduleEvents, cashPayments, refunds, messageLogs, manualWhatsAppOpens] = await Promise.all([
       loadAppointmentRows(
         () => admin
           .from("payment_intents")
@@ -296,6 +296,15 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
           .order("created_at", { ascending: false }),
         sensitiveAppointmentIds,
       ),
+      access.role === "studio_owner" || access.role === "saas_owner"
+        ? loadAppointmentRows(
+            () => admin.from("appointment_manual_whatsapp_opens")
+              .select("appointment_id,opened_at")
+              .eq("studio_id", data.studioId)
+              .order("opened_at", { ascending: false }),
+            sensitiveAppointmentIds,
+          )
+        : Promise.resolve([]),
     ]);
 
     const [refundAudits, disputeAudits] = await Promise.all([
@@ -362,6 +371,8 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
         whatsappAvailable: Boolean(
           studio.whatsapp_auto_send_enabled && whatsappEntitlementResult.data === true,
         ),
+        whatsappManualMode: studio.whatsapp_auto_send_enabled === false &&
+          (access.role === "studio_owner" || access.role === "saas_owner"),
       },
       payments: payments.map((row: any) => ({
         ...row,
@@ -378,6 +389,7 @@ export const getProtectedAgendaData = createServerFn({ method: "GET" })
         amount_cents: refundAmountById.get(String(row.id)) ?? null,
       })),
       messageLogs,
+      manualWhatsAppOpens,
       scheduleEvents,
     };
   });

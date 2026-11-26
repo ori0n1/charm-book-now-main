@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/select";
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import { WhatsAppIcon } from "@/components/whatsapp-icon";
+import { ManualWhatsAppDialog } from "@/components/manual-whatsapp-dialog";
 import {
   InternationalPhoneInput,
   isValidInternationalPhone,
@@ -89,9 +90,11 @@ import {
 import { dispatchRecentStudioAppointmentPushNotification } from "@/lib/notification-dispatcher.functions";
 import {
   buildPastAppointmentWhatsAppMessage,
+  buildManualAppointmentWhatsAppMessage,
   buildWhatsAppComposeUrl,
   isPastAppointment,
 } from "@/lib/appointment-whatsapp-message";
+import { recordManualAppointmentWhatsAppOpen } from "@/lib/appointment-manual-whatsapp.functions";
 import {
   buildAgendaDayGroups,
   findNextOperationalAppointmentId,
@@ -326,6 +329,7 @@ function AgendaPage() {
   const { view: agendaView } = useAgendaView(studio?.id);
   const { color: agendaColor } = useAgendaColor(studio?.id);
   const resendWhatsApp = useServerFn(sendAppointmentConfirmationForAppointment);
+  const recordManualWhatsApp = useServerFn(recordManualAppointmentWhatsAppOpen);
   const loadProtectedAgenda = useServerFn(getProtectedAgendaData);
   const loadDisplayPhones = useServerFn(getProtectedAgendaDisplayPhones);
   const resolveAttendance = useServerFn(resolveProtectedAppointmentAttendance);
@@ -344,6 +348,9 @@ function AgendaPage() {
   const [refundRows, setRefundRows] = useState<RefundRow[]>([]);
   const [messageLogs, setMessageLogs] = useState<MessageLog[]>([]);
   const [whatsappAvailable, setWhatsappAvailable] = useState(false);
+  const [whatsappManualMode, setWhatsappManualMode] = useState(false);
+  const [manualWhatsAppOpens, setManualWhatsAppOpens] = useState<Array<{ appointment_id: string; opened_at: string }>>([]);
+  const [manualWhatsAppDraft, setManualWhatsAppDraft] = useState<{ studioId: string; appointmentId: string; name: string; phone: string; text: string } | null>(null);
   const [scheduleEvents, setScheduleEvents] = useState<ScheduleEventRow[]>([]);
   const [agendaIdentityStaffId, setAgendaIdentityStaffId] = useState<string | null>(null);
   useEffect(() => {
@@ -637,6 +644,8 @@ function AgendaPage() {
       setRefundRows((payload.refunds ?? []) as RefundRow[]);
       setMessageLogs((payload.messageLogs ?? []) as MessageLog[]);
       setWhatsappAvailable(Boolean(payload.communicationSettings?.whatsappAvailable));
+      setWhatsappManualMode(Boolean(payload.communicationSettings?.whatsappManualMode));
+      setManualWhatsAppOpens((payload.manualWhatsAppOpens ?? []) as Array<{ appointment_id: string; opened_at: string }>);
       setScheduleEvents((payload.scheduleEvents ?? []) as ScheduleEventRow[]);
       void (async () => {
         const currentTime = Date.now();
@@ -771,6 +780,12 @@ function AgendaPage() {
   for (const log of messageLogs) {
     if (!log.appointment_id || latestMessageByAppointment.has(log.appointment_id)) continue;
     latestMessageByAppointment.set(log.appointment_id, log);
+  }
+  const latestManualOpenByAppointment = new Map<string, string>();
+  for (const row of manualWhatsAppOpens) {
+    if (!latestManualOpenByAppointment.has(row.appointment_id)) {
+      latestManualOpenByAppointment.set(row.appointment_id, row.opened_at);
+    }
   }
 
   // Filtering
@@ -956,6 +971,10 @@ function AgendaPage() {
             now: agendaNow,
             graceMinutes: attendanceGraceMinutes,
           }) === "awaiting_confirmation",
+        manualWhatsAppPending: canSeeSensitive && whatsappManualMode &&
+          appointment.status === "confirmed" && Date.parse(appointment.starts_at) > agendaNow.getTime() &&
+          isValidInternationalPhone(normalizeInternationalPhone(appointment.clients?.display_phone ?? appointment.clients?.phone)) &&
+          !latestManualOpenByAppointment.has(appointment.id),
         manualFit: Boolean(appointment.is_manual_fit),
       };
       const selectedDateKey = toDateInputValue(selectedDate);
@@ -1397,6 +1416,37 @@ function AgendaPage() {
     } finally {
       setUpdatingServiceLineId(null);
     }
+  }
+
+  function openManualAppointmentDraft(appt: Appt) {
+    if (!studio?.id || !whatsappManualMode || appt.status !== "confirmed" || Date.parse(appt.starts_at) <= Date.now()) return;
+    const phone = normalizeInternationalPhone(appt.clients?.display_phone ?? appt.clients?.phone);
+    if (!isValidInternationalPhone(phone)) {
+      toast.error("O telefone da cliente não é válido para abrir o WhatsApp.");
+      return;
+    }
+    const startsInMinutes = (Date.parse(appt.starts_at) - Date.now()) / 60_000;
+    const text = buildManualAppointmentWhatsAppMessage({
+      clientName: appt.clients?.name ?? "",
+      studioName: studio.name ?? "",
+      serviceName: appointmentServiceLabel(appt),
+      date: formatStudioDate(appt.starts_at, studio.timezone, { day: "2-digit", month: "long", year: "numeric" }),
+      time: formatStudioTime(appt.starts_at, studio.timezone),
+      purpose: startsInMinutes <= 120 ? "reminder" : "confirmation",
+    });
+    setManualWhatsAppDraft({ studioId: studio.id, appointmentId: appt.id, name: appt.clients?.name ?? "Cliente", phone, text });
+  }
+
+  function recordManualAppointmentOpen(studioId: string, appointmentId: string) {
+    const optimisticAt = new Date().toISOString();
+    setManualWhatsAppOpens((rows) => [{ appointment_id: appointmentId, opened_at: optimisticAt }, ...rows]);
+    void recordManualWhatsApp({ data: { studioId, appointmentId } })
+      .then(() => void loadData({ silent: true }))
+      .catch(() => {
+        setManualWhatsAppOpens((rows) => rows.filter((row) =>
+          row.appointment_id !== appointmentId || row.opened_at !== optimisticAt));
+        toast.error("A abertura do WhatsApp não foi registada nesta marcação.");
+      });
   }
 
   async function resendMessage(appt: Appt) {
@@ -1958,7 +2008,10 @@ function AgendaPage() {
           focusRequestKey={timelineFocusRequest}
           onOpenAppointment={(appointment) => {
             if (!appointment.privateDetails) return;
-            setTimelineDetailId(appointment.sourceId ?? appointment.id);
+            const sourceId = appointment.sourceId ?? appointment.id;
+            const source = appts.find((item) => item.id === sourceId);
+            if (appointment.manualWhatsAppPending && source) openManualAppointmentDraft(source);
+            else setTimelineDetailId(sourceId);
           }}
           onOpenBlock={(block) => {
             if (block.sourceId) setSelectedBlockId(block.sourceId);
@@ -1988,6 +2041,20 @@ function AgendaPage() {
             : undefined}
         />
       )}
+
+      <ManualWhatsAppDialog
+        key={manualWhatsAppDraft ? manualWhatsAppDraft.appointmentId : "closed"}
+        draft={manualWhatsAppDraft?.studioId === studio?.id ? manualWhatsAppDraft : null}
+        onClose={() => setManualWhatsAppDraft(null)}
+        onOpen={() => {
+          if (manualWhatsAppDraft) recordManualAppointmentOpen(manualWhatsAppDraft.studioId, manualWhatsAppDraft.appointmentId);
+        }}
+        onViewDetails={() => {
+          if (manualWhatsAppDraft) setTimelineDetailId(manualWhatsAppDraft.appointmentId);
+          setManualWhatsAppDraft(null);
+        }}
+        statusTarget="marcação"
+      />
 
       {timelineDetailAppt &&
         canViewSensitiveAppointment(timelineDetailAppt, studio) &&
@@ -2130,7 +2197,9 @@ function AgendaPage() {
                 paymentDetails: paid > 0
                   ? paymentAttribution(timelineDetailAppt.id, confirmedPaidRows, cashPaymentRows, refundRows)
                   : undefined,
-                messageLabel: messageState?.label ?? null,
+                messageLabel: latestManualOpenByAppointment.has(timelineDetailAppt.id)
+                  ? "Enviada manualmente (abertura do WhatsApp; entrega não verificada)"
+                  : messageState?.label ?? null,
                 notes: timelineDetailAppt.notes,
                 valueLabel: formatEUR(split.serviceTotal),
                 scheduleHistory: formatScheduleHistory(
@@ -2138,6 +2207,10 @@ function AgendaPage() {
                 ),
               }}
               actions={actions}
+              onManualWhatsApp={whatsappManualMode && timelineDetailAppt.status === "confirmed" &&
+                Date.parse(timelineDetailAppt.starts_at) > agendaNow.getTime()
+                ? () => { setTimelineDetailId(null); openManualAppointmentDraft(timelineDetailAppt); }
+                : undefined}
               attendanceUnavailableReason={hasJointServiceState
                 ? (timelineDetailAppt.status === "cancelled"
                     ? "Marcação cancelada: a presença não pode ser registada."
