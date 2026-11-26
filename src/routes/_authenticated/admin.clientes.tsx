@@ -392,26 +392,32 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
     if (savingMessageIdsRef.current.has(clientId)) return;
     savingMessageIdsRef.current.add(clientId);
     setMessageSaveError(false);
-    void recordWhatsAppClick(studioId, clientId);
+    const openedAt = new Date().toISOString();
+    if (manualMessagesQuery.isSuccess) {
+      queryClient.setQueryData<ManualMessageRecord[]>(
+        ["client-manual-whatsapp-confirmations", studioId],
+        (rows = []) => [...rows, { client_id: clientId, confirmed_at: openedAt }],
+      );
+      setMessageClock(Date.now());
+    }
+    void recordWhatsAppClick(studioId, clientId, openedAt);
   }
 
-  async function recordWhatsAppClick(studioId: string, clientId: string) {
-    // This records opening WhatsApp. Delivery remains unverified.
+  async function recordWhatsAppClick(studioId: string, clientId: string, openedAt: string) {
+    // Opening WhatsApp is the manual "sent" confirmation; delivery remains unverified.
     try {
       const { error } = await (supabase as any).rpc("record_client_manual_whatsapp_open", {
         p_studio_id: studioId,
         p_client_id: clientId,
       });
       if (error) throw error;
-      if (manualMessagesQuery.isSuccess) {
-        queryClient.setQueryData<ManualMessageRecord[]>(
-          ["client-manual-whatsapp-confirmations", studioId],
-          (rows = []) => [...rows, { client_id: clientId, confirmed_at: new Date().toISOString() }],
-        );
-      }
       void manualMessagesQuery.refetch();
       setMessageClock(Date.now());
     } catch {
+      queryClient.setQueryData<ManualMessageRecord[]>(
+        ["client-manual-whatsapp-confirmations", studioId],
+        (rows = []) => rows.filter((row) => row.client_id !== clientId || row.confirmed_at !== openedAt),
+      );
       setMessageSaveError(true);
     } finally {
       savingMessageIdsRef.current.delete(clientId);
@@ -489,7 +495,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
           ) : (
             <button type="button" disabled className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white opacity-40">Abrir no WhatsApp do estúdio</button>
           )}
-          <p className="text-[11px] text-muted-foreground">O registo indica apenas a abertura da conversa. Confirme a conta e o texto no WhatsApp antes de enviar.</p>
+          <p className="text-[11px] text-muted-foreground">Ao abrir o WhatsApp, este card fica marcado como enviado. Confirme o envio no aplicativo.</p>
         </DialogContent>
       </Dialog>
       <header className={selectedClient ? "hidden" : "border-b border-border/70 pb-3 md:pb-4"}>
@@ -538,7 +544,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
             </SelectTrigger>
             <SelectContent className="rounded-3xl border-border/80 p-2 shadow-xl">
               <SelectItem value="all" className="rounded-2xl py-2.5">Todos ({messageCounts.total})</SelectItem>
-              <SelectItem value="sent" className="rounded-2xl py-2.5">WhatsApp aberto recentemente ({manualMessagesQuery.isSuccess ? messageCounts.sent : "—"})</SelectItem>
+              <SelectItem value="sent" className="rounded-2xl py-2.5">Enviadas recentemente ({manualMessagesQuery.isSuccess ? messageCounts.sent : "—"})</SelectItem>
               <SelectItem value="pending" className="rounded-2xl py-2.5">Pendentes ({manualMessagesQuery.isSuccess ? messageCounts.pending : "—"})</SelectItem>
             </SelectContent>
           </Select>
@@ -1106,8 +1112,9 @@ function ClientActions({
   onDetails: () => void;
 }) {
   const url = useClientWhatsAppUrl(client);
+  const [open, setOpen] = useState(false);
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -1122,8 +1129,8 @@ function ClientActions({
           <Eye className="mr-2 h-4 w-4" />
           Ver ficha
         </DropdownMenuItem>
-        <DropdownMenuItem asChild className="rounded-xl">
-          <a href={url} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer">
+        <DropdownMenuItem asChild onSelect={() => setOpen(false)} className="rounded-xl">
+          <a href={url} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
             <MessageCircle className="mr-2 h-4 w-4" />
             WhatsApp
           </a>
@@ -1320,7 +1327,7 @@ function ClientMessageStatus({ sent }: { sent: boolean | null }) {
   if (sent === null) return null;
   return (
     <span
-      aria-label={sent ? "WhatsApp aberto recentemente; envio e entrega não confirmados" : "Sem abertura recente do WhatsApp"}
+      aria-label={sent ? "Marcada como enviada ao abrir o WhatsApp; entrega não verificada" : "Mensagem manual pendente"}
       className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none ${
         sent
           ? "border-emerald-700/15 bg-emerald-600/[0.07] text-emerald-700 dark:text-emerald-300"
@@ -1328,7 +1335,7 @@ function ClientMessageStatus({ sent }: { sent: boolean | null }) {
       }`}
     >
       <MessageCircle className="size-3" aria-hidden="true" />
-      {sent ? "Aberta" : "Pendente"}
+      {sent ? "Enviada" : "Pendente"}
     </span>
   );
 }
