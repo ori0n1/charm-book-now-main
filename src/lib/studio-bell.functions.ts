@@ -1,6 +1,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware';
+import { disabledNotificationKinds, notificationCategoryForKind, notificationRecipientRole } from '@/lib/studio-notification-preferences';
 
 const BellInput = z.object({ studioId: z.string().uuid() });
 
@@ -19,25 +20,45 @@ export const getStudioBellNotifications = createServerFn({ method: 'POST' })
       .select('role').eq('studio_id', data.studioId).eq('user_id', userId);
     if (membershipError) throw new Error(membershipError.message);
     if (!memberships?.length) throw new Response('Forbidden', { status: 403 });
-    const role = ['saas_owner', 'studio_owner', 'manager', 'staff', 'desk_staff']
-      .find((candidate) => memberships.some((membership) => membership.role === candidate));
+    const role = notificationRecipientRole(memberships.map((membership) => membership.role));
     if (!role) throw new Response('Forbidden', { status: 403 });
 
     // Keep history and unread count under the caller's RLS, as before.
     const sb = context.supabase as any;
+    const owner = role === 'studio_owner' || role === 'saas_owner';
+    const { data: preferences, error: preferenceError } = owner
+      ? await sb.from('studio_notification_preferences').select('category,enabled')
+        .eq('studio_id', data.studioId).eq('user_id', userId)
+      : { data: [], error: null };
+    if (preferenceError) throw new Error(preferenceError.message);
+    const disabled = new Set<string>((preferences ?? [])
+      .filter((row: { enabled: boolean }) => row.enabled === false)
+      .map((row: { category: string }) => row.category));
+    const allowedKinds = disabledNotificationKinds(
+      ['new_appointments', 'reschedules', 'cancellations', 'pending', 'payments', 'reminders', 'clients', 'reviews']
+        .filter((category) => !disabled.has(category)),
+    );
+    function applyPreferences(query: any) {
+      if (disabled.has('other')) return query.in('kind', allowedKinds);
+      const excluded = disabledNotificationKinds(disabled);
+      return excluded.length ? query.not('kind', 'in', `(${excluded.join(',')})`) : query;
+    }
     const [historyResult, unreadResult] = await Promise.all([
-      sb.from('studio_notifications')
+      applyPreferences(sb.from('studio_notifications')
         .select('id,studio_id,appointment_id,kind,title,body,payload,action_url,read_at,created_at,appointments:appointment_id(starts_at,studio_id)')
-        .eq('studio_id', data.studioId).order('created_at', { ascending: false }).limit(100),
-      sb.from('studio_notifications')
+        .eq('studio_id', data.studioId)).order('created_at', { ascending: false }).limit(100),
+      applyPreferences(sb.from('studio_notifications')
         .select('id', { count: 'exact', head: true })
-        .eq('studio_id', data.studioId).is('read_at', null),
+        .eq('studio_id', data.studioId).is('read_at', null)),
     ]);
     if (historyResult.error) throw new Error(historyResult.error.message);
     if (unreadResult.error) throw new Error(unreadResult.error.message);
     const history = historyResult.data ?? [];
     const count = Number(unreadResult.count ?? 0);
-    if (!['studio_owner', 'saas_owner'].includes(role)) {
+    if (!owner) {
+      return { items: history, unreadCount: count };
+    }
+    if (disabled.has(notificationCategoryForKind('appointment_rescheduled'))) {
       return { items: history, unreadCount: count };
     }
 

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useServerFn } from "@tanstack/react-start";
+import { Link } from "@tanstack/react-router";
 import {
   Bell,
   BellRing,
@@ -42,6 +43,7 @@ import { formatStudioDateTime, formatStudioTime } from "@/lib/studio-time";
 import { buildStudioNotificationDeepLink } from "@/lib/notification-deep-link";
 import { useConnectFinancialNotifications } from "@/components/connect-financial-test-notifications";
 import { financialNoticeActionUrl } from "@/lib/financial-notice-navigation";
+import { getStudioNotificationPreferences } from "@/lib/studio-notification-preferences.functions";
 
 type StudioNotification = {
   id: string;
@@ -108,7 +110,9 @@ function scheduleNonCriticalNotificationTask(task: () => void) {
 export function AdminNotifications({ studioId, studioName, timeZone, financialNoticesEnabled, standardNotificationsEnabled }: AdminNotificationsProps) {
   const [items, setItems] = useState<StudioNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const financialNotices = useConnectFinancialNotifications(studioId, financialNoticesEnabled);
+  const loadPreferences = useServerFn(getStudioNotificationPreferences);
+  const [paymentsEnabled, setPaymentsEnabled] = useState(false);
+  const financialNotices = useConnectFinancialNotifications(studioId, financialNoticesEnabled && paymentsEnabled);
   const [financialReadIds, setFinancialReadIds] = useState<string[]>([]);
   const financialUnreadCount = financialNotices.filter((item) => !financialReadIds.includes(item.id)).length;
   const totalUnreadCount = unreadCount + financialUnreadCount;
@@ -128,6 +132,28 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
   const [pushNeedsAttention, setPushNeedsAttention] = useState(false);
   const [pushActivating, setPushActivating] = useState(false);
   const [pushActivationCode, setPushActivationCode] = useState<PushActivationCode | null>(null);
+
+  useEffect(() => {
+    if (!financialNoticesEnabled) return;
+    let active = true;
+    async function refreshPreferences() {
+      try {
+        const rows = await loadPreferences({ data: { studioId } });
+        if (active) setPaymentsEnabled(!rows.some((row) => row.category === "payments" && row.enabled === false));
+      } catch (error) {
+        if (active) setPaymentsEnabled(false);
+        console.warn("studio_notification_preferences_load_failed", error);
+      }
+    }
+    void refreshPreferences();
+    window.addEventListener("bellza:notification-preferences-changed", refreshPreferences);
+    window.addEventListener("focus", refreshPreferences);
+    return () => {
+      active = false;
+      window.removeEventListener("bellza:notification-preferences-changed", refreshPreferences);
+      window.removeEventListener("focus", refreshPreferences);
+    };
+  }, [financialNoticesEnabled, loadPreferences, studioId]);
 
   useEffect(() => {
     try {
@@ -512,21 +538,27 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
   async function markAllRead() {
     markFinancialNoticesRead(financialNotices.map((item) => item.id));
     if (!standardNotificationsEnabled) return;
+    const unreadIds = items.filter((item) => !item.read_at).map((item) => item.id);
+    if (financialNoticesEnabled && !unreadIds.length) return;
     const readAt = new Date().toISOString();
     setItems((current) => current.map((item) => ({ ...item, read_at: item.read_at ?? readAt })));
-    setUnreadCount(0);
-    const { error } = await (supabase as any)
+    setUnreadCount((count) => financialNoticesEnabled ? Math.max(0, count - unreadIds.length) : 0);
+    let query = (supabase as any)
       .from("studio_notifications")
       .update({ read_at: readAt })
       .eq("studio_id", studioId)
       .is("read_at", null);
+    if (financialNoticesEnabled) query = query.in("id", unreadIds);
+    const { error } = await query;
     if (error) {
       await reloadNotificationState();
       toast.error("Não foi possível marcar todas como lidas.");
+    } else if (financialNoticesEnabled) {
+      await reloadNotificationState();
     }
   }
 
-  async function reloadNotificationState() {
+  const reloadNotificationState = useCallback(async () => {
     const sequence = ++bellLoadSequenceRef.current;
     try {
       const result = await loadBellNotifications({ data: { studioId } });
@@ -539,7 +571,14 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
     } catch (error) {
       console.warn("studio_bell_reload_failed", error);
     }
-  }
+  }, [loadBellNotifications, studioId, timeZone]);
+
+  useEffect(() => {
+    if (!standardNotificationsEnabled) return;
+    const reload = () => { void reloadNotificationState(); };
+    window.addEventListener("bellza:notification-preferences-changed", reload);
+    return () => window.removeEventListener("bellza:notification-preferences-changed", reload);
+  }, [reloadNotificationState, standardNotificationsEnabled]);
 
   const panel = (
     <>
@@ -557,8 +596,20 @@ export function AdminNotifications({ studioId, studioName, timeZone, financialNo
               onClick={markAllRead}
               className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-full border border-border px-2.5 text-center text-[10px] font-semibold leading-none text-muted-foreground transition hover:bg-muted hover:text-foreground sm:px-3 sm:text-[11px]"
             >
-              Marcar todas como lidas
+              {financialNoticesEnabled ? "Marcar visíveis como lidas" : "Marcar todas como lidas"}
             </button>
+          )}
+          {financialNoticesEnabled && (
+            <Link
+              to="/admin/whatsapp"
+              hash="notification-preferences"
+              onClick={() => setOpen(false)}
+              className="grid size-8 shrink-0 place-items-center rounded-full border border-border/80 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              aria-label="Preferências de notificações"
+              title="Preferências de notificações"
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </Link>
           )}
           <button
             type="button"

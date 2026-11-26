@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
+import { StudioNotificationPreferences } from "@/components/studio-notification-preferences";
 import {
   getClientAtRiskCampaignStatus,
   sendFollowerNotification,
@@ -342,6 +343,10 @@ function WhatsAppPage() {
           </div>
         </div>
       </header>
+
+      {(studio.role === "studio_owner" || studio.role === "saas_owner") && (
+        <StudioNotificationPreferences studioId={studio.id} />
+      )}
 
       <section className="overflow-hidden rounded-[1.35rem] bg-card shadow-sm ring-1 ring-border/60">
         <div className="grid gap-3 bg-muted/10 p-3 md:gap-4 md:p-5 lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start">
