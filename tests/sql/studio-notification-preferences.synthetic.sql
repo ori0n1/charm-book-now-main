@@ -28,7 +28,7 @@ INSERT INTO public.user_roles VALUES
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', 'studio_owner'),
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000003', 'staff');
 
-\ir ../../supabase/migrations/20261125223527_studio_notification_preferences.sql
+\ir ../../supabase/migrations/20261126101758_studio_notification_preferences.sql
 
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000001', false);
