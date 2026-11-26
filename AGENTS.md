@@ -81,7 +81,7 @@ npm.cmd run test:e2e:chromium
 
 1. Confirme por Cloudflare OAuth a versão ativa e parta da referência oficial que corresponde a ela. Use `scripts/new-isolated-worktree.ps1` para criar branch e worktree exclusivos; ele recusa referência local/remota ou versão ativa divergente. Nunca reutilize worktrees antigos como base.
 2. Desenvolva somente no worktree novo, com testes direcionados proporcionais ao risco e rollback preparado. Candidatos permanecem em branches próprias.
-3. Antes de qualquer publicação, compare o artefato completo aprovado com a versão ativa, incluindo módulos do Worker, assets estáticos, rotas, crons, runtime, variáveis e nomes/tipos dos bindings. Preserve secrets sem ler ou alterar seus valores. O `wrangler.jsonc` desta base não declara seis variáveis ativas adicionais registradas em `OFFICIAL_BASE.json`; preserve seus valores efetivos no artefato aprovado, sem expô-los. Confirme o estado das migrações necessárias e a segurança do rollback.
+3. Antes de qualquer publicação, compare o artefato completo aprovado com a versão ativa, incluindo módulos do Worker, assets estáticos, rotas, crons, runtime, variáveis e nomes/tipos dos bindings. Preserve secrets sem ler ou alterar seus valores. O `wrangler.jsonc` desta base não declara cinco variáveis ativas adicionais registradas em `OFFICIAL_BASE.json`; preserve seus valores efetivos no artefato aprovado, sem expô-los. Confirme o estado das migrações necessárias e a segurança do rollback.
 4. Solicite autorização explícita do proprietário para a publicação específica. Registre no GitHub o candidato aprovado em sua branch, sem antecipar a referência oficial.
 5. Publique exatamente o artefato aprovado. Confirme imediatamente por Cloudflare OAuth a versão e o tráfego efetivamente ativos, execute o smoke test direcionado e registre o resultado.
 6. Somente após comprovar publicação bem-sucedida, atualize a branch oficial no GitHub e a base local de referência. Registre commit, versão Cloudflare, hash/manifesto do artefato e configurações relevantes. Produção ativa, GitHub oficial e base local devem representar a mesma versão validada.
@@ -94,6 +94,13 @@ npm.cmd run test:e2e:chromium
 # AGENTS.md
 
 Leia este arquivo antes de qualquer alteração ou preparação de deploy no projeto Bellza.
+
+## Regra permanente — preferências de notificações
+
+- As preferências da central de notificações da proprietária pertencem ao par utilizador/estúdio e são ativadas por padrão quando não existe escolha guardada. Cada categoria pode ser desligada individualmente na página Comunicação, com salvamento automático.
+- Uma categoria desligada deve deixar de ser entregue à respetiva proprietária no push e de aparecer como notificação nova na central. A preferência tem de ser aplicada no servidor, além da interface. Mantenha os avisos partilhados do estúdio disponíveis para os restantes profissionais e preserve os avisos enviados aos clientes.
+- Ao acrescentar uma categoria ou um canal de entrega para a proprietária, verifique a correspondência das categorias e aplique a preferência no ponto de entrega. Não altere as regras de segurança, as mensagens de clientes nem as preferências de outras pessoas por efeito colateral.
+- Antes de publicar alterações nesta funcionalidade, valide a migração e as políticas RLS com identidades sintéticas isoladas, confirme o bloqueio efetivo de entrega e a continuidade dos fluxos dos profissionais e clientes. Preserve rollback seguro e siga o protocolo global de publicação.
 
 ## Contas QA fiéis para testes direcionados
 
