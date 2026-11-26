@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-26
 
+## Produção ativa — nomes das preferências de notificações
+
+- Cloudflare OAuth confirmou o deployment `e871815c-1d11-4f9f-b543-d0ef39308962`, versão `7e829038-6b52-4854-927c-be94426de5b7` a 100%, do commit `44dc8b849eecd12b47b80a40ee1ad32c1adf3285`. A versão anterior `ea72aaf7-c7fa-4334-af59-fd32c7a95e53` permanece a 0%; não houve rollback.
+- O rótulo “Lembretes” foi esclarecido como “Próximos atendimentos”; a categoria genérica “Outras notificações” foi ocultada da página. O mecanismo e as preferências existentes permaneceram, sem alteração na entrega para proprietária, profissionais ou clientes, e sem migração.
+- Artefacto: manifesto SHA-256 `e0d54808828b678d1e8f858b4f9631ad149378e75aa95de0bea653826470e435`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `43f6a51c308e14faf95bf446132e9d8320d86d4e9f40452c5cc91959f4ca41c9`. Coincidiram 238 módulos e 222 assets; `robots.txt` gerido pela Cloudflare era idêntico nas versões remotas. Preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime.
+- Typecheck, build com 17 contratos, três testes das preferências, lint e Playwright sintético passaram. O QA confirmou oito interruptores, autosave, persistência e ausência de rolagem horizontal a 320 e 1280 px. O gate devolveu `GATE_APTO`. Após ativação, GET `/` respondeu 200, `/admin/whatsapp` 307 e `/api/auth/session` 401. Não houve escritas, mensagens ou cobranças. O QA remoto não incluiu sessão autenticada.
+
 ## Produção ativa — plano e utilização do WhatsApp
 
 - Cloudflare OAuth confirmou o deployment `3109941a-f923-4881-84cf-2c0ea5f7b1a8`, versão `ea72aaf7-c7fa-4334-af59-fd32c7a95e53` a 100%, do commit `0f2d9908a0fde25f634e348729a0d8ed3fea194e`. A versão anterior `d6e07110-b38a-4ffd-980e-558ae1e567a1` permanece a 0%; não houve rollback.
