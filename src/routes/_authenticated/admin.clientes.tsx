@@ -46,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ClientAvatar } from "@/components/client-avatar";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AgendaExportButton } from "@/components/agenda/agenda-export-button";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { getClientProfileEditPermission, inspectClientProfile, removeClientProfiles, unifyEmptyClientProfiles, updateClientProfile } from "@/lib/client-profile.functions";
@@ -56,7 +57,8 @@ import {
   isClientAtRiskByCadence,
 } from "@/lib/client-risk";
 import { resolveScopedNotificationEntity } from "@/lib/notification-deep-link";
-import { manualMessageCounts, matchesManualMessageFilter, type MessageFilter } from "@/lib/client-manual-message-filter";
+import { MANUAL_MESSAGE_STATUS_HOURS, manualMessageCounts, matchesManualMessageFilter, recentManualMessageClientIds, type ManualMessageRecord, type MessageFilter } from "@/lib/client-manual-message-filter";
+import { buildClientWhatsAppMessage, isInactiveClient, isNearAppointment } from "@/lib/client-manual-whatsapp";
 
 type ClientsRouteSearch = {
   client?: string;
@@ -149,6 +151,7 @@ type ClientSummary = {
   attendanceRate: number | null;
   badges: ClientBadge[];
   returnReminder: ReturnReminderInsight | null;
+  nextAppointment: { startsAt: string; service: string } | null;
 };
 
 type ClientBookingStatus = "active" | "suspended" | "blocked";
@@ -178,12 +181,22 @@ type ClientAccumulator = ClientSummary & {
 };
 
 const ClientFinancialVisible = createContext(true);
+const ClientWhatsAppStudio = createContext({ name: "", timezone: "Europe/Lisbon" });
+
+function useClientWhatsAppUrl(client: ClientSummary) {
+  const studio = useContext(ClientWhatsAppStudio);
+  return whatsAppUrl(client, studio.name, studio.timezone);
+}
 
 function ClientsPage() {
   const { studio } = useCurrentStudio();
   const financiallyAuthorized = studio?.role === "studio_owner" || studio?.role === "saas_owner" || studio?.role === "manager";
   const financialVisible = financiallyAuthorized;
-  return <ClientFinancialVisible.Provider value={financialVisible}><ClientsContent financialVisible={financialVisible} /></ClientFinancialVisible.Provider>;
+  return <ClientFinancialVisible.Provider value={financialVisible}>
+    <ClientWhatsAppStudio.Provider value={{ name: studio?.name ?? "", timezone: studio?.timezone ?? "Europe/Lisbon" }}>
+      <ClientsContent financialVisible={financialVisible} />
+    </ClientWhatsAppStudio.Provider>
+  </ClientFinancialVisible.Provider>;
 }
 
 function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
@@ -206,9 +219,17 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const getEditPermission = useServerFn(getClientProfileEditPermission);
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [messageSaveError, setMessageSaveError] = useState(false);
+  const [messageClock, setMessageClock] = useState(() => Date.now());
+  const [whatsappDraft, setWhatsAppDraft] = useState<{ studioId: string; clientId: string; name: string; phone: string; text: string } | null>(null);
+  const [studioWhatsAppConfirmed, setStudioWhatsAppConfirmed] = useState(false);
   const savingMessageIdsRef = useRef(new Set<string>());
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const handledNotificationTargetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setMessageClock(Date.now()), 60_000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
@@ -331,17 +352,25 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const manualMessagesQuery = useQuery({
     queryKey: ["client-manual-whatsapp-confirmations", studio?.id],
     enabled: !!studio?.id,
-    queryFn: () => fetchAllStudioRows<{ client_id: string }>((from, to) =>
-      (supabase as any)
-        .from("client_manual_whatsapp_confirmations")
-        .select("client_id")
-        .eq("studio_id", studio!.id)
-        .order("client_id")
-        .range(from, to)),
+    queryFn: async () => {
+      const recentSince = new Date(Date.now() - MANUAL_MESSAGE_STATUS_HOURS * 3_600_000).toISOString();
+      const rows = await fetchAllStudioRows<ManualMessageRecord & { last_opened_at: string | null }>((from, to) =>
+        (supabase as any)
+          .from("client_manual_whatsapp_confirmations")
+          .select("client_id,confirmed_at,last_opened_at")
+          .eq("studio_id", studio!.id)
+          .or(`confirmed_at.gte.${recentSince},last_opened_at.gte.${recentSince}`)
+          .order("client_id")
+          .range(from, to));
+      return rows.map((row) => ({ client_id: row.client_id, confirmed_at: row.last_opened_at ?? row.confirmed_at }));
+    },
   });
+  const recentSentIds = useMemo(() => recentManualMessageClientIds(
+    clients.map((client) => client.id), manualMessagesQuery.data ?? [], messageClock,
+  ), [clients, manualMessagesQuery.data, messageClock]);
   const messageCounts = useMemo(
-    () => manualMessageCounts(clients.map((client) => client.id), (manualMessagesQuery.data ?? []).map((row) => row.client_id)),
-    [clients, manualMessagesQuery.data],
+    () => manualMessageCounts(clients.map((client) => client.id), [...recentSentIds]),
+    [clients, recentSentIds],
   );
   const sentClientIds = messageCounts.sentClientIds;
 
@@ -349,29 +378,39 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
     if (!studio?.id || !(event.target instanceof Element)) return;
     const anchor = event.target.closest<HTMLAnchorElement>("[data-client-whatsapp-id]");
     const clientId = anchor?.dataset.clientWhatsappId;
-    if (!clientId || sentClientIds.has(clientId) || savingMessageIdsRef.current.has(clientId) || !clients.some((client) => client.id === clientId)) return;
+    if (!anchor || !clientId) return;
+    event.preventDefault();
+    const client = clients.find((item) => item.id === clientId);
+    if (!client || client.studioId !== studio.id) return;
+    const url = new URL(anchor.href);
+    if (url.hostname !== "wa.me") return;
+    setWhatsAppDraft({ studioId: studio.id, clientId, name: client.name, phone: client.phone, text: url.searchParams.get("text") ?? "" });
+    setStudioWhatsAppConfirmed(false);
+  }
+
+  function recordWhatsAppOpen(studioId: string, clientId: string) {
+    if (savingMessageIdsRef.current.has(clientId)) return;
     savingMessageIdsRef.current.add(clientId);
     setMessageSaveError(false);
-    void recordWhatsAppClick(studio.id, clientId);
+    void recordWhatsAppClick(studioId, clientId);
   }
 
   async function recordWhatsAppClick(studioId: string, clientId: string) {
-    // This record means the owner clicked WhatsApp; delivery is not verified.
+    // This records opening WhatsApp. Delivery remains unverified.
     try {
-      const { error } = await (supabase as any).from("client_manual_whatsapp_confirmations").insert({
-        studio_id: studioId,
-        client_id: clientId,
+      const { error } = await (supabase as any).rpc("record_client_manual_whatsapp_open", {
+        p_studio_id: studioId,
+        p_client_id: clientId,
       });
-      if (error && error.code !== "23505") throw error;
+      if (error) throw error;
       if (manualMessagesQuery.isSuccess) {
-        queryClient.setQueryData<{ client_id: string }[]>(
+        queryClient.setQueryData<ManualMessageRecord[]>(
           ["client-manual-whatsapp-confirmations", studioId],
-          (rows = []) => rows.some((row) => row.client_id === clientId)
-            ? rows
-            : [...rows, { client_id: clientId }],
+          (rows = []) => [...rows, { client_id: clientId, confirmed_at: new Date().toISOString() }],
         );
       }
       void manualMessagesQuery.refetch();
+      setMessageClock(Date.now());
     } catch {
       setMessageSaveError(true);
     } finally {
@@ -432,6 +471,27 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
 
   return (
     <div className="space-y-3 md:space-y-4" onClickCapture={handleWhatsAppClick}>
+      <Dialog open={!!whatsappDraft && whatsappDraft.studioId === studio.id} onOpenChange={(open) => { if (!open) setWhatsAppDraft(null); }}>
+        <DialogContent className="max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="pr-8 text-left break-words">Mensagem para {whatsappDraft?.name}</DialogTitle>
+            <DialogDescription>Edite o texto antes de abrir a conversa. O envio é manual.</DialogDescription>
+          </DialogHeader>
+          <label className="text-sm font-medium">Mensagem
+            <textarea value={whatsappDraft?.text ?? ""} onChange={(event) => setWhatsAppDraft((draft) => draft ? { ...draft, text: event.target.value } : null)} rows={6} className="mt-2 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-ring/20" />
+          </label>
+          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={studioWhatsAppConfirmed} onChange={(event) => setStudioWhatsAppConfirmed(event.target.checked)} className="mt-0.5" />
+            Confirmo que a conta de WhatsApp aberta neste aparelho é a do estúdio.
+          </label>
+          {whatsappDraft && studioWhatsAppConfirmed && whatsappDraft.text.trim() && phoneForWhatsApp(whatsappDraft.phone) ? (
+            <a href={`https://wa.me/${phoneForWhatsApp(whatsappDraft.phone)}?text=${encodeURIComponent(whatsappDraft.text)}`} target="_blank" rel="noreferrer" onClick={() => { recordWhatsAppOpen(whatsappDraft.studioId, whatsappDraft.clientId); setWhatsAppDraft(null); }} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-center text-sm font-semibold text-white">Abrir no WhatsApp do estúdio</a>
+          ) : (
+            <button type="button" disabled className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white opacity-40">Abrir no WhatsApp do estúdio</button>
+          )}
+          <p className="text-[11px] text-muted-foreground">O registo indica apenas a abertura da conversa. Confirme a conta e o texto no WhatsApp antes de enviar.</p>
+        </DialogContent>
+      </Dialog>
       <header className={selectedClient ? "hidden" : "border-b border-border/70 pb-3 md:pb-4"}>
         <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="min-w-0">
@@ -478,7 +538,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
             </SelectTrigger>
             <SelectContent className="rounded-3xl border-border/80 p-2 shadow-xl">
               <SelectItem value="all" className="rounded-2xl py-2.5">Todos ({messageCounts.total})</SelectItem>
-              <SelectItem value="sent" className="rounded-2xl py-2.5">Enviadas ({manualMessagesQuery.isSuccess ? messageCounts.sent : "—"})</SelectItem>
+              <SelectItem value="sent" className="rounded-2xl py-2.5">WhatsApp aberto recentemente ({manualMessagesQuery.isSuccess ? messageCounts.sent : "—"})</SelectItem>
               <SelectItem value="pending" className="rounded-2xl py-2.5">Pendentes ({manualMessagesQuery.isSuccess ? messageCounts.pending : "—"})</SelectItem>
             </SelectContent>
           </Select>
@@ -535,7 +595,6 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
           key={selectedClient.id}
           client={selectedClient}
           studioId={studio.id}
-          studioName={studio.name}
           userId={studio.user_id}
           onClose={() => setSelectedClientId(null)}
           onSaved={() => queryClient.invalidateQueries({ queryKey: ["admin-clients", studio.id] })}
@@ -693,6 +752,7 @@ function buildClientSummaries(
       attendanceRate: null,
       badges: [],
       returnReminder: null,
+      nextAppointment: null,
       serviceCounts: new Map(),
       completedDates: [],
     });
@@ -722,6 +782,10 @@ function buildClientSummaries(
     if (appointmentBucket === "future") existing.futureAppointments += 1;
     if (isActiveFutureAppointment(appointment.status, appointment.starts_at)) {
       existing.hasFutureBooking = true;
+      if (appointment.status === "confirmed" &&
+        (!existing.nextAppointment || Date.parse(appointment.starts_at) < Date.parse(existing.nextAppointment.startsAt))) {
+        existing.nextAppointment = { startsAt: appointment.starts_at, service: serviceNames.join(", ") || serviceName };
+      }
     }
     if (appointmentBucket === "pending") existing.pendingAppointments += 1;
     if (appointmentBucket === "rescheduled") existing.rescheduledAppointments += 1;
@@ -852,7 +916,7 @@ function buildClientBadges(client: ClientSummary): ClientBadge[] {
   if (isBirthdaySoon(client.dateOfBirth, 14)) {
     badges.push({ label: "Aniversário próximo", tone: "amber" });
   }
-  if (isAtRisk) {
+  if (isAtRisk || isInactiveClient(client)) {
     badges.push({ label: CLIENT_WITHOUT_RETURN_BADGE, tone: "rose" });
   } else if (isReturnSeason) {
     badges.push({ label: "Em época de retorno", tone: "blue" });
@@ -971,7 +1035,7 @@ function ClientDesktopTable({
                 onDetails(client.id);
               }
             }}
-            className="grid w-full grid-cols-[minmax(13rem,1.35fr)_minmax(10rem,1fr)_8rem_8rem_7rem_3.5rem] items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
+            className={`grid w-full grid-cols-[minmax(13rem,1.35fr)_minmax(10rem,1fr)_8rem_8rem_7rem_3.5rem] items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 ${isNearAppointment(client) ? "bg-sky-50/40 dark:bg-sky-950/15" : isInactiveClient(client) ? "bg-amber-50/30 dark:bg-amber-950/10" : ""}`}
           >
             <ClientIdentity client={client} compact messageSent={messageStatusReady ? sentClientIds.has(client.id) : null} />
             <span className="min-w-0 whitespace-normal text-muted-foreground">{client.lastService}</span>
@@ -999,8 +1063,10 @@ function ClientCompactCard({
   messageSent: boolean | null;
   onDetails: () => void;
 }) {
+  const nearAppointment = isNearAppointment(client);
+  const inactive = isInactiveClient(client);
   return (
-    <article className="rounded-2xl border border-border/80 bg-card px-3 py-2.5 shadow-sm transition active:scale-[0.995]">
+    <article className={`rounded-2xl border bg-card px-3 py-2.5 shadow-sm transition active:scale-[0.995] ${nearAppointment ? "border-sky-300/70 dark:border-sky-700/70" : inactive ? "border-amber-300/60 dark:border-amber-700/60" : "border-border/80"}`}>
       <div className="flex items-center gap-3">
         <button type="button" onClick={onDetails} className="min-w-0 flex-1 text-left">
           <ClientIdentity client={client} compact messageSent={messageSent} />
@@ -1039,6 +1105,7 @@ function ClientActions({
   client: ClientSummary;
   onDetails: () => void;
 }) {
+  const url = useClientWhatsAppUrl(client);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -1056,7 +1123,7 @@ function ClientActions({
           Ver ficha
         </DropdownMenuItem>
         <DropdownMenuItem asChild className="rounded-xl">
-          <a href={whatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer">
+          <a href={url} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer">
             <MessageCircle className="mr-2 h-4 w-4" />
             WhatsApp
           </a>
@@ -1067,10 +1134,11 @@ function ClientActions({
 }
 
 function ClientTableRow({ client, onDetails }: { client: ClientSummary; onDetails: () => void }) {
+  const url = useClientWhatsAppUrl(client);
   return (
     <div className="box-border grid grid-cols-[minmax(11rem,1.2fr)_minmax(7rem,0.9fr)_minmax(6rem,0.65fr)_minmax(7rem,0.75fr)_minmax(7.5rem,0.85fr)_20rem] items-center gap-4 border-b border-border/70 px-4 py-3 text-sm last:border-b-0 hover:bg-muted/20">
       <ClientIdentity client={client} />
-      <a href={whatsAppUrl(client)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="hover:underline">
+      <a href={url} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="hover:underline">
         {client.phone}
       </a>
       <span className="text-right">{client.totalAppointments}</span>
@@ -1094,6 +1162,7 @@ function ClientTableRow({ client, onDetails }: { client: ClientSummary; onDetail
 
 function ClientDesktopCard({ client, onDetails }: { client: ClientSummary; onDetails: () => void }) {
   const display = getClientDisplayInfo(client);
+  const url = useClientWhatsAppUrl(client);
 
   return (
     <article className="overflow-hidden rounded-2xl border border-border/90 bg-card px-4 py-3 shadow-sm">
@@ -1117,7 +1186,7 @@ function ClientDesktopCard({ client, onDetails }: { client: ClientSummary; onDet
             </div>
           </div>
           <a
-            href={whatsAppUrl(client)}
+            href={url}
             data-client-whatsapp-id={client.id}
             target="_blank"
             rel="noreferrer"
@@ -1214,6 +1283,7 @@ function ClientIdentity({
   messageSent?: boolean | null;
 }) {
   const display = getClientDisplayInfo(client);
+  const nearAppointment = isNearAppointment(client);
 
   return (
     <div className="min-w-0">
@@ -1232,6 +1302,7 @@ function ClientIdentity({
           </div>
           <div className={`mt-0.5 flex min-w-0 items-center gap-1.5 ${messageSent !== undefined ? "flex-wrap" : ""}`}>
             <ClientPrimaryStatus client={client} compact={compact} />
+            {nearAppointment && <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-300/70 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-sky-800 dark:border-sky-700 dark:bg-sky-950 dark:text-sky-200"><Clock3 className="size-3" aria-hidden="true" /> Em 2 h</span>}
             {messageSent !== undefined && <ClientMessageStatus sent={messageSent} />}
             {!compact && (
               <span className="min-w-0 truncate text-xs text-muted-foreground">
@@ -1249,7 +1320,7 @@ function ClientMessageStatus({ sent }: { sent: boolean | null }) {
   if (sent === null) return null;
   return (
     <span
-      aria-label={sent ? "Mensagem registada após clique no WhatsApp; entrega não confirmada" : "Mensagem pendente"}
+      aria-label={sent ? "WhatsApp aberto recentemente; envio e entrega não confirmados" : "Sem abertura recente do WhatsApp"}
       className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium leading-none ${
         sent
           ? "border-emerald-700/15 bg-emerald-600/[0.07] text-emerald-700 dark:text-emerald-300"
@@ -1257,7 +1328,7 @@ function ClientMessageStatus({ sent }: { sent: boolean | null }) {
       }`}
     >
       <MessageCircle className="size-3" aria-hidden="true" />
-      {sent ? "Enviada" : "Pendente"}
+      {sent ? "Aberta" : "Pendente"}
     </span>
   );
 }
@@ -1280,10 +1351,10 @@ function ClientPrimaryStatus({ client, compact = false }: { client: ClientSummar
 function getClientPrimaryStatus(client: ClientSummary): ClientPrimaryStatusInfo | null {
   const badgesByLabel = new Map(client.badges.map((badge) => [badge.label, badge]));
   const withoutReturnBadge = badgesByLabel.get(CLIENT_WITHOUT_RETURN_BADGE);
-  if (withoutReturnBadge) {
+  if (withoutReturnBadge || isInactiveClient(client)) {
     return {
       label: getClientWithoutReturnLabel(client.daysSinceLastVisit),
-      tone: withoutReturnBadge.tone,
+      tone: "rose",
     };
   }
 
@@ -1373,19 +1444,18 @@ function isCounterClientName(name: string) {
 function ClientDetails({
   client,
   studioId,
-  studioName,
   userId,
   onClose,
   onSaved,
 }: {
   client: ClientSummary;
   studioId: string;
-  studioName: string;
   userId: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const saveProfile = useServerFn(updateClientProfile);
+  const whatsappUrl = useClientWhatsAppUrl(client);
   const removeProfiles = useServerFn(removeClientProfiles);
   const inspectProfile = useServerFn(inspectClientProfile);
   const checkEditPermission = useServerFn(getClientProfileEditPermission);
@@ -1548,7 +1618,7 @@ function ClientDetails({
       <div className="flex flex-wrap items-center gap-4 rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
         <div className="shrink-0 rounded-full bg-violet-50 p-1 dark:bg-violet-950"><ClientAvatar name={display.name} avatarUrl={client.avatarUrl} size="lg" /></div>
         <div className="min-w-0 flex-1"><h3 className="truncate text-xl font-bold tracking-tight sm:text-2xl">{display.name}</h3><div className="mt-1 flex flex-wrap gap-1">{primaryBadge && <ClientBadge badge={primaryBadge} compact />}{secondaryBadges.map((badge) => <ClientBadge key={badge.label} badge={badge} compact />)}</div>{display.subtitle && <p className="mt-1 text-xs text-slate-500">{display.subtitle}</p>}<p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{client.phone}</p></div>
-        <a href={whatsAppUrl(client, studioName)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" aria-label="Abrir WhatsApp do cliente" className="flex h-10 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"><MessageCircle className="h-4 w-4" /><span className="hidden sm:inline">WhatsApp</span></a>
+        <a href={whatsappUrl} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" aria-label="Abrir WhatsApp do cliente" className="flex h-10 items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"><MessageCircle className="h-4 w-4" /><span className="hidden sm:inline">WhatsApp</span></a>
       </div>
       <div className="grid grid-cols-4 divide-x divide-slate-100 rounded-3xl border border-slate-100 bg-white py-3 shadow-sm dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
         {[
@@ -1581,7 +1651,7 @@ function ClientDetails({
           </dl>}
         </div>
         <div className="grid gap-3 md:grid-cols-2"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><Star className="h-5 w-5 text-amber-500" />Preferências</h3><ContextGroup title="" items={preferenceDetails} /></div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><h3 className="flex items-center gap-2 text-sm font-bold"><BarChart3 className="h-5 w-5 text-blue-600" />Estatísticas</h3><div className="mt-3 space-y-2">{keyContextMetrics.map((metric) => <div key={metric.label} className="flex justify-between gap-3 text-xs sm:text-sm"><span className="text-slate-500">{metric.label}</span><strong className={metric.money ? "text-emerald-700" : ""}>{metric.value}</strong></div>)}</div></div></div>
-        {relationshipInsight && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><div className="flex items-start gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-sm font-bold">{hasDelayedReturn ? "Cliente com retorno atrasado" : relationshipInsight}</p>{hasDelayedReturn && client.daysSinceLastVisit !== null && client.suggestedReturnAt && <p className="mt-1 text-xs">Não retorna há {client.daysSinceLastVisit} dias. O retorno era esperado em {formatDate(client.suggestedReturnAt)}.</p>}</div></div><a href={whatsAppUrl(client, studioName)} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar mensagem</a></div>}
+        {relationshipInsight && <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50 p-4 text-amber-900"><div className="flex items-start gap-3"><Clock3 className="mt-0.5 h-5 w-5 shrink-0" /><div><p className="text-sm font-bold">{hasDelayedReturn ? "Cliente com retorno atrasado" : relationshipInsight}</p>{hasDelayedReturn && client.daysSinceLastVisit !== null && client.suggestedReturnAt && <p className="mt-1 text-xs">Não retorna há {client.daysSinceLastVisit} dias. O retorno era esperado em {formatDate(client.suggestedReturnAt)}.</p>}</div></div><a href={whatsappUrl} data-client-whatsapp-id={client.id} target="_blank" rel="noreferrer" className="rounded-full border border-amber-400 px-3 py-2 text-xs font-semibold">Enviar mensagem</a></div>}
         <div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="flex items-center gap-2 text-sm font-bold"><ShieldAlert className="h-4 w-4" />Status: {statusLabel}</h3><button type="button" onClick={() => setStatusPanelOpen((open) => !open)} className="rounded-full border px-3 py-1.5 text-xs">{statusPanelOpen ? "Fechar" : "Alterar"}</button></div>{statusPanelOpen && <div className="mt-3 space-y-3"><div className="grid gap-2 sm:grid-cols-3"><StatusOption active={status === "active"} title="Ativo" description="Marcações normais." onClick={() => { setStatus("active"); setUntil(""); }} /><StatusOption active={status === "suspended"} title="Suspenso temporariamente" description="Até uma data definida." onClick={() => setStatus("suspended")} /><StatusOption active={status === "blocked"} title="Bloqueado definitivamente" description="Sem novas marcações." onClick={() => { setStatus("blocked"); setUntil(""); }} /></div>{status === "suspended" && <label className="block text-xs">Suspenso até<PremiumDatePicker value={until} onChange={setUntil} placeholder="dd/mm/aaaa" className="mt-1" /></label>}{status !== "active" && <label className="block text-xs">Motivo interno opcional<textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} className="mt-1 w-full rounded-xl border bg-white p-2 text-sm text-slate-950" /></label>}<button type="button" onClick={saveStatus} disabled={saving || (status === "suspended" && !until)} className="rounded-xl bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{saving ? "A guardar..." : "Guardar status"}</button></div>}</div>
       </div>}
       {activeTab === "history" && <div role="tabpanel" className="space-y-3"><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><div className="flex items-center justify-between gap-2"><h3 className="text-sm font-bold">Resumo das marcações</h3><button type="button" onClick={() => setShowAppointmentDetails((open) => !open)} className="flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs">{showAppointmentDetails ? "Ocultar" : "Ver detalhes"}<ChevronDown className={`h-3.5 w-3.5 ${showAppointmentDetails ? "rotate-180" : ""}`} /></button></div><div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-5">{mainAppointmentMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} />)}</div>{showAppointmentDetails && <div className="mt-4 grid grid-cols-3 gap-3 border-t pt-3">{visibleSecondaryMetrics.map((metric) => <CompactStat key={metric.label} label={metric.label} value={metric.value} muted />)}</div>}</div><div className="rounded-3xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"><ContextGroup title="Relacionamento" items={relationshipDetails} /><p className="mt-3 text-xs text-slate-500">Último serviço: {client.lastService}</p></div>{explainedTotal !== client.totalAppointments && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Existem estados antigos sem categoria clara. O total mantém todas as marcações reais deste cliente.</p>}{faltasWarning && <p className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><AlertTriangle className="h-4 w-4 shrink-0" />{client.noShowAppointments} faltas registadas. Avaliar status apenas se fizer sentido para este cliente.</p>}</div>}
@@ -1661,9 +1731,10 @@ function WhatsAppButton({
   compact?: boolean;
   className?: string;
 }) {
+  const url = useClientWhatsAppUrl(client);
   return (
     <a
-      href={whatsAppUrl(client)}
+      href={url}
       data-client-whatsapp-id={client.id}
       target="_blank"
       rel="noreferrer"
@@ -1801,29 +1872,9 @@ function formatAppointmentCount(count: number) {
   return `${count} ${count === 1 ? "marcação" : "marcações"}`;
 }
 
-function whatsAppUrl(client: ClientSummary, studioName?: string | null) {
-  const text = buildClientWhatsAppMessage(client, studioName);
+function whatsAppUrl(client: ClientSummary, studioName?: string | null, studioTimezone?: string | null) {
+  const text = buildClientWhatsAppMessage(client, getClientReturnDelayDays(client), studioName, studioTimezone);
   return `https://wa.me/${phoneForWhatsApp(client.phone)}?text=${encodeURIComponent(text)}`;
-}
-
-function buildClientWhatsAppMessage(client: ClientSummary, studioName?: string | null) {
-  const greeting = buildClientGreeting(client.name);
-  const delayDays = getClientReturnDelayDays(client);
-  if (delayDays > 0) {
-    const quantityText =
-      delayDays === 1
-        ? "já passou 1 dia da sua previsão de retorno"
-        : `já se passaram ${delayDays} dias da sua previsão de retorno`;
-    const studioText = studioName?.trim() ? ` ao ${studioName.trim()}` : " conosco";
-    return `${greeting} Tudo bem? 😊\nPercebemos que ${quantityText}${studioText}. Gostaríamos de saber se está tudo bem e se deseja marcar um novo horário conosco.`;
-  }
-
-  return `${greeting} Tudo bem? 😊 Sentimos a sua falta e gostaríamos de saber se deseja marcar um novo horário conosco.`;
-}
-
-function buildClientGreeting(name: string | null | undefined) {
-  const cleanName = String(name ?? "").trim();
-  return cleanName ? `Olá, ${cleanName}!` : "Olá!";
 }
 
 function cleanPhone(phone: string) {

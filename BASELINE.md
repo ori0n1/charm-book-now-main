@@ -1,5 +1,13 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-26
 
+## Produção ativa — WhatsApp manual contextual nos Clientes
+
+- Cloudflare OAuth confirmou o deployment `82d8c69f-d600-4aa7-9a44-99694f60111e`, versão `c3fff4b7-cebf-4645-a88e-43188f8bcf28` a 100% do tráfego, do commit funcional `f2a415dbc5f703766644773a26bbcf4f2b242749`. A versão anterior `7e829038-6b52-4854-927c-be94426de5b7` permanece a 0% para rollback somente após autorização específica.
+- Os cards de Clientes indicam discretamente inatividade e marcação nas próximas duas horas. O WhatsApp abre um texto contextual editável, com confirmação da conta do estúdio antes de sair. O indicador de abertura expira em 72 horas; o histórico permanece na tabela, e a interface deixa claro que abertura não comprova envio. Agendamentos e disparos automáticos não foram alterados.
+- A migração `20261126155006_client_manual_whatsapp_history.sql` foi autorizada e aplicada em transação no SQL Editor de produção. Leitura posterior como `authenticated`, em transação somente leitura com RLS, confirmou duas colunas novas, política, trigger e função, sem `UPDATE` amplo nem permissão de edição do histórico. A migração manual ainda não aparece no ledger do Supabase; reconciliar antes de qualquer `db push`. A reversão do Worker é compatível com as colunas adicionais, que devem permanecer para preservar o histórico.
+- Artefato: 475 ficheiros, manifesto SHA-256 `573bfc45973a2d3bbfd427d7fe03df6427f017d195b183b7f1cf70cc8b664371`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `149a129e979eabd80265b6c35339dd831d6ee4101375f57e9f9b1a6cebaae078`. Os 237 módulos enviados coincidiram byte a byte com o build; 17 assets do cabeçalho e o chunk de Clientes coincidiram por HTTP. Preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios, runtime e handlers.
+- Typecheck, lint, build de produção com 17 contratos, testes da mensagem e isolamento SQL sintético passaram. O candidato a 0% passou smoke por override e Playwright autenticado com estúdio sintético em 390 px. Depois da ativação, `/` e `/login` responderam 200, `/admin/clientes` sem sessão respondeu 307, e o teste autenticado carregou histórico e modal editável sem escrita de cliente ou envio de mensagem.
+
 ## Produção ativa — nomes das preferências de notificações
 
 - Cloudflare OAuth confirmou o deployment `e871815c-1d11-4f9f-b543-d0ef39308962`, versão `7e829038-6b52-4854-927c-be94426de5b7` a 100%, do commit `44dc8b849eecd12b47b80a40ee1ad32c1adf3285`. A versão anterior `ea72aaf7-c7fa-4334-af59-fd32c7a95e53` permanece a 0%; não houve rollback.
