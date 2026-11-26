@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCurrentStudio } from "@/hooks/use-current-studio";
+import { PLAN_DEFINITIONS } from "@/lib/plan-entitlements";
 import { StudioNotificationPreferences } from "@/components/studio-notification-preferences";
 import {
   getClientAtRiskCampaignStatus,
@@ -570,13 +571,36 @@ function WhatsAppPage() {
           </label>
         </div>
 
+        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-border/70 pt-3 sm:grid-cols-3">
+          <div className="col-span-2 min-w-0 sm:col-span-1">
+            <p className="text-[11px] text-muted-foreground">Plano do estúdio</p>
+            <p className="text-sm font-semibold">{PLAN_DEFINITIONS[studio.plan_tier].name}</p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] text-muted-foreground">
+              Enviadas{commercial.data?.status === "trial" ? " no teste" : " (total)"}
+            </p>
+            <p className="text-sm font-semibold tabular-nums">{commercial.data?.used ?? "—"}</p>
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] text-muted-foreground">Restantes</p>
+            <p className="text-sm font-semibold tabular-nums">
+              {commercial.data?.limit != null
+                ? <>{commercial.data.remaining} <span className="text-xs font-normal text-muted-foreground">de {commercial.data.limit}</span></>
+                : commercial.data?.available
+                  ? "Sem limite definido"
+                  : commercial.data ? "Indisponível" : "—"}
+            </p>
+          </div>
+        </div>
+
         {commercial.data && (
           commercial.data.daysRemaining != null ||
           commercial.data.limit != null ||
           (commercial.data.alerts.length > 0 && commercial.data.available) ||
           !commercial.data.available
         ) && (
-          <div className="mt-3 grid gap-2 border-t border-border/70 pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+          <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
             <div className="min-w-0">
               {commercial.data.daysRemaining != null && (
                 <p className="text-xs text-muted-foreground">
@@ -584,11 +608,7 @@ function WhatsAppPage() {
                 </p>
               )}
               {commercial.data.limit != null && (
-                <div className="mt-2 max-w-xl">
-                  <div className="mb-1 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-                    <span>{commercial.data.used} enviadas</span>
-                    <span>{commercial.data.remaining} restantes</span>
-                  </div>
+                <div className="mt-2 max-w-xl" role="progressbar" aria-label="Mensagens do teste utilizadas" aria-valuemin={0} aria-valuemax={commercial.data.limit} aria-valuenow={Math.min(commercial.data.limit, commercial.data.used + commercial.data.reserved)}>
                   <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                     <div
                       className="h-full rounded-full bg-emerald-600 transition-[width]"
