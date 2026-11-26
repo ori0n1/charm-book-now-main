@@ -37,6 +37,9 @@ WITH CHECK (
   )
 );
 
+-- Supabase's existing table-level UPDATE grant would override a column grant.
+-- No UPDATE policy exists before this migration, so revoke that unused grant.
+REVOKE UPDATE ON public.client_manual_whatsapp_confirmations FROM authenticated;
 GRANT UPDATE (last_opened_at)
 ON public.client_manual_whatsapp_confirmations TO authenticated;
 

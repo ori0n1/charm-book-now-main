@@ -26,7 +26,17 @@ INSERT INTO public.user_roles VALUES
   ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2', '22222222-2222-4222-8222-222222222222', 'studio_owner');
 
 \ir ../../supabase/migrations/20261106150000_client_manual_whatsapp_confirmations.sql
+-- Mirror the broad Supabase default grant observed on the production table.
+GRANT UPDATE ON public.client_manual_whatsapp_confirmations TO authenticated;
 \ir ../../supabase/migrations/20261126155006_client_manual_whatsapp_history.sql
+
+DO $$ BEGIN
+  IF has_table_privilege('authenticated', 'public.client_manual_whatsapp_confirmations', 'UPDATE')
+    OR has_column_privilege('authenticated', 'public.client_manual_whatsapp_confirmations', 'opened_at_history', 'UPDATE')
+    OR NOT has_column_privilege('authenticated', 'public.client_manual_whatsapp_confirmations', 'last_opened_at', 'UPDATE') THEN
+    RAISE EXCEPTION 'Permissões UPDATE demasiado amplas ou ausentes';
+  END IF;
+END $$;
 
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', true);

@@ -474,7 +474,7 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
       <Dialog open={!!whatsappDraft && whatsappDraft.studioId === studio.id} onOpenChange={(open) => { if (!open) setWhatsAppDraft(null); }}>
         <DialogContent className="max-w-md rounded-3xl">
           <DialogHeader>
-            <DialogTitle>Mensagem para {whatsappDraft?.name}</DialogTitle>
+            <DialogTitle className="pr-8 text-left break-words">Mensagem para {whatsappDraft?.name}</DialogTitle>
             <DialogDescription>Edite o texto antes de abrir a conversa. O envio é manual.</DialogDescription>
           </DialogHeader>
           <label className="text-sm font-medium">Mensagem
