@@ -1,4 +1,11 @@
-# Base oficial da produção Bellza — atualizada em 2026-11-24
+# Base oficial da produção Bellza — atualizada em 2026-11-26
+
+## Produção ativa — preferências de notificações
+
+- Cloudflare OAuth confirmou o deployment `8e6484bd-0db3-4e19-9d3f-b7b56f491e16`, versão `959a93f7-bda1-4edc-8247-2d88e732da76` a 100% do tráfego. O artefacto foi gerado a partir de `f14010b1ee20af4263b2d33a499b3732fc45c11c`; o merge oficial equivalente é `ee65ceb`. A versão anterior `93d3da35-f38c-4c1f-81d7-a7eab14fe50d` permanece a 0%, sem autorização para rollback automático.
+- A proprietária pode guardar por utilizador e estúdio nove categorias na página Comunicação. A filtragem no servidor impede novas entregas push e oculta os avisos da central da proprietária; profissionais e clientes preservam o comportamento anterior. A migração de produção `20261126101758_studio_notification_preferences.sql` foi aplicada com autorização específica. A RLS foi validada com identidades sintéticas em staging e transação revertida.
+- Manifesto SHA-256 `38709fd950406c72af380ddef76202069457cac06068c2c471258d4b10c74136`; configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`; ETag `0c456870337601a97b5ce17d38cbb5639d0d9627d661d2d5dec4bc79197a8065`. Os 238 módulos remotos e 222 assets de cliente coincidiram byte a byte com o artefacto; `robots.txt` é gerido pela Cloudflare e tinha conteúdo igual na versão anterior e candidata. Foram preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime.
+- Typecheck, build de produção com 17 contratos, testes dirigidos, UI sintética em 320 e 1280 px e gate proporcional passaram. Após a promoção, `/` e `/login` responderam 200, e `/admin/whatsapp` redirecionou sem sessão (307). Não houve cobranças, mensagens nem alterações de dados reais durante o smoke. O QA não incluiu sessão autenticada no Worker de staging.
 
 ## Produção ativa — filtro de datas do painel
 
