@@ -37,8 +37,27 @@ WITH CHECK (
   )
 );
 
-GRANT UPDATE (last_opened_at, opened_at_history)
+GRANT UPDATE (last_opened_at)
 ON public.client_manual_whatsapp_confirmations TO authenticated;
+
+CREATE FUNCTION public.append_client_manual_whatsapp_open()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  NEW.last_opened_at := clock_timestamp();
+  NEW.opened_at_history := OLD.opened_at_history || NEW.last_opened_at;
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.append_client_manual_whatsapp_open() FROM PUBLIC;
+
+CREATE TRIGGER append_client_manual_whatsapp_open
+BEFORE UPDATE OF last_opened_at ON public.client_manual_whatsapp_confirmations
+FOR EACH ROW EXECUTE FUNCTION public.append_client_manual_whatsapp_open();
 
 CREATE FUNCTION public.record_client_manual_whatsapp_open(p_studio_id uuid, p_client_id uuid)
 RETURNS void
@@ -46,13 +65,11 @@ LANGUAGE plpgsql
 SECURITY INVOKER
 SET search_path = public, pg_temp
 AS $$
-DECLARE opened_at timestamptz := clock_timestamp();
 BEGIN
   INSERT INTO public.client_manual_whatsapp_confirmations (studio_id, client_id)
   VALUES (p_studio_id, p_client_id)
   ON CONFLICT (studio_id, client_id) DO UPDATE
-    SET last_opened_at = opened_at,
-        opened_at_history = client_manual_whatsapp_confirmations.opened_at_history || opened_at;
+    SET last_opened_at = clock_timestamp();
 END;
 $$;
 

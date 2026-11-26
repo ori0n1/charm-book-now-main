@@ -49,6 +49,28 @@ DO $$
 DECLARE rejected boolean := false;
 BEGIN
   BEGIN
+    UPDATE public.client_manual_whatsapp_confirmations
+    SET opened_at_history = '{}'
+    WHERE studio_id = '11111111-1111-4111-8111-111111111111';
+  EXCEPTION WHEN insufficient_privilege THEN rejected := true; END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Histórico editável diretamente'; END IF;
+END $$;
+
+UPDATE public.client_manual_whatsapp_confirmations
+SET last_opened_at = '2000-01-01T00:00:00Z'
+WHERE studio_id = '11111111-1111-4111-8111-111111111111';
+DO $$
+BEGIN
+  IF (SELECT cardinality(opened_at_history) FROM public.client_manual_whatsapp_confirmations) <> 2
+    OR (SELECT last_opened_at FROM public.client_manual_whatsapp_confirmations) < now() - interval '1 minute' THEN
+    RAISE EXCEPTION 'Trigger não preservou o histórico ou aceitou um horário arbitrário';
+  END IF;
+END $$;
+
+DO $$
+DECLARE rejected boolean := false;
+BEGIN
+  BEGIN
     PERFORM public.record_client_manual_whatsapp_open(
       '11111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2');
   EXCEPTION WHEN insufficient_privilege THEN rejected := true; END;

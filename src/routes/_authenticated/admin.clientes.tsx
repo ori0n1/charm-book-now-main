@@ -46,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ClientAvatar } from "@/components/client-avatar";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AgendaExportButton } from "@/components/agenda/agenda-export-button";
 import { ExpandableList } from "@/components/ui/expandable-list";
 import { getClientProfileEditPermission, inspectClientProfile, removeClientProfiles, unifyEmptyClientProfiles, updateClientProfile } from "@/lib/client-profile.functions";
@@ -219,6 +220,8 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   const [messageFilter, setMessageFilter] = useState<MessageFilter>("all");
   const [messageSaveError, setMessageSaveError] = useState(false);
   const [messageClock, setMessageClock] = useState(() => Date.now());
+  const [whatsappDraft, setWhatsAppDraft] = useState<{ studioId: string; clientId: string; name: string; phone: string; text: string } | null>(null);
+  const [studioWhatsAppConfirmed, setStudioWhatsAppConfirmed] = useState(false);
   const savingMessageIdsRef = useRef(new Set<string>());
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const handledNotificationTargetRef = useRef<string | null>(null);
@@ -375,10 +378,21 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
     if (!studio?.id || !(event.target instanceof Element)) return;
     const anchor = event.target.closest<HTMLAnchorElement>("[data-client-whatsapp-id]");
     const clientId = anchor?.dataset.clientWhatsappId;
-    if (!clientId || savingMessageIdsRef.current.has(clientId) || !clients.some((client) => client.id === clientId)) return;
+    if (!anchor || !clientId) return;
+    event.preventDefault();
+    const client = clients.find((item) => item.id === clientId);
+    if (!client || client.studioId !== studio.id) return;
+    const url = new URL(anchor.href);
+    if (url.hostname !== "wa.me") return;
+    setWhatsAppDraft({ studioId: studio.id, clientId, name: client.name, phone: client.phone, text: url.searchParams.get("text") ?? "" });
+    setStudioWhatsAppConfirmed(false);
+  }
+
+  function recordWhatsAppOpen(studioId: string, clientId: string) {
+    if (savingMessageIdsRef.current.has(clientId)) return;
     savingMessageIdsRef.current.add(clientId);
     setMessageSaveError(false);
-    void recordWhatsAppClick(studio.id, clientId);
+    void recordWhatsAppClick(studioId, clientId);
   }
 
   async function recordWhatsAppClick(studioId: string, clientId: string) {
@@ -457,6 +471,27 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
 
   return (
     <div className="space-y-3 md:space-y-4" onClickCapture={handleWhatsAppClick}>
+      <Dialog open={!!whatsappDraft && whatsappDraft.studioId === studio.id} onOpenChange={(open) => { if (!open) setWhatsAppDraft(null); }}>
+        <DialogContent className="max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle>Mensagem para {whatsappDraft?.name}</DialogTitle>
+            <DialogDescription>Edite o texto antes de abrir a conversa. O envio é manual.</DialogDescription>
+          </DialogHeader>
+          <label className="text-sm font-medium">Mensagem
+            <textarea value={whatsappDraft?.text ?? ""} onChange={(event) => setWhatsAppDraft((draft) => draft ? { ...draft, text: event.target.value } : null)} rows={6} className="mt-2 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-ring/20" />
+          </label>
+          <label className="flex items-start gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={studioWhatsAppConfirmed} onChange={(event) => setStudioWhatsAppConfirmed(event.target.checked)} className="mt-0.5" />
+            Confirmo que a conta de WhatsApp aberta neste aparelho é a do estúdio.
+          </label>
+          {whatsappDraft && studioWhatsAppConfirmed && whatsappDraft.text.trim() && phoneForWhatsApp(whatsappDraft.phone) ? (
+            <a href={`https://wa.me/${phoneForWhatsApp(whatsappDraft.phone)}?text=${encodeURIComponent(whatsappDraft.text)}`} target="_blank" rel="noreferrer" onClick={() => { recordWhatsAppOpen(whatsappDraft.studioId, whatsappDraft.clientId); setWhatsAppDraft(null); }} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-center text-sm font-semibold text-white">Abrir no WhatsApp do estúdio</a>
+          ) : (
+            <button type="button" disabled className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white opacity-40">Abrir no WhatsApp do estúdio</button>
+          )}
+          <p className="text-[11px] text-muted-foreground">O registo indica apenas a abertura da conversa. Confirme a conta e o texto no WhatsApp antes de enviar.</p>
+        </DialogContent>
+      </Dialog>
       <header className={selectedClient ? "hidden" : "border-b border-border/70 pb-3 md:pb-4"}>
         <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="min-w-0">
