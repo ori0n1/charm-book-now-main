@@ -1,0 +1,101 @@
+{
+  "decision": { "evidenceMode": "proportional", "phase": "activation" },
+  "authorization": {
+    "versionId": "cca5315f-0a30-42bc-9e83-378017688889",
+    "commit": "39dc96ee683f8ac58a72697c775d7b074749ebd9",
+    "fullWorkerCycle": true
+  },
+  "baseline": {
+    "activeVersion": "c3fff4b7-cebf-4645-a88e-43188f8bcf28",
+    "activeTrafficPercent": 100,
+    "rollbackVersion": "c3fff4b7-cebf-4645-a88e-43188f8bcf28",
+    "rollbackAvailable": true,
+    "rollbackSafe": true
+  },
+  "artifact": {
+    "versionId": "cca5315f-0a30-42bc-9e83-378017688889",
+    "commit": "39dc96ee683f8ac58a72697c775d7b074749ebd9",
+    "qaSourceCommit": "39dc96ee683f8ac58a72697c775d7b074749ebd9",
+    "unchanged": true,
+    "localManifestSha256": "b8815c3d83d670f6d4445ee3a9db478a6470f7d8f17fa94a419598862c7295e2",
+    "configSha256": "cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634",
+    "uploadedScriptEtag": "aac2bc96fc50c9d891a40b2c18b38327a02caa1a243b8c8cd4b9d45960e0cd58",
+    "remoteModulesMatchManifest": true,
+    "remoteAssetsVerified": true
+  },
+  "config": {
+    "bindings": true,
+    "secretNamesAndTypes": true,
+    "crons": true,
+    "domains": true,
+    "modules": true,
+    "assets": true,
+    "routes": true
+  },
+  "safety": {
+    "noRealTransactions": true,
+    "noRealMessages": true,
+    "noRealDataWrites": true
+  },
+  "tests": {
+    "workerStart": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "remote-readonly", "readOnly": true,
+      "evidence": "Override GET / and /login returned HTTP 200; remote QA 2026-11-26"
+    },
+    "routesApis": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "remote-readonly", "readOnly": true,
+      "evidence": "Override GET / and /login 200; /admin/clientes 307 to login, matching active route contract"
+    },
+    "authPermissions": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "qa-equivalent-artifact", "impact": "related", "isolated": true,
+      "evidence": "Remote 237/237 modules equal local artifact; client route redirects unauthenticated 307",
+      "qaEvidence": "Synthetic owner Playwright QA intercepted record_client_manual_whatsapp_open; no production writes; prior RLS migration unchanged"
+    },
+    "agendaReservations": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "unchanged-contract", "impact": "unchanged",
+      "evidence": "Agenda modules and reservation source unchanged against active production candidate",
+      "sourceDiffEvidence": "git diff c3-source..39dc96e changes only Clients route and build version allowlist",
+      "baselineEvidence": "Active c3fff4b7 previously validated appointment flow remains at 100 percent",
+      "remoteReadOnlyEvidence": "Override root/login and /admin/clientes routes retain HTTP and redirect behavior"
+    },
+    "paymentsStripeConnect": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "unchanged-contract", "impact": "unchanged",
+      "evidence": "Financial opt-in build guard confirmed disabled parity with active reference",
+      "sourceDiffEvidence": "No payments or Stripe source changed; only active version added to parity allowlist",
+      "baselineEvidence": "Active c3fff4b7 payment contract unchanged and retained at 100 percent",
+      "remoteReadOnlyEvidence": "Remote module comparison found only Clients and manifest references changed"
+    },
+    "whatsapp": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "qa-equivalent-artifact", "impact": "changed", "isolated": true,
+      "evidence": "Remote admin.clientes-C9zYKf_i.js SHA-256 6ab1f65893f9d9517bae7174342013390cde337f62251cdefde57d60a066facf matches local",
+      "qaEvidence": "Synthetic owner mobile Playwright: dropdown closes; Pendente to Enviada on WhatsApp open; failed RPC rolls back; 6 manual WhatsApp tests pass"
+    },
+    "email": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "unchanged-contract", "impact": "unchanged",
+      "evidence": "Email modules and notification flows unchanged in source and artifact comparison",
+      "sourceDiffEvidence": "Only Clients route and build version allowlist changed from active source",
+      "baselineEvidence": "Active c3fff4b7 email notification contract remains serving traffic",
+      "remoteReadOnlyEvidence": "Remote 237 Worker modules match built artifact; unrelated groups equal active build"
+    },
+    "push": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "unchanged-contract", "impact": "unchanged",
+      "evidence": "Push modules and triggers unchanged in source and artifact comparison",
+      "sourceDiffEvidence": "Only Clients route and build version allowlist changed from active source",
+      "baselineEvidence": "Active c3fff4b7 push notification contract remains serving traffic",
+      "remoteReadOnlyEvidence": "Remote modules match local artifact; cron schedules and bindings unchanged"
+    },
+    "bindingsSecretsCrons": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "cloudflare-metadata",
+      "evidence": "OAuth compared 53 binding names/types including 24 secrets, runtime, two crons and two domains; values not disclosed"
+    },
+    "existingFeatures": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "qa-equivalent-artifact", "impact": "related", "isolated": true,
+      "evidence": "450 build groups equal baseline except Clients bundle and generated manifest references",
+      "qaEvidence": "Mobile synthetic owner QA checked reactivation text, checkbox gating, menu closure, sent state and failed-save rollback"
+    },
+    "criticalErrors": {
+      "status": "PASS", "versionId": "cca5315f-0a30-42bc-9e83-378017688889", "method": "remote-readonly", "readOnly": true,
+      "evidence": "Override public routes return 200 and protected Clients route 307; no Worker error responses"
+    }
+  }
+}

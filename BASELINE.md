@@ -1,5 +1,13 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-26
 
+## Produção ativa — estado WhatsApp manual e menu de Clientes
+
+- Cloudflare OAuth confirmou o deployment `e35d0a44-370d-454a-b3e0-b72e3dd85c58`, versão `cca5315f-0a30-42bc-9e83-378017688889` a 100% do tráfego, do commit funcional `39dc96ee683f8ac58a72697c775d7b074749ebd9`. A versão anterior `c3fff4b7-cebf-4645-a88e-43188f8bcf28` permanece disponível para rollback seguro do Worker mediante autorização específica.
+- Nos cards de Clientes, o estado muda de “Pendente” para “Enviada” quando o operador abre o WhatsApp do estúdio; se o registo falhar, volta a “Pendente”. O menu de ações fecha ao abrir o compositor. A interface esclarece que a entrega da mensagem não é verificada. Não houve mudança em agendamentos, disparos automáticos, banco, permissões ou dados reais.
+- Artefato: 475 ficheiros, manifesto SHA-256 `b8815c3d83d670f6d4445ee3a9db478a6470f7d8f17fa94a419598862c7295e2`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `aac2bc96fc50c9d891a40b2c18b38327a02caa1a243b8c8cd4b9d45960e0cd58`. Os 237 módulos enviados coincidiram byte a byte com o build; o bundle de Clientes coincidiu por HTTP. Preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime.
+- Testes: seis testes dirigidos de WhatsApp, typecheck, lint, build de produção com 17 contratos, Playwright móvel com identidade sintética e RPC interceptada, e gate proporcional `GATE_APTO`. Antes da promoção, QA remoto de leitura verificou `/` e `/login` 200, `/admin/clientes` 307 sem sessão e o hash do bundle de Clientes. Após a promoção, as mesmas rotas e o bundle passaram; OAuth confirmou 100%. Nenhuma mensagem, cobrança ou escrita em dados reais foi executada.
+- O commit de sincronização oficial posterior acrescenta apenas este registro e o ID ativo à lista de paridade do build. O código funcional publicado continua sendo `39dc96e`.
+
 ## Produção ativa — WhatsApp manual contextual nos Clientes
 
 - Cloudflare OAuth confirmou o deployment `82d8c69f-d600-4aa7-9a44-99694f60111e`, versão `c3fff4b7-cebf-4645-a88e-43188f8bcf28` a 100% do tráfego, do commit funcional `f2a415dbc5f703766644773a26bbcf4f2b242749`. A versão anterior `7e829038-6b52-4854-927c-be94426de5b7` permanece a 0% para rollback somente após autorização específica.
