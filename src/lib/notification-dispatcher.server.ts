@@ -7,7 +7,7 @@ import { buildStudioNotificationDeepLink } from "@/lib/notification-deep-link";
 import { loadTrustedPushStudios, type TrustedPushStudio } from "@/lib/push-tenant-identity";
 import { shouldDeliverManualAppointmentPush } from "@/lib/manual-appointment-push";
 import { isOwnerSelfReschedule } from "@/lib/owner-self-reschedule.server";
-import { notificationCategoryForKind } from "@/lib/studio-notification-preferences";
+import { isRecipientNotificationCategoryDisabled, notificationRecipientRole } from "@/lib/studio-notification-preferences";
 
 type ClaimedDelivery = {
   delivery_id: string;
@@ -321,30 +321,24 @@ async function validateStudioNotificationScope(
   if (!(await studioCanUseNotifications(sb, notification.studio_id))) {
     return { ok: false as const, reason: "plan_feature_required:notifications" };
   }
-  const { data: currentMembership, error: membershipError } = await (sb as any)
+  const { data: memberships, error: membershipError } = await (sb as any)
     .from("user_roles")
     .select("role")
     .eq("user_id", notification.user_id)
-    .eq("studio_id", notification.studio_id)
-    .limit(1)
-    .maybeSingle();
+    .eq("studio_id", notification.studio_id);
   if (membershipError) throw new Error(membershipError.message);
-  if (!currentMembership?.role) {
+  const role = notificationRecipientRole((memberships ?? []).map((membership: { role: string }) => membership.role));
+  if (!role) {
     return { ok: false as const, reason: "subscription_user_not_studio_member" };
   }
 
-  if (["studio_owner", "saas_owner"].includes(currentMembership.role)) {
-    const { data: preference, error: preferenceError } = await (sb as any)
-      .from("studio_notification_preferences")
-      .select("enabled")
-      .eq("studio_id", notification.studio_id)
-      .eq("user_id", notification.user_id)
-      .eq("category", notificationCategoryForKind(notification.kind))
-      .maybeSingle();
-    if (preferenceError) throw new Error(preferenceError.message);
-    if (preference?.enabled === false) {
-      return { ok: false as const, reason: "recipient_category_disabled" };
-    }
+  if (await isRecipientNotificationCategoryDisabled(sb as any, {
+    studioId: notification.studio_id,
+    userId: notification.user_id,
+    kind: notification.kind,
+    role,
+  })) {
+    return { ok: false as const, reason: "recipient_category_disabled" };
   }
 
   if (notification.kind === "appointment_rescheduled" && await isOwnerSelfReschedule(sb, {
@@ -353,7 +347,7 @@ async function validateStudioNotificationScope(
     appointmentId: readPayloadString(notification.payload, "appointment_id") ?? "",
     startsAt: readPayloadString(notification.payload, "starts_at") ?? "",
     recipientId: notification.user_id,
-    recipientRole: currentMembership.role,
+    recipientRole: role,
   })) {
     return { ok: false as const, reason: "owner_self_schedule_move" };
   }

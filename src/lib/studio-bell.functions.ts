@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware';
-import { disabledNotificationKinds, notificationCategoryForKind } from '@/lib/studio-notification-preferences';
+import { disabledNotificationKinds, notificationCategoryForKind, notificationRecipientRole } from '@/lib/studio-notification-preferences';
 
 const BellInput = z.object({ studioId: z.string().uuid() });
 
@@ -20,8 +20,7 @@ export const getStudioBellNotifications = createServerFn({ method: 'POST' })
       .select('role').eq('studio_id', data.studioId).eq('user_id', userId);
     if (membershipError) throw new Error(membershipError.message);
     if (!memberships?.length) throw new Response('Forbidden', { status: 403 });
-    const role = ['saas_owner', 'studio_owner', 'manager', 'staff', 'desk_staff']
-      .find((candidate) => memberships.some((membership) => membership.role === candidate));
+    const role = notificationRecipientRole(memberships.map((membership) => membership.role));
     if (!role) throw new Response('Forbidden', { status: 403 });
 
     // Keep history and unread count under the caller's RLS, as before.

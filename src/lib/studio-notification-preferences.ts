@@ -12,6 +12,12 @@ export const notificationCategories = [
 
 export type NotificationCategory = (typeof notificationCategories)[number]["id"];
 
+export function notificationRecipientRole(roles: Iterable<string>): string | undefined {
+  const assigned = new Set(roles);
+  return ["saas_owner", "studio_owner", "manager", "staff", "desk_staff"]
+    .find((role) => assigned.has(role));
+}
+
 const kindCategories: Record<string, NotificationCategory> = {
   new_appointment: "new_appointments",
   appointment_rescheduled: "reschedules",
@@ -41,4 +47,19 @@ export function disabledNotificationKinds(categories: Iterable<string>): string[
   return Object.entries(kindCategories)
     .filter(([, category]) => disabled.has(category))
     .map(([kind]) => kind);
+}
+
+export async function isRecipientNotificationCategoryDisabled(
+  sb: { from: (table: string) => any },
+  input: { studioId: string; userId: string; kind: string; role: string },
+): Promise<boolean> {
+  if (input.role !== "studio_owner" && input.role !== "saas_owner") return false;
+  const { data, error } = await sb.from("studio_notification_preferences")
+    .select("enabled")
+    .eq("studio_id", input.studioId)
+    .eq("user_id", input.userId)
+    .eq("category", notificationCategoryForKind(input.kind))
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.enabled === false;
 }
