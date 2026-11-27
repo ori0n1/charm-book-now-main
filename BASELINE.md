@@ -1,4 +1,13 @@
-# Base oficial da produção Bellza — atualizada em 2026-11-26
+# Base oficial da produção Bellza — atualizada em 2026-11-27
+
+## Produção ativa — WhatsApp manual nos cards da Agenda
+
+- Cloudflare OAuth confirmou o deployment `b69216e5-d32d-426c-83e8-7b586d63a2a4`, versão `5577faab-7d18-4415-bc50-7a5b9c2234a8` a 100% do tráfego, do commit funcional `c1d6e60a9c67df144ea5eb2ac61546069018de34`. A versão anterior `cca5315f-0a30-42bc-9e83-378017688889` permanece a 0% para rollback do Worker somente mediante autorização específica.
+- Em estúdios com WhatsApp automático desativado, os cards dos agendamentos futuros confirmados mostram discretamente o ícone de WhatsApp. O clique abre a mesma janela editável de confirmação ou lembrete, conforme o horário; o detalhe indica a abertura manual após a ação. Para estúdios com envio automático ativado, o novo ícone não aparece. O X do compositor foi afastado do nome. As regras de agendamento e os disparos automáticos foram preservados. A abertura da conversa não comprova a entrega da mensagem.
+- A migração `20261126224230_appointment_manual_whatsapp_opens.sql` (SHA-256 `73d870b456955fdc62c001c5b60b35886d66fa644d6012176bc806ecd6e44046`) foi autorizada e aplicada em transação no SQL Editor de produção. Leitura posterior como `anon`, sem BYPASSRLS, confirmou a tabela com RLS, duas políticas `service_role` e função `SECURITY INVOKER` restrita. O histórico manual ainda não aparece no ledger da CLI; reconciliar antes de qualquer `db push`. Nenhum dado real de clientes ou agendamentos foi alterado nos testes.
+- Artefato: 478 ficheiros, manifesto SHA-256 `ce7631f920caea0387dd1859e0bd63457fb11b6afe0372945dccb764fbd9a4f4`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `b2afc9e5fd411d1f609f4fa7b1993be440bbe2d21073e7d24eba792466304e36`. Os 239 módulos do Worker ativo coincidiram byte a byte com o build; cinco assets públicos, inclusive Agenda e Clientes, coincidiram por HTTP. Preservados 53 bindings, 24 secrets por nome/tipo, dois crons, domínios e runtime.
+- Testes: SQL sintético de isolamento entre estúdios, sete testes dirigidos, typecheck, lint, build de produção com 17 contratos e Playwright móvel sintético a 390 px. O candidato a 0% passou GET público via override e comparação dos assets; após ativação, `/` e `/login` responderam 200 com os arquivos novos, e `/admin/clientes` e `/admin/agenda` redirecionaram sem sessão (307). O QA remoto não incluiu uma sessão administrativa autenticada e não enviou mensagens, cobrou nem modificou agendamentos reais.
+- O commit de sincronização oficial posterior acrescenta somente este registro e a identificação da versão ativa; o código funcional publicado continua sendo `c1d6e60`.
 
 ## Produção ativa — estado WhatsApp manual e menu de Clientes
 
