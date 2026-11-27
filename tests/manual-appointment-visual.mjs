@@ -32,7 +32,7 @@ try {
   assert.equal(await messageAction.textContent(), "Enviar mensagem");
   const phoneBox = await page.getByText("+351912345678").boundingBox();
   const messageBox = await messageAction.boundingBox();
-  assert.ok(phoneBox && messageBox && Math.abs(phoneBox.y - messageBox.y) < 22, "compact action must align with phone");
+  assert.ok(phoneBox && messageBox && messageBox.y >= phoneBox.y + phoneBox.height, "compact action must sit below the phone");
   await messageAction.click();
   const dialog = page.getByRole("dialog");
   await dialog.waitFor();
@@ -67,6 +67,9 @@ try {
   assert.match(await page.locator("body").innerText(), /Lembrete enviado manualmente/);
   assert.equal(await page.getByText("Lembrete enviado", { exact: true }).count(), 1);
   assert.equal(await messageAction.textContent(), "Reenviar mensagem");
+  const sentBox = await page.getByText("Lembrete enviado", { exact: true }).boundingBox();
+  const resendBox = await messageAction.boundingBox();
+  assert.ok(sentBox && resendBox && Math.abs(sentBox.y - resendBox.y) < 8, "sent status and resend action must align");
   assert.equal(await page.getByText("Lembrete pendente", { exact: true }).count(), 0);
   await messageAction.click();
   assert.match(await dialog.getByRole("textbox", { name: "Mensagem" }).inputValue(), /Brushing.*09:00/);
