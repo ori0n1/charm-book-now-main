@@ -437,14 +437,16 @@ export function TimelineAppointmentDrawer({
                 {!details.serviceAssignments?.length && <p className="break-words text-xs text-muted-foreground">{details.serviceName}</p>}
                 <div className="mt-1.5 min-w-0">
                   {manualWhatsAppUrl && onManualWhatsApp ? (
-                    <button type="button" onClick={onManualWhatsApp}
-                      aria-label={`Editar mensagem para ${details.clientName} no WhatsApp`}
-                      title="Editar mensagem antes de abrir o WhatsApp"
-                      data-testid="manual-appointment-whatsapp"
-                      className="inline-flex min-h-9 max-w-full items-center gap-1.5 break-all text-xs font-bold text-foreground hover:underline focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700">
-                      <span>{details.clientPhone}</span>
-                      <WhatsAppIcon className="h-3.5 w-3.5 shrink-0 text-emerald-700 dark:text-emerald-300" />
-                    </button>
+                    <div className="space-y-2">
+                      <p className="break-all text-xs font-semibold">{details.clientPhone}</p>
+                      <button type="button" onClick={onManualWhatsApp}
+                        aria-label={`Editar mensagem para ${details.clientName} no WhatsApp`}
+                        data-testid="manual-appointment-whatsapp"
+                        className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-xl border border-emerald-700/25 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-100">
+                        <WhatsAppIcon className="size-4 shrink-0" />
+                        Preparar WhatsApp manual
+                      </button>
+                    </div>
                   ) : manualWhatsAppUrl ? (
                     <a href={manualWhatsAppUrl} target="_blank" rel="noopener noreferrer"
                       aria-label={`Contactar ${details.clientName} no WhatsApp`}

@@ -78,6 +78,7 @@ export const Route = createFileRoute("/_authenticated/admin/clientes")({
 type AppointmentRow = {
   id: string;
   client_id: string;
+  created_at: string;
   starts_at: string;
   status: string;
   total_price: number;
@@ -134,6 +135,7 @@ type ClientSummary = {
   noShowAppointments: number;
   futureAppointments: number;
   hasFutureBooking: boolean;
+  latestFutureBookingCreatedAt: string | null;
   pendingAppointments: number;
   rescheduledAppointments: number;
   otherAppointments: number;
@@ -386,6 +388,9 @@ function ClientsContent({ financialVisible }: { financialVisible: boolean }) {
   });
   const recentSentIds = useMemo(() => recentManualMessageClientIds(
     clients.map((client) => client.id), manualMessagesQuery.data ?? [], messageClock,
+    MANUAL_MESSAGE_STATUS_HOURS,
+    new Map(clients.flatMap((client) => client.latestFutureBookingCreatedAt
+      ? [[client.id, client.latestFutureBookingCreatedAt] as const] : [])),
   ), [clients, manualMessagesQuery.data, messageClock]);
   const messageCounts = useMemo(
     () => manualMessageCounts(clients.map((client) => client.id), [...recentSentIds]),
@@ -698,7 +703,7 @@ async function fetchClientAppointments(studioId: string, staffId?: string | null
     (supabase as any)
       .from("appointments")
       .select(
-        "id,client_id,starts_at,status,total_price,clients!appointments_client_id_fkey(id),appointment_services(services(name))",
+        "id,client_id,created_at,starts_at,status,total_price,clients!appointments_client_id_fkey(id),appointment_services(services(name))",
       )
       .eq("studio_id", studioId)
       .match(staffId ? { staff_id: staffId } : {})
@@ -774,6 +779,7 @@ function buildClientSummaries(
       noShowAppointments: 0,
       futureAppointments: 0,
       hasFutureBooking: false,
+      latestFutureBookingCreatedAt: null,
       pendingAppointments: 0,
       rescheduledAppointments: 0,
       otherAppointments: 0,
@@ -822,6 +828,10 @@ function buildClientSummaries(
     if (appointmentBucket === "future") existing.futureAppointments += 1;
     if (isActiveFutureAppointment(appointment.status, appointment.starts_at)) {
       existing.hasFutureBooking = true;
+      if (appointment.created_at && (!existing.latestFutureBookingCreatedAt ||
+        Date.parse(appointment.created_at) > Date.parse(existing.latestFutureBookingCreatedAt))) {
+        existing.latestFutureBookingCreatedAt = appointment.created_at;
+      }
       if (appointment.status === "confirmed" &&
         (!existing.nextAppointment || Date.parse(appointment.starts_at) < Date.parse(existing.nextAppointment.startsAt))) {
         existing.nextAppointment = { id: appointment.id, startsAt: appointment.starts_at, service: serviceNames.join(", ") || serviceName };
@@ -1082,7 +1092,7 @@ function ClientDesktopTable({
                 else onDetails(client.id);
               }
             }}
-            className={`grid w-full grid-cols-[minmax(13rem,1.35fr)_minmax(10rem,1fr)_8rem_8rem_7rem_3.5rem] items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 ${isNearAppointment(client) ? "bg-sky-50/40 dark:bg-sky-950/15" : isInactiveClient(client) ? "bg-amber-50/30 dark:bg-amber-950/10" : ""}`}
+            className={`grid w-full grid-cols-[minmax(13rem,1.35fr)_minmax(10rem,1fr)_8rem_8rem_7rem_3.5rem] items-center gap-3 px-4 py-2.5 text-left text-sm transition hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20 ${isNearAppointment(client) ? "bg-sky-50/40 dark:bg-sky-950/15" : ""}`}
           >
             <ClientIdentity client={client} compact messageSent={messageStatusReady ? sentClientIds.has(client.id) : null} manualReminder={Boolean(client.nextAppointment && manualReminderIds.has(client.nextAppointment.id))} />
             <span className="min-w-0 whitespace-normal text-muted-foreground">{client.lastService}</span>
@@ -1115,9 +1125,8 @@ function ClientCompactCard({
   onManualReminder: () => void;
 }) {
   const nearAppointment = isNearAppointment(client);
-  const inactive = isInactiveClient(client);
   return (
-    <article className={`rounded-2xl border bg-card px-3 py-2.5 shadow-sm transition active:scale-[0.995] ${nearAppointment ? "border-sky-300/70 dark:border-sky-700/70" : inactive ? "border-amber-300/60 dark:border-amber-700/60" : "border-border/80"}`}>
+    <article className={`rounded-2xl border bg-card px-3 py-2.5 shadow-sm transition active:scale-[0.995] ${nearAppointment ? "border-sky-300/70 dark:border-sky-700/70" : "border-border/80"}`}>
       <div className="flex items-center gap-3">
         <button type="button" onClick={manualReminder ? onManualReminder : onDetails} className="min-w-0 flex-1 text-left">
           <ClientIdentity client={client} compact messageSent={messageSent} manualReminder={manualReminder} />

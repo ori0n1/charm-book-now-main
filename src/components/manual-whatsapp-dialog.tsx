@@ -29,10 +29,14 @@ export function ManualWhatsAppDialog({
 
   return (
     <Dialog open={Boolean(draft)} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-md rounded-3xl [&>button]:!absolute [&>button]:!right-3 [&>button]:!top-3">
-        <DialogHeader className="pr-14">
-          <DialogTitle className="text-left break-words">Mensagem para {draft?.name}</DialogTitle>
-          <DialogDescription>Edite o texto antes de abrir a conversa. O envio é manual.</DialogDescription>
+      <DialogContent
+        overlayClassName="z-[10020]"
+        className="z-[10021] max-w-md rounded-3xl [&>button]:!absolute [&>button]:!right-3 [&>button]:!top-3"
+        onOpenAutoFocus={(event) => { event.preventDefault(); (event.currentTarget as HTMLElement).focus({ preventScroll: true }); }}
+      >
+        <DialogHeader className="min-h-12 pr-16">
+          <DialogTitle className="break-words text-left leading-snug">Mensagem para {draft?.name}</DialogTitle>
+          <DialogDescription className="text-left">Edite o texto antes de abrir a conversa. O envio é manual.</DialogDescription>
         </DialogHeader>
         <label className="text-sm font-medium">Mensagem
           <textarea value={text} onChange={(event) => setText(event.target.value)} rows={6} className="mt-2 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm font-normal outline-none focus:ring-2 focus:ring-ring/20" />

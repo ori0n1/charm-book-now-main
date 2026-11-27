@@ -2009,9 +2009,7 @@ function AgendaPage() {
           onOpenAppointment={(appointment) => {
             if (!appointment.privateDetails) return;
             const sourceId = appointment.sourceId ?? appointment.id;
-            const source = appts.find((item) => item.id === sourceId);
-            if (appointment.manualWhatsAppPending && source) openManualAppointmentDraft(source);
-            else setTimelineDetailId(sourceId);
+            setTimelineDetailId(sourceId);
           }}
           onOpenBlock={(block) => {
             if (block.sourceId) setSelectedBlockId(block.sourceId);

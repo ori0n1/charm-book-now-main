@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode, type TouchEvent as ReactTouchEvent } from "react";
 import { createPortal } from "react-dom";
 import { CalendarPlus, Clock3, GripVertical, LockKeyhole, Sparkles, UserRound, X } from "lucide-react";
-import { WhatsAppIcon } from "@/components/whatsapp-icon";
 import {
   getTimelineSlotMinutes,
   getTimelineVisualPeriods,
@@ -681,7 +680,7 @@ export function ProfessionalTimeline({
                           left: `calc(${left}% + 3px)`,
                           width: `calc(${width}% - 6px)`,
                         }}
-                        aria-label={`${formatTime(appointment.startsAt, timeZone)}, ${appointment.clientName}, ${appointment.serviceName}, ${appointment.professionalName}, ${appointment.jointBooking ? "Atendimento conjunto, " : ""}${appointment.relatedServiceSummary ?? ""}, ${appointment.valueLabel ?? "valor privado"}, ${statusLabel(appointment.status)}${appointment.manualWhatsAppPending ? ", mensagem manual de WhatsApp pendente; tocar para editar" : ""}`}
+                        aria-label={`${formatTime(appointment.startsAt, timeZone)}, ${appointment.clientName}, ${appointment.serviceName}, ${appointment.professionalName}, ${appointment.jointBooking ? "Atendimento conjunto, " : ""}${appointment.relatedServiceSummary ?? ""}, ${appointment.valueLabel ?? "valor privado"}, ${statusLabel(appointment.status)}${appointment.manualWhatsAppPending ? ", lembrete manual de WhatsApp pendente nos detalhes" : ""}`}
                         data-timeline-entry="appointment"
                       >
                         {onDropAppointment && !unified && appointment.privateDetails && appointment.status === "confirmed" &&
@@ -698,12 +697,6 @@ export function ProfessionalTimeline({
                             <span className="flex min-w-0 flex-1 items-baseline gap-1 text-[9px] leading-none">
                               <span className="min-w-0 flex-[3] truncate font-black">{appointment.serviceName}</span>
                               <span className="min-w-0 flex-[2] truncate font-semibold">{appointment.clientName}</span>
-                            </span>
-                          )}
-                          {appointment.manualWhatsAppPending && (
-                            <span title="WhatsApp manual pendente" className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-emerald-700/20 bg-emerald-50/90 px-1 py-0.5 text-[8px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
-                              <WhatsAppIcon className="size-3" />
-                              <span className="hidden lg:inline">Enviar</span>
                             </span>
                           )}
                           {appointment.height >= 32 && (appointment.attendancePending ? (

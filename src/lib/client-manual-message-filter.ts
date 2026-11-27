@@ -10,15 +10,17 @@ export function recentManualMessageClientIds(
   records: ManualMessageRecord[],
   now = Date.now(),
   statusHours = MANUAL_MESSAGE_STATUS_HOURS,
+  latestBookingCreatedAtByClient: ReadonlyMap<string, string> = new Map(),
 ) {
   const clients = new Set(clientIds);
   const cutoff = now - statusHours * 60 * 60 * 1000;
-  return new Set(records.filter((record) =>
-    clients.has(record.client_id) &&
-    Number.isFinite(Date.parse(record.confirmed_at)) &&
-    Date.parse(record.confirmed_at) >= cutoff &&
-    Date.parse(record.confirmed_at) <= now,
-  ).map((record) => record.client_id));
+  return new Set(records.filter((record) => {
+    const openedAt = Date.parse(record.confirmed_at);
+    const latestBookingAt = Date.parse(latestBookingCreatedAtByClient.get(record.client_id) ?? "");
+    return clients.has(record.client_id) &&
+      Number.isFinite(openedAt) && openedAt >= cutoff && openedAt <= now &&
+      (!Number.isFinite(latestBookingAt) || openedAt >= latestBookingAt);
+  }).map((record) => record.client_id));
 }
 
 export function manualMessageCounts(clientIds: string[], confirmedClientIds: string[]) {

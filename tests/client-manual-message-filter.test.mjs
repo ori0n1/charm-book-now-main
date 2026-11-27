@@ -15,6 +15,15 @@ test("o estado recente expira sem apagar o histórico e um novo clique reativa-o
   assert.equal(records.length, 4);
 });
 
+test("uma nova marcação devolve o indicador a pendente até a próxima abertura", () => {
+  const now = Date.parse("2026-11-27T12:00:00Z");
+  const booking = new Map([["a", "2026-11-27T10:00:00Z"]]);
+  const oldOpen = { client_id: "a", confirmed_at: "2026-11-27T09:00:00Z" };
+  assert.deepEqual([...recentManualMessageClientIds(["a"], [oldOpen], now, 72, booking)], []);
+  const newOpen = { client_id: "a", confirmed_at: "2026-11-27T11:00:00Z" };
+  assert.deepEqual([...recentManualMessageClientIds(["a"], [oldOpen, newOpen], now, 72, booking)], ["a"]);
+});
+
 test("cada cliente conta uma vez e confirmações de outro estúdio são ignoradas", () => {
   const result = manualMessageCounts(["a", "b", "c"], ["a", "a", "other-studio"]);
   assert.deepEqual([result.total, result.sent, result.pending], [3, 1, 2]);

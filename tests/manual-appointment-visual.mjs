@@ -24,16 +24,20 @@ try {
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
   const card = page.locator('[data-timeline-entry="appointment"]');
   await card.waitFor();
-  assert.match(await card.getAttribute("aria-label"), /mensagem manual de WhatsApp pendente/);
+  assert.match(await card.getAttribute("aria-label"), /lembrete manual de WhatsApp pendente nos detalhes/);
   await card.click();
+  assert.equal(await page.getByTestId("appointment-details").textContent(), "Detalhes do agendamento");
+  await page.getByTestId("prepare-manual-whatsapp").click();
   const dialog = page.getByRole("dialog");
   await dialog.waitFor();
+  assert.notEqual(await page.evaluate(() => document.activeElement?.tagName), "TEXTAREA", "the keyboard should stay closed when the dialog opens");
   const titleBox = await dialog.getByText("Mensagem para Jaqueline de Almeida Santos").boundingBox();
   const closeBox = await dialog.getByRole("button", { name: "Close" }).boundingBox();
   assert.ok(titleBox && closeBox && titleBox.x + titleBox.width <= closeBox.x, "close button must not overlap the title");
+  assert.ok(closeBox && await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[role="dialog"]') !== null, { x: closeBox.x + closeBox.width / 2, y: closeBox.y + closeBox.height / 2 }), "dialog must stay above appointment details");
   await dialog.getByRole("button", { name: "Ver detalhes da marcação" }).click();
   assert.equal(await page.getByTestId("appointment-details").textContent(), "Detalhes do agendamento");
-  await card.click();
+  await page.getByTestId("prepare-manual-whatsapp").click();
   await dialog.getByRole("textbox", { name: "Mensagem" }).fill("Texto editado para Jaqueline");
   await dialog.getByRole("checkbox").check();
   const link = dialog.getByRole("link", { name: "Abrir no WhatsApp do estúdio" });
@@ -41,13 +45,14 @@ try {
   await page.route("https://wa.me/**", (route) => route.abort());
   await link.click();
   assert.equal(await page.getByTestId("sent-state").textContent(), "Enviada manualmente");
-  assert.doesNotMatch(await card.getAttribute("aria-label"), /mensagem manual de WhatsApp pendente/);
+  assert.doesNotMatch(await card.getAttribute("aria-label"), /lembrete manual de WhatsApp pendente/);
   await page.getByTestId("mode-toggle").click();
-  assert.doesNotMatch(await card.getAttribute("aria-label"), /mensagem manual de WhatsApp pendente/);
+  assert.doesNotMatch(await card.getAttribute("aria-label"), /lembrete manual de WhatsApp pendente/);
   await card.click();
   assert.equal(await page.getByTestId("appointment-details").textContent(), "Detalhes do agendamento");
+  assert.equal(await page.getByTestId("prepare-manual-whatsapp").count(), 0);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ mobile: "390x844", closeClearOfTitle: true, editedMessage: true, manualStatus: true, automaticModeWithoutBubble: true }));
+  console.log(JSON.stringify({ mobile: "390x844", detailsFirst: true, closeClearOfTitle: true, keyboardClosedOnOpen: true, editedMessage: true, manualStatus: true, automaticModeWithoutManualAction: true }));
 } finally {
   await browser?.close();
 }

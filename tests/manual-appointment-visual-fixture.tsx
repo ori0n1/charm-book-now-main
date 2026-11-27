@@ -11,7 +11,10 @@ function App() {
   return <main className="min-h-screen bg-stone-50 p-3">
     <button type="button" onClick={() => { setManual((value) => !value); setDraft(false); setDetails(false); setSent(false); }} data-testid="mode-toggle">Modo {manual ? "manual" : "automático"}</button>
     <p data-testid="sent-state">{sent ? "Enviada manualmente" : "Pendente"}</p>
-    {details && <p data-testid="appointment-details">Detalhes do agendamento</p>}
+    {details && <div className="fixed inset-x-0 top-16 z-[10000] rounded-xl bg-white p-4 shadow-xl">
+      <p data-testid="appointment-details">Detalhes do agendamento</p>
+      {manual && !sent && <button type="button" data-testid="prepare-manual-whatsapp" onClick={() => { setDetails(false); setDraft(true); }}>Preparar WhatsApp manual</button>}
+    </div>}
     <ProfessionalTimeline
       date={new Date("2026-11-26T12:00:00Z")}
       now={new Date("2026-11-26T08:00:00Z")}
@@ -23,7 +26,7 @@ function App() {
       }]}
       availability={[{ staffId: "ana", startMinutes: 540, endMinutes: 780 }]}
       timeZone="Europe/Lisbon"
-      onOpenAppointment={() => { if (manual && !sent) setDraft(true); else setDetails(true); }}
+      onOpenAppointment={() => setDetails(true)}
       onOpenBlock={() => {}}
       onCreateAtSlot={() => {}}
       onBlockAtSlot={() => {}}
