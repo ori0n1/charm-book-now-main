@@ -1,5 +1,11 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-27
 
+## Produção ativa — alinhamento visual do estado manual
+
+- Cloudflare OAuth confirmou o deployment `602b0c0d-27a4-4bf7-b9d3-a7795ded4c3a`, versão `7fe0499e-48eb-4e5a-ac13-a982bf4aa861` a 100% do tráfego, com fonte funcional `33e324322fb8e189a9eed05a2436549c52189623`. A versão anterior `e77da792-f3b9-473c-81a1-2ff46f3dc624` permanece disponível para rollback autorizado.
+- No detalhe da marcação, o telefone ocupa a primeira linha; “Lembrete enviado” e “Reenviar mensagem” ficam agrupados abaixo. A alteração foi só visual, sem mudança no registo, mensagens, agenda, banco ou permissões.
+- Artefato: 478 ficheiros, manifesto SHA-256 `595580cbe83bda30ee6cda54222eaf6249c6a583c65b741f7b6fb8c25f04de2c`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`. Na versão a 0%, 239 módulos, 173 assets, 53 bindings e o runtime coincidiram; as cinco rotas esperadas passaram. TypeScript, lint, QA visual mobile e build de produção com 17 contratos passaram. Após ativação, 239 módulos, 173 assets e cinco rotas passaram novamente. Nenhuma mensagem, cobrança ou escrita real de dados foi feita nos testes.
+
 ## Produção ativa — estado enviado com reenvio manual
 
 - Cloudflare OAuth confirmou o deployment `0c333f89-26d6-4ac6-b0fc-ba988493b950`, versão `e77da792-f3b9-473c-81a1-2ff46f3dc624` a 100% do tráfego, com fonte funcional `4eec906bce38f5fafe4edac0315eaae38aa9f909`. A anterior `26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6` permanece a 0% para rollback seguro do Worker mediante autorização aplicável.
