@@ -1346,8 +1346,6 @@ function ClientIdentity({
   manualReminder?: boolean;
 }) {
   const display = getClientDisplayInfo(client);
-  const nearAppointment = isNearAppointment(client);
-
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-2">
@@ -1365,7 +1363,6 @@ function ClientIdentity({
           </div>
           <div className={`mt-0.5 flex min-w-0 items-center gap-1.5 ${messageSent !== undefined ? "flex-wrap" : ""}`}>
             <ClientPrimaryStatus client={client} compact={compact} />
-            {nearAppointment && <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-sky-300/70 bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-sky-800 dark:border-sky-700 dark:bg-sky-950 dark:text-sky-200"><Clock3 className="size-3" aria-hidden="true" /> Em 2 h</span>}
             {manualReminder && <span title="Abrir lembrete manual no WhatsApp" aria-label="Lembrete de WhatsApp manual pendente" className="inline-flex shrink-0 items-center gap-1 rounded-md border border-emerald-500/25 bg-emerald-500/[0.07] px-1.5 py-0.5 text-[10px] font-medium leading-none text-emerald-800 dark:text-emerald-300"><MessageCircle className="size-3" aria-hidden="true" /> WhatsApp</span>}
             {messageSent !== undefined && <ClientMessageStatus sent={messageSent} />}
             {!compact && (

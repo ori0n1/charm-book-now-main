@@ -50,6 +50,7 @@ import {
 import { PremiumDatePicker } from "@/components/ui/premium-date-picker";
 import { WhatsAppIcon } from "@/components/whatsapp-icon";
 import { ManualWhatsAppDialog } from "@/components/manual-whatsapp-dialog";
+import { isManualReminderOpen, isManualReminderPending } from "@/lib/manual-appointment-reminder";
 import {
   InternationalPhoneInput,
   isValidInternationalPhone,
@@ -972,9 +973,9 @@ function AgendaPage() {
             graceMinutes: attendanceGraceMinutes,
           }) === "awaiting_confirmation",
         manualWhatsAppPending: canSeeSensitive && whatsappManualMode &&
-          appointment.status === "confirmed" && Date.parse(appointment.starts_at) > agendaNow.getTime() &&
+          appointment.status === "confirmed" &&
           isValidInternationalPhone(normalizeInternationalPhone(appointment.clients?.display_phone ?? appointment.clients?.phone)) &&
-          !latestManualOpenByAppointment.has(appointment.id),
+          isManualReminderPending(appointment.starts_at, agendaNow, latestManualOpenByAppointment.get(appointment.id)),
         manualFit: Boolean(appointment.is_manual_fit),
       };
       const selectedDateKey = toDateInputValue(selectedDate);
@@ -2195,7 +2196,9 @@ function AgendaPage() {
                 paymentDetails: paid > 0
                   ? paymentAttribution(timelineDetailAppt.id, confirmedPaidRows, cashPaymentRows, refundRows)
                   : undefined,
-                messageLabel: latestManualOpenByAppointment.has(timelineDetailAppt.id)
+                messageLabel: isManualReminderOpen(timelineDetailAppt.starts_at, latestManualOpenByAppointment.get(timelineDetailAppt.id))
+                  ? "Lembrete enviado manualmente (entrega não verificada)"
+                  : latestManualOpenByAppointment.has(timelineDetailAppt.id)
                   ? "Enviada manualmente (abertura do WhatsApp; entrega não verificada)"
                   : messageState?.label ?? null,
                 notes: timelineDetailAppt.notes,
@@ -2209,6 +2212,9 @@ function AgendaPage() {
                 Date.parse(timelineDetailAppt.starts_at) > agendaNow.getTime()
                 ? () => { setTimelineDetailId(null); openManualAppointmentDraft(timelineDetailAppt); }
                 : undefined}
+              manualReminderPending={whatsappManualMode && timelineDetailAppt.status === "confirmed" &&
+                isValidInternationalPhone(normalizeInternationalPhone(timelineDetailAppt.clients?.display_phone ?? timelineDetailAppt.clients?.phone)) &&
+                isManualReminderPending(timelineDetailAppt.starts_at, agendaNow, latestManualOpenByAppointment.get(timelineDetailAppt.id))}
               attendanceUnavailableReason={hasJointServiceState
                 ? (timelineDetailAppt.status === "cancelled"
                     ? "Marcação cancelada: a presença não pode ser registada."

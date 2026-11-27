@@ -80,6 +80,7 @@ export function TimelineAppointmentDrawer({
   actions,
   onClose,
   onManualWhatsApp,
+  manualReminderPending = false,
   onChangeAttendance,
   attendanceUnavailableReason,
   onConfirmCancel,
@@ -102,6 +103,7 @@ export function TimelineAppointmentDrawer({
   actions: TimelineDrawerAction[];
   onClose: () => void;
   onManualWhatsApp?: () => void;
+  manualReminderPending?: boolean;
   onChangeAttendance?: (status: "confirmed" | "completed" | "no_show") => Promise<boolean>;
   attendanceUnavailableReason?: string;
   onConfirmCancel?: (reason: string) => Promise<boolean>;
@@ -437,15 +439,16 @@ export function TimelineAppointmentDrawer({
                 {!details.serviceAssignments?.length && <p className="break-words text-xs text-muted-foreground">{details.serviceName}</p>}
                 <div className="mt-1.5 min-w-0">
                   {manualWhatsAppUrl && onManualWhatsApp ? (
-                    <div className="space-y-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <p className="break-all text-xs font-semibold">{details.clientPhone}</p>
                       <button type="button" onClick={onManualWhatsApp}
                         aria-label={`Editar mensagem para ${details.clientName} no WhatsApp`}
                         data-testid="manual-appointment-whatsapp"
-                        className="inline-flex min-h-9 max-w-full items-center gap-2 rounded-xl border border-emerald-700/25 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 transition hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-100">
-                        <WhatsAppIcon className="size-4 shrink-0" />
-                        Preparar WhatsApp manual
+                        className={`inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 ${manualReminderPending ? "border-amber-500/50 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-100" : "border-emerald-700/25 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-100"}`}>
+                        <WhatsAppIcon className="size-3.5 shrink-0" />
+                        Enviar mensagem
                       </button>
+                      {manualReminderPending && <span className="text-[11px] font-medium text-amber-900 dark:text-amber-200">Lembrete pendente</span>}
                     </div>
                   ) : manualWhatsAppUrl ? (
                     <a href={manualWhatsAppUrl} target="_blank" rel="noopener noreferrer"

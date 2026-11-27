@@ -695,11 +695,16 @@ export function ProfessionalTimeline({
                           </span>
                           {appointment.height < 32 && (
                             <span className="flex min-w-0 flex-1 items-baseline gap-1 text-[9px] leading-none">
+                              {appointment.manualWhatsAppPending && <span className="size-1.5 shrink-0 rounded-full bg-amber-600" title="Lembrete pendente" />}
                               <span className="min-w-0 flex-[3] truncate font-black">{appointment.serviceName}</span>
                               <span className="min-w-0 flex-[2] truncate font-semibold">{appointment.clientName}</span>
                             </span>
                           )}
-                          {appointment.height >= 32 && (appointment.attendancePending ? (
+                          {appointment.height >= 32 && (appointment.manualWhatsAppPending ? (
+                            <span className="inline-flex shrink-0 items-center rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-bold text-amber-900 dark:text-amber-200">
+                              Lembrete pendente
+                            </span>
+                          ) : appointment.attendancePending ? (
                             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-[0.04em] text-amber-900 dark:text-amber-200">
                               <Clock3 className="size-2.5" />
                               Confirmar
