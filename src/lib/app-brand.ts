@@ -16,7 +16,7 @@ export const CANONICAL_ORIGIN = `https://${APP_BRAND.publicSiteHost}`;
 export const LANDING_SEO = {
   title: "Bellza | Agenda online gratuita para salões e estúdios",
   description:
-    "Gestão simples e profissional para salões, estúdios e barbearias: agenda online, clientes, equipa, pagamentos e comunicação num só lugar.",
+    "Marcações online e gestão para salões, estúdios de estética e barbearias. Agenda e clientes num só lugar; sinais no Pro e WhatsApp no Premium.",
   keywords:
     "agenda online gratuita, software para salão, sistema para salão de beleza, agenda para estúdio de estética, software para barbearia, reservas online, gestão para estúdios, pagamentos para salão, aplicação para agendamento, Bellza",
   themeColor: "#FFFDFA",

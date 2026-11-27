@@ -75,7 +75,7 @@ export const Route = createFileRoute("/")({
   component: LandingPage,
 });
 
-const featureIcons = [CalendarCheck, UsersRound, CreditCard, MessageCircle];
+const featureIcons = [CalendarCheck, MessageCircle, CreditCard, UsersRound];
 
 const HOW_IT_WORKS = [
   ["Configure o essencial", "Adicione os serviços, a equipa e os horários do seu espaço."],
@@ -256,13 +256,13 @@ function LandingPage() {
           <div className="max-w-2xl text-center lg:text-left">
             <div className="public-landing-eyebrow mx-auto lg:mx-0">
               <Sparkles className="size-3.5 shrink-0 text-accent" aria-hidden="true" />
-              <span>Gestão para beleza e bem-estar</span>
+              <span>Para salões, barbearias e estúdios de estética</span>
             </div>
             <h1 className="mx-auto mt-5 max-w-[42rem] text-balance text-[clamp(2.45rem,10vw,3.65rem)] font-semibold leading-[1.01] tracking-[-0.045em] lg:mx-0 lg:text-[clamp(3.35rem,4.7vw,4.8rem)]">
-              A forma simples e profissional de gerir o seu espaço.
+              Menos faltas. Mais marcações. <span className="text-accent">Mais tempo para o seu negócio.</span>
             </h1>
             <p className="mx-auto mt-5 max-w-[38rem] text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg lg:mx-0">
-              Agenda, clientes, pagamentos e o dia a dia do seu espaço — organizados num só lugar.
+              A Bellza reúne reservas online, agenda e clientes num só painel. Ative sinais online no Pro e lembretes por WhatsApp no Premium, sujeitos à franquia contratada.
             </p>
             <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row lg:justify-start">
               <Link to="/signup" search={{ ref: undefined }} className="public-btn-primary h-12 w-full px-6 sm:w-auto">
@@ -301,8 +301,8 @@ function LandingPage() {
         <section id="como-funciona" className="mx-auto grid max-w-7xl scroll-mt-28 gap-8 px-4 py-14 sm:px-6 sm:py-20 lg:grid-cols-[0.82fr_1.18fr] lg:items-start lg:gap-16">
           <SectionIntro
             label="Menos trabalho manual"
-            title="Da mensagem solta à agenda organizada."
-            description="A Bellza liga a reserva do cliente à operação do seu espaço, para que cada dia comece mais claro."
+            title="Deixe de gerir marcações em várias conversas."
+            description="O cliente escolhe o horário no seu link. A reserva entra na agenda, onde pode acompanhar o dia e a equipa."
           />
           <div className="public-process-list">
             {HOW_IT_WORKS.map(([title, text], index) => (
@@ -322,9 +322,9 @@ function LandingPage() {
         <section id="funcionalidades" className="public-benefits-section scroll-mt-28 py-14 sm:py-20">
           <div className="mx-auto max-w-7xl px-4 sm:px-6">
             <SectionIntro
-              label="Feito para o seu espaço"
-              title="Menos tarefas. Mais atenção a quem entra pela porta."
-              description="O essencial do negócio reunido numa experiência calma, rápida e fácil de aprender."
+              label="Benefícios no dia a dia"
+              title="Da primeira marcação ao próximo regresso do cliente."
+              description="Reservas, faltas, recebimentos e fidelização: veja o que cada plano pode ajudar a resolver."
               centered
             />
             <div className="public-benefit-grid">
@@ -352,7 +352,7 @@ function LandingPage() {
                 <div>
                   <p className="public-section-label">A sua marca primeiro</p>
                   <h2 className="mt-2 text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
-                    A tecnologia é Bellza. A experiência continua a ser sua.
+                    O cliente marca na sua página, com a sua marca.
                   </h2>
                 </div>
               </div>
@@ -376,8 +376,8 @@ function LandingPage() {
             <div className="flex flex-col gap-5 text-center md:flex-row md:items-end md:justify-between md:text-left">
               <SectionIntro
                 label="Planos"
-                title="Comece sem pressão. Cresça quando fizer sentido."
-                description="Experimente 14 dias de Premium. Depois escolha o plano certo ou continue no Free sem perder os seus dados."
+                title="Escolha o nível de gestão de que precisa."
+                description="Experimente 14 dias de Premium. Depois escolha um plano ou continue no Free sem perder os seus dados."
               />
               <div className="shrink-0">
                 <PlanPeriodToggle value={billingCycle} onChange={setBillingCycle} />
@@ -467,12 +467,12 @@ function LandingPage() {
 
         <section className="px-4 pb-16 sm:px-6 sm:pb-20">
           <div className="public-final-cta mx-auto max-w-5xl overflow-hidden p-7 text-center sm:p-12">
-            <p className="public-section-label">O próximo dia pode ser mais simples</p>
+            <p className="public-section-label">Comece com o seu próprio link de reservas</p>
             <h2 className="mx-auto mt-3 max-w-3xl text-balance text-3xl font-semibold tracking-[-0.035em] sm:text-5xl">
-              Organize o seu espaço sem perder o toque pessoal.
+              Dê aos clientes uma forma simples de marcar. Ganhe uma agenda mais clara.
             </h2>
             <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground">
-              Experimente agenda, página pública, clientes, pagamentos e comunicação num único painel.
+              Experimente o Premium durante 14 dias, sem cartão nem fidelização. Depois pode continuar no Free.
             </p>
             <div className="mt-7 flex flex-col justify-center gap-3 sm:flex-row">
               <Link to="/signup" search={{ ref: undefined }} className="public-btn-primary">

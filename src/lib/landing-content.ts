@@ -10,7 +10,7 @@ export const PRICING_PLANS = [
     yearlyPlanId: null,
     positioning: "Começar",
     annualSaving: null,
-    tagline: "Comece a receber marcações online.",
+    tagline: "Receba reservas online no seu próprio link.",
     features: [
       "Agenda e reservas online",
       "Página pública do seu estúdio",
@@ -28,7 +28,7 @@ export const PRICING_PLANS = [
     yearlyPlanId: "pro_yearly",
     positioning: "Gerir",
     annualSaving: "Poupe 26,88 € por ano",
-    tagline: "Tudo para gerir o seu negócio.",
+    tagline: "Tenha equipa, clientes e pagamentos sob controlo.",
     features: [
       "Equipa e agendas até 3 profissionais",
       "Pagamentos, sinais e notificações",
@@ -46,7 +46,7 @@ export const PRICING_PLANS = [
     yearlyPlanId: "premium_yearly",
     positioning: "Crescer",
     annualSaving: "Poupe 50,88 € por ano",
-    tagline: "Automatize, fidelize e cresça.",
+    tagline: "Automatize lembretes e trabalhe a fidelização.",
     features: [
       "Agendas e profissionais ativos sem limite",
       "Reservas online na página pública do estúdio",
@@ -83,10 +83,10 @@ export const PLAN_FEATURES = [
 ] as const;
 
 export const TRUST_PILLARS = [
-  { value: "14 dias", label: "Teste Premium gratuito" },
-  { value: "PWA", label: "App instalável para o seu estúdio" },
-  { value: "1 link", label: "Reservas diretas na sua marca" },
-  { value: "Tudo junto", label: "Agenda, equipa, clientes e pagamentos" },
+  { value: "Reservas diretas", label: "No link do seu espaço, sem marketplace" },
+  { value: "Agenda ligada", label: "Serviços, equipa e horários organizados" },
+  { value: "Sinais online", label: "Disponíveis a partir do Pro" },
+  { value: "WhatsApp", label: "Lembretes no Premium, sujeitos à franquia" },
 ] as const;
 
 export const DIFFERENTIATORS = [
@@ -109,28 +109,28 @@ export const DIFFERENTIATORS = [
 
 export const FEATURE_BLOCKS = [
   {
-    title: "Reservas online",
+    title: "Receba reservas enquanto está a atender",
     description:
-      "O cliente escolhe serviço, profissional, data e horário na página pública do seu estúdio.",
-    points: ["Disponibilidade real", "Link próprio", "Resumo da reserva"],
+      "O cliente escolhe serviço, profissional e horário no link do seu espaço. A marcação entra diretamente na agenda.",
+    points: ["Todos os planos", "Disponibilidade real"],
   },
   {
-    title: "Agenda e equipa",
+    title: "Dê mais segurança a cada marcação",
     description:
-      "Organize profissionais, horários, folgas, bloqueios e reservas sem depender de conversas soltas.",
-    points: ["Profissionais", "Horários", "Bloqueios"],
+      "Peça sinais online a partir do Pro. No Premium, lembretes por WhatsApp ajudam a evitar esquecimentos, dentro da franquia contratada.",
+    points: ["Sinais: Pro e Premium", "WhatsApp: Premium"],
   },
   {
-    title: "Clientes",
+    title: "Saiba o que recebeu",
     description:
-      "Acompanhe histórico, preferências, presença e contexto de relacionamento num só lugar.",
-    points: ["Ficha do cliente", "Histórico", "Preferências"],
+      "Acompanhe pagamentos e caixa a partir do Pro. No Premium, consulte o financeiro e os relatórios avançados.",
+    points: ["Pagamentos: Pro e Premium", "Avançado: Premium"],
   },
   {
-    title: "Pagamentos e avisos",
+    title: "Dê motivos para voltar",
     description:
-      "Acompanhe sinais, pagamentos, caixa, lembretes e notificações importantes da operação.",
-    points: ["Sinais online", "Caixa", "Notificações"],
+      "Consulte o histórico e a presença dos clientes no Pro. No Premium, crie programas de fidelidade e campanhas.",
+    points: ["Clientes: todos os planos", "Fidelidade: Premium"],
   },
 ] as const;
 
