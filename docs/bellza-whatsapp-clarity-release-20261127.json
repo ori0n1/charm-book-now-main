@@ -1,0 +1,92 @@
+{
+  "decision": { "evidenceMode": "proportional", "phase": "activation" },
+  "authorization": {
+    "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2",
+    "commit": "8bfea0428054d907d18f6d032e14c18fe717623b",
+    "fullWorkerCycle": true
+  },
+  "baseline": {
+    "activeVersion": "5577faab-7d18-4415-bc50-7a5b9c2234a8",
+    "activeTrafficPercent": 100,
+    "rollbackVersion": "5577faab-7d18-4415-bc50-7a5b9c2234a8",
+    "rollbackAvailable": true,
+    "rollbackSafe": true
+  },
+  "artifact": {
+    "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2",
+    "commit": "8bfea0428054d907d18f6d032e14c18fe717623b",
+    "qaSourceCommit": "8bfea0428054d907d18f6d032e14c18fe717623b",
+    "unchanged": true,
+    "localManifestSha256": "04228483c463fa812dace48dff4cebc4529a23a3d9bc5e080c7b593005166130",
+    "configSha256": "cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634",
+    "uploadedScriptEtag": "a652625897ccc0806d1703fdeb014deeb38677d2fd8644aa7e749bf65fc890b5",
+    "remoteModulesMatchManifest": true,
+    "remoteAssetsVerified": true
+  },
+  "config": {
+    "bindings": true, "secretNamesAndTypes": true, "crons": true,
+    "domains": true, "modules": true, "assets": true, "routes": true
+  },
+  "safety": {
+    "noRealTransactions": true, "noRealMessages": true, "noRealDataWrites": true
+  },
+  "tests": {
+    "workerStart": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "remote-readonly", "readOnly": true,
+      "evidence": "Override GET / and /login returned HTTP 200 while candidate remained at 0 percent."
+    },
+    "routesApis": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "remote-readonly", "readOnly": true,
+      "evidence": "Override GET /admin/clientes and /admin/agenda returned 307 to login; /api/auth/session returned 401."
+    },
+    "authPermissions": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "qa-equivalent-artifact", "impact": "related", "isolated": true,
+      "evidence": "239 Worker modules and _headers matched uploaded version bytes; 173 client assets matched by override GET; protected routes retained auth redirects.",
+      "qaEvidence": "Local synthetic owner mobile QA opened appointment details and composer; automatic studio had no manual action; no production authentication or data writes."
+    },
+    "agendaReservations": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "qa-equivalent-artifact", "impact": "related", "isolated": true,
+      "evidence": "Only appointment card click target and manual button placement changed; scheduling functions and server reservation rules unchanged from active commit.",
+      "qaEvidence": "Mobile synthetic QA at 390x844 confirmed details first, editable composer, close stacking, no automatic action, and manual status; build passed 17 contracts."
+    },
+    "paymentsStripeConnect": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "unchanged-contract", "impact": "unchanged",
+      "evidence": "No payment, pricing, or Stripe source changed; production build retained 17 contract checks.",
+      "sourceDiffEvidence": "git diff e61a4e7..8bfea04 changed only WhatsApp UI, client status helper, and related tests.",
+      "baselineEvidence": "Active version 5577faab remained at 100 percent and was the verified production base.",
+      "remoteReadOnlyEvidence": "Remote version module parity passed and public/root/auth route smoke returned prior expected statuses."
+    },
+    "whatsapp": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "qa-equivalent-artifact", "impact": "changed", "isolated": true,
+      "evidence": "Remote Agenda, Clients, appointment WhatsApp bundle and CSS matched local bytes; 239 Worker modules and 173 assets matched.",
+      "qaEvidence": "Synthetic 390x844 QA: details before composer, X clear of title, keyboard closed on open, editable message, manual status; five focused tests include new-booking reset and 72-hour expiry."
+    },
+    "email": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "unchanged-contract", "impact": "unchanged",
+      "evidence": "No email source, templates, delivery settings, or migrations changed.",
+      "sourceDiffEvidence": "Commit 8bfea04 changes only manual WhatsApp UI and client visual status; email files are absent from diff.",
+      "baselineEvidence": "The previous active version 5577faab retained approved email behavior.",
+      "remoteReadOnlyEvidence": "All 239 uploaded Worker modules matched the approved build, and override public routes returned no server errors."
+    },
+    "push": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "unchanged-contract", "impact": "unchanged",
+      "evidence": "No push notification source, triggers, schedules, or settings changed.",
+      "sourceDiffEvidence": "Commit 8bfea04 changes only manual WhatsApp UI and client visual status; push files are absent from diff.",
+      "baselineEvidence": "The previous active version 5577faab retained approved push behavior.",
+      "remoteReadOnlyEvidence": "OAuth confirmed identical cron schedule and 53 bindings; uploaded Worker modules matched the approved build."
+    },
+    "bindingsSecretsCrons": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "cloudflare-metadata",
+      "evidence": "OAuth compared 53 bindings including 24 secret names and types, two crons, both domains and runtime with active production."
+    },
+    "existingFeatures": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "qa-equivalent-artifact", "impact": "related", "isolated": true,
+      "evidence": "Artifact inventory remained 478 files; generated config equivalent; 239 Worker modules and 173 client assets matched remote candidate.",
+      "qaEvidence": "Typecheck, 17 build contracts, five focused tests, mobile visual QA and 150 responsive route checks passed; no unrelated source files changed."
+    },
+    "criticalErrors": {
+      "status": "PASS", "versionId": "1de75604-0745-4076-ba3e-8776d6ce33e2", "method": "remote-readonly", "readOnly": true,
+      "evidence": "Override root/login returned 200, protected routes 307 and session route 401; no 5xx in five read-only probes."
+    }
+  }
+}
