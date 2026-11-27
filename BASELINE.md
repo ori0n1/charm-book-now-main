@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-27
 
+## Produção ativa — estado enviado com reenvio manual
+
+- Cloudflare OAuth confirmou o deployment `0c333f89-26d6-4ac6-b0fc-ba988493b950`, versão `e77da792-f3b9-473c-81a1-2ff46f3dc624` a 100% do tráfego, com fonte funcional `4eec906bce38f5fafe4edac0315eaae38aa9f909`. A anterior `26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6` permanece a 0% para rollback seguro do Worker mediante autorização aplicável.
+- Ao regressar do WhatsApp, o detalhe da marcação exibe “Lembrete enviado” junto ao telefone e troca a ação por “Reenviar mensagem”. O reenvio abre o mesmo compositor editável. O registo continua a indicar a abertura do WhatsApp, sem comprovar entrega. Não houve mudança de banco, agendamento, disparos automáticos ou permissões.
+- Artefato: 478 ficheiros, manifesto SHA-256 `559771cbfa41a17f1f19da88731b6c6244529d08234877eb2ef99f2fc8401d38`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `f5d58de943715adbf5fcbe71e81a662f79710fd408635812426529febacbbfb6`. Os 240 módulos e 173 assets coincidiram byte a byte com a versão a 0%; 53 bindings, 24 secrets por nome/tipo, crons, domínios e runtime foram preservados.
+- TypeScript, build de produção com 17 contratos, ESLint sem erros, QA visual sintético de envio e reenvio e gate `GATE_APTO` passaram. Após ativação, cinco rotas e três assets relacionados passaram. Nenhuma mensagem real, cobrança ou escrita de dados ocorreu nos testes. O commit posterior de sincronização só regista este estado; o código publicado é `4eec906`.
+
 ## Produção ativa — lembretes manuais e modal WhatsApp
 
 - Cloudflare OAuth confirmou o deployment `c89dccb8-f444-4074-8348-40f3f2807c10`, versão `26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6` a 100% do tráfego, com fonte funcional `c563a572965d5fb539e5cfd71f1a1e278b2b4bca`. A versão anterior `1de75604-0745-4076-ba3e-8776d6ce33e2` permanece a 0% para rollback seguro do Worker mediante autorização aplicável.
