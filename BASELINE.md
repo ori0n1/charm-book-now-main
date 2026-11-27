@@ -1,5 +1,12 @@
 # Base oficial da produção Bellza — atualizada em 2026-11-27
 
+## Produção ativa — lembretes manuais e modal WhatsApp
+
+- Cloudflare OAuth confirmou o deployment `c89dccb8-f444-4074-8348-40f3f2807c10`, versão `26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6` a 100% do tráfego, com fonte funcional `c563a572965d5fb539e5cfd71f1a1e278b2b4bca`. A versão anterior `1de75604-0745-4076-ba3e-8776d6ce33e2` permanece a 0% para rollback seguro do Worker mediante autorização aplicável.
+- O compositor de WhatsApp mantém título e X separados e ações no rodapé. Os detalhes da marcação mostram “Enviar mensagem” junto ao telefone. O selo “Em 2 h” saiu dos clientes; no modo manual, a Agenda mostra “Lembrete pendente” nas duas horas anteriores à marcação até a abertura do WhatsApp, e o detalhe passa a “Lembrete enviado manualmente”. É um registo operacional, sem confirmação de entrega.
+- Artefato: 478 ficheiros, manifesto SHA-256 `d1b900061cbbd205f3e3ea4f8ef24dcfcbdbdd7fa0693324400c46015620f602`, configuração SHA-256 `cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634`, ETag `d7d5bd075f6fad2b4e0072c6af7574ffc1a9cfcc53b670666dae937aaf64680f`. Os 240 módulos e 173 assets coincidiram byte a byte com a versão a 0%; 53 bindings, 24 secrets por nome/tipo, crons, domínios e runtime foram preservados.
+- TypeScript, build de produção com 17 contratos, ESLint sem erros novos, dois testes da janela de lembrete, QA visual sintético mobile/desktop e leituras RLS QA A/B passaram. Gate `GATE_APTO`; após ativação, cinco rotas e três assets diretamente relacionados passaram. Nenhuma mensagem real, cobrança, escrita de dados ou migração foi executada nos testes. O commit posterior de sincronização só regista este estado; o código publicado é `c563a572`.
+
 ## Produção ativa — detalhes antes do WhatsApp manual
 
 - Cloudflare OAuth confirmou o deployment `6741b4e8-0ac6-4d09-b32b-6544106d77d6`, versão `1de75604-0745-4076-ba3e-8776d6ce33e2` a 100% do tráfego, do commit funcional `8bfea0428054d907d18f6d032e14c18fe717623b`. A versão anterior `5577faab-7d18-4415-bc50-7a5b9c2234a8` permanece a 0% para recuperação do Worker mediante autorização aplicável.

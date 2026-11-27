@@ -1,0 +1,138 @@
+{
+  "decision": {
+    "evidenceMode": "proportional",
+    "phase": "activation"
+  },
+  "authorization": {
+    "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+    "commit": "c563a572965d5fb539e5cfd71f1a1e278b2b4bca",
+    "fullWorkerCycle": true
+  },
+  "baseline": {
+    "activeVersion": "1de75604-0745-4076-ba3e-8776d6ce33e2",
+    "activeTrafficPercent": 100,
+    "rollbackVersion": "1de75604-0745-4076-ba3e-8776d6ce33e2",
+    "rollbackAvailable": true,
+    "rollbackSafe": true
+  },
+  "artifact": {
+    "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+    "commit": "c563a572965d5fb539e5cfd71f1a1e278b2b4bca",
+    "qaSourceCommit": "c563a572965d5fb539e5cfd71f1a1e278b2b4bca",
+    "unchanged": true,
+    "localManifestSha256": "d1b900061cbbd205f3e3ea4f8ef24dcfcbdbdd7fa0693324400c46015620f602",
+    "configSha256": "cc8af1ea8e4ca14d9e44f27d8cdb0c8d037ed21cae85aa84086c65c7b4b42634",
+    "uploadedScriptEtag": "d7d5bd075f6fad2b4e0072c6af7574ffc1a9cfcc53b670666dae937aaf64680f",
+    "remoteModulesMatchManifest": true,
+    "remoteAssetsVerified": true
+  },
+  "config": {
+    "bindings": true,
+    "secretNamesAndTypes": true,
+    "crons": true,
+    "domains": true,
+    "modules": true,
+    "assets": true,
+    "routes": true
+  },
+  "safety": {
+    "noRealTransactions": true,
+    "noRealMessages": true,
+    "noRealDataWrites": true
+  },
+  "tests": {
+    "workerStart": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "remote-readonly",
+      "evidence": "Zero-traffic override GET / and /login returned HTTP 200 without 5xx.",
+      "readOnly": true
+    },
+    "routesApis": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "remote-readonly",
+      "evidence": "Zero-traffic override /admin/clientes and /admin/agenda returned expected 307 login redirects; /api/auth/session returned 401.",
+      "readOnly": true
+    },
+    "authPermissions": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "qa-equivalent-artifact",
+      "evidence": "Tenant-scoped agenda history path unchanged; uploaded 240 modules and 173 assets match the locally tested commit.",
+      "impact": "related",
+      "isolated": true,
+      "qaEvidence": "QA A and QA B authenticated separately with RLS HEAD; foreign roles and appointments both zero. Synthetic owner and automatic modes passed local visual QA; no writes."
+    },
+    "agendaReservations": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "qa-equivalent-artifact",
+      "evidence": "Only reminder presentation and existing per-appointment open history selection changed; scheduling functions and reservation rules unchanged.",
+      "impact": "related",
+      "isolated": true,
+      "qaEvidence": "Synthetic 390px Agenda click opened real detail drawer first, showed pending reminder and compact action; reminder state and automatic mode tested without reservation writes."
+    },
+    "paymentsStripeConnect": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "unchanged-contract",
+      "evidence": "No payment or Stripe source changed; production build passed the existing 17 contract checks.",
+      "impact": "unchanged",
+      "sourceDiffEvidence": "git diff cd4522a..c563a57: five changed UI/Agenda source files, one pure reminder helper, and focused tests; no migrations or automatic notification code changed.",
+      "baselineEvidence": "Verified active production version 1de75604 at 100 percent remains available for Worker traffic rollback; no database or config change.",
+      "remoteReadOnlyEvidence": "OAuth confirmed 240 uploaded modules byte-identical, 173 client assets byte-identical by zero-traffic override, and five read-only route probes matched production."
+    },
+    "whatsapp": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "qa-equivalent-artifact",
+      "evidence": "Zero-traffic override delivered all 173 matching assets and 240 matching modules; no real WhatsApp conversation was opened.",
+      "impact": "changed",
+      "isolated": true,
+      "qaEvidence": "Synthetic mobile and desktop visual test passed: no title/X overlap, footer actions, compact detail button, editable reminder, pending removal, sent label and automatic mode; two time-window tests passed."
+    },
+    "email": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "unchanged-contract",
+      "evidence": "No email source, templates, settings or triggers changed.",
+      "impact": "unchanged",
+      "sourceDiffEvidence": "git diff cd4522a..c563a57: five changed UI/Agenda source files, one pure reminder helper, and focused tests; no migrations or automatic notification code changed.",
+      "baselineEvidence": "Verified active production version 1de75604 at 100 percent remains available for Worker traffic rollback; no database or config change.",
+      "remoteReadOnlyEvidence": "OAuth confirmed 240 uploaded modules byte-identical, 173 client assets byte-identical by zero-traffic override, and five read-only route probes matched production."
+    },
+    "push": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "unchanged-contract",
+      "evidence": "No push source, settings or crons changed; two active cron schedules matched by OAuth.",
+      "impact": "unchanged",
+      "sourceDiffEvidence": "git diff cd4522a..c563a57: five changed UI/Agenda source files, one pure reminder helper, and focused tests; no migrations or automatic notification code changed.",
+      "baselineEvidence": "Verified active production version 1de75604 at 100 percent remains available for Worker traffic rollback; no database or config change.",
+      "remoteReadOnlyEvidence": "OAuth confirmed 240 uploaded modules byte-identical, 173 client assets byte-identical by zero-traffic override, and five read-only route probes matched production."
+    },
+    "bindingsSecretsCrons": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "cloudflare-metadata",
+      "evidence": "OAuth verified 53 bindings, 24 secret names/types, identical runtime and two crons; both production domains unchanged."
+    },
+    "existingFeatures": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "qa-equivalent-artifact",
+      "evidence": "Artifact inventory stayed at 478 files and build config matched; all uploaded modules and 173 client assets matched local bytes.",
+      "impact": "related",
+      "isolated": true,
+      "qaEvidence": "TypeScript passed, focused ESLint had zero errors, production build and 17 contracts passed, synthetic mobile/desktop visual test and QA A/B RLS read checks passed."
+    },
+    "criticalErrors": {
+      "status": "PASS",
+      "versionId": "26c5467a-3f3f-4ef4-bf1f-ca426f0b12e6",
+      "method": "remote-readonly",
+      "evidence": "Five zero-traffic override route probes returned 200, 307 or 401 as expected; no 5xx response.",
+      "readOnly": true
+    }
+  }
+}
