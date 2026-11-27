@@ -81,6 +81,7 @@ export function TimelineAppointmentDrawer({
   onClose,
   onManualWhatsApp,
   manualReminderPending = false,
+  manualWhatsAppStatus = null,
   onChangeAttendance,
   attendanceUnavailableReason,
   onConfirmCancel,
@@ -104,6 +105,7 @@ export function TimelineAppointmentDrawer({
   onClose: () => void;
   onManualWhatsApp?: () => void;
   manualReminderPending?: boolean;
+  manualWhatsAppStatus?: "Lembrete enviado" | "Mensagem enviada" | null;
   onChangeAttendance?: (status: "confirmed" | "completed" | "no_show") => Promise<boolean>;
   attendanceUnavailableReason?: string;
   onConfirmCancel?: (reason: string) => Promise<boolean>;
@@ -441,12 +443,13 @@ export function TimelineAppointmentDrawer({
                   {manualWhatsAppUrl && onManualWhatsApp ? (
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <p className="break-all text-xs font-semibold">{details.clientPhone}</p>
+                      {manualWhatsAppStatus && <span title="Registo de abertura do WhatsApp; entrega não verificada" className="inline-flex min-h-7 items-center rounded-lg border border-emerald-700/25 bg-emerald-50 px-2 text-[11px] font-semibold text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100">{manualWhatsAppStatus}</span>}
                       <button type="button" onClick={onManualWhatsApp}
-                        aria-label={`Editar mensagem para ${details.clientName} no WhatsApp`}
+                        aria-label={`${manualWhatsAppStatus ? "Reenviar" : "Editar"} mensagem para ${details.clientName} no WhatsApp`}
                         data-testid="manual-appointment-whatsapp"
                         className={`inline-flex min-h-8 max-w-full items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-700 ${manualReminderPending ? "border-amber-500/50 bg-amber-50 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-100" : "border-emerald-700/25 bg-emerald-50 text-emerald-900 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-100"}`}>
                         <WhatsAppIcon className="size-3.5 shrink-0" />
-                        Enviar mensagem
+                        {manualWhatsAppStatus ? "Reenviar mensagem" : "Enviar mensagem"}
                       </button>
                       {manualReminderPending && <span className="text-[11px] font-medium text-amber-900 dark:text-amber-200">Lembrete pendente</span>}
                     </div>

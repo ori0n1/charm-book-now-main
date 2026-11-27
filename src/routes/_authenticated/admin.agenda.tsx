@@ -2215,6 +2215,10 @@ function AgendaPage() {
               manualReminderPending={whatsappManualMode && timelineDetailAppt.status === "confirmed" &&
                 isValidInternationalPhone(normalizeInternationalPhone(timelineDetailAppt.clients?.display_phone ?? timelineDetailAppt.clients?.phone)) &&
                 isManualReminderPending(timelineDetailAppt.starts_at, agendaNow, latestManualOpenByAppointment.get(timelineDetailAppt.id))}
+              manualWhatsAppStatus={whatsappManualMode && latestManualOpenByAppointment.has(timelineDetailAppt.id)
+                ? isManualReminderOpen(timelineDetailAppt.starts_at, latestManualOpenByAppointment.get(timelineDetailAppt.id))
+                  ? "Lembrete enviado" : "Mensagem enviada"
+                : null}
               attendanceUnavailableReason={hasJointServiceState
                 ? (timelineDetailAppt.status === "cancelled"
                     ? "Marcação cancelada: a presença não pode ser registada."

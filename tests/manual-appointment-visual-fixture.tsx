@@ -18,6 +18,7 @@ function App() {
       onClose={() => setDetails(false)}
       onManualWhatsApp={manual ? () => { setDetails(false); setDraft(true); } : undefined}
       manualReminderPending={manual && !sent}
+      manualWhatsAppStatus={manual && sent ? "Lembrete enviado" : null}
       timeZone="Europe/Lisbon"
     />}
     <ProfessionalTimeline

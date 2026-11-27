@@ -65,6 +65,13 @@ try {
   assert.doesNotMatch(await card.getAttribute("aria-label"), /lembrete manual de WhatsApp pendente/);
   await card.click();
   assert.match(await page.locator("body").innerText(), /Lembrete enviado manualmente/);
+  assert.equal(await page.getByText("Lembrete enviado", { exact: true }).count(), 1);
+  assert.equal(await messageAction.textContent(), "Reenviar mensagem");
+  assert.equal(await page.getByText("Lembrete pendente", { exact: true }).count(), 0);
+  await messageAction.click();
+  assert.match(await dialog.getByRole("textbox", { name: "Mensagem" }).inputValue(), /Brushing.*09:00/);
+  await dialog.getByRole("button", { name: "Ver detalhes da marcação" }).click();
+  assert.equal(await messageAction.textContent(), "Reenviar mensagem");
   await page.getByRole("button", { name: /Fechar|Close/ }).first().click();
   await page.getByTestId("mode-toggle").click();
   assert.doesNotMatch(await card.getAttribute("aria-label"), /lembrete manual de WhatsApp pendente/);
@@ -72,7 +79,7 @@ try {
   assert.match(await page.locator("body").innerText(), /Detalhes da marcação/i);
   assert.doesNotMatch(await page.getByTestId("manual-appointment-whatsapp").textContent(), /Enviar mensagem/);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ mobile: "390x844", detailsFirst: true, closeClearOfTitle: true, keyboardClosedOnOpen: true, editedMessage: true, manualStatus: true, automaticModeWithoutManualAction: true }));
+  console.log(JSON.stringify({ mobile: "390x844", detailsFirst: true, closeClearOfTitle: true, keyboardClosedOnOpen: true, editedMessage: true, manualStatus: true, resendAvailable: true, automaticModeWithoutManualAction: true }));
 } finally {
   await browser?.close();
 }
